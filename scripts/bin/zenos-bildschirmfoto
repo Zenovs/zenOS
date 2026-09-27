@@ -17,9 +17,10 @@ TOKENS="$BIN/../../shell/theme/tokens.json"
 
 meldung() { printf 'zenos-bildschirmfoto: %s\n' "$*" >&2; }
 hinweis() { "$BIN/zenos-ipc" hinweis zeigen "$1" > /dev/null 2>&1 || true; }
+warnen() { "$BIN/zenos-ipc" hinweis warnen "$1" > /dev/null 2>&1 || true; }
 fehler() { # MELDUNG HINWEIS
   meldung "$1"
-  hinweis "$2"
+  warnen "$2"
   exit 1
 }
 
@@ -117,6 +118,6 @@ if wl-copy --type image/png < "$datei"; then
   hinweis "Bildschirmfoto kopiert und gespeichert"
 else
   meldung "wl-copy fehlgeschlagen, das Bild liegt unter $datei"
-  hinweis "Bildschirmfoto gespeichert, nicht kopiert"
+  warnen "Bildschirmfoto gespeichert, nicht kopiert"
 fi
 printf '%s\n' "$datei"

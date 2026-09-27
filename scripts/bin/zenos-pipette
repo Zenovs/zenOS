@@ -12,9 +12,10 @@ BIN=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
 
 meldung() { printf 'zenos-pipette: %s\n' "$*" >&2; }
 hinweis() { "$BIN/zenos-ipc" hinweis zeigen "$1" > /dev/null 2>&1 || true; }
+warnen() { "$BIN/zenos-ipc" hinweis warnen "$1" > /dev/null 2>&1 || true; }
 fehler() { # MELDUNG HINWEIS
   meldung "$1"
-  hinweis "$2"
+  warnen "$2"
   exit 1
 }
 
