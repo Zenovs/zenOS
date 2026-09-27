@@ -1,0 +1,57 @@
+# Testumgebung für zenOS auf dem Mac: Ubuntu 26.04 arm64 mit systemd.
+# Gleiche Architektur wie der Pi 5. Kein Ersatz für den Test auf echter Hardware
+# (kein GPU-Beschleuniger, kein VT, kein I2C/GPIO).
+FROM ubuntu:26.04
+
+ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
+
+# Grundsystem wie Ubuntu Server: systemd, sudo, dbus
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+      systemd systemd-sysv dbus dbus-user-session sudo locales ca-certificates \
+      git curl gnupg less file procps psmisc iproute2 kmod udev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Laufzeit, Build-Abhängigkeiten von Quickshell und Prüfwerkzeuge.
+# Die Liste ist bewusst grösser als nötig, damit Modul-Tests schnell sind;
+# install.sh muss trotzdem alles selbst sicherstellen.
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+      labwc kitty fish greetd pipewire wireplumber pipewire-pulse \
+      xdg-desktop-portal xdg-desktop-portal-wlr xdg-desktop-portal-gtk \
+      grim slurp wl-clipboard swayidle kanshi wlr-randr hyprpicker xwayland \
+      python3 python3-jsonschema python3-gi jq adwaita-icon-theme fonts-dejavu-core \
+      libnotify-bin xdg-utils gsettings-desktop-schemas dconf-cli dconf-service libglib2.0-bin \
+      qt6-wayland qt6-svg-plugins qt6-gtk-platformtheme qt6-xdgdesktopportal-platformtheme \
+      qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts \
+      qml6-module-qtquick-shapes qml6-module-qtquick-effects qml6-module-qt-labs-folderlistmodel \
+      qml6-module-qtqml-workerscript qml6-module-qtquick-window qml6-module-qtquick-templates \
+      qml6-module-qtqml qml6-module-qtqml-models libjemalloc2 \
+      build-essential cmake ninja-build pkg-config \
+      qt6-base-dev qt6-base-private-dev qt6-declarative-dev qt6-declarative-private-dev \
+      qt6-shadertools-dev qt6-wayland-dev qt6-svg-dev spirv-tools libcli11-dev libjemalloc-dev \
+      libdrm-dev libgbm-dev libegl-dev libvulkan-dev libwayland-dev wayland-protocols \
+      libpipewire-0.3-dev libpam0g-dev libpolkit-agent-1-dev libpolkit-gobject-1-dev libglib2.0-dev \
+      eza bat zoxide fzf tealdeer man-db \
+      unattended-upgrades ufw i2c-tools python3-smbus python3-libgpiod \
+      shellcheck gitleaks qt6-declarative-dev-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+# Quickshell v0.3.1, vorgebaut (gleicher Stand wie scripts/module/25-quickshell.sh)
+ADD cache/usr-local.tar /usr/
+
+# Testbenutzer mit derselben temporären sudo-Regel wie auf dem Pi während des Baus
+# (Das Ubuntu-Image bringt einen Benutzer «ubuntu» mit UID 1000 mit; er wird ersetzt.)
+RUN set -e; if id ubuntu >/dev/null 2>&1; then userdel -r ubuntu; fi; \
+    useradd -m -u 1000 -s /bin/bash tester; \
+    echo 'tester:tester' | chpasswd; \
+    echo 'tester ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/zenos-bau; \
+    chmod 0440 /etc/sudoers.d/zenos-bau; \
+    mkdir -p /var/lib/systemd/linger; touch /var/lib/systemd/linger/tester
+
+# systemd im Container: keine Getty, keine Hardware-Dienste
+# greetd wird vom Paket sofort aktiviert; im Test soll es wie auf einem frischen Pi aus sein.
+RUN systemctl mask getty@tty1.service serial-getty@ttyS0.service systemd-udevd.service \
+      systemd-networkd-wait-online.service 2>/dev/null || true; \
+    systemctl disable greetd.service 2>/dev/null || true; rm -f /etc/systemd/system/display-manager.service
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

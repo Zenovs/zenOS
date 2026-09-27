@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# zen – Werkzeug für zenOS. /usr/local/bin/zen verweist auf /opt/zenos/scripts/zen.
+#
+# «zen <befehl> [argumente…]» sourct scripts/zen.d/<befehl>.sh und ruft befehl_<befehl> auf
+# (Bindestriche werden zu Unterstrichen). Jede zen.d-Datei hat oben eine Zeile
+# «# hilfe: <befehl> – <kurz>»; darunter können weitere Kommentarzeilen die Hilfe ergänzen
+# (zen hilfe <befehl>).
+#
+# Für die Unterbefehle stehen bereit (neben scripts/lib/gemeinsam.sh):
+#   ZENOS_CODE (/opt/zenos, fest), ZEN_SKRIPTE (Ordner dieser Datei), ZEN_WURZEL (Repo dazu), SUDO
+#   zen_git ARG…        lesendes git in /opt/zenos als Benutzer
+#   zen_git_root ARG…   schreibendes git in /opt/zenos als root
+#   zen_fehler TEXT     Meldung «zen: TEXT» auf stderr (Rückgabe 0; danach selbst return/exit)
+#   zen_hinweis TEXT    Meldung auf stdout
+
+set -euo pipefail
+
+ZEN_SKRIPTE=$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")" && pwd -P)
+ZEN_WURZEL=$(dirname -- "$ZEN_SKRIPTE")
+# Fest: zen bedient immer das installierte System, nie einen Arbeits-Checkout.
+ZENOS_CODE=/opt/zenos
+if (( EUID == 0 )); then SUDO=""; else SUDO=sudo; fi
+export ZEN_SKRIPTE ZEN_WURZEL ZENOS_CODE
+
+# shellcheck source=lib/gemeinsam.sh
+source "$ZEN_SKRIPTE/lib/gemeinsam.sh"
+
+zen_git() { git -c safe.directory="$ZENOS_CODE" -C "$ZENOS_CODE" "$@"; }
+zen_git_root() { $SUDO git -c advice.detachedHead=false -C "$ZENOS_CODE" "$@"; }
+zen_fehler() { printf 'zen: %s\n' "$*" >&2; }
+zen_hinweis() { printf '%s\n' "$*"; }
+
+_zen_hilfe_kurz() {
+  printf 'zen – Werkzeug für zenOS\n\n'
+  local datei zeile breite=0 i
+  local -a befehle=() texte=()
+  while IFS= read -r -d '' datei; do
+    zeile=$(sed -n 's/^# hilfe: //p' "$datei" | head -n 1)
+    [[ -n "$zeile" ]] || continue
+    befehle+=("${zeile%% – *}")
+    if [[ "$zeile" == *" – "* ]]; then texte+=("${zeile#* – }"); else texte+=(""); fi
+    (( ${#befehle[-1]} <= breite )) || breite=${#befehle[-1]}
+  done < <(find "$ZEN_SKRIPTE/zen.d" -maxdepth 1 -type f -name '*.sh' -print0 | LC_ALL=C sort -z)
+  for i in "${!befehle[@]}"; do
+    printf '  zen %-*s  %s\n' "$breite" "${befehle[$i]}" "${texte[$i]}"
+  done
+  printf '\nMehr zu einem Befehl: zen hilfe <befehl>\n'
+}
+
+befehl=${1:-hilfe}
+(( $# == 0 )) || shift
+case "$befehl" in
+  -h | --hilfe | --help) befehl=hilfe ;;
+  -V | --version) befehl=version ;;
+esac
+
+if [[ ! "$befehl" =~ ^[a-z][a-z0-9-]*$ ]] || [[ ! -f "$ZEN_SKRIPTE/zen.d/$befehl.sh" ]]; then
+  printf 'zen: unbekannter Befehl «%s»\n\n' "$befehl" >&2
+  _zen_hilfe_kurz >&2
+  exit 2
+fi
+
+# shellcheck source=/dev/null
+source "$ZEN_SKRIPTE/zen.d/$befehl.sh"
+funktion="befehl_${befehl//-/_}"
+if ! declare -F "$funktion" >/dev/null; then
+  zen_fehler "zen.d/$befehl.sh definiert $funktion nicht"
+  exit 1
+fi
+"$funktion" "$@"
