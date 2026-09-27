@@ -48,14 +48,8 @@ Scope {
     // PAM fragt etwas anderes als das Passwort (z. B. einen Code): dann steht die Frage über dem Feld
     readonly property string frage: pam.active && pam.responseRequired && !_geantwortet ? pam.message.trim().replace(/:$/, "") : ""
 
-    // Nie Inhalte: nur Zahlen aus dem Mitteilungsdienst (wartende und, falls der Dienst sie zählt,
-    // zugestellte ungelesene)
-    readonly property int anzahlMitteilungen: {
-        const dienst = Mitteilungen;
-        const wartend = Math.max(0, Number(dienst.anzahlWartend) || 0);
-        const ungelesen = "anzahlUngelesen" in dienst ? Math.max(0, Number(dienst["anzahlUngelesen"]) || 0) : 0; // qmllint disable missing-property
-        return wartend + ungelesen;
-    }
+    // Nie Inhalte: nur Zahlen aus dem Mitteilungsdienst (wartende und zugestellte ungelesene)
+    readonly property int anzahlMitteilungen: Math.max(0, Mitteilungen.anzahlWartend) + Math.max(0, Mitteilungen.anzahlUngelesen)
 
     function sperren(): void {
         if (lock.locked)

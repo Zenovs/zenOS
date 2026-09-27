@@ -25,8 +25,8 @@ modul_system() {
   done
 
   # systemd-Benutzerdienst. Direkt nach /etc/systemd/user: /etc/xdg/systemd/user ist unter Ubuntu nur ein
-  # Symlink dorthin, und «install -D» aus uutils (Ubuntu 26.04) ersetzt einen solchen Symlink durch einen
-  # leeren Ordner, den systemd nicht durchsucht.
+  # Symlink dorthin, und systemd 259 durchsucht /etc/xdg/systemd/user nur über XDG_CONFIG_DIRS, das in der
+  # Benutzerinstanz meist nicht gesetzt ist. /etc/systemd/user gilt immer.
   datei_installieren "$ZENOS_CODE/system/systemd/user/zenos-idle.service" \
     /etc/systemd/user/zenos-idle.service 0644 root:root
 }
