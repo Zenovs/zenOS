@@ -1,0 +1,6 @@
+# M13 · Argon ONE (zenos-argon)
+# Lüfter über I2C: Python-Modul smbus; i2cget für zen doctor
+python3-smbus
+i2c-tools
+# Power-Button über GPIO (libgpiod v2)
+python3-libgpiod

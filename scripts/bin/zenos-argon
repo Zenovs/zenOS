@@ -1,0 +1,953 @@
+#!/usr/bin/python3
+"""zenos-argon: Lüfter und Power-Button des Argon ONE V3 am Raspberry Pi 5.
+
+Aufruf:
+  zenos-argon                        Dienst (zenos-argon.service, als root)
+  zenos-argon --simulieren [--temperatur GRAD | --temperatur-datei PFAD] [--puls MS …]
+                                     ohne I2C und GPIO: Lüfterwerte und Tastendrücke nur ins Log
+  zenos-argon --pruefen              nur lesend: Pi-Modell, I2C-Bus, Argon an 0x1a, GPIO4, Konfiguration
+  zenos-argon --konfig-pruefen       Konfiguration prüfen und die wirksame Kurve zeigen
+
+Optionen:
+  --konfig PFAD          Konfiguration (Standard /etc/xdg/zenos/argon.json, darf fehlen)
+  --status-datei PFAD    Werte für die Leiste (Standard /run/zenos/argon.json)
+  --intervall SEKUNDEN   Takt für Messen und Schreiben (Standard 5)
+  --durchlaeufe N        nach N Messungen beenden (für Tests)
+
+Orientiert am offiziellen Argon-Skript (download.argon40.com/argon1.sh mit argononed.py, argonregister.py
+und argonpowerbutton-libgpiod.py, Version 2608001; Einzelheiten in docs/module/m13.md):
+- Lüfter über I2C, Bus 1, Adresse 0x1a. Firmware mit Registern (Argon ONE V3): Tastverhältnis in Register
+  0x80. Erkannt wie im Original: lesen, um eins verändert schreiben, zurücklesen, wiederherstellen. Sonst ein
+  einzelnes Byte. Nach jedem Schreiben 1 s Pause wie im Original.
+- Kurve in Stufen: ab 55 °C 30 %, ab 60 °C 55 %, ab 65 °C 100 %; 1–24 % werden 25 % wie im Original.
+  Schneller wird der Lüfter sofort. Langsamer erst, wenn die Temperatur die Stufe um die Hysterese (3 °C)
+  unterschritten hat und das 30 s lang bleibt (das Original wartet 30 s vor jedem Absenken).
+  Ab 80 °C läuft er immer mit 100 % (Code, nicht Konfiguration).
+- Anlaufhilfe wie im Original: aus dem Stillstand erst 1 s mit 100 %, dann der Zielwert.
+- Power-Button: Die Argon-Platine meldet Tastendrücke als Puls auf GPIO4 (Zeile «GPIO4», auf dem Pi 5 am
+  RP1). 20–30 ms = Doppeltipp → systemctl reboot, 40–50 ms = gedrückt halten → systemctl poweroff.
+  Gemessen wird mit den Zeitstempeln der Flanken; die Fenster haben 5 ms Rand um diese Werte.
+
+Alle 5 s schreibt der Dienst /run/zenos/argon.json atomar: {"temperatur": int, "luefter": int, "zeit": ISO-8601},
+-1 heisst unbekannt. Ohne Raspberry Pi 5, I2C-Bus oder Argon endet er mit einer Meldung und Exit 0.
+Beim Beenden stellt er den Lüfter auf 100 % (niemand regelt mehr), beim Herunterfahren aus (wie das Original).
+
+Konfiguration /etc/xdg/zenos/argon.json (optional, wird im laufenden Betrieb neu gelesen):
+  {"kurve": [{"temperatur": 55, "luefter": 30}, {"temperatur": 60, "luefter": 55},
+             {"temperatur": 65, "luefter": 100}],
+   "hysterese": 3, "absenkenNachSekunden": 30}
+Ist sie ungültig, gelten die Standardwerte und das Log nennt den Grund.
+
+Exit: 0 in Ordnung oder nichts zu tun · 1 Fehler · 2 Aufruf.
+"""
+
+import datetime
+import errno
+import json
+import math
+import os
+import signal
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+
+I2C_BUS = 1
+I2C_DEVICE = "/dev/i2c-1"
+ARGON_ADDRESS = 0x1A
+REG_DUTY_CYCLE = 0x80
+WRITE_PAUSE = 1.0
+KICK_SPEED = 100
+MIN_SPEED = 25
+SAFE_SPEED = 100
+# Leitplanke im Code: ab hier voller Lüfter, egal was konfiguriert ist (der Pi 5 drosselt ab 80–85 °C)
+EMERGENCY_TEMPERATURE = 80.0
+
+BUTTON_LINE = "GPIO4"
+BUTTON_CHIP_LABEL = "pinctrl-rp1"
+# Pulsbreiten in ms: [von, bis)
+REBOOT_PULSE_MS = (15.0, 35.0)
+POWEROFF_PULSE_MS = (35.0, 55.0)
+ACTIONS = {"neustart": ("reboot", "Neustart"), "ausschalten": ("poweroff", "Ausschalten")}
+
+CONFIG_PATH = "/etc/xdg/zenos/argon.json"
+STATUS_PATH = "/run/zenos/argon.json"
+THERMAL_PATH = "/sys/class/thermal/thermal_zone0/temp"
+MODEL_PATHS = ("/sys/firmware/devicetree/base/model", "/proc/device-tree/model")
+PI5_MODEL = "Raspberry Pi 5"
+# So lange wartet der Dienst kurz nach dem Start des Systems auf /dev/i2c-1 (RP1 hängt am PCIe)
+I2C_WAIT_SECONDS = 30
+I2C_WAIT_UPTIME = 180
+
+DEFAULT_CURVE = ((55.0, 30), (60.0, 55), (65.0, 100))
+DEFAULT_HYSTERESIS = 3.0
+DEFAULT_DELAY = 30.0
+CONFIG_KEYS = ("kurve", "hysterese", "absenkenNachSekunden")
+
+
+# --- Log -------------------------------------------------------------------
+
+
+class Log:
+    """Meldungen auf stderr; unter systemd mit Priorität für das Journal."""
+
+    def __init__(self, journal=None, stream=None):
+        self.journal = ("JOURNAL_STREAM" in os.environ) if journal is None else journal
+        self.stream = stream
+        self._open = set()
+
+    def _write(self, priority, text):
+        prefix = f"<{priority}>" if self.journal else ""
+        print(prefix + text, file=self.stream or sys.stderr, flush=True)
+
+    def info(self, text):
+        self._write(6, text)
+
+    def warning(self, text):
+        self._write(4, text)
+
+    def error(self, text):
+        self._write(3, text)
+
+    def problem(self, key, text):
+        """Warnung nur beim ersten Auftreten eines Problems (kein Log-Schwall bei Dauerfehlern)."""
+        if key not in self._open:
+            self._open.add(key)
+            self.warning(text)
+
+    def solved(self, key, text):
+        if key in self._open:
+            self._open.discard(key)
+            self.info(text)
+
+
+# --- Konfiguration ---------------------------------------------------------
+
+
+class Config:
+    def __init__(self, curve=DEFAULT_CURVE, hysteresis=DEFAULT_HYSTERESIS, delay=DEFAULT_DELAY):
+        self.curve = tuple(sorted((float(t), int(s)) for t, s in curve))
+        self.hysteresis = float(hysteresis)
+        self.delay = float(delay)
+
+    def describe(self):
+        stufen = " · ".join(f"{_fmt(t)} °C → {s} %" for t, s in self.curve)
+        return f"{stufen} · Hysterese {_fmt(self.hysteresis)} °C · absenken nach {_fmt(self.delay)} s"
+
+
+def _fmt(value):
+    text = f"{value:.1f}".rstrip("0").rstrip(".")
+    return text.replace(".", ",")
+
+
+def _is_number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def validate_config(data):
+    """Prüft eine geparste Konfiguration. Gibt (Config oder None, Fehler, Hinweise) zurück."""
+    errors, notes = [], []
+    if not isinstance(data, dict):
+        return None, ["Die Konfiguration muss ein JSON-Objekt sein"], notes
+    for key in data:
+        if key not in CONFIG_KEYS:
+            notes.append(f"Unbekannter Schlüssel «{key}» wird ignoriert")
+
+    curve = DEFAULT_CURVE
+    if "kurve" in data:
+        raw = data["kurve"]
+        if not isinstance(raw, list) or not 1 <= len(raw) <= 10:
+            errors.append("«kurve» muss eine Liste mit 1 bis 10 Stufen sein")
+        else:
+            points = []
+            for index, entry in enumerate(raw, 1):
+                if not isinstance(entry, dict):
+                    errors.append(f"Stufe {index}: erwartet {{\"temperatur\": …, \"luefter\": …}}")
+                    continue
+                for key in entry:
+                    if key not in ("temperatur", "luefter"):
+                        notes.append(f"Stufe {index}: unbekannter Schlüssel «{key}» wird ignoriert")
+                temperature, speed = entry.get("temperatur"), entry.get("luefter")
+                if not _is_number(temperature) or not 0 <= temperature <= 100:
+                    errors.append(f"Stufe {index}: «temperatur» muss eine Zahl von 0 bis 100 (°C) sein")
+                    continue
+                if not _is_number(speed) or speed != int(speed) or not 0 <= speed <= 100:
+                    errors.append(f"Stufe {index}: «luefter» muss eine ganze Zahl von 0 bis 100 (%) sein")
+                    continue
+                points.append((float(temperature), int(speed)))
+            points.sort()
+            for (t1, s1), (t2, s2) in zip(points, points[1:]):
+                if t1 == t2:
+                    errors.append(f"Die Temperatur {_fmt(t1)} °C steht zweimal in der Kurve")
+                elif s2 < s1:
+                    errors.append(f"Die Kurve fällt bei {_fmt(t2)} °C (von {s1} % auf {s2} %)")
+            curve = tuple(points)
+
+    hysteresis = data.get("hysterese", DEFAULT_HYSTERESIS)
+    if not _is_number(hysteresis) or not 0 <= hysteresis <= 10:
+        errors.append("«hysterese» muss eine Zahl von 0 bis 10 (°C) sein")
+    delay = data.get("absenkenNachSekunden", DEFAULT_DELAY)
+    if not _is_number(delay) or not 0 <= delay <= 600:
+        errors.append("«absenkenNachSekunden» muss eine Zahl von 0 bis 600 sein")
+
+    if errors:
+        return None, errors, notes
+    return Config(curve, hysteresis, delay), errors, notes
+
+
+def load_config(path):
+    """(Config, Fehler, Hinweise, eigen). Fehlt die Datei, gelten die Standardwerte ohne Meldung."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except FileNotFoundError:
+        return Config(), [], [], False
+    except (OSError, ValueError) as err:
+        return Config(), [f"{path} ist nicht lesbar: {err}"], [], True
+    config, errors, notes = validate_config(data)
+    return (config or Config()), errors, notes, True
+
+
+# --- Kurve und Hysterese ---------------------------------------------------
+
+
+def fan_speed(temperature, curve):
+    """Lüfter in % für eine Temperatur: die höchste erreichte Stufe (wie get_fanspeed im Original)."""
+    if temperature >= EMERGENCY_TEMPERATURE:
+        return 100
+    for threshold, speed in sorted(curve, reverse=True):
+        if temperature >= threshold:
+            if speed < 1:
+                return 0
+            return max(speed, MIN_SPEED)
+    return 0
+
+
+class FanController:
+    """Entscheidet über den Lüfterwert: schneller sofort, langsamer mit Hysterese und Verzögerung."""
+
+    def __init__(self, config):
+        self.config = config
+        self.speed = None
+        self._lower_since = None
+
+    def forget(self):
+        """Nach einem Schreibfehler: Der nächste Takt setzt den Wert neu."""
+        self.speed = None
+        self._lower_since = None
+
+    def update(self, temperature, now):
+        """Neuer Lüfterwert oder None, wenn alles bleibt."""
+        if temperature is None:
+            return self._set(SAFE_SPEED)
+        curve = self.config.curve
+        higher = fan_speed(temperature, curve)
+        if self.speed is None or higher > self.speed:
+            return self._set(higher)
+        # Wert, der auch bei um die Hysterese höherer Temperatur gälte: erst darunter wird abgesenkt
+        lower = fan_speed(temperature + self.config.hysteresis, curve)
+        if lower >= self.speed:
+            self._lower_since = None
+            return None
+        if self._lower_since is None:
+            self._lower_since = now
+        if now - self._lower_since < self.config.delay:
+            return None
+        return self._set(lower)
+
+    def _set(self, value):
+        self._lower_since = None
+        if value == self.speed:
+            return None
+        self.speed = value
+        return value
+
+
+# --- Power-Button ----------------------------------------------------------
+
+
+def classify_pulse(width_ms):
+    """«neustart», «ausschalten» oder None für eine Pulsbreite in ms."""
+    if REBOOT_PULSE_MS[0] <= width_ms < REBOOT_PULSE_MS[1]:
+        return "neustart"
+    if POWEROFF_PULSE_MS[0] <= width_ms < POWEROFF_PULSE_MS[1]:
+        return "ausschalten"
+    return None
+
+
+class PulseDetector:
+    """Paart steigende und fallende Flanken zu Pulsbreiten (ms)."""
+
+    def __init__(self):
+        self._rising = None
+
+    def edge(self, rising, timestamp_ns):
+        if rising:
+            self._rising = timestamp_ns
+            return None
+        if self._rising is None:
+            return None
+        width = (timestamp_ns - self._rising) / 1e6
+        self._rising = None
+        return width if width >= 0 else None
+
+
+def find_button_line(gpiod, devices=None):
+    """(Pfad, Offset, Label) der Zeile «GPIO4»; der RP1 des Pi 5 hat Vorrang. None, wenn es sie nicht gibt."""
+    if devices is None:
+        try:
+            devices = sorted("/dev/" + name for name in os.listdir("/dev") if name.startswith("gpiochip"))
+        except OSError:
+            devices = []
+    found = []
+    for path in devices:
+        try:
+            if not gpiod.is_gpiochip_device(path):
+                continue
+            with gpiod.Chip(path) as chip:
+                label = chip.get_info().label
+                try:
+                    offset = chip.line_offset_from_id(BUTTON_LINE)
+                except (OSError, ValueError):
+                    continue
+        except OSError:
+            continue
+        found.append((label != BUTTON_CHIP_LABEL, path, offset, label))
+    if not found:
+        return None
+    found.sort(key=lambda entry: (entry[0], len(entry[1]), entry[1]))
+    return found[0][1:]
+
+
+class ButtonWatcher(threading.Thread):
+    """Wartet auf Flanken an GPIO4 und meldet Pulsbreiten an on_pulse."""
+
+    def __init__(self, stop, on_pulse, log):
+        super().__init__(name="power-button", daemon=True)
+        self.stop = stop
+        self.on_pulse = on_pulse
+        self.log = log
+
+    def run(self):
+        try:
+            self._run()
+        except Exception as err:  # der Lüfter soll weiterlaufen, was auch immer hier schiefgeht
+            self.log.error(f"Power-Button: unerwarteter Fehler ({err!r}), der Knopf bleibt ohne Funktion")
+
+    def _run(self):
+        try:
+            import gpiod
+            from gpiod.line import Direction, Edge
+        except ImportError:
+            self.log.warning("python3-libgpiod fehlt, der Power-Button bleibt ohne Funktion (install.sh ausführen)")
+            return
+        for attempt in range(3):
+            if self.stop.is_set():
+                return
+            found = find_button_line(gpiod)
+            if found is None:
+                self.log.warning(f"GPIO-Zeile {BUTTON_LINE} nicht gefunden, der Power-Button bleibt ohne Funktion")
+                return
+            path, offset, label = found
+            settings = gpiod.LineSettings(direction=Direction.INPUT, edge_detection=Edge.BOTH)
+            try:
+                with gpiod.request_lines(path, consumer="zenos-argon", config={offset: settings}) as request:
+                    self.log.info(f"Power-Button an {BUTTON_LINE} ({path}, {label}, Zeile {offset})")
+                    self._watch(request, gpiod.EdgeEvent.Type.RISING_EDGE)
+                return
+            except OSError as err:
+                if err.errno == errno.EBUSY:
+                    self.log.warning(f"{BUTTON_LINE} ist schon belegt (läuft das Argon-Originalskript argononed?), "
+                                     "der Power-Button bleibt ohne Funktion")
+                    return
+                self.log.warning(f"Power-Button: {err} (Versuch {attempt + 1} von 3)")
+                self.stop.wait(10)
+        self.log.warning("Power-Button aufgegeben, der Lüfter läuft weiter")
+
+    def _watch(self, request, rising_type):
+        detector = PulseDetector()
+        while not self.stop.is_set():
+            if not request.wait_edge_events(1.0):
+                continue
+            for event in request.read_edge_events():
+                width = detector.edge(event.event_type == rising_type, event.timestamp_ns)
+                if width is not None:
+                    self.on_pulse(width)
+
+
+# --- Hardware --------------------------------------------------------------
+
+
+class ArgonFan:
+    """Lüfter der Argon-Platine über I2C (Protokoll wie argonregister.py)."""
+
+    def __init__(self, bus, sleep=time.sleep):
+        self.bus = bus
+        self.sleep = sleep
+        self.register = False
+
+    def present(self):
+        """Antwortet etwas an 0x1a? Erst lesen, dann (wie i2cdetect) ein Quick-Write ohne Daten."""
+        try:
+            self.bus.read_byte(ARGON_ADDRESS)
+            return True
+        except OSError:
+            pass
+        try:
+            self.bus.write_quick(ARGON_ADDRESS)
+            return True
+        except OSError:
+            return False
+
+    def detect_register(self):
+        """Wie argonregister_checksupport: Register 0x80 lesen, verändern, zurücklesen, wiederherstellen."""
+        try:
+            old = self.bus.read_byte_data(ARGON_ADDRESS, REG_DUTY_CYCLE)
+            probe = old + 1
+            if probe >= 100:
+                probe = 98
+            self._write_register(probe)
+            back = self.bus.read_byte_data(ARGON_ADDRESS, REG_DUTY_CYCLE)
+            self.register = back != old
+            if self.register:
+                self._write_register(min(old, 100))
+        except OSError:
+            self.register = False
+        return self.register
+
+    def _write_register(self, value):
+        self.bus.write_byte_data(ARGON_ADDRESS, REG_DUTY_CYCLE, value)
+        self.sleep(WRITE_PAUSE)
+
+    def set_speed(self, value):
+        value = max(0, min(100, int(value)))
+        if self.register:
+            self._write_register(value)
+        else:
+            self.bus.write_byte(ARGON_ADDRESS, value)
+            self.sleep(WRITE_PAUSE)
+
+
+class SimulatedFan:
+    """Für --simulieren: schreibt nur ins Log."""
+
+    register = False
+
+    def __init__(self, log):
+        self.log = log
+
+    def set_speed(self, value):
+        self.log.info(f"Simulation: Lüfter {int(value)} %")
+
+
+def apply_speed(fan, value, previous):
+    """Setzt den Lüfter; aus dem Stillstand (oder unbekannt) mit Anlaufhilfe wie im Original."""
+    if 0 < value < KICK_SPEED and not previous:
+        fan.set_speed(KICK_SPEED)
+    fan.set_speed(value)
+
+
+def read_model():
+    for path in MODEL_PATHS:
+        try:
+            with open(path, "rb") as handle:
+                return handle.read().replace(b"\0", b"").decode("utf-8", "replace").strip()
+        except OSError:
+            continue
+    return ""
+
+
+def is_pi5(model):
+    return model.startswith(PI5_MODEL)
+
+
+def read_temperature(path=THERMAL_PATH):
+    """°C aus der Thermal-Zone (Milligrad) oder None."""
+    try:
+        with open(path, encoding="ascii") as handle:
+            value = int(handle.read().strip()) / 1000
+    except (OSError, ValueError):
+        return None
+    return value if -40 < value < 150 else None
+
+
+def read_temperature_file(path):
+    """Für --simulieren: °C oder Milligrad (Werte ab 1000) aus einer Datei, sonst None."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            value = float(handle.read().strip().replace(",", "."))
+    except (OSError, ValueError):
+        return None
+    if value >= 1000:
+        value /= 1000
+    return value if math.isfinite(value) and -40 < value < 150 else None
+
+
+def uptime_seconds():
+    try:
+        with open("/proc/uptime", encoding="ascii") as handle:
+            return float(handle.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        return 0.0
+
+
+def system_stopping(runner=subprocess.run):
+    """Fährt das System gerade herunter (Neustart oder Ausschalten)?"""
+    try:
+        result = runner(["systemctl", "is-system-running"], stdin=subprocess.DEVNULL,
+                        capture_output=True, text=True, timeout=3, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.stdout.strip() == "stopping"
+
+
+# --- Status für die Leiste -------------------------------------------------
+
+
+class StatusFile:
+    def __init__(self, path, log):
+        self.path = path
+        self.log = log
+
+    def write(self, temperature, speed, now=None):
+        now = now or datetime.datetime.now().astimezone()
+        data = {
+            "temperatur": -1 if temperature is None else int(round(temperature)),
+            "luefter": -1 if speed is None else int(speed),
+            "zeit": now.isoformat(timespec="seconds"),
+        }
+        directory = os.path.dirname(self.path) or "."
+        temp = None
+        try:
+            os.makedirs(directory, mode=0o755, exist_ok=True)
+            handle, temp = tempfile.mkstemp(prefix=".argon-", suffix=".tmp", dir=directory)
+            with os.fdopen(handle, "w", encoding="utf-8") as out:
+                out.write(json.dumps(data, ensure_ascii=False) + "\n")
+            os.chmod(temp, 0o644)
+            os.replace(temp, self.path)
+            temp = None
+        except OSError as err:
+            self.log.problem("status", f"{self.path} lässt sich nicht schreiben: {err}")
+            return False
+        finally:
+            if temp is not None:
+                try:
+                    os.unlink(temp)
+                except OSError:
+                    pass
+        self.log.solved("status", f"{self.path} wird wieder geschrieben")
+        return True
+
+    def remove(self):
+        try:
+            os.unlink(self.path)
+        except OSError:
+            pass
+
+
+# --- Dienst ----------------------------------------------------------------
+
+
+class Daemon:
+    def __init__(self, fan, log, status, config_path, temperature_source, simulate=False,
+                 clock=time.monotonic, runner=subprocess.run, stopping=None):
+        self.fan = fan
+        self.log = log
+        self.status = status
+        self.config_path = config_path
+        self.temperature_source = temperature_source
+        self.simulate = simulate
+        self.clock = clock
+        self.runner = runner
+        self.stopping = stopping or (lambda: system_stopping(runner))
+        self.stop = threading.Event()
+        self.applied = None
+        self._config_stamp = None
+        self._action_started = False
+        self._action_lock = threading.Lock()
+        self.controller = FanController(self._load_config(initial=True))
+
+    # Konfiguration beim Start und bei jeder Änderung der Datei
+    def _stamp(self):
+        try:
+            info = os.stat(self.config_path)
+        except OSError:
+            return None
+        return (info.st_ino, info.st_size, info.st_mtime_ns)
+
+    def _load_config(self, initial=False):
+        self._config_stamp = self._stamp()
+        config, errors, notes, own = load_config(self.config_path)
+        for note in notes:
+            self.log.warning(f"{self.config_path}: {note}")
+        if errors:
+            for error in errors:
+                self.log.warning(f"{self.config_path}: {error}")
+            self.log.warning(f"Konfiguration ungültig, es gilt die Standardkurve: {config.describe()}")
+        elif own:
+            self.log.info(f"Lüfterkurve aus {self.config_path}: {config.describe()}")
+        elif initial:
+            self.log.info(f"Standardkurve: {config.describe()}")
+        else:
+            self.log.info(f"{self.config_path} entfernt, es gilt die Standardkurve")
+        return config
+
+    def _check_config(self):
+        if self._stamp() != self._config_stamp:
+            self.controller.config = self._load_config()
+
+    def tick(self):
+        self._check_config()
+        temperature = self.temperature_source()
+        if temperature is None:
+            self.log.problem("temperatur", "Temperatur nicht lesbar, der Lüfter läuft sicherheitshalber mit 100 %")
+        else:
+            self.log.solved("temperatur", "Temperatur wieder lesbar")
+        value = self.controller.update(temperature, self.clock())
+        if value is not None:
+            previous = self.applied
+            try:
+                apply_speed(self.fan, value, previous)
+            except OSError as err:
+                self.applied = None
+                self.controller.forget()
+                self.log.problem("i2c", f"Lüfter lässt sich nicht setzen ({err}), neuer Versuch im nächsten Takt")
+            else:
+                self.applied = value
+                self.log.solved("i2c", "I2C antwortet wieder")
+                shown = "?" if temperature is None else _fmt(round(temperature, 1))
+                self.log.info(f"Lüfter {value} % bei {shown} °C")
+        self.status.write(temperature, self.applied)
+
+    def on_pulse(self, width_ms):
+        action = classify_pulse(width_ms)
+        if action is None:
+            self.log.info(f"Power-Button: Puls {width_ms:.0f} ms ohne Bedeutung, ignoriert")
+            return
+        verb, name = ACTIONS[action]
+        if self.simulate:
+            self.log.info(f"Simulation: Power-Button {width_ms:.0f} ms → {name} (systemctl {verb}, nicht ausgeführt)")
+            return
+        with self._action_lock:
+            if self._action_started:
+                return
+            self._action_started = True
+        self.log.info(f"Power-Button {width_ms:.0f} ms → {name} (systemctl {verb})")
+        try:
+            result = self.runner(["systemctl", verb], stdin=subprocess.DEVNULL, timeout=60, check=False)
+            ok = result.returncode == 0
+        except (OSError, subprocess.SubprocessError) as err:
+            ok = False
+            if not self.stop.is_set():
+                self.log.error(f"systemctl {verb} ist fehlgeschlagen: {err}")
+        # Beim Herunterfahren beendet systemd auch den wartenden systemctl-Aufruf: kein Fehler
+        if not ok and not self.stop.is_set():
+            self.log.error(f"{name} hat nicht geklappt (systemctl {verb})")
+            with self._action_lock:
+                self._action_started = False
+
+    def finish(self):
+        """Lüfter auf einen sicheren Wert: beim Herunterfahren aus (wie das Original), sonst 100 %."""
+        if self.stopping():
+            value, why = 0, "aus, das System fährt herunter"
+        else:
+            value, why = SAFE_SPEED, f"{SAFE_SPEED} %, der Dienst endet und niemand regelt mehr"
+        try:
+            self.fan.set_speed(value)
+            self.log.info(f"Lüfter {why}")
+        except OSError as err:
+            self.log.warning(f"Lüfter liess sich beim Beenden nicht setzen: {err}")
+        self.status.remove()
+
+    def run(self, interval, rounds=None):
+        count = 0
+        try:
+            while not self.stop.is_set():
+                self.tick()
+                count += 1
+                if rounds is not None and count >= rounds:
+                    break
+                self.stop.wait(interval)
+        finally:
+            self.stop.set()
+            self.finish()
+        return 0
+
+
+# --- Aufruf ----------------------------------------------------------------
+
+
+class UsageError(Exception):
+    pass
+
+
+def _option_value(items, arg):
+    if not items:
+        raise UsageError(f"{arg} braucht einen Wert")
+    return items.pop(0)
+
+
+def _option_number(items, arg, low, high):
+    text = _option_value(items, arg)
+    try:
+        result = float(text.replace(",", "."))
+    except ValueError:
+        raise UsageError(f"{arg}: «{text}» ist keine Zahl") from None
+    if not math.isfinite(result) or not low <= result <= high:
+        raise UsageError(f"{arg}: erlaubt sind {_fmt(low)} bis {_fmt(high)}")
+    return result
+
+
+def parse_args(argv):
+    options = {
+        "mode": "dienst",
+        "konfig": CONFIG_PATH,
+        "status": STATUS_PATH,
+        "intervall": 5.0,
+        "durchlaeufe": None,
+        "temperatur": None,
+        "temperatur_datei": None,
+        "pulse": [],
+    }
+    modes = {"--simulieren": "simulation", "--pruefen": "pruefen", "--konfig-pruefen": "konfig"}
+    items = list(argv)
+    while items:
+        arg = items.pop(0)
+        if arg in ("-h", "--hilfe", "--help"):
+            options["mode"] = "hilfe"
+        elif arg in modes:
+            if options["mode"] not in ("dienst", modes[arg]):
+                raise UsageError("--simulieren, --pruefen und --konfig-pruefen schliessen sich aus")
+            options["mode"] = modes[arg]
+        elif arg == "--konfig":
+            options["konfig"] = _option_value(items, arg)
+        elif arg == "--status-datei":
+            options["status"] = _option_value(items, arg)
+        elif arg == "--intervall":
+            options["intervall"] = _option_number(items, arg, 0.05, 60)
+        elif arg == "--durchlaeufe":
+            options["durchlaeufe"] = int(_option_number(items, arg, 1, 1_000_000))
+        elif arg == "--temperatur":
+            options["temperatur"] = _option_number(items, arg, -40, 150)
+        elif arg == "--temperatur-datei":
+            options["temperatur_datei"] = _option_value(items, arg)
+        elif arg == "--puls":
+            options["pulse"].append(_option_number(items, arg, 0, 10_000))
+        else:
+            raise UsageError(f"unbekannte Option «{arg}»")
+    simulation_only = options["temperatur"] is not None or options["temperatur_datei"] or options["pulse"]
+    if simulation_only and options["mode"] != "simulation":
+        raise UsageError("--temperatur, --temperatur-datei und --puls gibt es nur mit --simulieren")
+    if options["temperatur"] is not None and options["temperatur_datei"]:
+        raise UsageError("entweder --temperatur oder --temperatur-datei")
+    return options
+
+
+def install_signals(stop, handler_log):
+    def handle(signum, _frame):
+        handler_log.info(f"Signal {signal.Signals(signum).name}, beende")
+        stop.set()
+
+    signal.signal(signal.SIGTERM, handle)
+    signal.signal(signal.SIGINT, handle)
+
+
+def wait_for_device(path, stop, seconds):
+    deadline = time.monotonic() + seconds
+    while not os.path.exists(path):
+        if time.monotonic() >= deadline or stop.is_set():
+            return False
+        stop.wait(1)
+    return True
+
+
+def run_service(options, log):
+    stop = threading.Event()
+    install_signals(stop, log)
+
+    model = read_model()
+    if not is_pi5(model):
+        log.info(f"Kein Raspberry Pi 5 ({model or 'kein Gerätebaum'}), zenos-argon hat nichts zu tun")
+        return 0
+
+    wait = I2C_WAIT_SECONDS if uptime_seconds() < I2C_WAIT_UPTIME else 0
+    if not wait_for_device(I2C_DEVICE, stop, wait):
+        if stop.is_set():
+            return 0
+        log.info(f"I2C-Bus 1 fehlt ({I2C_DEVICE}), zenos-argon hat nichts zu tun. Für den Argon ONE braucht es "
+                 "dtparam=i2c_arm=on in /boot/firmware/config.txt; zenOS ändert die Firmware-Einstellungen "
+                 "nicht selbst (zen doctor)")
+        return 0
+
+    try:
+        import smbus
+    except ImportError:
+        log.error("python3-smbus fehlt (install.sh ausführen)")
+        return 1
+    try:
+        bus = smbus.SMBus(I2C_BUS)
+    except OSError as err:
+        log.error(f"{I2C_DEVICE} lässt sich nicht öffnen: {err}")
+        return 1
+
+    fan = ArgonFan(bus)
+    present = False
+    for attempt in range(3):
+        present = fan.present()
+        if present or stop.is_set():
+            break
+        stop.wait(2)
+    if not present:
+        log.info(f"Kein Argon ONE an I2C-Adresse 0x{ARGON_ADDRESS:02x}, zenos-argon hat nichts zu tun")
+        bus.close()
+        return 0
+    if stop.is_set():
+        bus.close()
+        return 0
+
+    register = fan.detect_register()
+    how = f"Register 0x{REG_DUTY_CYCLE:02x}" if register else "einzelnes Byte (Firmware ohne Register)"
+    log.info(f"Argon ONE an 0x{ARGON_ADDRESS:02x} gefunden ({model}), Lüfter über {how}")
+
+    daemon = Daemon(fan, log, StatusFile(options["status"], log), options["konfig"], read_temperature)
+    daemon.stop = stop
+    ButtonWatcher(stop, daemon.on_pulse, log).start()
+    try:
+        return daemon.run(options["intervall"], options["durchlaeufe"])
+    finally:
+        bus.close()
+
+
+def run_simulation(options, log):
+    stop = threading.Event()
+    install_signals(stop, log)
+    if options["temperatur"] is not None:
+        fixed = options["temperatur"]
+
+        def source():
+            return fixed
+    elif options["temperatur_datei"]:
+        path = options["temperatur_datei"]
+
+        def source():
+            return read_temperature_file(path)
+    else:
+        source = read_temperature
+    log.info("Simulation: kein I2C, kein GPIO")
+    daemon = Daemon(SimulatedFan(log), log, StatusFile(options["status"], log), options["konfig"], source,
+                    simulate=True, stopping=lambda: False)
+    daemon.stop = stop
+    for width in options["pulse"]:
+        daemon.on_pulse(width)
+    return daemon.run(options["intervall"], options["durchlaeufe"])
+
+
+def run_config_check(options, out=sys.stdout):
+    config, errors, notes, own = load_config(options["konfig"])
+    for note in notes:
+        print(f"Hinweis: {note}", file=out)
+    if errors:
+        for error in errors:
+            print(f"Ungültig: {error}", file=out)
+        print(f"Wirksam ist die Standardkurve: {config.describe()}", file=out)
+        return 1
+    herkunft = f"Eigene Kurve ({options['konfig']})" if own else "Standardkurve"
+    print(f"{herkunft}: {config.describe()}", file=out)
+    return 0
+
+
+def run_check(options, out=sys.stdout):
+    """Nur lesend: nichts wird geschrieben, auch nicht an den Argon."""
+    good = True
+
+    def line(ok, text):
+        print(f"  {'✓' if ok else '✗'} {text}", file=out)
+
+    model = read_model()
+    pi5 = is_pi5(model)
+    line(pi5, f"Gerät: {model or 'kein Gerätebaum'}")
+    # Auf anderen Geräten können I2C-Bus 1 und GPIO4 etwas ganz anderes sein: dort nichts anfragen
+    if not pi5:
+        _check_config_line(options, line)
+        return 1
+
+    if os.path.exists(I2C_DEVICE):
+        line(True, f"I2C-Bus 1 ({I2C_DEVICE})")
+        try:
+            import smbus
+            bus = smbus.SMBus(I2C_BUS)
+        except (ImportError, OSError) as err:
+            line(False, f"I2C-Bus 1 nicht nutzbar: {err}")
+            good = False
+        else:
+            try:
+                bus.read_byte(ARGON_ADDRESS)
+                line(True, f"Argon ONE antwortet an 0x{ARGON_ADDRESS:02x} (Lesezugriff)")
+            except OSError as err:
+                line(False, f"Keine Antwort an 0x{ARGON_ADDRESS:02x} ({err})")
+                good = False
+            finally:
+                bus.close()
+    else:
+        line(False, f"I2C-Bus 1 fehlt ({I2C_DEVICE}): dtparam=i2c_arm=on in /boot/firmware/config.txt nötig")
+        good = False
+
+    try:
+        import gpiod
+    except ImportError:
+        line(False, "python3-libgpiod fehlt")
+        good = False
+    else:
+        found = find_button_line(gpiod)
+        if found is None:
+            line(False, f"GPIO-Zeile {BUTTON_LINE} nicht gefunden")
+            good = False
+        else:
+            path, offset, label = found
+            used = ""
+            try:
+                with gpiod.Chip(path) as chip:
+                    info = chip.get_line_info(offset)
+                    if info.used:
+                        used = f", belegt von «{info.consumer or '?'}»"
+            except OSError:
+                pass
+            line(True, f"Power-Button: {BUTTON_LINE} = {path} ({label}), Zeile {offset}{used}")
+
+    _check_config_line(options, line)
+    return 0 if good else 1
+
+
+def _check_config_line(options, line):
+    config, errors, _notes, own = load_config(options["konfig"])
+    if errors:
+        line(False, f"{options['konfig']} ungültig, Standardkurve aktiv: {errors[0]}")
+    else:
+        line(True, f"{'Eigene Kurve' if own else 'Standardkurve'}: {config.describe()}")
+
+
+def main(argv=None):
+    try:
+        options = parse_args(sys.argv[1:] if argv is None else argv)
+    except UsageError as err:
+        print(f"zenos-argon: {err}", file=sys.stderr)
+        print("Aufruf: zenos-argon [--simulieren | --pruefen | --konfig-pruefen] [Optionen] (--hilfe)",
+              file=sys.stderr)
+        return 2
+    mode = options["mode"]
+    if mode == "hilfe":
+        print(__doc__.strip())
+        return 0
+    if mode == "konfig":
+        return run_config_check(options)
+    if mode == "pruefen":
+        return run_check(options)
+    log = Log()
+    if mode == "simulation":
+        return run_simulation(options, log)
+    return run_service(options, log)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

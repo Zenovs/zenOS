@@ -1,0 +1,53 @@
+# zenOS: Argon ONE V3 am Raspberry Pi 5 – Lüfterkurve und Power-Button (scripts/bin/zenos-argon).
+# Schreibt /run/zenos/argon.json für die Leiste. Ohne Raspberry Pi 5, I2C-Bus 1 oder Argon an 0x1a endet der
+# Dienst mit einer Meldung und Exit 0 (kein Neustart). Auf amd64 startet er gar nicht.
+# Konfiguration (optional): /etc/xdg/zenos/argon.json, siehe docs/module/m13.md.
+[Unit]
+Description=zenOS Argon ONE (Lüfter und Power-Button)
+Documentation=file:///opt/zenos/docs/module/m13.md
+ConditionArchitecture=arm64
+ConditionPathExists=/opt/zenos/scripts/bin/zenos-argon
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -I /opt/zenos/scripts/bin/zenos-argon
+Restart=on-failure
+RestartSec=10
+# Beim Beenden setzt der Dienst den Lüfter noch (1 s Pause wie im Original)
+TimeoutStopSec=15
+RuntimeDirectory=zenos
+RuntimeDirectoryMode=0755
+UMask=0022
+SyslogIdentifier=zenos-argon
+
+# Härtung: nur I2C- und GPIO-Geräte, kein Netz, System nur lesbar. CAP_SYS_BOOT braucht logind, damit
+# «systemctl reboot/poweroff» vom Power-Button ohne Rückfrage durchgeht.
+CapabilityBoundingSet=CAP_SYS_BOOT
+NoNewPrivileges=yes
+DevicePolicy=closed
+DeviceAllow=char-i2c rw
+DeviceAllow=char-gpiochip rw
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
