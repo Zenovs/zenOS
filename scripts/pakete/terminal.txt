@@ -1,0 +1,22 @@
+# M10 · Terminal
+# 20-pakete installiert die Vereinigung aller Listen in scripts/pakete/ (ohne quickshell-bau.txt).
+
+# kitty mit Shell-Integration (Debian trennt sie ab) und terminfo, fish als Shell
+kitty
+kitty-shell-integration
+kitty-terminfo
+fish
+
+# Werkzeuge: eza (ls), bat (Ubuntu: batcat), zoxide (z), fzf (Ctrl+R, Ctrl+T, Alt+C)
+eza
+bat
+zoxide
+fzf
+
+# «?»: tldr-Seiten offline (tealdeer), man-Seiten, deutsche man-Seiten, wo es sie gibt
+tealdeer
+man-db
+manpages-de
+
+# Git-Angaben in der Eingabezeile (git status läuft mit timeout aus coreutils)
+git
