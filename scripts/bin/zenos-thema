@@ -1,0 +1,638 @@
+#!/usr/bin/env python3
+"""zenos-thema: Erscheinungsbild von zenOS auf GTK, Qt, kitty, labwc und VS Code übertragen.
+
+Aufruf:
+  zenos-thema anwenden [--modus hell|dunkel] [--akzent NAME] [--melden]
+  zenos-thema setzen hell|dunkel|tageszeit|wechseln
+  zenos-thema status
+
+anwenden   Überträgt Erscheinungsbild und Akzent. Ohne --modus gelten die Einstellungen
+           (~/.config/zenos/einstellungen.json), ohne --akzent der zuletzt übertragene
+           Akzent (~/.local/state/zenos/thema.json), sonst der des aktiven Modus, sonst
+           standardAkzent. Schreibt nur bei Änderungen, still ausser bei Fehlern.
+           --melden gibt pro Änderung eine Zeile aus (für install.sh).
+setzen     Schreibt das Erscheinungsbild in die Einstellungen. Läuft die Shell, übernimmt
+           sie es; sonst wird es direkt angewendet.
+status     Zeigt gewähltes und wirksames Erscheinungsbild.
+
+Alle Farben kommen aus shell/theme/tokens.json. Qt folgt über das Plattform-Theme
+xdgdesktopportal (QT_QPA_PLATFORMTHEME), Chrome über das Settings-Portal.
+"""
+
+import datetime
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import tempfile
+
+CODE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+TOKENS = os.path.join(CODE, "shell", "theme", "tokens.json")
+HOME = os.path.expanduser("~")
+CONFIG_DIR = os.path.join(HOME, ".config", "zenos")
+SETTINGS = os.path.join(CONFIG_DIR, "einstellungen.json")
+RUNTIME_STATE = os.path.join(HOME, ".local", "state", "zenos", "laufzeit.json")
+# Zuletzt von der Shell übertragener Akzent, für Aufrufe ohne --akzent (z. B. install.sh)
+THEME_STATE = os.path.join(HOME, ".local", "state", "zenos", "thema.json")
+KITTY = os.path.join(HOME, ".config", "kitty")
+LABWC = os.path.join(HOME, ".config", "labwc")
+VSCODE = os.path.join(HOME, ".config", "Code", "User")
+HEADER = "Erzeugt von zenos-thema aus shell/theme/tokens.json. Nicht von Hand ändern."
+
+MODES = ("hell", "dunkel", "tageszeit")
+
+
+class ThemeError(Exception):
+    pass
+
+
+def warn(text):
+    print(f"zenos-thema: {text}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------- Hilfen
+
+def read_json(path, default=None):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return default
+    except (OSError, ValueError) as e:
+        raise ThemeError(f"{path} nicht lesbar: {e}") from e
+
+
+def write_if_changed(path, content, mode=0o644):
+    """Schreibt atomar, nur wenn sich der Inhalt ändert. Gibt True bei Änderung zurück."""
+    # Verknüpfungen (z. B. aus Dotfiles) bleiben erhalten: das Ziel wird geschrieben
+    if os.path.islink(path):
+        path = os.path.realpath(path)
+    try:
+        with open(path, encoding="utf-8") as f:
+            if f.read() == content:
+                return False
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError) as e:
+        raise ThemeError(f"{path} nicht lesbar: {e}") from e
+    folder = os.path.dirname(path)
+    tmp = None
+    try:
+        os.makedirs(folder, exist_ok=True)
+        try:
+            mode = os.stat(path).st_mode & 0o777
+        except FileNotFoundError:
+            pass
+        fd, tmp = tempfile.mkstemp(prefix=".zenos-thema-", dir=folder)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except OSError as e:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        raise ThemeError(f"{path} nicht schreibbar: {e}") from e
+    return True
+
+
+def own_processes(names):
+    """PIDs eigener Prozesse mit einem der Namen (comm)."""
+    uid = os.getuid()
+    pids = []
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            if os.stat(f"/proc/{entry}").st_uid != uid:
+                continue
+            with open(f"/proc/{entry}/comm", encoding="utf-8") as f:
+                if f.read().strip() in names:
+                    pids.append(int(entry))
+        except OSError:
+            continue
+    return pids
+
+
+def send_signal(pids, sig):
+    for pid in pids:
+        try:
+            os.kill(pid, sig)
+        except OSError:
+            pass
+
+
+def hex_rgb(value):
+    """'#RRGGBB' oder 'rgba(r, g, b, a)' → (r, g, b, a)."""
+    s = str(value).strip()
+    m = re.fullmatch(r"#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})?", s)
+    if m:
+        a = int(m.group(4), 16) / 255 if m.group(4) else 1.0
+        return int(m.group(1), 16), int(m.group(2), 16), int(m.group(3), 16), a
+    m = re.fullmatch(r"rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)", s)
+    if m:
+        return int(m.group(1)), int(m.group(2)), int(m.group(3)), float(m.group(4) or 1)
+    raise ThemeError(f"ungültige Farbe in tokens.json: {value!r}")
+
+
+def hex6(value):
+    r, g, b, _ = hex_rgb(value)
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def hex8(value, alpha):
+    r, g, b, _ = hex_rgb(value)
+    return f"#{r:02x}{g:02x}{b:02x}{round(alpha * 255):02x}"
+
+
+# ---------------------------------------------------------------- Tokens und Einstellungen
+
+def load_tokens():
+    t = read_json(TOKENS)
+    if not isinstance(t, dict):
+        raise ThemeError(f"{TOKENS} fehlt")
+    try:
+        colors = t["farben"]
+        for variant in ("hell", "dunkel"):
+            if not isinstance(colors[variant], dict):
+                raise KeyError(variant)
+        if not colors["akzente"]:
+            raise KeyError("akzente")
+    except (KeyError, TypeError) as e:
+        raise ThemeError(f"tokens.json unvollständig: {e}") from e
+    return t
+
+
+def palette(tokens, mode, accent):
+    """Farben eines Erscheinungsbilds als Wörterbuch (Hex-Werte)."""
+    colors = tokens["farben"]
+    p = {k: v for k, v in colors[mode].items()}
+    for name, pair in colors["akzente"].items():
+        p["akzent:" + name] = pair[mode]
+    for name, pair in colors.get("signal", {}).items():
+        p[name] = pair[mode]
+    p["akzent"] = colors["akzente"][accent][mode]
+    return p
+
+
+def minutes(hhmm, fallback):
+    m = re.fullmatch(r"(\d{1,2}):(\d{2})", str(hhmm or ""))
+    if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
+        return fallback
+    return int(m.group(1)) * 60 + int(m.group(2))
+
+
+def effective_mode(settings):
+    chosen = settings.get("erscheinungsbild", "hell")
+    if chosen not in MODES:
+        chosen = "hell"
+    if chosen != "tageszeit":
+        return chosen
+    now_dt = datetime.datetime.now()
+    now = now_dt.hour * 60 + now_dt.minute
+    day = minutes(settings.get("tagAb"), 7 * 60)
+    night = minutes(settings.get("nachtAb"), 19 * 60)
+    if day == night:
+        return "hell"
+    if day < night:
+        return "dunkel" if (now < day or now >= night) else "hell"
+    return "dunkel" if (night <= now < day) else "hell"
+
+
+def load_settings():
+    try:
+        s = read_json(SETTINGS, {})
+    except ThemeError as e:
+        warn(f"{e}; es gelten die Standardwerte")
+        s = {}
+    return s if isinstance(s, dict) else {}
+
+
+def active_accent(tokens):
+    """Zuletzt übertragener Akzent, sonst der des aktiven Modus (Laufzeitzustand), sonst standardAkzent."""
+    accents = tokens["farben"]["akzente"]
+    default = tokens["farben"].get("standardAkzent")
+    if default not in accents:
+        default = next(iter(accents))
+    try:
+        state = read_json(THEME_STATE, {}) or {}
+        if state.get("akzent") in accents:
+            return state["akzent"]
+    except (ThemeError, AttributeError):
+        pass
+    try:
+        runtime = read_json(RUNTIME_STATE, {}) or {}
+        mode_id = runtime.get("modus") or runtime.get("aktiverModus") or ""
+        if isinstance(mode_id, str) and re.fullmatch(r"[A-Za-z0-9_-]+", mode_id):
+            mode = read_json(os.path.join(CONFIG_DIR, "modi", mode_id + ".json"), {}) or {}
+            if mode.get("akzent") in accents:
+                return mode["akzent"]
+    except (ThemeError, AttributeError):
+        pass
+    return default
+
+
+# ---------------------------------------------------------------- GTK (gsettings)
+
+def session_env():
+    env = dict(os.environ)
+    if not env.get("DBUS_SESSION_BUS_ADDRESS"):
+        bus = f"/run/user/{os.getuid()}/bus"
+        if os.path.exists(bus):
+            env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={bus}"
+    return env
+
+
+def apply_gtk(mode, changes):
+    env = session_env()
+    target = {
+        "color-scheme": "prefer-dark" if mode == "dunkel" else "default",
+        "gtk-theme": "Adwaita-dark" if mode == "dunkel" else "Adwaita",
+    }
+    for key, value in target.items():
+        try:
+            current = subprocess.run(
+                ["gsettings", "get", "org.gnome.desktop.interface", key],
+                env=env, capture_output=True, text=True, timeout=10, check=True,
+            ).stdout.strip().strip("'")
+        except FileNotFoundError as e:
+            raise ThemeError("gsettings fehlt (Paket libglib2.0-bin)") from e
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            raise ThemeError(f"gsettings get {key}: {getattr(e, 'stderr', '') or e}".strip()) from e
+        if current == value:
+            continue
+        if not env.get("DBUS_SESSION_BUS_ADDRESS"):
+            # Ohne Sitzungsbus kann dconf nicht schreiben; beim nächsten Sitzungsstart erneut.
+            return
+        try:
+            subprocess.run(
+                ["gsettings", "set", "org.gnome.desktop.interface", key, value],
+                env=env, capture_output=True, text=True, timeout=10, check=True,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            raise ThemeError(f"gsettings set {key}: {getattr(e, 'stderr', '') or e}".strip()) from e
+        changes.append(f"gsettings {key} {value}")
+
+
+# ---------------------------------------------------------------- kitty
+
+def kitty_palette_accents(tokens, accent):
+    """Blau, Magenta, Cyan aus den übrigen Akzenten (ohne den aktiven)."""
+    names = list(tokens["farben"]["akzente"].keys())
+    preference = {
+        "blau": ["blau", "graphit", "salbei", "ton", "sand"],
+        "magenta": ["ton", "sand", "graphit", "blau", "salbei"],
+        "cyan": ["salbei", "graphit", "blau", "sand", "ton"],
+    }
+    used = {accent}
+    result = {}
+    for slot, order in preference.items():
+        choice = next((n for n in order + names if n in names and n not in used), accent)
+        used.add(choice)
+        result[slot] = choice
+    return result
+
+
+def kitty_conf(tokens, mode, accent):
+    p = palette(tokens, mode, accent)
+    others = kitty_palette_accents(tokens, accent)
+    blue, magenta, cyan = (p["akzent:" + others[k]] for k in ("blau", "magenta", "cyan"))
+    if mode == "dunkel":
+        black, white, bright_white = p["flaeche2"], p["text2"], p["text"]
+    else:
+        black, white, bright_white = p["text"], p["flaeche2"], p["grund"]
+    values = [
+        ("foreground", p["text"]),
+        ("background", p["fenster"]),
+        ("selection_foreground", "none"),
+        ("selection_background", p["eingabeRand"]),
+        ("cursor", p["text"]),
+        ("cursor_text_color", p["fenster"]),
+        ("url_color", p["akzent"]),
+        ("active_border_color", p["akzent"]),
+        ("inactive_border_color", p["linie"]),
+        ("bell_border_color", p["warnung"]),
+        ("active_tab_foreground", p["text"]),
+        ("active_tab_background", p["flaeche2"]),
+        ("inactive_tab_foreground", p["gedaempft"]),
+        ("inactive_tab_background", p["grund"]),
+        ("tab_bar_background", p["grund"]),
+        ("tab_bar_margin_color", p["grund"]),
+        ("color0", black),
+        ("color8", p["gedaempft"]),
+        ("color1", p["fehler"]),
+        ("color9", p["fehler"]),
+        ("color2", p["akzent"]),
+        ("color10", p["akzent"]),
+        ("color3", p["warnung"]),
+        ("color11", p["warnung"]),
+        ("color4", blue),
+        ("color12", blue),
+        ("color5", magenta),
+        ("color13", magenta),
+        ("color6", cyan),
+        ("color14", cyan),
+        ("color7", white),
+        ("color15", bright_white),
+    ]
+    lines = [f"# {HEADER}", f"# Erscheinungsbild {mode}, Akzent {accent}"]
+    for key, value in values:
+        lines.append(f"{key} {value if value == 'none' else hex6(value)}")
+    return "\n".join(lines) + "\n"
+
+
+def apply_kitty(tokens, accent, changes):
+    changed = False
+    dark = kitty_conf(tokens, "dunkel", accent)
+    light = kitty_conf(tokens, "hell", accent)
+    # «default» meldet das Portal als «keine Vorliebe»: dann gilt hell.
+    for name, content in (("dark-theme.auto.conf", dark), ("light-theme.auto.conf", light),
+                         ("no-preference-theme.auto.conf", light)):
+        if write_if_changed(os.path.join(KITTY, name), content):
+            changes.append(f"kitty {name}")
+            changed = True
+    # Hell/Dunkel wechselt kitty selbst; bei neuem Akzent die Konfiguration neu laden lassen
+    if changed:
+        send_signal(own_processes({"kitty"}), signal.SIGUSR1)
+
+
+# ---------------------------------------------------------------- labwc
+
+def labwc_themerc(tokens, mode, accent):
+    p = palette(tokens, mode, accent)
+    values = [
+        ("border.width", "1"),
+        ("window.titlebar.padding.width", "8"),
+        ("window.titlebar.padding.height", "5"),
+        ("window.button.width", "28"),
+        ("window.button.height", "24"),
+        ("window.button.spacing", "2"),
+        ("window.button.hover.bg.corner-radius", str(tokens.get("radius", {}).get("xs", 6))),
+        ("window.label.text.justify", "left"),
+        ("window.active.title.bg.color", hex6(p["fenster"])),
+        ("window.inactive.title.bg.color", hex6(p["fenster"])),
+        ("window.active.border.color", hex6(p["akzent"])),
+        ("window.inactive.border.color", hex6(p["linie"])),
+        ("window.active.label.text.color", hex6(p["text"])),
+        ("window.inactive.label.text.color", hex6(p["gedaempft"])),
+        ("window.active.button.unpressed.image.color", hex6(p["gedaempft"])),
+        ("window.inactive.button.unpressed.image.color", hex6(p["gedaempft"])),
+        ("window.active.shadow.size", "0"),
+        ("window.inactive.shadow.size", "0"),
+        ("menu.border.width", "1"),
+        ("menu.border.color", hex6(p["linie2"])),
+        ("menu.items.bg.color", hex6(p["flaeche"])),
+        ("menu.items.text.color", hex6(p["text"])),
+        ("menu.items.active.bg.color", hex6(p["flaeche2"])),
+        ("menu.items.active.text.color", hex6(p["text"])),
+        ("menu.items.padding.x", "12"),
+        ("menu.items.padding.y", "6"),
+        ("menu.separator.color", hex6(p["trennlinie"])),
+        ("menu.title.bg.color", hex6(p["flaeche"])),
+        ("menu.title.text.color", hex6(p["gedaempft"])),
+        ("osd.bg.color", hex6(p["flaeche"])),
+        ("osd.border.color", hex6(p["linie2"])),
+        ("osd.border.width", "1"),
+        ("osd.label.text.color", hex6(p["text"])),
+        ("osd.window-switcher.style-classic.item.active.bg.color", hex6(p["flaeche2"])),
+        ("osd.window-switcher.style-classic.item.active.border.color", hex6(p["akzent"])),
+        ("osd.window-switcher.style-thumbnail.item.active.bg.color", hex6(p["flaeche2"])),
+        ("osd.window-switcher.style-thumbnail.item.active.border.color", hex6(p["akzent"])),
+        ("osd.window-switcher.preview.border.color", hex6(p["akzent"])),
+        ("snapping.overlay.region.bg.enabled", "yes"),
+        ("snapping.overlay.region.bg.color", hex8(p["akzent"], 0.16)),
+        ("snapping.overlay.region.border.enabled", "yes"),
+        ("snapping.overlay.region.border.width", "1"),
+        ("snapping.overlay.region.border.color", hex6(p["akzent"])),
+        ("snapping.overlay.edge.bg.enabled", "yes"),
+        ("snapping.overlay.edge.bg.color", hex8(p["akzent"], 0.16)),
+        ("snapping.overlay.edge.border.enabled", "yes"),
+        ("snapping.overlay.edge.border.width", "1"),
+        ("snapping.overlay.edge.border.color", hex6(p["akzent"])),
+    ]
+    lines = [f"# {HEADER}", f"# Erscheinungsbild {mode}, Akzent {accent}"]
+    lines += [f"{k}: {v}" for k, v in values]
+    return "\n".join(lines) + "\n"
+
+
+def apply_labwc(tokens, mode, accent, changes):
+    if write_if_changed(os.path.join(LABWC, "themerc-override"), labwc_themerc(tokens, mode, accent)):
+        changes.append("labwc themerc-override")
+        # wie «labwc --reconfigure», auch ohne LABWC_PID in der Umgebung
+        send_signal(own_processes({"labwc"}), signal.SIGHUP)
+
+
+# ---------------------------------------------------------------- VS Code
+
+def jsonc_code_positions(text):
+    """Positionen der Zeichen ausserhalb von Kommentaren (Strings eingeschlossen)."""
+    i, n = 0, len(text)
+    while i < n:
+        if text[i] == '"':
+            j = i + 1
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            yield from range(i, min(j + 1, n))
+            i = j + 1
+        elif text.startswith("//", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+        else:
+            yield i
+            i += 1
+
+
+def strip_jsonc(text):
+    """Kommentare und abschliessende Kommas entfernen (nur zum Prüfen)."""
+    code = "".join(text[i] for i in jsonc_code_positions(text))
+    return re.sub(r",(\s*[}\]])", r"\1", code)
+
+
+def first_brace(text):
+    for i in jsonc_code_positions(text):
+        if text[i] == "{":
+            return i
+    raise ValueError("kein Objekt")
+
+
+def apply_vscode(changes):
+    if not os.path.isdir(VSCODE):
+        return
+    settings_path = os.path.join(VSCODE, "settings.json")
+    try:
+        with open(settings_path, encoding="utf-8") as f:
+            text = f.read()
+    except FileNotFoundError:
+        text = ""
+    setting_key = "window.autoDetectColorScheme"
+    if not text.strip():
+        new_text = '{\n    "window.autoDetectColorScheme": true\n}\n'
+    else:
+        try:
+            data = json.loads(strip_jsonc(text))
+        except ValueError as e:
+            raise ThemeError(f"{settings_path} ist kein gültiges JSON, unverändert gelassen") from e
+        if not isinstance(data, dict):
+            raise ThemeError(f"{settings_path} enthält kein Objekt, unverändert gelassen")
+        if data.get(setting_key) is True:
+            return
+        pattern = re.compile(r'("window\.autoDetectColorScheme"\s*:\s*)(false|null|"[^"]*"|-?\d+(?:\.\d+)?)')
+        if setting_key in data and pattern.search(text):
+            new_text = pattern.sub(r"\1true", text, count=1)
+        else:
+            # direkt nach der öffnenden Klammer des Objekts einfügen, Rest unverändert
+            stripped = strip_jsonc(text)
+            empty = re.fullmatch(r"\s*\{\s*\}\s*", stripped) is not None
+            pos = first_brace(text) + 1
+            insertion = '\n    "window.autoDetectColorScheme": true' + ("\n" if empty else ",")
+            new_text = text[:pos] + insertion + text[pos:]
+        try:
+            if json.loads(strip_jsonc(new_text)).get(setting_key) is not True:
+                raise ValueError
+        except ValueError as e:
+            raise ThemeError(f"{settings_path}: Zusammenführen fehlgeschlagen, unverändert gelassen") from e
+    if write_if_changed(settings_path, new_text, 0o644):
+        changes.append("VS Code window.autoDetectColorScheme")
+
+
+# ---------------------------------------------------------------- Befehle
+
+def cmd_apply(args):
+    mode = accent = None
+    melden = False
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in ("--modus", "--akzent") and i + 1 < len(args):
+            if a == "--modus":
+                mode = args[i + 1]
+            else:
+                accent = args[i + 1]
+            i += 2
+        elif a == "--melden":
+            melden = True
+            i += 1
+        else:
+            warn(f"unbekanntes Argument: {a}")
+            return 2
+    tokens = load_tokens()
+    if mode is None:
+        mode = effective_mode(load_settings())
+    if mode not in ("hell", "dunkel"):
+        warn(f"--modus muss hell oder dunkel sein, nicht {mode!r}")
+        return 2
+    explicit_accent = accent is not None
+    if accent is None:
+        accent = active_accent(tokens)
+    if accent not in tokens["farben"]["akzente"]:
+        warn(f"unbekannter Akzent {accent!r} (bekannt: {', '.join(tokens['farben']['akzente'])})")
+        return 2
+
+    changes = []
+    ok = True
+    steps = [lambda: apply_gtk(mode, changes),
+             lambda: apply_kitty(tokens, accent, changes),
+             lambda: apply_labwc(tokens, mode, accent, changes),
+             lambda: apply_vscode(changes)]
+    if explicit_accent:
+        steps.append(lambda: save_state(accent))
+    for step in steps:
+        try:
+            step()
+        except ThemeError as e:
+            warn(str(e))
+            ok = False
+    if melden:
+        for c in changes:
+            print(c)
+    return 0 if ok else 1
+
+
+def save_state(accent):
+    try:
+        # Persönliches bleibt nur für den Benutzer lesbar
+        os.makedirs(os.path.dirname(THEME_STATE), mode=0o700, exist_ok=True)
+    except OSError as e:
+        raise ThemeError(f"{THEME_STATE}: {e}") from e
+    write_if_changed(THEME_STATE, json.dumps({"akzent": accent}) + "\n")
+
+
+def shell_running():
+    for pid in own_processes({"quickshell", "qs"}):
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as f:
+                if b"greeter.qml" not in f.read():
+                    return True
+        except OSError:
+            continue
+    return False
+
+
+def cmd_set(args):
+    if len(args) != 1 or args[0] not in MODES + ("wechseln",):
+        warn("Aufruf: zenos-thema setzen hell|dunkel|tageszeit|wechseln")
+        return 2
+    try:
+        data = read_json(SETTINGS, {})
+    except ThemeError as e:
+        # Eine beschädigte Datei nicht überschreiben
+        warn(f"{e}; bitte reparieren oder löschen")
+        return 1
+    if not isinstance(data, dict):
+        warn(f"{SETTINGS} enthält kein Objekt; bitte reparieren oder löschen")
+        return 1
+    preference = args[0]
+    if preference == "wechseln":
+        preference = "hell" if effective_mode(data) == "dunkel" else "dunkel"
+    if data.get("erscheinungsbild") != preference:
+        data["erscheinungsbild"] = preference
+        try:
+            # Persönliches bleibt nur für den Benutzer lesbar
+            os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True)
+            write_if_changed(SETTINGS, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+        except (ThemeError, OSError) as e:
+            warn(str(e))
+            return 1
+    # Läuft die Shell, übernimmt sie die Änderung (mit dem Akzent des aktiven Modus).
+    if shell_running():
+        return 0
+    return cmd_apply([])
+
+
+def cmd_status(args):
+    settings = load_settings()
+    chosen = settings.get("erscheinungsbild", "hell")
+    if chosen not in MODES:
+        chosen = "hell"
+    try:
+        accent = active_accent(load_tokens())
+    except ThemeError:
+        accent = "?"
+    print(f"Erscheinungsbild: {chosen} (wirksam: {effective_mode(settings)}) · Akzent: {accent}")
+    return 0
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--hilfe", "--help", "hilfe"):
+        print(__doc__.strip())
+        return 0 if argv else 2
+    commands = {"anwenden": cmd_apply, "setzen": cmd_set, "status": cmd_status}
+    if argv[0] not in commands:
+        warn(f"unbekannter Befehl: {argv[0]}")
+        return 2
+    try:
+        return commands[argv[0]](argv[1:])
+    except ThemeError as e:
+        warn(str(e))
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

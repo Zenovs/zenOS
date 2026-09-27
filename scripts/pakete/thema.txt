@@ -1,0 +1,13 @@
+# M3 · Erscheinungsbild (zenos-thema)
+# gsettings und dconf für GTK (color-scheme, gtk-theme)
+libglib2.0-bin
+gsettings-desktop-schemas
+dconf-cli
+dconf-service
+# Adwaita-dark für GTK3-Anwendungen (Ubuntu 26.04: gnome-themes-extra-data)
+gnome-themes-extra-data
+adwaita-icon-theme
+# Qt folgt dem color-scheme über das Settings-Portal (QT_QPA_PLATFORMTHEME=xdgdesktopportal)
+qt6-xdgdesktopportal-platformtheme
+# zenos-thema ist ein python3-Skript
+python3

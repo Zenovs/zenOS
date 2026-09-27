@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "zenOS Design-Tokens (shell/theme/tokens.json)",
+  "description": "Einzige Quelle für Farben, Schrift, Radien, Abstände, Bewegung und Masse. Siehe docs/design.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "farben", "schrift", "radius", "abstand", "bewegung", "leiste", "fenster", "befehlsfeld"],
+  "properties": {
+    "version": { "const": 1 },
+    "farben": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dunkel", "hell", "akzente", "signal", "standardAkzent"],
+      "properties": {
+        "dunkel": { "$ref": "#/$defs/farbsatz" },
+        "hell": { "$ref": "#/$defs/farbsatz" },
+        "akzente": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "pattern": "^[a-z]+$" },
+          "additionalProperties": { "$ref": "#/$defs/paar" }
+        },
+        "signal": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sitzung", "fehler", "warnung"],
+          "properties": {
+            "sitzung": { "$ref": "#/$defs/paar" },
+            "fehler": { "$ref": "#/$defs/paar" },
+            "warnung": { "$ref": "#/$defs/paar" }
+          }
+        },
+        "standardAkzent": {
+          "description": "Name eines Eintrags in farben.akzente",
+          "type": "string",
+          "pattern": "^[a-z]+$"
+        }
+      }
+    },
+    "schrift": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["anzeige", "text", "mono", "groessen"],
+      "properties": {
+        "anzeige": { "type": "string", "minLength": 1 },
+        "text": { "type": "string", "minLength": 1 },
+        "mono": { "type": "string", "minLength": 1 },
+        "groessen": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["klein", "label", "text", "gross", "titel", "anzeige"],
+          "properties": {
+            "klein": { "$ref": "#/$defs/px" },
+            "label": { "$ref": "#/$defs/px" },
+            "text": { "$ref": "#/$defs/px" },
+            "gross": { "$ref": "#/$defs/px" },
+            "titel": { "$ref": "#/$defs/px" },
+            "anzeige": { "$ref": "#/$defs/px" }
+          }
+        }
+      }
+    },
+    "radius": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["xs", "chip", "feld", "fenster", "befehlsfeld", "pille"],
+      "properties": {
+        "xs": { "$ref": "#/$defs/px0" },
+        "chip": { "$ref": "#/$defs/px0" },
+        "feld": { "$ref": "#/$defs/px0" },
+        "fenster": { "$ref": "#/$defs/px0" },
+        "befehlsfeld": { "$ref": "#/$defs/px0" },
+        "pille": { "$ref": "#/$defs/px0" }
+      }
+    },
+    "abstand": {
+      "description": "Abstandsstufen a1 bis a7 in px",
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "items": { "$ref": "#/$defs/px0" }
+    },
+    "bewegung": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kurz", "maximal", "kurve"],
+      "properties": {
+        "kurz": { "type": "integer", "minimum": 0, "maximum": 200 },
+        "maximal": { "type": "integer", "minimum": 0, "maximum": 200 },
+        "kurve": { "const": "OutCubic" }
+      }
+    },
+    "leiste": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hoehe"],
+      "properties": {
+        "hoehe": { "$ref": "#/$defs/px" }
+      }
+    },
+    "fenster": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["titelzeile", "rasterAbstand", "aktiverRand"],
+      "properties": {
+        "titelzeile": { "$ref": "#/$defs/px" },
+        "rasterAbstand": { "$ref": "#/$defs/px0" },
+        "aktiverRand": { "$ref": "#/$defs/px0" }
+      }
+    },
+    "befehlsfeld": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["breite", "abstandOben"],
+      "properties": {
+        "breite": { "$ref": "#/$defs/px" },
+        "abstandOben": { "$ref": "#/$defs/px0" }
+      }
+    }
+  },
+  "$defs": {
+    "farbe": {
+      "description": "#RRGGBB oder rgba(r, g, b, a)",
+      "type": "string",
+      "pattern": "^(#[0-9A-Fa-f]{6}|rgba\\(\\s*(25[0-5]|2[0-4]\\d|1?\\d?\\d)\\s*,\\s*(25[0-5]|2[0-4]\\d|1?\\d?\\d)\\s*,\\s*(25[0-5]|2[0-4]\\d|1?\\d?\\d)\\s*,\\s*(0|1|0?\\.\\d+|1\\.0+)\\s*\\))$"
+    },
+    "paar": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hell", "dunkel"],
+      "properties": {
+        "hell": { "$ref": "#/$defs/farbe" },
+        "dunkel": { "$ref": "#/$defs/farbe" }
+      }
+    },
+    "farbsatz": {
+      "description": "Farben eines Erscheinungsbilds. Beide Sätze (hell, dunkel) haben dieselben Namen.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "grund", "flaeche", "flaeche2", "fenster", "linie", "text", "text2", "gedaempft", "abdunkeln",
+        "linie2", "trennlinie", "eingabeRand", "tasteRand", "abgesetzt", "wasserzeichen", "schatten"
+      ],
+      "properties": {
+        "grund": { "$ref": "#/$defs/farbe" },
+        "flaeche": { "$ref": "#/$defs/farbe" },
+        "flaeche2": { "$ref": "#/$defs/farbe" },
+        "fenster": { "$ref": "#/$defs/farbe" },
+        "linie": { "$ref": "#/$defs/farbe" },
+        "text": { "$ref": "#/$defs/farbe" },
+        "text2": { "$ref": "#/$defs/farbe" },
+        "gedaempft": { "$ref": "#/$defs/farbe" },
+        "abdunkeln": { "$ref": "#/$defs/farbe" },
+        "linie2": { "$ref": "#/$defs/farbe" },
+        "trennlinie": { "$ref": "#/$defs/farbe" },
+        "eingabeRand": { "$ref": "#/$defs/farbe" },
+        "tasteRand": { "$ref": "#/$defs/farbe" },
+        "abgesetzt": { "$ref": "#/$defs/farbe" },
+        "wasserzeichen": { "$ref": "#/$defs/farbe" },
+        "schatten": { "$ref": "#/$defs/farbe" }
+      }
+    },
+    "px": { "type": "integer", "minimum": 1 },
+    "px0": { "type": "integer", "minimum": 0 }
+  }
+}
