@@ -122,7 +122,10 @@ test/container/oberflaeche.sh stopp
 - `log` zeigt das Protokoll ohne Farbcodes. Eine Auswertung wie im Start-Test macht `scripts/pruefen.sh start`.
 - `starte kitty` startet ein Programm in der Sitzung (Protokoll in `/srv/oberflaeche/`).
 - `tippe tester` und `taste Return` geben Text und Tasten über wtype ein (z. B. das Passwort in die Sperre).
-  wtype kennt kein `--`; Text, der mit `-` beginnt, lehnt `tippe` ab.
+  wtype kennt kein `--`; Text, der mit `-` beginnt, lehnt `tippe` ab. Tastenkombinationen schreibt man mit `+`,
+  z. B. `taste super+l` oder `taste ctrl+alt+t` (Modifikatoren: super, ctrl, alt, shift).
+- Der erste virtuelle Tastendruck nach dem Start von labwc geht verloren. `tippe`/`taste` senden deshalb einmal
+  pro Sitzung vorab ein harmloses `Shift_L`.
 - Im Software-Backend fehlen `MultiEffect` und `RectangularShadow` (brauchen RHI). Schatten dort nicht
   beurteilen. `Shape` mit `preferredRendererType: Shape.CurveRenderer` rendert sauber.
 

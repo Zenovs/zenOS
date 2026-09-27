@@ -13,7 +13,7 @@
 #   thema hell|dunkel               Erscheinungsbild umschalten (IPC thema setzen, sonst einstellungen.json)
 #   starte <programm> [arg…]        Programm in der Sitzung starten (z. B. kitty)
 #   tippe <text>                    Text eintippen (wtype), z. B. das Passwort «tester» in die Sperre
-#   taste <taste> [<taste>…]        Tasten drücken (wtype -k), z. B. Return, Escape, Tab
+#   taste <taste> [<taste>…]        Tasten drücken (wtype), z. B. Return, Escape, Tab, super+l, ctrl+alt+t
 #   log [zeilen]                    Ende des Quickshell-Protokolls (mit --sitzung aus dem Journal)
 #   status                          läuft etwas?
 #   stopp                           Quickshell und labwc beenden (mit --sitzung auch die Dienste)
@@ -142,7 +142,7 @@ befehl_start() {
   fi
   schriften
 
-  rm -f -- "$ZUSTAND"/{wayland,quickshell.pid,labwc.pid,quickshell.log,labwc.log,modus}
+  rm -f -- "$ZUSTAND"/{wayland,quickshell.pid,labwc.pid,quickshell.log,labwc.log,modus,tastatur-geweckt}
   echo direkt > "$ZUSTAND/modus"
   export ZENOS_TEST_SHELL=$shell ZENOS_TEST_GROESSE=$groesse ZENOS_TEST_ZUSTAND=$ZUSTAND
   setsid labwc -C "$config" -s "$SELBST _innen" > "$ZUSTAND/labwc.log" 2>&1 < /dev/null &
@@ -213,7 +213,7 @@ start_sitzung() {
   done
   printf '#!/bin/sh\n# oberflaeche.sh start --sitzung\nexec %q _autostart\n' "$SELBST" > "$konfig/autostart"
 
-  rm -f -- "$ZUSTAND"/{wayland,quickshell.pid,labwc.pid,quickshell.log,labwc.log,modus,sitzung.beginn}
+  rm -f -- "$ZUSTAND"/{wayland,quickshell.pid,labwc.pid,quickshell.log,labwc.log,modus,sitzung.beginn,tastatur-geweckt}
   echo sitzung > "$ZUSTAND/modus"
   date +%s > "$ZUSTAND/sitzung.beginn"
   unset ZENOS_CODE
@@ -366,16 +366,46 @@ befehl_starte() {
 befehl_tippe() {
   (( $# == 1 )) && [[ -n "$1" && "$1" != -* ]] || { meldung "Aufruf: tippe <text> (nicht mit - am Anfang)"; exit 2; }
   wayland_setzen
+  tastatur_wecken
   wtype "$1"
 }
 
+# Der erste virtuelle Tastendruck nach dem Start von labwc geht verloren (wtype legt die virtuelle
+# Tastatur neu an). Einmal pro Sitzung eine harmlose Taste vorab senden.
+tastatur_wecken() {
+  [[ -e "$ZUSTAND/tastatur-geweckt" ]] && return 0
+  wtype -k Shift_L
+  sleep 0.2
+  : > "$ZUSTAND/tastatur-geweckt"
+}
+
+# taste Return · taste super+l · taste ctrl+alt+t · taste super+shift+Left
 befehl_taste() {
-  (( $# >= 1 )) || { meldung "Aufruf: taste <taste> [<taste>…] (z. B. Return, Escape, Tab)"; exit 2; }
+  (( $# >= 1 )) || { meldung "Aufruf: taste <taste> [<taste>…] (z. B. Return, Escape, super+l)"; exit 2; }
   wayland_setzen
-  local taste
-  for taste in "$@"; do
-    [[ "$taste" =~ ^[A-Za-z0-9_]+$ ]] || { meldung "unbekannte Taste «$taste»"; exit 2; }
-    wtype -k "$taste"
+  tastatur_wecken
+  local eingabe taste mod
+  local -a teile mods args
+  for eingabe in "$@"; do
+    [[ "$eingabe" =~ ^[A-Za-z0-9_+]+$ ]] || { meldung "unbekannte Taste «$eingabe»"; exit 2; }
+    IFS=+ read -r -a teile <<< "$eingabe"
+    taste=${teile[-1]}
+    [[ -n "$taste" ]] || { meldung "unbekannte Taste «$eingabe»"; exit 2; }
+    mods=()
+    for mod in "${teile[@]:0:${#teile[@]}-1}"; do
+      case "${mod,,}" in
+        super | logo) mods+=(logo) ;;
+        ctrl | strg) mods+=(ctrl) ;;
+        alt) mods+=(alt) ;;
+        shift) mods+=(shift) ;;
+        *) meldung "unbekannter Modifikator «$mod»"; exit 2 ;;
+      esac
+    done
+    args=()
+    for mod in "${mods[@]}"; do args+=(-M "$mod"); done
+    args+=(-k "$taste")
+    for mod in "${mods[@]}"; do args+=(-m "$mod"); done
+    wtype "${args[@]}"
   done
 }
 
@@ -426,7 +456,7 @@ befehl_stopp() {
       if kill -0 "$pid" 2>/dev/null; then kill -9 "$pid" 2>/dev/null || true; fi
     done
   fi
-  rm -f -- "$ZUSTAND"/{wayland,quickshell.pid,labwc.pid,modus,sitzung.beginn}
+  rm -f -- "$ZUSTAND"/{wayland,quickshell.pid,labwc.pid,modus,sitzung.beginn,tastatur-geweckt}
   echo "Gestoppt."
 }
 

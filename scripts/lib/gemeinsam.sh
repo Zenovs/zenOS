@@ -51,8 +51,11 @@
 #     dienst_*, systemd_neu_laden) sind nur in modul_system erlaubt, Benutzerfunktionen
 #     (benutzer_*, verknuepfen) nur in modul_benutzer. Ein Verstoss bricht mit Meldung ab.
 #   - Dienststarts durch apt: pakete_sicherstellen legt für die Dauer von apt-get ein
-#     /usr/sbin/policy-rc.d mit «exit 101» an (Markierung in der zweiten Zeile). Damit starten
-#     Pakete wie greetd ihre Dienste nicht sofort; aktiviert (enable) werden sie trotzdem.
+#     /usr/sbin/policy-rc.d an (Markierung in der zweiten Zeile), das Starts, Stopps und Neustarts
+#     verbietet (exit 101). Damit starten Pakete wie greetd ihre Dienste nicht sofort; aktiviert
+#     (enable) werden sie trotzdem. Einzige Ausnahme mit laufendem systemd (nie mit --image): den
+#     laufenden System-Bus neu laden («invoke-rc.d dbus reload|force-reload»), wie es postinst-Skripte
+#     nach einem neuen Systembenutzer tun (polkitd), sonst kennt der Bus ihn bis zum Neustart nicht.
 #     Eine schon vorhandene fremde policy-rc.d bleibt unangetastet. Die Datei wird direkt nach
 #     apt-get entfernt, spätestens beim Ende von install.sh (auch nach einem Abbruch), und eine
 #     liegengebliebene eigene Datei aus einem abgestürzten Lauf räumt der nächste Lauf weg.
@@ -269,13 +272,40 @@ _zenos_apt() {
     apt-get -o DPkg::Lock::Timeout=300 "$@"
 }
 
-_zenos_policy_an() {
-  if [[ -e "$_ZENOS_POLICY" ]]; then
-    # Eigene Datei aus einem abgebrochenen Lauf übernehmen, fremde respektieren
-    if grep -qxF -- "$_ZENOS_POLICY_MARKE" "$_ZENOS_POLICY" 2>/dev/null; then _ZENOS_POLICY_AKTIV=1; fi
+# Inhalt der temporären policy-rc.d. Aufruf (invoke-rc.d, deb-systemd-invoke):
+#   policy-rc.d [--quiet] <Dienst> "<Aktion …>" [<Runlevel>] → 0 erlaubt, 101 verboten.
+# Erlaubt ist nur «dbus reload|force-reload», und nur, solange der Bus läuft und neu laden kann:
+# force-reload wird bei einem Dienst ohne Reload zum Neustart, und ein gescheitertes reload liesse
+# postinst-Skripte ohne «|| true» scheitern (ein verbotenes endet in invoke-rc.d mit Exit 0).
+_zenos_policy_inhalt() {
+  printf '#!/bin/sh\n%s\n' "$_ZENOS_POLICY_MARKE"
+  if [[ "$ZENOS_SYSTEMD" != 1 || "$ZENOS_IMAGE" == 1 ]]; then
+    printf 'exit 101\n'
     return 0
   fi
-  printf '#!/bin/sh\n%s\nexit 101\n' "$_ZENOS_POLICY_MARKE" | $SUDO tee "$_ZENOS_POLICY" >/dev/null
+  cat <<'SH'
+# Erlaubt nur: den laufenden System-Bus neu laden (postinst nach einem neuen Systembenutzer, z. B. polkitd)
+[ "${1:-}" = --quiet ] && shift
+case ${1:-} in dbus | dbus.service) ;; *) exit 101 ;; esac
+[ -n "${2:-}" ] || exit 101
+set -f
+for aktion in $2; do
+  case $aktion in reload | force-reload) ;; *) exit 101 ;; esac
+done
+systemctl --quiet is-active dbus.service 2>/dev/null || exit 101
+[ "$(systemctl show --property=CanReload --value dbus.service 2>/dev/null)" = yes ] || exit 101
+exit 0
+SH
+}
+
+_zenos_policy_an() {
+  # Fremde respektieren; eine eigene aus einem abgebrochenen Lauf wird mit dem aktuellen Inhalt überschrieben
+  if [[ -e "$_ZENOS_POLICY" || -L "$_ZENOS_POLICY" ]] &&
+    ! grep -qxF -- "$_ZENOS_POLICY_MARKE" "$_ZENOS_POLICY" 2>/dev/null; then
+    return 0
+  fi
+  $SUDO rm -f -- "$_ZENOS_POLICY"
+  _zenos_policy_inhalt | $SUDO tee "$_ZENOS_POLICY" >/dev/null
   $SUDO chmod 0755 "$_ZENOS_POLICY"
   _ZENOS_POLICY_AKTIV=1
 }

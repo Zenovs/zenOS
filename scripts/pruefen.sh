@@ -742,6 +742,7 @@ START_RUNDGANG=(
   "einstellungen oeffnen system"
   "einrichtung oeffnen"
   "hinweis zeigen Prüfung"
+  "hinweis warnen Prüfung"
   # Bildschirmfreigabe mit offener Zentrale (Leitplanke: Inhalte verborgen), danach zurück
   "freigabe gestartet"
   "mitteilungen zentrale"

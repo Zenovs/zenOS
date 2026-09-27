@@ -65,7 +65,8 @@ modul_benutzer() {  # optional; als Benutzer, ohne sudo, nie im --image-Modus
   Verstoss bricht mit Meldung ab.
 - Pakete: `pakete_sicherstellen` installiert nur Fehlendes, macht höchstens einmal pro Lauf
   `apt-get update` und verhindert mit einem temporären `/usr/sbin/policy-rc.d`, dass Pakete ihre Dienste
-  sofort starten (greetd!). Aktiviert werden sie trotzdem. Wer einen Dienst sofort braucht, ruft
+  sofort starten (greetd!). Aktiviert werden sie trotzdem. Erlaubt bleibt nur, den laufenden System-Bus
+  neu zu laden (`invoke-rc.d dbus reload`, etwa im postinst von polkitd). Wer einen Dienst sofort braucht, ruft
   `dienst_neustarten_falls` (nur mit laufendem systemd, nie im Image-Modus, nur nach einer Änderung im
   selben Modul). Nach neuen Paketquellen `apt_quellen_geaendert` aufrufen.
 - Die ganze API mit allen Parametern steht im Kopf von `lib/gemeinsam.sh`.
