@@ -1,0 +1,6 @@
+#!/bin/sh
+# zenOS: Ende der Sitzung (~/.config/labwc/shutdown verweist hierher). labwc führt es beim Beenden aus
+# und wartet darauf. Danach zeigt nichts mehr auf den beendeten Wayland-Bildschirm.
+
+systemctl --user stop zenos-sitzung.target graphical-session.target
+systemctl --user unset-environment WAYLAND_DISPLAY DISPLAY LABWC_PID

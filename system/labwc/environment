@@ -1,0 +1,17 @@
+# zenOS: Umgebung der labwc-Sitzung (~/.config/labwc/environment verweist hierher).
+# labwc liest KEY=VALUE, eine Zuweisung pro Zeile. autostart gibt die Werte an systemd und D-Bus weiter.
+XDG_CURRENT_DESKTOP=labwc:wlroots
+XDG_SESSION_DESKTOP=zenos
+XDG_SESSION_TYPE=wayland
+
+# Qt: Wayland zuerst, Farben und Dialoge über das Portal (folgt color-scheme), Rahmen von labwc
+QT_QPA_PLATFORM=wayland;xcb
+QT_QPA_PLATFORMTHEME=xdgdesktopportal
+QT_WAYLAND_DISABLE_WINDOWDECORATION=1
+
+# Firefox und Electron-Apps (VS Code, 1Password) nativ unter Wayland
+MOZ_ENABLE_WAYLAND=1
+ELECTRON_OZONE_PLATFORM_HINT=auto
+
+XCURSOR_THEME=Adwaita
+XCURSOR_SIZE=24

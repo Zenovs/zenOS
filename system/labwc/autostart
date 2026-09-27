@@ -1,0 +1,13 @@
+#!/bin/sh
+# zenOS: Start der Sitzung (~/.config/labwc/autostart verweist hierher, labwc führt es mit sh aus).
+# Gibt die Umgebung an systemd und D-Bus weiter (Dienste und Portale brauchen WAYLAND_DISPLAY) und
+# startet zenos-sitzung.target mit der Oberfläche. LABWC_PID braucht «labwc --exit» (Abmelden).
+
+dbus-update-activation-environment --systemd \
+  WAYLAND_DISPLAY DISPLAY LABWC_PID \
+  XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE \
+  QT_QPA_PLATFORM QT_QPA_PLATFORMTHEME QT_WAYLAND_DISABLE_WINDOWDECORATION \
+  MOZ_ENABLE_WAYLAND ELECTRON_OZONE_PLATFORM_HINT \
+  XCURSOR_THEME XCURSOR_SIZE
+
+systemctl --user start --no-block zenos-sitzung.target

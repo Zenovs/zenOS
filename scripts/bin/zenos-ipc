@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# zenos-ipc – Aufruf in die laufende zenOS-Oberfläche (Quickshell-IPC), auch aus einer SSH-Sitzung.
+#
+#   zenos-ipc <ziel> <funktion> [argument …]
+#
+# Beispiele: zenos-ipc befehlsfeld umschalten · zenos-ipc sperre status · zenos-ipc hinweis zeigen "Text"
+# Exit 0: ausgeführt (ein Rückgabewert steht auf stdout) · 1: abgelehnt (Ziel, Funktion oder Argumente
+# falsch, Oberfläche noch nicht bereit) · 2: keine Oberfläche läuft · 64: falscher Aufruf.
+#
+# Quickshell v0.3.1 beendet «ipc call» auch bei Fehlern mit Exit 0 und schreibt die Meldung auf stdout,
+# zenos-ipc wertet deshalb die Ausgabe aus. «--any-display» findet die Instanz auch ohne WAYLAND_DISPLAY.
+# Gesucht wird zuerst die Standard-Konfiguration (~/.config/quickshell/shell.qml, so startet sie
+# zenos-shell.service), sonst die neueste laufende Instanz einer shell.qml dieses Benutzers.
+
+set -uo pipefail
+
+meldung() { printf 'zenos-ipc: %s\n' "$*" >&2; }
+
+if (( $# < 2 )) || [[ "$1" == -h || "$1" == --hilfe || "$1" == --help ]]; then
+  sed -n '4,8p' "$0" | sed 's/^# \{0,1\}//' >&2
+  exit 64
+fi
+if [[ ! "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*$ || ! "$2" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+  meldung "Ziel und Funktion bestehen nur aus Buchstaben, Ziffern und _"
+  exit 64
+fi
+
+qs=$(command -v quickshell 2> /dev/null || true)
+[[ -n "$qs" ]] || qs=/usr/local/bin/quickshell
+if [[ ! -x "$qs" ]]; then
+  meldung "Quickshell ist nicht installiert"
+  exit 2
+fi
+
+# Aus SSH oder Cron fehlt oft die Sitzungsumgebung
+if [[ -z "${XDG_RUNTIME_DIR:-}" ]]; then
+  XDG_RUNTIME_DIR=/run/user/$(id -u)
+  export XDG_RUNTIME_DIR
+fi
+if [[ ! -d "$XDG_RUNTIME_DIR/quickshell" ]]; then
+  meldung "keine laufende Oberfläche"
+  exit 2
+fi
+
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/zenos-ipc.XXXXXX") || exit 1
+trap 'rm -rf -- "$tmp"' EXIT
+
+# aufruf [auswahl …] – ruft die Funktion, Ausgaben in $tmp/aus und $tmp/fehler.
+# Auswahl: --any-display (Standard-Konfiguration) oder --pid <pid>; beides zusammen lehnt Quickshell ab.
+aufruf() {
+  local rc=0
+  LC_ALL=C.UTF-8 "$qs" ipc "$@" call -- "${ARGUMENTE[@]}" > "$tmp/aus" 2> "$tmp/fehler" || rc=$?
+  return "$rc"
+}
+
+# Neueste laufende Instanz einer shell.qml dieses Benutzers (nicht der Greeter)
+instanz_suchen() {
+  LC_ALL=C.UTF-8 "$qs" list --all --json 2> /dev/null | python3 -c '
+import json, os, sys
+try:
+    liste = json.load(sys.stdin)
+except ValueError:
+    sys.exit(1)
+standard = os.path.join(os.environ.get("HOME", ""), ".config/quickshell/shell.qml")
+kandidaten = [i for i in liste if str(i.get("config_path", "")).endswith("/shell.qml") and int(i.get("pid", -1)) > 0]
+if not kandidaten:
+    sys.exit(1)
+kandidaten.sort(key=lambda i: (i.get("config_path") == standard, i.get("launch_time", "")), reverse=True)
+print(int(kandidaten[0]["pid"]))
+'
+}
+
+ARGUMENTE=("$@")
+rc=0
+aufruf --any-display || rc=$?
+if (( rc == 255 )); then
+  # Keine Instanz der Standard-Konfiguration (oder keine Verbindung): nach einer anderen suchen
+  if pid=$(instanz_suchen) && [[ "$pid" =~ ^[0-9]+$ ]]; then
+    rc=0
+    aufruf --pid "$pid" || rc=$?
+  fi
+fi
+
+sed -i 's/\x1b\[[0-9;]*m//g' "$tmp/aus" "$tmp/fehler"
+if (( rc == 255 )); then
+  meldung "keine laufende Oberfläche"
+  exit 2
+fi
+if (( rc != 0 )) ||
+  grep -qE '(Target|Function|Property) not found\.|arguments provided|Unable to parse argument|Not ready to accept|Socket Error|Received invalid IPC response' \
+    "$tmp/aus" "$tmp/fehler"; then
+  cat -- "$tmp/aus" "$tmp/fehler" >&2
+  exit 1
+fi
+cat -- "$tmp/aus"

@@ -1,0 +1,9 @@
+# zenOS-Sitzung. Startet mit labwc (autostart), endet mit labwc (shutdown).
+# Zieht die Dienste der Oberfläche; Dienste anderer Module fehlen dürfen (Wants=).
+[Unit]
+Description=zenOS-Sitzung
+Documentation=file:///opt/zenos/docs/architektur.md
+BindsTo=graphical-session.target
+Wants=graphical-session-pre.target
+After=graphical-session-pre.target
+Wants=zenos-shell.service zenos-idle.service zenos-kanshi.service

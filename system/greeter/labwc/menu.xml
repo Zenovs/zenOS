@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- zenOS: im Login gibt es kein Menü von labwc (leer statt der Vorgabe mit «Beenden»). -->
+<openbox_menu>
+  <menu id="root-menu" label="" />
+</openbox_menu>

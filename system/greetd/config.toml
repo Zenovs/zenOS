@@ -1,0 +1,11 @@
+# zenOS: Login über greetd (installiert von scripts/module/40-sitzung.sh nach /etc/greetd/config.toml).
+# Der Greeter ist labwc mit Quickshell (shell/greeter.qml). Kein Autologin: es gibt keinen
+# [initial_session]-Abschnitt.
+
+[terminal]
+# VT 7 wie bei Ubuntu üblich für die grafische Anmeldung
+vt = 7
+
+[default_session]
+command = "/opt/zenos/scripts/bin/zenos-greeter"
+user = "_greetd"

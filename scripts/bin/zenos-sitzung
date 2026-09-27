@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# zenos-sitzung – startet die zenOS-Sitzung. greetd ruft es nach der Anmeldung auf (shell/greeter.qml).
+#
+# Setzt die Umgebung, richtet die Benutzerteile ein (install.sh --nur-benutzer --ruhig: still, schnell,
+# idempotent; ein frisch geflashtes Image bekommt so beim ersten Login die Dateien des Benutzers), löscht
+# den Sperr-Marker einer früheren Sitzung und startet labwc. labwc startet über ~/.config/labwc/autostart
+# zenos-sitzung.target mit der Oberfläche und beendet es über ~/.config/labwc/shutdown.
+# Nichts davon darf die Anmeldung aufhalten: Fehler werden gemeldet (Journal), labwc startet trotzdem.
+
+set -uo pipefail
+
+code=/opt/zenos
+
+meldung() { printf 'zenos-sitzung: %s\n' "$*" >&2; }
+
+export XDG_SESSION_TYPE=wayland
+export XDG_SESSION_DESKTOP=zenos
+export XDG_CURRENT_DESKTOP=labwc:wlroots
+if [[ -z "${XDG_RUNTIME_DIR:-}" ]]; then
+  XDG_RUNTIME_DIR=/run/user/$(id -u)
+  export XDG_RUNTIME_DIR
+fi
+case ":${PATH:-}:" in
+  *:/usr/local/bin:*) ;;
+  *) export PATH="/usr/local/bin:${PATH:-/usr/bin:/bin}" ;;
+esac
+
+# Tastaturbelegung des Systems (wie auf der Konsole), sofern nicht schon gesetzt
+tastatur() {
+  local datei=/etc/default/keyboard paar quelle ziel wert
+  [[ -r "$datei" ]] || return 0
+  for paar in XKBMODEL:XKB_DEFAULT_MODEL XKBLAYOUT:XKB_DEFAULT_LAYOUT \
+    XKBVARIANT:XKB_DEFAULT_VARIANT XKBOPTIONS:XKB_DEFAULT_OPTIONS; do
+    quelle=${paar%%:*}
+    ziel=${paar#*:}
+    [[ -z "${!ziel:-}" ]] || continue
+    wert=$(sed -n "s/^$quelle=[\"']\{0,1\}\([^\"']*\)[\"']\{0,1\}[[:space:]]*\$/\1/p" "$datei" | tail -n 1)
+    [[ -n "$wert" && "$wert" =~ ^[A-Za-z0-9_,:()+-]+$ ]] || continue
+    export "$ziel=$wert"
+  done
+}
+tastatur
+
+# Benutzerteile; ein hängender Lauf (z. B. wartet auf ein laufendes install.sh) hält höchstens 2 Minuten auf
+if [[ -x "$code/scripts/install.sh" ]]; then
+  timeout 120 "$code/scripts/install.sh" --nur-benutzer --ruhig < /dev/null ||
+    meldung "Benutzerteile nicht vollständig eingerichtet (Exit $?), Details im install.log"
+else
+  meldung "$code/scripts/install.sh fehlt"
+fi
+
+# Wer sich gerade angemeldet hat, ist nicht gesperrt
+rm -f -- "$XDG_RUNTIME_DIR/zenos/gesperrt"
+
+# Reste einer abgebrochenen Sitzung (z. B. labwc abgestürzt) beenden, Startsperre der Oberfläche lösen
+if systemctl --user --quiet is-active zenos-sitzung.target 2> /dev/null; then
+  meldung "Sitzung von vorher läuft noch, wird beendet"
+  systemctl --user stop zenos-sitzung.target graphical-session.target 2> /dev/null || true
+fi
+systemctl --user reset-failed zenos-shell.service 2> /dev/null || true
+
+# Ausgaben von labwc und den Apps ins Journal (journalctl -t labwc), sonst zu greetd
+if command -v systemd-cat > /dev/null && [[ -S /run/systemd/journal/stdout ]]; then
+  exec systemd-cat --identifier=labwc -- labwc
+fi
+exec labwc

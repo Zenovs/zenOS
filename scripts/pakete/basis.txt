@@ -1,0 +1,57 @@
+# M2 · Basis und Sitzung
+# 20-pakete installiert die Vereinigung aller Listen in scripts/pakete/ (ohne quickshell-bau.txt).
+
+# Fenstermanager und Login
+labwc
+xwayland
+greetd
+wlr-randr
+kanshi
+swayidle
+
+# Grafik (Mesa: Gallium-Treiber, auf dem Pi v3d)
+mesa-libgallium
+libgl1-mesa-dri
+libegl-mesa0
+
+# Sitzung: logind, D-Bus-Benutzersitzung, polkit (Neustart und Ausschalten aus Login und Sitzung)
+libpam-systemd
+dbus-user-session
+polkitd
+
+# Ton
+pipewire
+wireplumber
+pipewire-pulse
+
+# Portale (Settings über gtk, Bildschirmfreigabe und Bildschirmfoto über wlr)
+xdg-desktop-portal
+xdg-desktop-portal-wlr
+xdg-desktop-portal-gtk
+
+# Terminal
+kitty
+fish
+
+# Werkzeuge der Oberfläche
+grim
+slurp
+wl-clipboard
+libnotify-bin
+xdg-utils
+shared-mime-info
+jq
+
+# Skripte
+python3
+python3-jsonschema
+git
+
+# Schrift, Symbole, Mauszeiger
+fontconfig
+fonts-dejavu-core
+adwaita-icon-theme
+
+# Qt für Wayland (Plattform-Plugin, SVG)
+qt6-wayland
+qt6-svg-plugins

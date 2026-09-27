@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# zenos-greeter – die Login-Oberfläche. greetd startet es als Benutzer _greetd (/etc/greetd/config.toml).
+#
+#   zenos-greeter                 labwc mit system/greeter/labwc, darin die Oberfläche
+#   zenos-greeter --oberflaeche   (intern, von labwc gestartet) Quickshell mit shell/greeter.qml
+#
+# labwc läuft mit -S: Endet Quickshell (nach der Anmeldung), endet labwc, und greetd startet die Sitzung
+# (zenos-sitzung). Stürzt etwas ab, startet greetd den Greeter neu. Lädt greeter.qml gar nicht, übernimmt
+# shell/greeter/notfall/notfall.qml (ohne qs.*-Module). Kein Autologin.
+# Caches und Zustände landen im Laufzeitordner, nicht im Home von _greetd.
+
+set -euo pipefail
+
+meldung() { printf 'zenos-greeter: %s\n' "$*" >&2; }
+
+# ZENOS_CODE nur für Tests aus einem Arbeits-Checkout; greetd setzt es nicht
+code=${ZENOS_CODE:-/opt/zenos}
+[[ "$code" =~ ^/[A-Za-z0-9._/-]+$ ]] || code=/opt/zenos
+selbst=$(readlink -f -- "${BASH_SOURCE[0]}")
+
+case "$#:${1:-}" in
+  1:--oberflaeche)
+    # Lädt greeter.qml nicht (z. B. Fehler in einem Dienst), endet Quickshell sofort mit 255. Dann der
+    # Notfall-Login ohne qs.*-Module, sonst startet greetd den Greeter endlos neu und der Bildschirm bleibt leer.
+    start=$SECONDS
+    rc=0
+    quickshell --no-color -p "$code/shell/greeter.qml" || rc=$?
+    if (( rc != 0 && SECONDS - start < 30 )); then
+      meldung "greeter.qml lädt nicht (Exit $rc), starte den Notfall-Login"
+      exec quickshell --no-color -p "$code/shell/greeter/notfall/notfall.qml"
+    fi
+    exit "$rc"
+    ;;
+  0:) ;;
+  *)
+    sed -n '4,5p' "$selbst" | sed 's/^# \{0,1\}//' >&2
+    exit 2
+    ;;
+esac
+
+# labwc startet den Befehl hinter -S über eine Shell: nur ein unauffälliger Pfad kommt dort hinein
+if [[ ! "$selbst" =~ ^/[A-Za-z0-9._/-]+$ ]]; then
+  meldung "ungewöhnlicher Pfad: $selbst"
+  exit 1
+fi
+
+if [[ -z "${XDG_RUNTIME_DIR:-}" || ! -d "$XDG_RUNTIME_DIR" || ! -w "$XDG_RUNTIME_DIR" ]]; then
+  XDG_RUNTIME_DIR=$(mktemp -d "${TMPDIR:-/tmp}/zenos-greeter.XXXXXX")
+  export XDG_RUNTIME_DIR
+fi
+basis=$XDG_RUNTIME_DIR/zenos-greeter
+for ordner in cache state data config; do
+  mkdir -p -- "$basis/$ordner"
+  chmod 0700 -- "$basis" "$basis/$ordner"
+done
+export XDG_CACHE_HOME=$basis/cache XDG_STATE_HOME=$basis/state XDG_DATA_HOME=$basis/data XDG_CONFIG_HOME=$basis/config
+
+export XDG_SESSION_TYPE=wayland
+export XDG_CURRENT_DESKTOP=labwc:wlroots
+export QT_QPA_PLATFORM=wayland
+export XCURSOR_THEME=Adwaita XCURSOR_SIZE=24
+unset QT_QPA_PLATFORMTHEME DISPLAY
+case ":${PATH:-}:" in
+  *:/usr/local/bin:*) ;;
+  *) export PATH="/usr/local/bin:${PATH:-/usr/bin:/bin}" ;;
+esac
+
+# Tastaturbelegung des Systems, damit das Passwort mit derselben Belegung ankommt wie auf der Konsole
+tastatur() {
+  local datei=/etc/default/keyboard paar quelle ziel wert
+  [[ -r "$datei" ]] || return 0
+  for paar in XKBMODEL:XKB_DEFAULT_MODEL XKBLAYOUT:XKB_DEFAULT_LAYOUT \
+    XKBVARIANT:XKB_DEFAULT_VARIANT XKBOPTIONS:XKB_DEFAULT_OPTIONS; do
+    quelle=${paar%%:*}
+    ziel=${paar#*:}
+    [[ -z "${!ziel:-}" ]] || continue
+    wert=$(sed -n "s/^$quelle=[\"']\{0,1\}\([^\"']*\)[\"']\{0,1\}[[:space:]]*\$/\1/p" "$datei" | tail -n 1)
+    [[ -n "$wert" && "$wert" =~ ^[A-Za-z0-9_,:()+-]+$ ]] || continue
+    export "$ziel=$wert"
+  done
+}
+tastatur
+
+exec labwc -C "$code/system/greeter/labwc" -S "$selbst --oberflaeche"
