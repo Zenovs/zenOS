@@ -5,8 +5,9 @@
 # Installiert zenos-argon.service nach /etc/systemd/system und aktiviert ihn. Ausser im Image-Modus startet
 # das Modul ihn auch (nach einer Änderung an der Einheit oder wenn zenos-argon neuer ist als der laufende
 # Dienst). Ob es etwas zu tun gibt (Pi 5, I2C-Bus 1, Argon an 0x1a), entscheidet der Dienst selbst; sonst
-# endet er mit einer Meldung. Firmware und /boot/firmware/config.txt fasst zenOS nie an: Fehlt auf einem
-# Pi 5 der I2C-Bus, gibt es nur einen Hinweis (Rückfrage-Thema).
+# endet er mit einer Meldung. Dazu der Hook /usr/lib/systemd/system-shutdown/zenos-argon, der beim
+# Ausschalten das Abschaltsignal an die Platine sendet. Firmware und /boot/firmware/config.txt fasst zenOS
+# nie an: Fehlt auf einem Pi 5 der I2C-Bus, gibt es nur einen Hinweis (Rückfrage-Thema).
 
 modul_system() {
   local einheit=zenos-argon.service zeile
@@ -26,6 +27,13 @@ modul_system() {
   elif _argon_code_neuer "$einheit"; then
     _argon_starten "$einheit" "zenos-argon ist neuer als der laufende Dienst"
   fi
+
+  # Abschaltsignal an die Platine ganz am Ende des Ausschaltens (wie argon-shutdown.sh im Original). Eine
+  # Kopie, kein Verweis nach /opt/zenos: systemd-shutdown ruft den Hook, wenn die Dateisysteme schon
+  # ausgehängt oder nur lesbar sind. Nach dem Start-Entscheid, damit eine Änderung nur am Hook den Dienst
+  # nicht neu startet.
+  datei_installieren "$ZENOS_CODE/system/systemd/system-shutdown/zenos-argon" \
+    /usr/lib/systemd/system-shutdown/zenos-argon 0755 root:root
 
   _argon_i2c_hinweis
   _argon_originalskript
@@ -101,14 +109,18 @@ _argon_i2c_hinweis() {
   fi
 }
 
-# Das Installationsskript von Argon richtet argononed.service ein; zwei Dienste am selben Lüfter und Knopf
-# stören sich gegenseitig.
+# Das Installationsskript von Argon richtet argononed.service und argon-shutdown.sh ein; zwei Dienste am
+# selben Lüfter und Knopf stören sich gegenseitig.
 _argon_originalskript() {
   local zustand
   zustand=$(systemctl is-enabled argononed.service 2> /dev/null) || true
   case "$zustand" in
     enabled | enabled-runtime | static | alias | generated | indirect)
       log_warnung "argononed.service (Argon-Originalskript) ist eingerichtet und stört zenos-argon an Lüfter und Knopf. Entfernen: argonone-uninstall oder sudo systemctl disable --now argononed.service"
+      return 0
       ;;
   esac
+  if [[ -e /usr/lib/systemd/system-shutdown/argon-shutdown.sh ]]; then
+    log_info "Hinweis: argon-shutdown.sh (Argon-Originalskript) liegt noch in /usr/lib/systemd/system-shutdown; zenos-argon überlässt ihm das Abschaltsignal (entfernen: argonone-uninstall)."
+  fi
 }

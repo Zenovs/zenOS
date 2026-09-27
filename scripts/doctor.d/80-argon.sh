@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# 80-argon: Argon ONE – Dienst, Pi-Modell, I2C-Bus, Argon an 0x1a (nur lesend), Werte für die Leiste, Kurve
+# 80-argon: Argon ONE – Dienst, Abschaltsignal, Pi-Modell, I2C-Bus, Argon an 0x1a (nur lesend), Werte für die
+# Leiste, Kurve
 # shellcheck shell=bash
 
 pruefe_argon() {
   abschnitt "Argon ONE"
   local modell i2c=0
   _argon_einheit
+  _argon_abschaltsignal
   modell=$(_argon_modell)
   if [[ "$modell" != "Raspberry Pi 5"* ]]; then
     hinweis "Kein Raspberry Pi 5 (${modell:-kein Gerätebaum}), der Argon-Dienst hat nichts zu tun"
@@ -42,6 +44,22 @@ _argon_einheit() {
     ok "$einheit installiert und aktiviert"
   else
     warnung "$einheit ist nicht aktiviert (${zustand:-unbekannt}; install.sh ausführen)"
+  fi
+}
+
+# Hook für systemd-shutdown: sendet beim Ausschalten das Abschaltsignal an die Platine (nur lesend geprüft)
+_argon_abschaltsignal() {
+  local hook=/usr/lib/systemd/system-shutdown/zenos-argon quelle=/opt/zenos/system/systemd/system-shutdown/zenos-argon
+  if [[ ! -f "$hook" ]]; then
+    fehler "Abschaltsignal beim Ausschalten fehlt: $hook (install.sh ausführen)"
+  elif [[ ! -x "$hook" ]]; then
+    fehler "$hook ist nicht ausführbar (install.sh ausführen)"
+  elif [[ -r "$quelle" ]] && ! cmp -s -- "$quelle" "$hook"; then
+    warnung "$hook ist veraltet (install.sh ausführen)"
+  elif ! command -v i2cset > /dev/null 2>&1; then
+    warnung "i2cset fehlt (Paket i2c-tools): kein Abschaltsignal an die Argon-Platine beim Ausschalten"
+  else
+    ok "Abschaltsignal an die Argon-Platine beim Ausschalten eingerichtet (${hook%/*}/)"
   fi
 }
 
@@ -174,4 +192,7 @@ _argon_originalskript() {
       warnung "argononed.service (Argon-Originalskript) ist eingerichtet und stört zenos-argon (argonone-uninstall)"
       ;;
   esac
+  if [[ -e /usr/lib/systemd/system-shutdown/argon-shutdown.sh ]]; then
+    hinweis "argon-shutdown.sh (Argon-Originalskript) sendet das Abschaltsignal, zenos-argon hält sich heraus (argonone-uninstall)"
+  fi
 }

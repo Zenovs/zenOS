@@ -1,0 +1,162 @@
+#!/bin/bash
+# zenos-argon (systemd-shutdown-Hook): Abschaltsignal an die Argon-ONE-Platine beim Ausschalten.
+#
+# Liegt als /usr/lib/systemd/system-shutdown/zenos-argon (Modul 80-argon). systemd-shutdown ruft den Hook
+# ganz am Ende auf, wenn alle Prozesse beendet und die Dateisysteme ausgehängt oder nur noch lesbar sind,
+# mit einem Argument: poweroff, halt, reboot oder kexec.
+#
+# Wie argon-shutdown.sh im Original (argonregister_signalpoweroff, Version 2608001): bei poweroff und halt
+# Register 0x86 = 1 (Firmware mit Registern, Argon ONE V3), sonst das Byte 0xFF. Die Platine trennt danach
+# den Strom, der Knopf am Gehäuse schaltet wieder ein. Die Firmware erkennt der Hook wie das Original:
+# Register 0x80 lesen, um eins verändert schreiben, zurücklesen, wiederherstellen. Bei reboot und kexec
+# sendet er nichts. Den Lüfter hat zenos-argon.service beim Stoppen schon abgestellt.
+#
+# Gesendet wird nur, wenn alles zutrifft, sonst endet der Hook still: Raspberry Pi 5, zenos-argon.service
+# aktiviert, kein Hook des Originalskripts, /dev/i2c-1, i2cget und i2cset (i2c-tools), ein Gerät antwortet
+# an 0x1a. Braucht nur bash, i2c-tools und sleep und schreibt nichts ins Dateisystem (kein python).
+#
+#   zenos-argon poweroff|halt|reboot|kexec    nur aus systemd-shutdown, sonst Abbruch ohne zu senden
+#   zenos-argon --simulieren poweroff|halt|…  nur lesend: zeigt, was beim Herunterfahren passieren würde
+#
+# Exit: 0 gesendet oder nichts zu tun · 1 Senden fehlgeschlagen oder nicht aus systemd-shutdown · 2 Aufruf.
+#
+# Für die Einheitentests (test/einheiten/argon.test.py) legt ZENOS_ARGON_TESTWURZEL alle festen Pfade unter
+# einen eigenen Ordner; Programme kommen dann nur aus dessen bin, die echten i2c-tools sind nicht erreichbar.
+
+set -u
+export LC_ALL=C
+
+wurzel=${ZENOS_ARGON_TESTWURZEL-}
+if [[ -n "$wurzel" ]]; then
+  if [[ "$wurzel" != /* || ! -d "$wurzel" || "$wurzel" -ef / ]]; then
+    echo "zenos-argon: ZENOS_ARGON_TESTWURZEL muss ein eigener Ordner sein (absoluter Pfad)" >&2
+    exit 2
+  fi
+  PATH=$wurzel/bin
+else
+  PATH=/usr/sbin:/usr/bin:/sbin:/bin
+fi
+
+readonly BUS=1
+readonly GERAET=$wurzel/dev/i2c-1
+readonly ADRESSE=0x1a
+readonly REG_LUEFTER=0x80
+readonly REG_STEUERUNG=0x86
+readonly PID1=$wurzel/proc/1/comm
+readonly DIENST=$wurzel/etc/systemd/system/multi-user.target.wants/zenos-argon.service
+readonly ORIGINAL=$wurzel/usr/lib/systemd/system-shutdown/argon-shutdown.sh
+readonly MODELL=("$wurzel/sys/firmware/devicetree/base/model" "$wurzel/proc/device-tree/model")
+
+simulieren=0
+
+# Erklärungen nur im Simulationsmodus; beim Herunterfahren bleibt der Hook still, wenn er nichts tut
+erklaeren() {
+  if (( simulieren )); then printf '%s\n' "$*"; fi
+}
+
+nichts_zu_tun() {
+  erklaeren "Nichts zu tun: $*"
+  exit 0
+}
+
+# Byte der Platine (receive byte, mit REGISTER read byte data) als Dezimalzahl
+lesen() {
+  local wert
+  wert=$(i2cget -y "$BUS" "$ADRESSE" "$@" 2> /dev/null) || return 1
+  [[ "$wert" =~ ^0x[0-9a-fA-F]{1,2}$ ]] || return 1
+  printf '%d' "$wert"
+}
+
+schreiben() {
+  i2cset -y "$BUS" "$ADRESSE" "$@" > /dev/null 2>&1
+}
+
+if [[ "${1-}" == --simulieren ]]; then
+  simulieren=1
+  shift
+fi
+if (( $# != 1 )); then
+  echo "Aufruf: zenos-argon [--simulieren] poweroff|halt|reboot|kexec" >&2
+  exit 2
+fi
+aktion=$1
+
+case "$aktion" in
+  poweroff | halt) ;;
+  *) nichts_zu_tun "Bei «$aktion» bekommt die Platine kein Abschaltsignal." ;;
+esac
+
+# Nie im laufenden System: Die Platine würde den Strom trennen, während noch alles läuft
+if (( ! simulieren )); then
+  pid1=""
+  { read -r pid1 < "$PID1"; } 2> /dev/null
+  if [[ "$pid1" != systemd-shutdow* ]]; then
+    echo "zenos-argon: sendet das Abschaltsignal nur beim Herunterfahren. Prüfen: $0 --simulieren $aktion" >&2
+    exit 1
+  fi
+fi
+
+[[ -e "$DIENST" ]] || nichts_zu_tun "zenos-argon.service ist nicht aktiviert."
+[[ -e "$ORIGINAL" ]] && nichts_zu_tun "Das Argon-Originalskript sendet selbst ($ORIGINAL)."
+
+modell=""
+for datei in "${MODELL[@]}"; do
+  if [[ -r "$datei" ]]; then
+    { IFS= read -r -d '' modell < "$datei"; } 2> /dev/null
+    break
+  fi
+done
+[[ "$modell" == "Raspberry Pi 5"* ]] || nichts_zu_tun "Kein Raspberry Pi 5 (${modell:-kein Gerätebaum})."
+[[ -c "$GERAET" ]] || nichts_zu_tun "I2C-Bus 1 fehlt ($GERAET)."
+[[ -r "$GERAET" && -w "$GERAET" ]] || nichts_zu_tun "Kein Zugriff auf $GERAET (mit sudo aufrufen)."
+if ! command -v i2cget > /dev/null || ! command -v i2cset > /dev/null; then
+  nichts_zu_tun "i2cget oder i2cset fehlt (Paket i2c-tools)."
+fi
+
+# Antwortet die Platine? Nur lesen: ein Byte, sonst Register 0x80 (Firmware mit Registern)
+if ! lesen > /dev/null && ! lesen "$REG_LUEFTER" b > /dev/null; then
+  nichts_zu_tun "Kein Gerät antwortet an $ADRESSE."
+fi
+
+if (( simulieren )); then
+  if alt=$(lesen "$REG_LUEFTER" b); then
+    erklaeren "Argon ONE antwortet an $ADRESSE, Register $REG_LUEFTER (Lüfter) = $alt."
+  else
+    erklaeren "Argon ONE antwortet an $ADRESSE, Register $REG_LUEFTER ist nicht lesbar (Firmware ohne Register)."
+  fi
+  erklaeren "Beim Herunterfahren ($aktion): Firmware erkennen wie im Original (Register $REG_LUEFTER um eins" \
+    "ändern, zurücklesen, wiederherstellen), dann Register $REG_STEUERUNG = 1, ohne Register das Byte 0xFF."
+  erklaeren "Simulation: Es wurde nichts gesendet."
+  exit 0
+fi
+
+# Firmware mit Registern? Wie argonregister_checksupport im Original, jeder Fehler heisst «ohne Register»
+register=0
+if alt=$(lesen "$REG_LUEFTER" b); then
+  probe=$(( alt + 1 ))
+  (( probe >= 100 )) && probe=98
+  if schreiben "$REG_LUEFTER" "$probe" b; then
+    sleep 1
+    if zurueck=$(lesen "$REG_LUEFTER" b) && (( zurueck != alt )); then
+      register=1
+      schreiben "$REG_LUEFTER" "$(( alt > 100 ? 100 : alt ))" b && sleep 1
+    fi
+  fi
+fi
+
+# Danach 1 s Pause wie nach jedem Schreiben ins Register im Original: Die Platine übernimmt das Signal in Ruhe
+if (( register )); then
+  echo "zenos-argon: Abschaltsignal an den Argon ONE (Register $REG_STEUERUNG)"
+  if schreiben "$REG_STEUERUNG" 1 b; then
+    sleep 1
+    exit 0
+  fi
+else
+  echo "zenos-argon: Abschaltsignal an den Argon ONE (Byte 0xFF)"
+  if schreiben 0xff c; then
+    sleep 1
+    exit 0
+  fi
+fi
+echo "zenos-argon: Das Abschaltsignal liess sich nicht senden." >&2
+exit 1
