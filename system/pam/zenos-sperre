@@ -1,0 +1,6 @@
+# PAM-Dienst des zenOS-Sperrbildschirms (shell/sperre/Sperre.qml, Quickshell PamContext).
+# Wird direkt aus /opt/zenos/system/pam gelesen (PamContext.configDirectory), nicht nach /etc/pam.d kopiert.
+# Deshalb absolute Pfade: «@include common-auth» würde im eigenen Ordner gesucht.
+# Anmeldung wie beim Login des Systems; Quickshell ruft nur «auth» auf, «account» steht der Vollständigkeit halber da.
+auth     include  /etc/pam.d/common-auth
+account  include  /etc/pam.d/common-account

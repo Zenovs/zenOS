@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# zenos-idle – automatische Sperre bei Inaktivität und vor dem Standby (swayidle).
+#
+#   zenos-idle            läuft als Benutzerdienst zenos-idle.service: startet swayidle und startet es neu,
+#                         sobald sich sperreNachMinuten in ~/.config/zenos/einstellungen.json ändert
+#                         (geprüft alle 10 s, gelesen nur bei geänderter Datei)
+#   zenos-idle minuten    wirksame Sperrzeit in Minuten
+#   zenos-idle pruefen    «<minuten> <standard|einstellung|begrenzt|ungueltig>» (für zen doctor)
+#
+# Leitplanke (Code): Die Sperrzeit liegt immer zwischen 1 und 15 Minuten (Standard 5). Die automatische
+# Sperre lässt sich nicht abschalten. Gesperrt wird immer über «zen lock»: bei Inaktivität (timeout),
+# vor dem Standby (before-sleep; swayidle -w wartet, bis gesperrt ist) und auf Anforderung von logind
+# (lock, z. B. «loginctl lock-session»).
+
+set -euo pipefail
+
+readonly STANDARD=5 MINIMUM=1 MAXIMUM=15 PRUEFINTERVALL=10
+
+selbst=$(readlink -f -- "${BASH_SOURCE[0]}")
+zen=$(dirname -- "$(dirname -- "$selbst")")/zen
+einstellungen=$HOME/.config/zenos/einstellungen.json
+
+meldung() { printf 'zenos-idle: %s\n' "$*" >&2; }
+
+# Gibt «<minuten> <art>» aus. Zahlen (auch als Text) werden gerundet und auf 1–15 begrenzt,
+# alles andere ergibt den Standard.
+auswerten() {
+  python3 - "$einstellungen" "$STANDARD" "$MINIMUM" "$MAXIMUM" <<'PY'
+import json
+import math
+import sys
+
+datei, standard, minimum, maximum = sys.argv[1], *map(int, sys.argv[2:5])
+
+
+def ausgabe(minuten, art):
+    print(minuten, art)
+    sys.exit(0)
+
+
+try:
+    with open(datei, encoding="utf-8") as f:
+        daten = json.load(f)
+except FileNotFoundError:
+    ausgabe(standard, "standard")
+except (OSError, ValueError):
+    ausgabe(standard, "ungueltig")
+
+if not isinstance(daten, dict) or "sperreNachMinuten" not in daten:
+    ausgabe(standard, "standard")
+wert = daten["sperreNachMinuten"]
+zahl = None
+if isinstance(wert, (int, float)) and not isinstance(wert, bool):
+    zahl = float(wert)
+elif isinstance(wert, str):
+    try:
+        zahl = float(wert.strip().replace(",", "."))
+    except ValueError:
+        zahl = None
+if zahl is None or not math.isfinite(zahl):
+    ausgabe(standard, "ungueltig")
+gerundet = math.floor(zahl + 0.5)
+begrenzt = min(maximum, max(minimum, gerundet))
+ausgabe(begrenzt, "einstellung" if begrenzt == gerundet else "begrenzt")
+PY
+}
+
+minuten() {
+  local wert
+  wert=$(auswerten 2>/dev/null) || wert=""
+  wert=${wert%% *}
+  if [[ "$wert" =~ ^[0-9]+$ ]] && (( wert >= MINIMUM && wert <= MAXIMUM )); then
+    printf '%s\n' "$wert"
+  else
+    printf '%s\n' "$STANDARD"
+  fi
+}
+
+# Stand der Einstellungsdatei (ändert sich bei jedem Schreiben, auch beim atomaren Ersetzen)
+stand() { stat -c '%i %s %Y' -- "$einstellungen" 2>/dev/null || printf 'fehlt\n'; }
+
+# Befehl für swayidle (swayidle führt ihn über sh aus, deshalb nur ein geprüfter fester Pfad)
+sperrbefehl() {
+  if [[ -x "$zen" && "$zen" =~ ^[A-Za-z0-9/._-]+$ ]]; then
+    printf '%s lock\n' "$zen"
+  elif command -v zen >/dev/null 2>&1; then
+    printf 'zen lock\n'
+  else
+    return 1
+  fi
+}
+
+laufen() {
+  command -v swayidle >/dev/null 2>&1 || { meldung "swayidle fehlt"; exit 1; }
+  [[ -n "${WAYLAND_DISPLAY:-}" ]] || { meldung "WAYLAND_DISPLAY fehlt (keine grafische Sitzung)"; exit 1; }
+  local sperre minuten jetzt alt neu rc
+  sperre=$(sperrbefehl) || { meldung "zen fehlt"; exit 1; }
+
+  swayidle_pid=""
+  # Beim Beenden (systemctl stop, Ende der Sitzung) swayidle mitnehmen und ohne Fehler enden
+  trap 'if [[ -n "$swayidle_pid" ]]; then kill "$swayidle_pid" 2>/dev/null || true; fi; exit 0' TERM INT HUP
+
+  while true; do
+    minuten=$(minuten)
+    alt=$(stand)
+    printf 'Automatische Sperre nach %s Min.\n' "$minuten"
+    swayidle -w \
+      timeout "$((minuten * 60))" "$sperre" \
+      before-sleep "$sperre" \
+      lock "$sperre" &
+    swayidle_pid=$!
+
+    while kill -0 "$swayidle_pid" 2>/dev/null; do
+      sleep "$PRUEFINTERVALL" &
+      wait $! || true
+      neu=$(stand)
+      [[ "$neu" != "$alt" ]] || continue
+      alt=$neu
+      jetzt=$(minuten)
+      [[ "$jetzt" != "$minuten" ]] || continue
+      printf 'Sperrzeit geändert: %s → %s Min.\n' "$minuten" "$jetzt"
+      kill "$swayidle_pid" 2>/dev/null || true
+      wait "$swayidle_pid" 2>/dev/null || true
+      continue 2
+    done
+
+    rc=0
+    wait "$swayidle_pid" || rc=$?
+    meldung "swayidle hat sich beendet (Exit $rc)"
+    # systemd startet den Dienst neu (Restart=always)
+    exit 1
+  done
+}
+
+case "${1:-}" in
+  "") laufen ;;
+  minuten) minuten ;;
+  pruefen) auswerten ;;
+  -h | --hilfe | --help) sed -n '2,13p' "$selbst" | sed 's/^# \{0,1\}//' ;;
+  *) meldung "unbekannter Befehl «$1» (erlaubt: minuten, pruefen)"; exit 2 ;;
+esac

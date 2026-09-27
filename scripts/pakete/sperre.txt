@@ -1,0 +1,9 @@
+# M7 · Sperrbildschirm
+# 20-pakete installiert die Vereinigung aller Listen; 65-oberflaeche prüft nur nach.
+
+# Automatische Sperre bei Inaktivität und vor dem Standby (zenos-idle)
+swayidle
+# Notfall-Sperre von zen lock, falls die Oberfläche nicht antwortet (bringt /etc/pam.d/swaylock mit)
+swaylock
+# pgrep für zen lock und zenos-1password-sperren
+procps

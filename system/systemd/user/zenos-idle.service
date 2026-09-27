@@ -1,0 +1,19 @@
+# zenOS: automatische Sperre bei Inaktivität und vor dem Standby (swayidle über zenos-idle).
+# Gestartet von zenos-sitzung.target (Wants=). Die Sperrzeit kommt aus ~/.config/zenos/einstellungen.json
+# (1–15 Minuten, Standard 5); zenos-idle übernimmt Änderungen selbst. Nicht abschaltbar: Restart=always.
+[Unit]
+Description=zenOS automatische Sperre (swayidle)
+Documentation=file:///opt/zenos/docs/module/m7.md
+PartOf=zenos-sitzung.target
+After=graphical-session.target
+ConditionEnvironment=WAYLAND_DISPLAY
+ConditionFileIsExecutable=/usr/bin/swayidle
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/opt/zenos/scripts/bin/zenos-idle
+Restart=always
+RestartSec=5
+# Das Ende der Sitzung (labwc shutdown) wartet nicht auf swayidle
+TimeoutStopSec=5
