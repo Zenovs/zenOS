@@ -38,13 +38,16 @@ Singleton {
 
     // Einträge: ein Objekt je Mitteilung (siehe Instantiator unten) mit nummer, app, titel,
     // text, symbol, bild, dringend, aktionen, standardAktion, fluechtig, ankunft (date),
-    // zugestelltUm (date oder null) und zustand ("wartend" | "zugestellt").
+    // zugestelltUm (date oder null), zustand ("wartend" | "zugestellt") und gesehen (bool).
     // wartend: älteste zuerst · zugestellt: neueste zuerst
     property var wartend: []
     property var zugestellt: []
     readonly property int anzahlWartend: wartend.length
     readonly property int anzahlZugestellt: zugestellt.length
     readonly property int anzahl: anzahlWartend + anzahlZugestellt
+    // Zugestellt, aber noch nicht angesehen (Zentrale geöffnet oder Karte angeklickt).
+    // Die Sperre zeigt wartend + ungelesen als Anzahl.
+    readonly property int anzahlUngelesen: zugestellt.filter(e => !e.gesehen).length
 
     // Wirksame Regel: "alle" | "gebuendelt-<N>" | "nur-dringend" | "keine"
     readonly property string modus: {
@@ -104,6 +107,24 @@ Singleton {
         return true;
     }
 
+    // Als angesehen merken (Karte angeklickt). nummer: Nummer der Mitteilung
+    function alsGesehen(nummer: var): void {
+        const entry = zugestellt.find(e => e.nummer === Number(nummer));
+        if (entry && !entry.gesehen) {
+            entry.gesehen = true;
+            _save();
+        }
+    }
+
+    // Alle zugestellten als angesehen merken (Zentrale geöffnet)
+    function alleAlsGesehen(): void {
+        const unseen = zugestellt.filter(e => !e.gesehen);
+        for (const entry of unseen)
+            entry.gesehen = true;
+        if (unseen.length > 0)
+            _save();
+    }
+
     // Eintrag zu einer Nummer oder null
     function eintrag(nummer: var): var {
         const n = Number(nummer);
@@ -156,6 +177,7 @@ Singleton {
             property date ankunft: new Date()
             property var zugestelltUm: null
             property string zustand: ""
+            property bool gesehen: false
 
             // Ersetzt eine App ihre Mitteilung (gleiche Nummer), ändert sich der Inhalt
             readonly property string signatur: (modelData?.summary ?? "") + "\u0001" + (modelData?.body ?? "") + "\u0001" + (modelData?.urgency ?? 0)
@@ -223,7 +245,7 @@ Singleton {
     property bool _slotDue: false
     // Ein Zustand ist zu Ende: Wartendes kommt, sobald die Freigabe nicht mehr zurückhält
     property bool _releasePending: false
-    // Stand vor dem Neuladen: nummer → [zustand, ankunft, zugestelltUm]
+    // Stand vor dem Neuladen: nummer → [zustand, ankunft, zugestelltUm, gesehen (0/1)]
     property var _restored: ({})
 
     function _parse(mode: string): var {
@@ -334,6 +356,7 @@ Singleton {
     function _hold(entry: var): void {
         entry.zustand = "wartend";
         entry.zugestelltUm = null;
+        entry.gesehen = false;
         const list = wartend.filter(e => e !== entry);
         list.push(entry);
         list.sort((a, b) => a.ankunft - b.ankunft);
@@ -350,6 +373,7 @@ Singleton {
         for (const entry of fresh) {
             entry.zustand = "zugestellt";
             entry.zugestelltUm = now;
+            entry.gesehen = false;
         }
         wartend = wartend.filter(e => fresh.indexOf(e) < 0);
         // neueste zuerst: die zuletzt eingetroffene steht oben
@@ -386,6 +410,7 @@ Singleton {
             } else {
                 entry.zustand = "zugestellt";
                 entry.zugestelltUm = saved && saved[2] ? new Date(saved[2]) : entry.ankunft;
+                entry.gesehen = saved ? saved[3] === 1 : false;
                 const list = zugestellt.concat([entry]);
                 list.sort((a, b) => (b.zugestelltUm - a.zugestelltUm) || (b.ankunft - a.ankunft));
                 zugestellt = list;
@@ -426,9 +451,9 @@ Singleton {
     function _save(): void {
         const state = {};
         for (const e of wartend)
-            state[e.nummer] = ["w", e.ankunft.getTime(), 0];
+            state[e.nummer] = ["w", e.ankunft.getTime(), 0, 0];
         for (const e of zugestellt)
-            state[e.nummer] = ["z", e.ankunft.getTime(), e.zugestelltUm ? e.zugestelltUm.getTime() : 0];
+            state[e.nummer] = ["z", e.ankunft.getTime(), e.zugestelltUm ? e.zugestelltUm.getTime() : 0, e.gesehen ? 1 : 0];
         persist.stand = JSON.stringify(state);
     }
 

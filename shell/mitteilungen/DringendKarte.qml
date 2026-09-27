@@ -17,13 +17,18 @@ Karte {
 
     property bool _bereit: false
 
+    // Von Hand geschlossen (×)
+    signal geschlossen
     // Nach dem Ausblenden: aus der Liste nehmen
     signal entfernt
     signal geklickt
     signal aktion(string kennung)
 
     function schliessen(): void {
+        if (!offen)
+            return;
         offen = false;
+        geschlossen();
     }
 
     innenabstand: Theme.a4

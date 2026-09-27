@@ -57,12 +57,24 @@ PanelWindow {
         }
     }
 
+    // Angesehen: alles, was beim Öffnen da ist, und beim Schliessen, was inzwischen dazukam.
+    // Bei Freigabe zeigt die Zentrale keine Inhalte, dann zählt es nicht.
     onOffenChanged: {
+        if (!verborgen)
+            Dienste.Mitteilungen.alleAlsGesehen();
         if (offen) {
             jetzt = new Date();
             liste.positionViewAtBeginning();
             tasten.forceActiveFocus();
         }
+    }
+
+    // Die Liste übernimmt Modelländerungen erst beim nächsten Zeichnen; ein verborgenes Fenster
+    // zeichnet nicht. So verschwinden die Einträge gleich beim Schliessen und nicht erst beim
+    // nächsten Öffnen.
+    onVisibleChanged: {
+        if (!visible)
+            Qt.callLater(() => liste.forceLayout());
     }
 
     Timer {
@@ -264,7 +276,8 @@ PanelWindow {
                         x: Theme.a4
                         width: parent.width - 2 * Theme.a4
                         anchors.verticalCenter: parent.verticalCenter
-                        text: Format.mitteilungen(Dienste.Mitteilungen.anzahl) + " · Inhalte verborgen, solange der Bildschirm geteilt wird"
+                        // Wartende stehen schon darüber; hier nur die zugestellten
+                        text: (Dienste.Mitteilungen.anzahlZugestellt > 0 ? Format.mitteilungen(Dienste.Mitteilungen.anzahlZugestellt) + " · " : "") + "Inhalte verborgen, solange der Bildschirm geteilt wird"
                         color: Theme.gedaempft
                         font.family: Theme.schriftText
                         font.pixelSize: Theme.groesseLabel
