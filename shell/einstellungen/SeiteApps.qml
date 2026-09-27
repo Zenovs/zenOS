@@ -112,7 +112,7 @@ Item {
                 enabled: katalog.gewaehlt.length > 0
                 onClicked: {
                     if (katalog.imTerminal("installieren", katalog.gewaehlt))
-                        Dienste.Oberflaeche.hinweis("Installation läuft im Terminal");
+                        Dienste.Oberflaeche.hinweis("Installation läuft im Terminal", "terminal");
                 }
             }
 
@@ -123,7 +123,7 @@ Item {
                 variante: "sekundaer"
                 onClicked: {
                     if (katalog.imTerminal("aktualisieren", katalog.aktualisierbar))
-                        Dienste.Oberflaeche.hinweis("Aktualisierung läuft im Terminal");
+                        Dienste.Oberflaeche.hinweis("Aktualisierung läuft im Terminal", "terminal");
                 }
             }
         }

@@ -33,14 +33,14 @@ FocusScope {
             return;
         }
         if (katalog.imTerminal("installieren", katalog.gewaehlt)) {
-            Oberflaeche.hinweis("Installation läuft im Terminal");
+            Oberflaeche.hinweis("Installation läuft im Terminal", "terminal");
             fertig();
         }
     }
 
     function spaeter(): void {
         if (!katalog.allesInstalliert)
-            Oberflaeche.hinweis("Apps installierst du später unter Einstellungen → Apps");
+            Oberflaeche.hinweis("Apps installierst du später unter Einstellungen → Apps", "info");
         fertig();
     }
 

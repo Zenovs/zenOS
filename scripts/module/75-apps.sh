@@ -9,8 +9,14 @@
 # aus webapps.json und – wenn 1Password installiert ist – SSH_AUTH_SOCK für den SSH-Agent.
 
 modul_system() {
+  local keyrings=/etc/apt/keyrings
   pakete_sicherstellen ca-certificates curl gpg
-  ordner_sicherstellen /etc/apt/keyrings 0755 root:root
+  # Ein Symlink auf einen Ordner bleibt, wie er ist (ordner_sicherstellen nimmt nur echte Ordner)
+  if [[ ! -L "$keyrings" ]]; then
+    ordner_sicherstellen "$keyrings" 0755 root:root
+  elif [[ ! -d "$keyrings" ]]; then
+    log_warnung "$keyrings zeigt auf keinen Ordner, zen apps kann dort keine Schlüssel ablegen"
+  fi
 }
 
 modul_benutzer() {

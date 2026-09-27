@@ -16,8 +16,8 @@
 #   --fenster  am Ende auf Enter warten (Terminal-Fenster aus der Einrichtung)
 # aktualisieren holt für 1Password (Archiv), coremail und Nubix (GitHub) die neueste Version.
 # Chrome, VS Code und die 1Password-CLI kommen aus Paketquellen und werden über apt aktualisiert.
-# status zeigt, was installiert ist; --netz fragt zusätzlich die GitHub-Releases von coremail und
-# Nubix ab (höchstens alle 12 Stunden, Ergebnis in ~/.cache/zenos/apps.json).
+# status zeigt, was installiert ist; --netz fragt zusätzlich die GitHub-Releases von coremail und Nubix
+# ab (höchstens alle 12 Stunden, nach einem Fehler nach 10 Minuten; Cache ~/.cache/zenos/apps.json).
 # benutzer zieht die Benutzerteile nach (Chrome-Starter über zenos-chrome, Web-Apps, SSH-Agent von
 # 1Password); --melden gibt pro Änderung eine Zeile aus (für install.sh).
 #
@@ -260,13 +260,21 @@ PY
   printf '%s\n' "$summe"
 }
 
-# Ergebnis der letzten Release-Abfrage (coremail, Nubix) aus dem Cache; aktualisiert mit --netz
+# Ergebnis der letzten Release-Abfrage (coremail, Nubix) aus dem Cache; aktualisiert mit --netz.
+# Nach einer erfolgreichen Abfrage wird 12 Stunden nicht mehr gefragt, nach einer gescheiterten
+# (kein Netz, GitHub-Limit) nach 10 Minuten wieder. NETZ_FEHLER nennt die Apps, deren Abfrage in
+# diesem Lauf scheiterte (leer, wenn nicht gefragt wurde).
+NETZ_FEHLER=()
 _netz_pruefen() {
-  local erzwingen=${1:-0} alter app repo
+  local erzwingen=${1:-0} alter grenze app repo
+  local marke=$CACHE/apps.fehler
+  NETZ_FEHLER=()
   mkdir -p -- "$CACHE"
   if [[ "$erzwingen" != 1 && -f "$NETZ_CACHE" ]]; then
+    grenze=43200
+    [[ -f "$marke" ]] && grenze=600
     alter=$(( $(date +%s) - $(stat -c %Y -- "$NETZ_CACHE" 2>/dev/null || echo 0) ))
-    (( alter < 43200 )) && return 0
+    (( alter >= 0 && alter < grenze )) && return 0
   fi
   local -a zeilen=()
   for app in coremail nubix; do
@@ -276,8 +284,10 @@ _netz_pruefen() {
       zeilen+=("$app" "$GH_VERSION" "$GH_ASSET" "$GH_GROESSE")
     else
       zeilen+=("$app" "" "" "-1")
+      NETZ_FEHLER+=("$app")
     fi
   done
+  if (( ${#NETZ_FEHLER[@]} > 0 )); then : > "$marke"; else rm -f -- "$marke"; fi
   python3 - "$NETZ_CACHE" "${zeilen[@]}" <<'PY'
 import json
 import os
@@ -291,7 +301,10 @@ try:
         alt = json.load(f)
 except (OSError, ValueError):
     alt = {}
-daten = {"geprueft": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
+if not isinstance(alt, dict):
+    alt = {}
+# «geprueft» ist der Zeitpunkt der letzten Abfrage, die etwas geliefert hat
+daten = {"geprueft": str(alt.get("geprueft") or "")}
 for i in range(0, len(rest), 4):
     app, version, asset, groesse = rest[i:i + 4]
     if groesse == "-1":
@@ -300,6 +313,7 @@ for i in range(0, len(rest), 4):
             daten[app] = alt[app]
         continue
     daten[app] = {"version": version, "asset": asset, "groesse": int(groesse or 0)}
+    daten["geprueft"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
 fd, tmp = tempfile.mkstemp(dir=os.path.dirname(ziel), prefix=".apps.", suffix=".tmp")
 with os.fdopen(fd, "w", encoding="utf-8") as f:
     json.dump(daten, f, ensure_ascii=False)
@@ -411,9 +425,18 @@ _befehl_status() {
   [[ -S "$AGENT_SOCKET" ]] && agent=true
   [[ -f "$AGENT_ENV" ]] && konfiguriert=true
   if (( als_json )); then
-    printf '],"agent":{"konfiguriert":%s,"socket":%s},"geprueft":%s}\n' "$konfiguriert" "$agent" \
-      "$(_json_text "$( [[ -f "$NETZ_CACHE" ]] && python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("geprueft",""))' "$NETZ_CACHE" 2>/dev/null || true)")"
-  elif _installiert 1password >/dev/null; then
+    # netzFehler: Die Release-Abfrage dieses Aufrufs ist gescheitert (die Oberfläche zeigt einen Hinweis)
+    printf '],"agent":{"konfiguriert":%s,"socket":%s},"geprueft":%s,"netzFehler":%s}\n' "$konfiguriert" "$agent" \
+      "$(_json_text "$( [[ -f "$NETZ_CACHE" ]] && python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("geprueft",""))' "$NETZ_CACHE" 2>/dev/null || true)")" \
+      "$( (( ${#NETZ_FEHLER[@]} > 0 )) && echo true || echo false)"
+    return 0
+  fi
+  if (( ${#NETZ_FEHLER[@]} > 0 )); then
+    local namen=""
+    for app in "${NETZ_FEHLER[@]}"; do namen+="${namen:+, }$(_name "$app")"; done
+    printf '\nRelease-Angaben von GitHub nicht abrufbar (%s), gezeigt ist der letzte bekannte Stand.\n' "$namen"
+  fi
+  if _installiert 1password >/dev/null; then
     if [[ "$agent" == true ]]; then
       printf '\nSSH-Agent von 1Password: läuft (%s)\n' "${AGENT_SOCKET/#"$HOME"/"~"}"
     else
@@ -489,6 +512,18 @@ _sudo() { sudo -p "[sudo] Passwort für %p: " "$@"; }
 
 _root_tmp() { _sudo mktemp -d /var/tmp/zenos-apps.XXXXXX; }
 
+# Legt einen Ordner als root an (0755), nur wenn er fehlt. Ein Symlink auf einen Ordner bleibt, wie er
+# ist. Nie «install -D»: uutils coreutils (Ubuntu 26.04) ersetzt dabei einen Symlink im Zielpfad durch
+# einen leeren Ordner.
+_root_ordner() {
+  _sudo test -d "$1" && return 0
+  if _sudo test -e "$1" || _sudo test -L "$1"; then
+    meldung "$1 ist kein Ordner – nichts geändert"
+    return 1
+  fi
+  _sudo mkdir -p -m 0755 -- "$1"
+}
+
 # Lädt einen Schlüssel, prüft den Fingerabdruck des Hauptschlüssels und legt ihn als Keyring ab.
 _schluessel() {
   local url=$1 fpr=$2 ziel=$3 tmp gefunden
@@ -508,7 +543,8 @@ _schluessel() {
   fi
   gpg --homedir "$tmp" --batch --yes --dearmor -o "$tmp/keyring.gpg" "$tmp/schluessel.asc"
   if ! _sudo cmp -s -- "$tmp/keyring.gpg" "$ziel" 2>/dev/null; then
-    _sudo install -D -m 0644 -o root -g root -- "$tmp/keyring.gpg" "$ziel"
+    _root_ordner "$(dirname -- "$ziel")"
+    _sudo install -m 0644 -o root -g root -- "$tmp/keyring.gpg" "$ziel"
     info "Schlüssel $ziel (Fingerabdruck geprüft)"
   fi
   rm -rf -- "$tmp"
@@ -520,7 +556,8 @@ _root_datei() {
   tmp=$(mktemp "${TMPDIR:-/tmp}/zenos-apps-datei.XXXXXX")
   cat > "$tmp"
   if ! _sudo cmp -s -- "$tmp" "$ziel" 2>/dev/null; then
-    _sudo install -D -m 0644 -o root -g root -- "$tmp" "$ziel"
+    _root_ordner "$(dirname -- "$ziel")"
+    _sudo install -m 0644 -o root -g root -- "$tmp" "$ziel"
     info "Datei $ziel"
   fi
   rm -f -- "$tmp"
@@ -540,7 +577,7 @@ EOF
 
 _schritt_quellen() {
   local app
-  _sudo install -d -m 0755 -o root -g root "$KEYRINGS"
+  _root_ordner "$KEYRINGS"
   for app in "$@"; do
     case "$app" in
       chrome)
@@ -670,7 +707,7 @@ _schritt_1password() {
   # after-install.sh legt den Starter mit xdg-desktop-menu an. Das bricht ohne einen Ordner
   # desktop-directories ab, den Ubuntu Server ohne Desktop nicht hat.
   if [[ ! -d /usr/share/desktop-directories && ! -d /usr/local/share/desktop-directories ]]; then
-    _sudo install -d -m 0755 -o root -g root /usr/local/share/desktop-directories
+    _root_ordner /usr/local/share/desktop-directories
     info "Ordner /usr/local/share/desktop-directories (für den Starter von 1Password)"
   fi
   if ! _sudo "$OP_ZIEL/after-install.sh"; then

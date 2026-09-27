@@ -88,6 +88,9 @@ Item {
             fehlgeschlagen = false;
             if (vomNetz)
                 _netzDa = true;
+            // Die Liste bleibt beim letzten bekannten Stand; zenos-apps fragt nach 10 Minuten wieder
+            if (vomNetz && d.netzFehler === true)
+                Oberflaeche.hinweis("Release-Angaben von GitHub nicht abrufbar (coremail, Nubix)", "warnung");
         } catch (e) {
             if (!geladen)
                 fehlgeschlagen = true;
