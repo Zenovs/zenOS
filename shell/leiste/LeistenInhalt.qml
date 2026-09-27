@@ -30,13 +30,12 @@ Item {
         return systemKnopf.mapToItem(null, systemKnopf.width, 0).x;
     }
 
-    // Modus- bzw. Zustandswahl unter dem Chip (modi/Umschalter.qml). Ein zweiter Klick schliesst;
-    // ist die Wahl auf einem anderen Bildschirm offen, wandert sie hierher.
-    // wahlAnker und zentraleBildschirm stellt Oberflaeche (M3) bereit; ohne sie bleibt es beim Umschalten.
+    // Modus- bzw. Zustandswahl unter dem Chip (modi/Umschalter.qml, Anker Oberflaeche.wahlAnker).
+    // Ein zweiter Klick schliesst. Ist die Wahl mittig (Super+M/Z, ohne Anker) oder auf einem anderen
+    // Bildschirm offen, wandert sie unter diesen Chip.
     function _toggleChoice(kind: string, chip: Item): void {
         const isOpen = kind === "modus" ? Oberflaeche.modusWahlOffen : Oberflaeche.zustandWahlOffen;
-        const hasAnchor = "wahlAnker" in Oberflaeche;
-        const anchor = hasAnchor ? Oberflaeche.wahlAnker : null;
+        const anchor = Oberflaeche.wahlAnker;
         const close = () => {
             if (kind === "modus")
                 Oberflaeche.modusWahlOffen = false;
@@ -45,14 +44,13 @@ Item {
         };
         if (isOpen) {
             close();
-            if (!anchor || anchor.bildschirm === bildschirm)
+            if (anchor && anchor.bildschirm === bildschirm)
                 return;
         }
-        if (hasAnchor)
-            Oberflaeche.wahlAnker = {
-                bildschirm: bildschirm,
-                x: chip.mapToItem(null, 0, 0).x
-            };
+        Oberflaeche.wahlAnker = {
+            bildschirm: bildschirm,
+            x: chip.mapToItem(null, 0, 0).x
+        };
         // Wahl und Zentrale beanspruchen beide die Tastatur: nur eine von beiden offen
         Oberflaeche.zentraleOffen = false;
         if (kind === "modus")
@@ -61,12 +59,10 @@ Item {
             Oberflaeche.zustandWahlOffen = true;
     }
 
-    // Zentrale auf diesem Bildschirm offen (leerer Name = erster Bildschirm)
+    // Zentrale auf diesem Bildschirm offen (Oberflaeche.zentraleBildschirm; leer = erster Bildschirm)
     readonly property bool _centerHere: {
         if (!Oberflaeche.zentraleOffen)
             return false;
-        if (!("zentraleBildschirm" in Oberflaeche))
-            return true;
         const name = Oberflaeche.zentraleBildschirm !== "" ? Oberflaeche.zentraleBildschirm : (Quickshell.screens[0]?.name ?? "");
         return name === bildschirm;
     }
@@ -76,8 +72,7 @@ Item {
             Oberflaeche.zentraleOffen = false;
             return;
         }
-        if ("zentraleBildschirm" in Oberflaeche)
-            Oberflaeche.zentraleBildschirm = bildschirm;
+        Oberflaeche.zentraleBildschirm = bildschirm;
         Oberflaeche.modusWahlOffen = false;
         Oberflaeche.zustandWahlOffen = false;
         Oberflaeche.zentraleOffen = true;
