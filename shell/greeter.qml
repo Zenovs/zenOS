@@ -1,4 +1,5 @@
 //@ pragma IconTheme Adwaita
+//@ pragma Env QT_NO_XDG_DESKTOP_PORTAL=1
 pragma ComponentBehavior: Bound
 
 import QtQuick
