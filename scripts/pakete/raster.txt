@@ -1,0 +1,9 @@
+# M9 · Raster und Bildschirme
+# Fenstermanager mit Regionen (SnapToRegion) und Bildschirm-Profile
+labwc
+kanshi
+# Lautstärketasten (wpctl)
+wireplumber
+# zenos-labwc und zenos-kanshi (Schema-Prüfung der Raster und Profile)
+python3
+python3-jsonschema

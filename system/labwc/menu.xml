@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  zenOS: Menüs von labwc (~/.config/labwc/menu.xml verweist hierher). Bewusst kurz: Die Zentrale ist
+  das Befehlsfeld (Super+Leertaste). root-menu erscheint beim Rechtsklick auf einen freien Hintergrund,
+  client-menu beim Rechtsklick auf eine Titelzeile. labwc startet die Befehle ohne Shell.
+-->
+<openbox_menu>
+
+  <menu id="root-menu" label="zenOS">
+    <item label="Befehlsfeld">
+      <action name="Execute" command="/opt/zenos/scripts/bin/zenos-ipc befehlsfeld oeffnen" />
+    </item>
+    <item label="Terminal">
+      <action name="Execute" command="kitty" />
+    </item>
+    <item label="Einstellungen">
+      <action name="Execute" command="/opt/zenos/scripts/bin/zenos-ipc einstellungen oeffnen ''" />
+    </item>
+    <separator />
+    <item label="Sperren">
+      <action name="Execute" command="/opt/zenos/scripts/zen lock" />
+    </item>
+  </menu>
+
+  <menu id="client-menu">
+    <item label="Maximieren">
+      <action name="ToggleMaximize" />
+    </item>
+    <item label="Linke Hälfte">
+      <action name="SnapToEdge" direction="left" />
+    </item>
+    <item label="Rechte Hälfte">
+      <action name="SnapToEdge" direction="right" />
+    </item>
+    <item label="Aus dem Raster lösen">
+      <action name="UnSnap" />
+    </item>
+    <item label="Auf den anderen Bildschirm">
+      <action name="MoveToOutput" direction="right" wrap="yes" />
+    </item>
+    <item label="Immer im Vordergrund">
+      <action name="ToggleAlwaysOnTop" />
+    </item>
+    <separator />
+    <item label="Schliessen">
+      <action name="Close" />
+    </item>
+  </menu>
+
+</openbox_menu>

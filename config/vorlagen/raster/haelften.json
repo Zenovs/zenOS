@@ -1,0 +1,9 @@
+{
+  "name": "Hälften",
+  "kurz": "2er",
+  "abstand": 8,
+  "bereiche": [
+    { "id": "links", "x": 0, "y": 0, "b": 50, "h": 100 },
+    { "id": "rechts", "x": 50, "y": 0, "b": 50, "h": 100 }
+  ]
+}

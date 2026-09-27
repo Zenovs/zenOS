@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- @@KOPF@@ -->
+<!--
+  zenOS (Modul M9): scripts/bin/zenos-labwc erzeugt ~/.config/labwc/rc.xml aus system/labwc/rc.xml.in.
+  Schrift, Radius und Lücke kommen aus shell/theme/tokens.json, Regionen und Super+1 … Super+4 aus dem
+  aktiven Raster. Farben der Titelzeilen, Menüs und der Einrast-Vorschau stehen in
+  ~/.config/labwc/themerc-override (zenos-thema). labwc startet die Befehle ohne Shell (Argumentliste).
+-->
+<labwc_config>
+
+  <core>
+    <decoration>server</decoration>
+    <!-- Lücke zwischen Fenstern und zum Rand: «abstand» des aktiven Rasters -->
+    <gap>@@ABSTAND@@</gap>
+  </core>
+
+  <!-- Ruhig: neue Fenster mittig (leicht versetzt), Fokus nur per Klick, kein Hochholen beim Fokus -->
+  <placement>
+    <policy>cascade</policy>
+  </placement>
+  <focus>
+    <followMouse>no</followMouse>
+    <raiseOnFocus>no</raiseOnFocus>
+  </focus>
+
+  <!-- Titelzeile 34 px (mit themerc-override), Radius oben, nur der Schliessen-Knopf -->
+  <theme>
+    <cornerRadius>@@RADIUS@@</cornerRadius>
+    <dropShadows>no</dropShadows>
+    <titlebar>
+      <layout>:close</layout>
+      <showTitle>yes</showTitle>
+    </titlebar>
+    <font place="ActiveWindow">
+      <name>@@SCHRIFT_TITEL@@</name>
+      <size>@@GROESSE_TITEL@@</size>
+    </font>
+    <font place="InactiveWindow">
+      <name>@@SCHRIFT_TITEL@@</name>
+      <size>@@GROESSE_TITEL@@</size>
+    </font>
+    <font place="MenuHeader">
+      <name>@@SCHRIFT_TEXT@@</name>
+      <size>@@GROESSE_TEXT@@</size>
+    </font>
+    <font place="MenuItem">
+      <name>@@SCHRIFT_TEXT@@</name>
+      <size>@@GROESSE_TEXT@@</size>
+    </font>
+    <font place="OnScreenDisplay">
+      <name>@@SCHRIFT_TEXT@@</name>
+      <size>@@GROESSE_TEXT@@</size>
+    </font>
+  </theme>
+
+  <windowSwitcher preview="yes" outlines="yes" allWorkspaces="no">
+    <osd show="yes" style="classic" output="focused" />
+    <fields>
+      <field content="icon" width="5%" />
+      <field content="desktop_entry_name" width="30%" />
+      <field content="title" width="65%" />
+    </fields>
+  </windowSwitcher>
+
+  <!--
+    Einrasten mit der Maus: Fenster an den Rand ziehen (Vorschau nach 500 ms, oben = maximieren) oder
+    während des Ziehens eine Taste (Super, Ctrl, Alt, Shift) drücken und halten, dann zeigt labwc die
+    Bereiche des Rasters. Ist die Taste schon beim Anfassen gedrückt (Super+Ziehen), erscheinen sie
+    erst, wenn sie losgelassen und wieder gedrückt wird.
+  -->
+  <snapping>
+    <range inner="10" outer="10" />
+    <cornerRange>50</cornerRange>
+    <overlay enabled="yes">
+      <delay inner="500" outer="500" />
+    </overlay>
+    <topMaximize>yes</topMaximize>
+    <!-- never: eingerastete Fenster behalten die runden Ecken (Entwurf 2); labwc macht sie sonst eckig -->
+    <notifyClient>never</notifyClient>
+  </snapping>
+
+  <!-- r1 … rN: Bereiche des aktiven Rasters in Prozent der nutzbaren Fläche -->
+  <regions>
+    @@REGIONEN@@
+  </regions>
+
+  <!-- Tastenkürzel (Liste in docs/module/m9.md). Super+Oben/Unten, Super+T, Super+D, Super+C und Super+V bleiben für kitty frei. -->
+  <keyboard>
+    <keybind key="W-space">
+      <action name="Execute" command="@@BIN@@/zenos-ipc befehlsfeld umschalten" />
+    </keybind>
+    <keybind key="W-l">
+      <action name="Execute" command="@@ZEN@@ lock" />
+    </keybind>
+    <keybind key="W-m">
+      <action name="Execute" command="@@BIN@@/zenos-ipc modus waehlen" />
+    </keybind>
+    <keybind key="W-z">
+      <action name="Execute" command="@@BIN@@/zenos-ipc zustand waehlen" />
+    </keybind>
+
+    <!-- Super+1 … Super+4: Bereiche des aktiven Rasters (nur so viele, wie es hat) -->
+    @@RASTER_TASTEN@@
+
+    <!--
+      Linke und rechte Hälfte, unabhängig vom Raster: labwc-Kanten statt fester Regionen, damit beim Ziehen
+      nur die Bereiche des Rasters erscheinen (labwc wählt die Region mit der nächsten Mitte). Zweimal
+      gedrückt wandert das Fenster auf den Bildschirm daneben, falls es einen gibt.
+    -->
+    <keybind key="W-Left">
+      <action name="SnapToEdge" direction="left" />
+    </keybind>
+    <keybind key="W-Right">
+      <action name="SnapToEdge" direction="right" />
+    </keybind>
+    <keybind key="W-Return">
+      <action name="ToggleMaximize" />
+    </keybind>
+    <keybind key="W-S-Left">
+      <action name="MoveToOutput" direction="left" wrap="yes" />
+    </keybind>
+    <keybind key="W-S-Right">
+      <action name="MoveToOutput" direction="right" wrap="yes" />
+    </keybind>
+    <keybind key="W-q">
+      <action name="Close" />
+    </keybind>
+    <keybind key="A-Tab">
+      <action name="NextWindow" />
+    </keybind>
+    <keybind key="A-S-Tab">
+      <action name="PreviousWindow" />
+    </keybind>
+
+    <keybind key="C-A-t">
+      <action name="Execute" command="kitty" />
+    </keybind>
+    <keybind key="W-S-s">
+      <action name="Execute" command="@@BIN@@/zenos-bildschirmfoto" />
+    </keybind>
+    <keybind key="Print">
+      <action name="Execute" command="@@BIN@@/zenos-bildschirmfoto" />
+    </keybind>
+    <keybind key="W-S-c">
+      <action name="Execute" command="@@BIN@@/zenos-pipette" />
+    </keybind>
+    <keybind key="W-comma">
+      <action name="Execute" command="@@BIN@@/zenos-ipc einstellungen oeffnen ''" />
+    </keybind>
+
+    <!-- Lautstärke (PipeWire über wpctl), auch bei gesperrtem Bildschirm -->
+    <keybind key="XF86AudioRaiseVolume" allowWhenLocked="yes">
+      <action name="Execute" command="wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+" />
+    </keybind>
+    <keybind key="XF86AudioLowerVolume" allowWhenLocked="yes">
+      <action name="Execute" command="wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-" />
+    </keybind>
+    <keybind key="XF86AudioMute" allowWhenLocked="yes">
+      <action name="Execute" command="wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle" />
+    </keybind>
+    <keybind key="XF86AudioMicMute" allowWhenLocked="yes">
+      <action name="Execute" command="wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle" />
+    </keybind>
+  </keyboard>
+
+</labwc_config>

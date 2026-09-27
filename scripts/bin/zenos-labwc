@@ -1,0 +1,534 @@
+#!/usr/bin/env python3
+"""zenos-labwc: labwc-Konfiguration (~/.config/labwc/rc.xml) aus system/labwc/rc.xml.in erzeugen.
+
+Aufruf:
+  zenos-labwc [--raster ID | --profil NAME | --profil-hex HEX] [--melden] [--kein-neuladen]
+  zenos-labwc --ausgeben [--raster ID | --profil NAME]   rc.xml auf stdout, nichts schreiben
+  zenos-labwc --pruefen                                  Exit 0, wenn rc.xml aktuell ist, sonst 1
+  zenos-labwc --status                                   aktives Raster und Profil als JSON
+
+Das aktive Raster kommt aus --raster, sonst aus --profil (Bildschirm-Profil in bildschirme.json;
+der aktive Modus kann pro Profil ein eigenes Raster festlegen), sonst aus laufzeit.json («raster»),
+sonst gilt 4er-grid. Mit --raster oder --profil wird das Ergebnis in laufzeit.json festgehalten
+(über zenos-konfig). --profil-hex nimmt den Profilnamen als Hex-Kodierung (UTF-8); so ruft kanshi
+zenos-labwc auf, weil kanshi «exec» über /bin/sh ausführt und Namen dort nie auftauchen dürfen.
+Raster liegen unter ~/.config/zenos/raster/<id>.json, fehlende Vorlagen kommen
+aus config/vorlagen/raster/. Werte für Schrift, Radius und Lücke stammen aus shell/theme/tokens.json.
+
+rc.xml wird nur bei einer Änderung geschrieben; läuft labwc, lädt es die Konfiguration dann neu
+(wie «labwc --reconfigure»). Eine fremde rc.xml wird einmal nach rc.xml.vor-zenos gesichert.
+--melden gibt pro Änderung eine Zeile aus (für install.sh).
+
+Exit: 0 in Ordnung · 1 Raster oder Profil ungültig bzw. nicht gefunden · 2 Aufruf- oder Systemfehler.
+"""
+
+import fcntl
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+import xml.etree.ElementTree as ET
+
+CODE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+BIN = os.path.join(CODE, "scripts", "bin")
+TEMPLATE = os.path.join(CODE, "system", "labwc", "rc.xml.in")
+TOKENS = os.path.join(CODE, "shell", "theme", "tokens.json")
+SCHEMA = os.path.join(CODE, "config", "schema", "raster.schema.json")
+TEMPLATES_RASTER = os.path.join(CODE, "config", "vorlagen", "raster")
+TEMPLATE_SCREENS = os.path.join(CODE, "config", "vorlagen", "bildschirme.json")
+
+HOME = os.path.expanduser("~")
+CONFIG = os.path.join(HOME, ".config", "zenos")
+STATE = os.path.join(HOME, ".local", "state", "zenos")
+RUNTIME_STATE = os.path.join(STATE, "laufzeit.json")
+LABWC = os.path.join(HOME, ".config", "labwc")
+RC_XML = os.path.join(LABWC, "rc.xml")
+
+DEFAULT_RASTER = "4er-grid"
+MARKER = "Erzeugt von zenos-labwc"
+ID_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+SAFE_PATH = re.compile(r"^/[A-Za-z0-9/._+-]*$")
+PLACEHOLDER = re.compile(r"@@[A-Z_]+@@")
+MAX_KEYS = 4
+
+
+class Fehler(Exception):
+    """Meldung für stderr; code 1 = ungültig/nicht gefunden, 2 = Aufruf/System."""
+
+    def __init__(self, text, code=1):
+        super().__init__(text)
+        self.code = code
+
+
+def warn(text):
+    print(f"zenos-labwc: {text}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------- Dateien
+
+def read_json(path, default=None):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return default
+    except (OSError, ValueError) as e:
+        raise Fehler(f"{shown(path)} nicht lesbar ({type(e).__name__})") from None
+
+
+def shown(path):
+    """Pfad für Meldungen: Home als ~."""
+    return "~" + path[len(HOME):] if path.startswith(HOME + os.sep) else path
+
+
+def write_if_changed(path, content, mode=0o644):
+    """Schreibt atomar, nur wenn sich der Inhalt ändert. True bei Änderung."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            if f.read() == content:
+                return False
+    except FileNotFoundError:
+        pass
+    except (OSError, UnicodeDecodeError):
+        pass
+    folder = os.path.dirname(path)
+    os.makedirs(folder, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".zenos-labwc-", dir=folder)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return True
+
+
+def backup_foreign(path):
+    """Sichert eine rc.xml, die nicht von zenOS stammt, einmal nach rc.xml.vor-zenos. True, wenn gesichert."""
+    if not os.path.lexists(path):
+        return False
+    if not os.path.islink(path):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                if MARKER in f.read(2048):
+                    return False
+        except OSError:
+            pass
+    target = path + ".vor-zenos"
+    if os.path.lexists(target):
+        target += time.strftime(".%Y%m%d-%H%M%S")
+    os.rename(path, target)
+    warn(f"eigene {shown(path)} gesichert nach {shown(target)}")
+    return True
+
+
+class Lock:
+    """Verhindert zwei gleichzeitige Läufe (kanshi und Oberfläche können zugleich aufrufen)."""
+
+    def __enter__(self):
+        runtime = os.environ.get("XDG_RUNTIME_DIR", "")
+        folder = os.path.join(runtime, "zenos") if runtime and os.path.isdir(runtime) else STATE
+        os.makedirs(folder, mode=0o700, exist_ok=True)
+        self.file = open(os.path.join(folder, "labwc.lock"), "a", encoding="utf-8")  # noqa: SIM115
+        fcntl.flock(self.file, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *_):
+        fcntl.flock(self.file, fcntl.LOCK_UN)
+        self.file.close()
+
+
+# ---------------------------------------------------------------- Raster
+
+_validator = None
+
+
+def raster_validator():
+    """jsonschema-Prüfer für Raster oder None, wenn python3-jsonschema fehlt."""
+    global _validator
+    if _validator is not None:
+        return _validator or None
+    try:
+        import jsonschema  # noqa: PLC0415
+    except ImportError:
+        _validator = False
+        return None
+    schema = read_json(SCHEMA)
+    if not isinstance(schema, dict):
+        raise Fehler("config/schema/raster.schema.json fehlt", 2)
+    cls = jsonschema.validators.validator_for(schema)
+    _validator = cls(schema)
+    return _validator
+
+
+def check_raster(data):
+    """Liste von Befunden (ohne Inhalte). Leer = gültig."""
+    if not isinstance(data, dict):
+        return ["kein JSON-Objekt"]
+    problems = []
+    validator = raster_validator()
+    if validator is not None:
+        for e in sorted(validator.iter_errors(data), key=lambda e: [str(p) for p in e.absolute_path]):
+            where = "/".join(str(p) for p in e.absolute_path) or "(Wurzel)"
+            problems.append(f"{where}: {e.validator}")
+    areas = data.get("bereiche")
+    if not isinstance(areas, list) or not areas:
+        if not problems:
+            problems.append("bereiche: fehlt")
+        return problems
+    seen = set()
+    for i, a in enumerate(areas):
+        if not isinstance(a, dict):
+            problems.append(f"bereiche/{i}: kein Objekt")
+            continue
+        values = [a.get(k) for k in ("x", "y", "b", "h")]
+        if not all(isinstance(v, int) and not isinstance(v, bool) for v in values):
+            problems.append(f"bereiche/{i}: x, y, b, h müssen ganze Prozente sein")
+            continue
+        x, y, b, h = values
+        if x < 0 or y < 0 or b < 1 or h < 1 or x + b > 100 or y + h > 100:
+            problems.append(f"bereiche/{i}: ragt über den Bildschirm hinaus")
+        if a.get("id") in seen:
+            problems.append(f"bereiche/{i}: id doppelt")
+        seen.add(a.get("id"))
+    gap = data.get("abstand")
+    if gap is not None and not (isinstance(gap, int) and not isinstance(gap, bool) and 0 <= gap <= 64):
+        problems.append("abstand: 0 bis 64 px")
+    return problems
+
+
+def raster_path(raster_id):
+    """Pfad der Raster-Datei (eigene vor Vorlage) oder None."""
+    for folder in (os.path.join(CONFIG, "raster"), TEMPLATES_RASTER):
+        path = os.path.join(folder, raster_id + ".json")
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def load_raster(raster_id):
+    if not isinstance(raster_id, str) or len(raster_id) > 64 or not ID_PATTERN.match(raster_id):
+        raise Fehler("ungültige Raster-ID (nur a-z, 0-9 und «-»)", 2)
+    path = raster_path(raster_id)
+    if path is None:
+        raise Fehler(f"Raster «{raster_id}» nicht gefunden")
+    data = read_json(path)
+    problems = check_raster(data)
+    if problems:
+        for p in problems:
+            warn(f"{shown(path)}: {p}")
+        raise Fehler(f"Raster «{raster_id}» ist ungültig")
+    return data
+
+
+# ---------------------------------------------------------------- Profile und Laufzeit
+
+def runtime_state():
+    try:
+        data = read_json(RUNTIME_STATE, {})
+    except Fehler:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def screen_profiles():
+    """Profile aus bildschirme.json (sonst Vorlage). Ungültige Einträge werden übersprungen."""
+    path = os.path.join(CONFIG, "bildschirme.json")
+    try:
+        data = read_json(path)
+    except Fehler as e:
+        warn(f"{e}; es gilt die Vorlage")
+        data = None
+    if data is None:
+        data = read_json(TEMPLATE_SCREENS, {})
+    profiles = data.get("profile") if isinstance(data, dict) else None
+    return [p for p in profiles if isinstance(p, dict) and isinstance(p.get("name"), str)] if isinstance(profiles, list) else []
+
+
+def valid_id(value):
+    return isinstance(value, str) and len(value) <= 64 and bool(ID_PATTERN.match(value))
+
+
+def raster_for_profile(name, state):
+    """Raster für ein Bildschirm-Profil: Eintrag des aktiven Modus, sonst des Profils, sonst None."""
+    profile = next((p for p in screen_profiles() if p["name"] == name), None)
+    if profile is None:
+        raise Fehler("Bildschirm-Profil nicht gefunden (bildschirme.json)")
+    candidates = []
+    mode_id = state.get("modus")
+    if valid_id(mode_id):
+        try:
+            mode = read_json(os.path.join(CONFIG, "modi", mode_id + ".json"), {})
+        except Fehler:
+            mode = {}
+        mapping = mode.get("raster") if isinstance(mode, dict) else None
+        if isinstance(mapping, dict):
+            candidates += [mapping.get(name), mapping.get("Standard")]
+    mapping = profile.get("raster") if isinstance(profile.get("raster"), dict) else {}
+    outputs = profile.get("ausgaenge") if isinstance(profile.get("ausgaenge"), list) else []
+    candidates += [mapping.get(o) for o in outputs if isinstance(o, str)] + [mapping.get("*")]
+    for c in candidates:
+        if valid_id(c) and raster_path(c):
+            return c
+    return None
+
+
+def persist(changes):
+    """Schreibt Schlüssel nach laufzeit.json (über zenos-konfig, das sperrt und prüft)."""
+    konfig = os.path.join(BIN, "zenos-konfig")
+    try:
+        result = subprocess.run([konfig, "aendere", "laufzeit"], input=json.dumps(changes, ensure_ascii=False),
+                                text=True, capture_output=True, timeout=20, check=False)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        warn(f"laufzeit.json nicht aktualisiert ({type(e).__name__})")
+        return False
+    if result.returncode != 0:
+        warn("laufzeit.json nicht aktualisiert: " + (result.stderr.strip().splitlines() or ["?"])[-1])
+        return False
+    return True
+
+
+# ---------------------------------------------------------------- rc.xml
+
+def tokens():
+    t = read_json(TOKENS, {})
+    return t if isinstance(t, dict) else {}
+
+
+def pt(px):
+    """labwc (Pango) rechnet Schriftgrössen in Punkt; 96 dpi: 12 px = 9 pt."""
+    return max(6, round(px * 72 / 96))
+
+
+def xml_text(value):
+    return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
+def render(raster_id, raster):
+    try:
+        with open(TEMPLATE, encoding="utf-8") as f:
+            template = f.read()
+    except OSError as e:
+        raise Fehler(f"Vorlage system/labwc/rc.xml.in nicht lesbar ({e.strerror})", 2) from None
+    t = tokens()
+    font = t.get("schrift", {}) if isinstance(t.get("schrift"), dict) else {}
+    sizes = font.get("groessen", {}) if isinstance(font.get("groessen"), dict) else {}
+    window = t.get("fenster", {}) if isinstance(t.get("fenster"), dict) else {}
+    radius = t.get("radius", {}) if isinstance(t.get("radius"), dict) else {}
+
+    gap = raster.get("abstand", window.get("rasterAbstand", 8))
+    for path in (BIN, CODE):
+        if not SAFE_PATH.match(path):
+            raise Fehler("Pfad des zenOS-Codes enthält ungewöhnliche Zeichen", 2)
+
+    areas = raster["bereiche"]
+    regions = [f'<region name="r{i}" x="{a["x"]}%" y="{a["y"]}%" width="{a["b"]}%" height="{a["h"]}%" />'
+               for i, a in enumerate(areas, 1)]
+    keys = []
+    for i in range(1, min(MAX_KEYS, len(areas)) + 1):
+        keys += [f'<keybind key="W-{i}">', f'  <action name="SnapToRegion" region="r{i}" />', "</keybind>"]
+
+    blocks = {"@@REGIONEN@@": regions, "@@RASTER_TASTEN@@": keys}
+    values = {
+        "@@KOPF@@": f"{MARKER} aus system/labwc/rc.xml.in, Raster {raster_id}. Nicht von Hand ändern: "
+                    "zenos-labwc schreibt die Datei beim nächsten Rasterwechsel neu.",
+        "@@ABSTAND@@": str(int(gap)),
+        "@@RADIUS@@": str(int(radius.get("fenster", 12))),
+        "@@SCHRIFT_TITEL@@": xml_text(font.get("mono", "Geist Mono")),
+        "@@GROESSE_TITEL@@": str(pt(sizes.get("klein", 12))),
+        "@@SCHRIFT_TEXT@@": xml_text(font.get("text", "Geist")),
+        "@@GROESSE_TEXT@@": str(pt(sizes.get("label", 13))),
+        "@@BIN@@": BIN,
+        "@@ZEN@@": os.path.join(CODE, "scripts", "zen"),
+    }
+    lines = []
+    for line in template.splitlines():
+        stripped = line.strip()
+        if stripped in blocks:
+            indent = line[: len(line) - len(line.lstrip())]
+            lines += [indent + b for b in blocks[stripped]]
+            continue
+        for key, value in values.items():
+            line = line.replace(key, value)
+        lines.append(line)
+    text = "\n".join(lines) + "\n"
+    rest = PLACEHOLDER.findall(text)
+    if rest:
+        raise Fehler(f"Vorlage enthält unbekannte Platzhalter: {', '.join(sorted(set(rest)))}", 2)
+    try:
+        root = ET.fromstring(text.encode("utf-8"))
+    except ET.ParseError as e:
+        raise Fehler(f"erzeugte rc.xml ist kein gültiges XML ({e})", 2) from None
+    if root.tag != "labwc_config":
+        raise Fehler("erzeugte rc.xml hat kein <labwc_config>", 2)
+    return text
+
+
+# ---------------------------------------------------------------- labwc neu laden
+
+def own_labwc():
+    uid = os.getuid()
+    pids = []
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            if os.stat(f"/proc/{entry}").st_uid != uid:
+                continue
+            with open(f"/proc/{entry}/comm", encoding="utf-8") as f:
+                if f.read().strip() == "labwc":
+                    pids.append(int(entry))
+        except OSError:
+            continue
+    return pids
+
+
+def reconfigure():
+    """Wie «labwc --reconfigure» (SIGHUP an LABWC_PID), sonst an alle eigenen labwc."""
+    pids = own_labwc()
+    wanted = os.environ.get("LABWC_PID", "")
+    if wanted.isdigit() and int(wanted) in pids:
+        pids = [int(wanted)]
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGHUP)
+        except OSError:
+            pass
+    return bool(pids)
+
+
+# ---------------------------------------------------------------- Ablauf
+
+def choose(args, state):
+    """(raster_id, laufzeit-Änderungen) nach den Aufrufargumenten."""
+    if args["raster"] is not None:
+        rid = args["raster"]
+        load_raster(rid)
+        return rid, {"raster": rid}
+    if args["profil"] is not None:
+        rid = raster_for_profile(args["profil"], state)
+        if rid is None:
+            rid = state.get("raster") if valid_id(state.get("raster")) and raster_path(state["raster"]) else DEFAULT_RASTER
+        return rid, {"raster": rid, "profil": args["profil"]}
+    rid = state.get("raster")
+    if valid_id(rid) and raster_path(rid):
+        return rid, {}
+    if rid is not None:
+        warn("aktives Raster aus laufzeit.json fehlt, es gilt 4er-grid")
+    return DEFAULT_RASTER, {}
+
+
+def generate(args):
+    state = runtime_state()
+    rid, changes = choose(args, state)
+    try:
+        raster = load_raster(rid)
+    except Fehler:
+        if args["raster"] is not None or rid == DEFAULT_RASTER:
+            raise
+        warn(f"Raster «{rid}» nicht verwendbar, es gilt {DEFAULT_RASTER}")
+        rid = DEFAULT_RASTER
+        changes = dict(changes, raster=DEFAULT_RASTER) if changes else {}
+        raster = load_raster(rid)
+    return rid, changes, render(rid, raster), state
+
+
+def parse_args(argv):
+    args = {"raster": None, "profil": None, "melden": False, "neuladen": True, "modus": "schreiben"}
+    it = iter(argv)
+    for a in it:
+        if a in ("--raster", "--profil"):
+            value = next(it, None)
+            if value is None:
+                raise Fehler(f"{a} braucht einen Wert", 2)
+            args[a[2:]] = value
+        elif a == "--profil-hex":
+            value = next(it, None)
+            if value is None or not re.fullmatch(r"(?:[0-9a-f]{2}){1,400}", value):
+                raise Fehler("--profil-hex braucht den Namen als Hex-Kodierung", 2)
+            try:
+                args["profil"] = bytes.fromhex(value).decode("utf-8")
+            except UnicodeDecodeError:
+                raise Fehler("--profil-hex: kein UTF-8", 2) from None
+        elif a.startswith("--raster="):
+            args["raster"] = a.split("=", 1)[1]
+        elif a.startswith("--profil="):
+            args["profil"] = a.split("=", 1)[1]
+        elif a == "--melden":
+            args["melden"] = True
+        elif a == "--kein-neuladen":
+            args["neuladen"] = False
+        elif a in ("--ausgeben", "--pruefen", "--status"):
+            args["modus"] = a[2:]
+        elif a in ("-h", "--hilfe", "--help"):
+            args["modus"] = "hilfe"
+        else:
+            raise Fehler(f"unbekanntes Argument «{a}» (zenos-labwc --hilfe)", 2)
+    if args["raster"] is not None and args["profil"] is not None:
+        raise Fehler("--raster und --profil schliessen sich aus", 2)
+    if args["profil"] is not None and (not args["profil"].strip() or len(args["profil"]) > 100
+                                       or re.search(r"[\x00-\x1f\x7f]", args["profil"])):
+        raise Fehler("ungültiger Profilname", 2)
+    return args
+
+
+def main(argv):
+    try:
+        args = parse_args(argv)
+        if args["modus"] == "hilfe":
+            print(__doc__.strip())
+            return 0
+        if args["modus"] == "status":
+            state = runtime_state()
+            rid, _ = choose({"raster": None, "profil": None}, state)
+            profile = state.get("profil") if isinstance(state.get("profil"), str) else None
+            print(json.dumps({"raster": rid, "profil": profile}, ensure_ascii=False))
+            return 0
+        if args["modus"] == "ausgeben":
+            sys.stdout.write(generate(args)[2])
+            return 0
+        if args["modus"] == "pruefen":
+            text = generate(args)[2]
+            try:
+                with open(RC_XML, encoding="utf-8") as f:
+                    return 0 if f.read() == text else 1
+            except OSError:
+                return 1
+        with Lock():
+            rid, changes, text, state = generate(args)
+            backed_up = backup_foreign(RC_XML)
+            changed = write_if_changed(RC_XML, text)
+            if changed and args["neuladen"]:
+                reconfigure()
+            if changed and args["melden"]:
+                print(f"labwc rc.xml (Raster {rid})")
+            if backed_up and args["melden"]:
+                print("eigene rc.xml gesichert (rc.xml.vor-zenos)")
+            pending = {k: v for k, v in changes.items() if state.get(k) != v}
+            if pending:
+                persist(pending)
+        return 0
+    except Fehler as e:
+        warn(str(e))
+        return e.code
+    except OSError as e:
+        warn(f"Systemfehler: {e.strerror or type(e).__name__}")
+        return 2
+    except (TypeError, ValueError) as e:
+        warn(f"unerwarteter Wert in tokens.json oder der Vorlage ({type(e).__name__})")
+        return 2
+    except KeyboardInterrupt:
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

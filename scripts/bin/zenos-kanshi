@@ -1,0 +1,246 @@
+#!/usr/bin/env python3
+"""zenos-kanshi: kanshi-Konfiguration (~/.config/kanshi/config) aus den Bildschirm-Profilen erzeugen.
+
+Aufruf:
+  zenos-kanshi [--melden] [--kein-neuladen]
+  zenos-kanshi --ausgeben     Konfiguration auf stdout, nichts schreiben
+  zenos-kanshi --pruefen      Exit 0, wenn die Konfiguration aktuell ist, sonst 1
+
+Quelle ist ~/.config/zenos/bildschirme.json; fehlt sie oder ist sie ungültig, gilt
+config/vorlagen/bildschirme.json. Jedes Profil wird ein kanshi-Profil, das beim Anwenden
+«zenos-labwc --profil-hex <Name als Hex>» ausführt (das Raster des Profils bzw. des aktiven Modus gilt
+dann).
+kanshi nimmt das erste passende Profil: Profile mit festen Ausgängen stehen deshalb vor denen mit «*».
+«*» steht für beliebige weitere Bildschirme (kanshi: «...output *»).
+
+kanshi zerlegt die exec-Zeile selbst und führt sie über /bin/sh aus; Anführungszeichen schützen dort
+nicht zuverlässig (im Test wurde «$(…)» ausgewertet). Namen stehen deshalb nie in der exec-Zeile, nur
+hex-kodiert; Pfade müssen harmlos sein, Ausgänge dem Muster aus bildschirme.schema.json entsprechen.
+Geschrieben wird nur bei einer Änderung; läuft kanshi, liest es die Datei dann neu (SIGHUP).
+
+Exit: 0 in Ordnung · 1 bildschirme.json ungültig (Vorlage verwendet) · 2 Aufruf- oder Systemfehler.
+"""
+
+import json
+import os
+import re
+import signal
+import sys
+import tempfile
+
+CODE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+BIN = os.path.join(CODE, "scripts", "bin")
+SCHEMA = os.path.join(CODE, "config", "schema", "bildschirme.schema.json")
+TEMPLATE = os.path.join(CODE, "config", "vorlagen", "bildschirme.json")
+
+HOME = os.path.expanduser("~")
+SOURCE = os.path.join(HOME, ".config", "zenos", "bildschirme.json")
+TARGET = os.path.join(HOME, ".config", "kanshi", "config")
+
+MARKER = "Erzeugt von zenos-kanshi"
+OUTPUT_PATTERN = re.compile(r"^(\*|[A-Za-z0-9][A-Za-z0-9 ._:+()-]{0,99})$")
+NAME_BAD = re.compile(r"[\x00-\x1f\x7f]")
+SAFE_PATH = re.compile(r"^/[A-Za-z0-9/._+-]*$")
+
+
+class Fehler(Exception):
+    def __init__(self, text, code=1):
+        super().__init__(text)
+        self.code = code
+
+
+def warn(text):
+    print(f"zenos-kanshi: {text}", file=sys.stderr)
+
+
+def read_json(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as e:
+        raise Fehler(f"{os.path.basename(path)} nicht lesbar ({type(e).__name__})") from None
+
+
+def schema_problems(data):
+    """Befunde gegen bildschirme.schema.json (ohne Inhalte); leer = gültig."""
+    try:
+        import jsonschema  # noqa: PLC0415
+    except ImportError:
+        return [] if isinstance(data, dict) else ["kein JSON-Objekt"]
+    schema = read_json(SCHEMA)
+    if not isinstance(schema, dict):
+        raise Fehler("config/schema/bildschirme.schema.json fehlt", 2)
+    validator = jsonschema.validators.validator_for(schema)(schema)
+    return ["/".join(str(p) for p in e.absolute_path) or "(Wurzel)"
+            for e in validator.iter_errors(data)]
+
+
+def load_profiles():
+    """(Profile, ob die Vorlage gilt, weil die eigene Datei ungültig ist)."""
+    fallback = False
+    try:
+        data = read_json(SOURCE)
+    except Fehler as e:
+        warn(f"{e}; es gilt die Vorlage")
+        data, fallback = None, True
+    if data is not None:
+        problems = schema_problems(data)
+        if problems:
+            warn("bildschirme.json ist ungültig (" + ", ".join(sorted(set(problems))[:5]) + "); es gilt die Vorlage")
+            data, fallback = None, True
+    if data is None:
+        data = read_json(TEMPLATE) or {"profile": []}
+    profiles = []
+    names = set()
+    for p in data.get("profile", []):
+        name = p.get("name") if isinstance(p, dict) else None
+        outputs = p.get("ausgaenge") if isinstance(p, dict) else None
+        if not isinstance(name, str) or not name.strip() or NAME_BAD.search(name) or len(name) > 100:
+            warn("Profil ohne gültigen Namen übersprungen")
+            continue
+        if name in names:
+            warn("Profilname doppelt, das spätere Profil wird übersprungen")
+            continue
+        if not isinstance(outputs, list) or not outputs or not all(isinstance(o, str) and OUTPUT_PATTERN.match(o) for o in outputs):
+            warn("Profil mit ungültigen Ausgängen übersprungen")
+            continue
+        names.add(name)
+        profiles.append({"name": name, "ausgaenge": list(dict.fromkeys(outputs))})
+    return profiles, fallback
+
+
+def render(profiles):
+    labwc = os.path.join(BIN, "zenos-labwc")
+    if not SAFE_PATH.match(labwc):
+        raise Fehler("Pfad des zenOS-Codes enthält ungewöhnliche Zeichen", 2)
+    lines = [
+        f"# {MARKER} aus ~/.config/zenos/bildschirme.json. Nicht von Hand ändern:",
+        "# Profile bearbeitest du in den Einstellungen (Bildschirme) oder in bildschirme.json.",
+        "# kanshi nimmt das erste passende Profil; Profile mit «*» (beliebige Bildschirme) stehen am Ende.",
+    ]
+    # Feste Ausgänge zuerst (in Dateireihenfolge), dann Profile mit «*»
+    ordered = [p for p in profiles if "*" not in p["ausgaenge"]] + [p for p in profiles if "*" in p["ausgaenge"]]
+    for number, p in enumerate(ordered, 1):
+        lines += ["", f"# Profil «{p['name']}»", f"profile zenos-{number} {{"]
+        for o in p["ausgaenge"]:
+            if o != "*":
+                lines.append(f'\toutput "{o}" enable')
+        if "*" in p["ausgaenge"]:
+            lines.append("\t...output * enable")
+        lines.append(f"\texec {labwc} --profil-hex {p['name'].encode('utf-8').hex()}")
+        lines.append("}")
+    if not ordered:
+        lines += ["", "# Keine Bildschirm-Profile: kanshi lässt die Bildschirme, wie labwc sie einrichtet."]
+    return "\n".join(lines) + "\n"
+
+
+def write_if_changed(path, content, mode=0o600):
+    try:
+        with open(path, encoding="utf-8") as f:
+            if f.read() == content:
+                return False
+    except (OSError, UnicodeDecodeError):
+        pass
+    folder = os.path.dirname(path)
+    os.makedirs(folder, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".zenos-kanshi-", dir=folder)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return True
+
+
+def backup_foreign(path):
+    """Eigene kanshi-Konfiguration einmal nach config.vor-zenos sichern. True, wenn gesichert."""
+    if not os.path.lexists(path):
+        return False
+    if not os.path.islink(path):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                if MARKER in f.read(1024):
+                    return False
+        except OSError:
+            pass
+    target = path + ".vor-zenos"
+    n = 2
+    while os.path.lexists(target):
+        target = f"{path}.vor-zenos.{n}"
+        n += 1
+    os.rename(path, target)
+    warn(f"eigene kanshi-Konfiguration gesichert nach ~/.config/kanshi/{os.path.basename(target)}")
+    return True
+
+
+def reload_kanshi():
+    uid = os.getuid()
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            if os.stat(f"/proc/{entry}").st_uid != uid:
+                continue
+            with open(f"/proc/{entry}/comm", encoding="utf-8") as f:
+                if f.read().strip() != "kanshi":
+                    continue
+            os.kill(int(entry), signal.SIGHUP)
+        except OSError:
+            continue
+
+
+def main(argv):
+    mode, report, reload = "schreiben", False, True
+    for a in argv:
+        if a == "--melden":
+            report = True
+        elif a == "--kein-neuladen":
+            reload = False
+        elif a in ("--ausgeben", "--pruefen"):
+            mode = a[2:]
+        elif a in ("-h", "--hilfe", "--help"):
+            print(__doc__.strip())
+            return 0
+        else:
+            warn(f"unbekanntes Argument «{a}» (zenos-kanshi --hilfe)")
+            return 2
+    try:
+        profiles, fallback = load_profiles()
+        text = render(profiles)
+        if mode == "ausgeben":
+            sys.stdout.write(text)
+            return 1 if fallback else 0
+        if mode == "pruefen":
+            try:
+                with open(TARGET, encoding="utf-8") as f:
+                    current = f.read() == text
+            except OSError:
+                current = False
+            return 0 if current and not fallback else 1
+        backed_up = backup_foreign(TARGET)
+        changed = write_if_changed(TARGET, text)
+        if changed and reload:
+            reload_kanshi()
+        if report and backed_up:
+            print("eigene kanshi-Konfiguration gesichert (config.vor-zenos)")
+        if report and changed:
+            print("kanshi-Konfiguration")
+        return 1 if fallback else 0
+    except Fehler as e:
+        warn(str(e))
+        return e.code
+    except OSError as e:
+        warn(f"Systemfehler: {e.strerror or type(e).__name__}")
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

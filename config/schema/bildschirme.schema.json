@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "zenOS Bildschirm-Profile (~/.config/zenos/bildschirme.json)",
+  "description": "Welches Raster gilt, je nachdem, welche Bildschirme angeschlossen sind. zenos-kanshi macht daraus die kanshi-Konfiguration; kanshi nimmt das erste passende Profil (Profile mit «*» kommen zuletzt). labwc kennt ein Raster für alle Bildschirme: Es gilt das Raster des ersten Ausgangs mit Eintrag, sonst der Eintrag «*». Siehe docs/konfiguration.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["profile"],
+  "properties": {
+    "profile": {
+      "type": "array",
+      "maxItems": 20,
+      "items": { "$ref": "#/$defs/profil" }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "maxLength": 64, "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+    "ausgang": {
+      "description": "Name des Ausgangs (z. B. HDMI-A-1, DP-1), Beschreibung «Hersteller Modell Seriennummer» oder «*» für beliebige weitere Bildschirme",
+      "type": "string",
+      "pattern": "^(\\*|[A-Za-z0-9][A-Za-z0-9 ._:+()-]{0,99})$"
+    },
+    "profil": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "ausgaenge"],
+      "properties": {
+        "name": {
+          "description": "Anzeigename, eindeutig; Modi verweisen darauf (modi/<id>.json, Schlüssel raster)",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]*\\S[^\\u0000-\\u001f\\u007f]*$"
+        },
+        "ausgaenge": {
+          "description": "Das Profil gilt, wenn genau diese Bildschirme angeschlossen sind («*»: und beliebige weitere)",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/ausgang" }
+        },
+        "raster": {
+          "description": "Ausgang (oder «*») → Raster-ID",
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/ausgang" },
+          "additionalProperties": { "$ref": "#/$defs/id" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "Voll",
+  "kurz": "Voll",
+  "abstand": 8,
+  "bereiche": [
+    { "id": "voll", "x": 0, "y": 0, "b": 100, "h": 100 }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "name": "3 Spalten",
+  "kurz": "3er",
+  "abstand": 8,
+  "bereiche": [
+    { "id": "links", "x": 0, "y": 0, "b": 33, "h": 100 },
+    { "id": "mitte", "x": 33, "y": 0, "b": 34, "h": 100 },
+    { "id": "rechts", "x": 67, "y": 0, "b": 33, "h": 100 }
+  ]
+}

@@ -1,0 +1,23 @@
+# zenOS: Bildschirm-Profile mit kanshi. Gestartet von zenos-sitzung.target (Wants=).
+# zenos-kanshi erzeugt vorher ~/.config/kanshi/config aus ~/.config/zenos/bildschirme.json; kanshi wendet
+# das passende Profil an und ruft zenos-labwc --profil <Name> auf (Raster des Profils bzw. des Modus).
+# Neu laden nach Änderungen: zenos-kanshi (schickt kanshi ein SIGHUP) oder systemctl --user reload.
+[Unit]
+Description=zenOS Bildschirm-Profile (kanshi)
+Documentation=file:///opt/zenos/docs/module/m9.md
+PartOf=zenos-sitzung.target
+After=graphical-session.target
+ConditionEnvironment=WAYLAND_DISPLAY
+ConditionFileIsExecutable=/usr/bin/kanshi
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+Slice=session.slice
+# Fehlt bildschirme.json oder ist sie ungültig, schreibt zenos-kanshi die Vorlage (Exit 1 ist dann kein Abbruch)
+ExecStartPre=-/opt/zenos/scripts/bin/zenos-kanshi --kein-neuladen
+ExecStart=/usr/bin/kanshi
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=2

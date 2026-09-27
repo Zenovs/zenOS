@@ -1,0 +1,9 @@
+{
+  "profile": [
+    {
+      "name": "Standard",
+      "ausgaenge": ["*"],
+      "raster": { "*": "4er-grid" }
+    }
+  ]
+}

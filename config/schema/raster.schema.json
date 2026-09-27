@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "zenOS Raster (~/.config/zenos/raster/<id>.json)",
+  "description": "Bereiche in Prozent der nutzbaren Bildschirmfläche (ohne Leiste), in die Fenster einrasten. zenos-labwc macht daraus die labwc-Regionen r1 … rN; Super+1 bis Super+4 rasten in die ersten vier. labwc rechnet nur mit ganzen Prozenten. x + b und y + h dürfen 100 nicht übersteigen (prüft zenos-labwc). Siehe docs/konfiguration.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "bereiche"],
+  "properties": {
+    "name": { "type": "string", "minLength": 1, "maxLength": 60, "pattern": "\\S" },
+    "kurz": {
+      "description": "Kurzname für die Leiste, z. B. «4er»",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 6,
+      "pattern": "\\S"
+    },
+    "abstand": {
+      "description": "Lücke zwischen Fenstern und zum Bildschirmrand in px (labwc core/gap), Standard 8",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 64
+    },
+    "bereiche": {
+      "description": "Reihenfolge = Nummer: der erste Bereich ist Super+1",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 12,
+      "items": { "$ref": "#/$defs/bereich" }
+    }
+  },
+  "$defs": {
+    "bereich": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "x", "y", "b", "h"],
+      "properties": {
+        "id": { "type": "string", "maxLength": 32, "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+        "x": { "description": "linker Rand in %", "type": "integer", "minimum": 0, "maximum": 99 },
+        "y": { "description": "oberer Rand in %", "type": "integer", "minimum": 0, "maximum": 99 },
+        "b": { "description": "Breite in %", "type": "integer", "minimum": 1, "maximum": 100 },
+        "h": { "description": "Höhe in %", "type": "integer", "minimum": 1, "maximum": 100 }
+      }
+    }
+  }
+}
