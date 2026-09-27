@@ -9,8 +9,8 @@ import qs.einstellungen.teile
 import qs.dienste as Dienste
 
 // Einstellungen-Fenster (FloatingWindow mit labwc-Titelzeile) nach Entwurf 2 «Modi & Zustände»:
-// Navigation (260 px) mit Modi, Zuständen, Rastern, Bildschirmen, dann Web-Apps, Apps, Allgemein,
-// System; rechts die Seite Seite<Name>.qml aus diesem Ordner (Seiten anderer Module per Dateiname).
+// Navigation (260 px) mit Modi, Zuständen, Rastern, Bildschirmen (scrollt), darunter fest Web-Apps, Apps,
+// Allgemein, System; rechts die Seite Seite<Name>.qml aus diesem Ordner (Seiten anderer Module per Dateiname).
 // Seite als "name" oder "name/unterauswahl", z. B. "modi/arbeit", "zustand/fokus", "zustand/fokus@arbeit",
 // "modi/neu", "zustand/neu", "allgemein".
 // IPC «einstellungen»: oeffnen(seite), schliessen()
@@ -38,6 +38,26 @@ Scope {
     }
     readonly property string unterauswahl: angefragt.indexOf("/") >= 0 ? angefragt.slice(angefragt.indexOf("/") + 1) : ""
 
+    // Raster bzw. Bildschirm-Profil, das die Seite zeigt (wie SeiteRaster/SeiteBildschirme: Unterauswahl,
+    // sonst das aktive Raster bzw. aktuelle Profil, sonst das erste)
+    readonly property string _rasterShown: {
+        const liste = Dienste.Raster.liste;
+        if (unterauswahl !== "" && liste.some(r => r.id === unterauswahl))
+            return unterauswahl;
+        if (liste.some(r => r.id === Dienste.Raster.aktivId))
+            return Dienste.Raster.aktivId;
+        return liste.length > 0 ? liste[0].id : "";
+    }
+    readonly property string _profileShown: {
+        const profile = Dienste.Raster.profile;
+        if (unterauswahl !== "" && profile.some(p => p.name === unterauswahl))
+            return unterauswahl;
+        const aktuell = Dienste.Raster.aktuellesProfil();
+        if (profile.some(p => p.name === aktuell))
+            return aktuell;
+        return profile.length > 0 ? profile[0].name : "";
+    }
+
     // ID, die gerade über «Neuer Modus» bzw. «Neuer Zustand» entstanden ist (Namensfeld bekommt den Fokus)
     property string neuAngelegt: ""
 
@@ -47,6 +67,12 @@ Scope {
 
     function schliessen(): void {
         Dienste.Oberflaeche.einstellungenOffen = false;
+    }
+
+    // Eigenschaft einer Seite binden, falls die Seite sie hat
+    function _bind(seite: var, name: string, wert: var): void {
+        if (seite && seite[name] !== undefined)
+            seite[name] = Qt.binding(wert);
     }
 
     // «Neuer Modus» / «Neuer Zustand»: sofort anlegen und öffnen
@@ -144,10 +170,14 @@ Scope {
                         color: Theme.trennlinie
                     }
 
+                    // Modi, Zustände, Raster und Bildschirme scrollen; die allgemeinen Seiten bleiben unten sichtbar
                     Flickable {
-                        anchors.fill: parent
+                        anchors.top: parent.top
+                        anchors.left: parent.left
+                        anchors.right: parent.right
                         anchors.rightMargin: 1
-                        contentHeight: navSpalte.implicitHeight + 32
+                        anchors.bottom: navFuss.top
+                        contentHeight: navSpalte.implicitHeight + 16 + 8
                         clip: true
                         boundsBehavior: Flickable.StopAtBounds
 
@@ -216,21 +246,22 @@ Scope {
                                 text: "Raster"
                             }
 
+                            // Vorlagen in fester Reihenfolge, dann eigene nach Name (wie die Seite und das Raster-Menü)
                             Repeater {
-                                model: Dienste.Konfig.raster
+                                model: Dienste.Raster.liste
 
                                 NavEintrag {
                                     required property var modelData
 
                                     width: navSpalte.width
                                     text: typeof modelData.name === "string" && modelData.name.trim() !== "" ? modelData.name : modelData.id
-                                    gewaehlt: root.seite === "raster" && root.unterauswahl === modelData.id
+                                    gewaehlt: root.seite === "raster" && root._rasterShown === modelData.id
                                     onClicked: root.navigieren("raster/" + modelData.id)
                                 }
                             }
 
                             NavEintrag {
-                                visible: Dienste.Konfig.raster.length === 0
+                                visible: Dienste.Raster.liste.length === 0
                                 width: navSpalte.width
                                 text: "Alle Raster"
                                 gewaehlt: root.seite === "raster"
@@ -242,68 +273,73 @@ Scope {
                             }
 
                             Repeater {
-                                model: Array.isArray(Dienste.Konfig.bildschirme?.profile) ? Dienste.Konfig.bildschirme.profile.filter(p => p && typeof p.name === "string") : []
+                                model: Dienste.Raster.profile
 
                                 NavEintrag {
                                     required property var modelData
 
                                     width: navSpalte.width
                                     text: modelData.name
-                                    gewaehlt: root.seite === "bildschirme" && root.unterauswahl === modelData.name
+                                    gewaehlt: root.seite === "bildschirme" && root._profileShown === modelData.name
                                     onClicked: root.navigieren("bildschirme/" + modelData.name)
                                 }
                             }
 
                             NavEintrag {
-                                visible: !(Array.isArray(Dienste.Konfig.bildschirme?.profile) && Dienste.Konfig.bildschirme.profile.length > 0)
+                                visible: Dienste.Raster.profile.length === 0
                                 width: navSpalte.width
                                 text: "Bildschirm-Profile"
                                 gewaehlt: root.seite === "bildschirme"
                                 onClicked: root.navigieren("bildschirme")
                             }
+                        }
+                    }
 
-                            Item {
-                                width: 1
-                                height: 14
-                            }
+                    Column {
+                        id: navFuss
 
-                            Trenner {
-                                x: 10
-                                width: navSpalte.width - 20
-                            }
+                        x: 12
+                        anchors.bottom: parent.bottom
+                        anchors.bottomMargin: 12
+                        width: parent.width - 24 - 1
+                        spacing: 2
 
-                            Item {
-                                width: 1
-                                height: 12
-                            }
+                        Trenner {
+                            x: 10
+                            width: navFuss.width - 20
+                        }
 
-                            NavEintrag {
-                                width: navSpalte.width
-                                text: "Web-Apps"
-                                gewaehlt: root.seite === "webapps"
-                                onClicked: root.navigieren("webapps")
-                            }
+                        Item {
+                            width: 1
+                            height: 10
+                        }
 
-                            NavEintrag {
-                                width: navSpalte.width
-                                text: "Apps"
-                                gewaehlt: root.seite === "apps"
-                                onClicked: root.navigieren("apps")
-                            }
+                        NavEintrag {
+                            width: navFuss.width
+                            text: "Web-Apps"
+                            gewaehlt: root.seite === "webapps"
+                            onClicked: root.navigieren("webapps")
+                        }
 
-                            NavEintrag {
-                                width: navSpalte.width
-                                text: "Allgemein"
-                                gewaehlt: root.seite === "allgemein"
-                                onClicked: root.navigieren("allgemein")
-                            }
+                        NavEintrag {
+                            width: navFuss.width
+                            text: "Apps"
+                            gewaehlt: root.seite === "apps"
+                            onClicked: root.navigieren("apps")
+                        }
 
-                            NavEintrag {
-                                width: navSpalte.width
-                                text: "System"
-                                gewaehlt: root.seite === "system"
-                                onClicked: root.navigieren("system")
-                            }
+                        NavEintrag {
+                            width: navFuss.width
+                            text: "Allgemein"
+                            gewaehlt: root.seite === "allgemein"
+                            onClicked: root.navigieren("allgemein")
+                        }
+
+                        NavEintrag {
+                            width: navFuss.width
+                            text: "System"
+                            gewaehlt: root.seite === "system"
+                            onClicked: root.navigieren("system")
                         }
                     }
                 }
@@ -320,11 +356,8 @@ Scope {
 
                     // Seiten haben «unterauswahl» (alle) und «frischAngelegt» (Modi, Zustand)
                     onLoaded: {
-                        const seite = item;
-                        if (seite && seite["unterauswahl"] !== undefined)
-                            seite["unterauswahl"] = Qt.binding(() => root.unterauswahl);
-                        if (seite && seite["frischAngelegt"] !== undefined)
-                            seite["frischAngelegt"] = Qt.binding(() => root.neuAngelegt !== "" && root.neuAngelegt === root.unterauswahl.split("@")[0]);
+                        root._bind(item, "unterauswahl", () => root.unterauswahl);
+                        root._bind(item, "frischAngelegt", () => root.neuAngelegt !== "" && root.neuAngelegt === root.unterauswahl.split("@")[0]);
                     }
                     onStatusChanged: {
                         if (status === Loader.Error)

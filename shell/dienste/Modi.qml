@@ -73,22 +73,17 @@ Singleton {
         Konfig.loeschen("modi", id, fertig);
     }
 
-    // Bildschirm-Profil, das gerade gilt (Name aus bildschirme.json) oder ""
+    // Bildschirm-Profil, das gerade gilt (Name aus bildschirme.json) oder "". Eine Quelle für alle:
+    // Raster ordnet wie kanshi (feste Profile nur bei genau diesen Ausgängen, dann «*») und nimmt sonst
+    // das zuletzt von kanshi angewendete Profil (laufzeit.json, live beobachtet).
     function aktuellesProfil(): string {
-        const profile = Array.isArray(Konfig.bildschirme?.profile) ? Konfig.bildschirme.profile : [];
-        const connected = Quickshell.screens.map(s => s.name);
-        // «*» passt auf jeden Ausgang; genaue Profile gehen vor
-        const passend = p => Array.isArray(p?.ausgaenge) && p.ausgaenge.length > 0 && p.ausgaenge.every(a => a === "*" || connected.indexOf(a) >= 0);
-        const genau = p => passend(p) && p.ausgaenge.indexOf("*") < 0;
-        const exact = profile.find(p => genau(p) && p.ausgaenge.length === connected.length);
-        const any = exact ?? profile.find(genau) ?? profile.find(passend);
-        if (any && typeof any.name === "string")
-            return any.name;
-        const gespeichert = Konfig.laufzeitStart?.profil;
-        return typeof gespeichert === "string" ? gespeichert : "";
+        return Raster.aktuellesProfil();
     }
 
     property var _startMode: null
+    // Offene Fenster (für «Beim Wechsel öffnen»). Schon beim Start gebunden: ToplevelManager füllt sich
+    // erst nach dem ersten Zugriff, asynchron. Im Greeter (ohne Konfiguration) nicht.
+    readonly property var _windows: Konfig.verfuegbar ? ToplevelManager.toplevels : null
 
     function _validId(id: var): bool {
         return typeof id === "string" && Logik.gueltigeId(id);
@@ -115,7 +110,7 @@ Singleton {
         const ids = Array.isArray(modus?.oeffnen) ? modus.oeffnen : [];
         if (ids.length === 0)
             return;
-        const offen = ToplevelManager.toplevels.values.map(t => (t.appId ?? "").toLowerCase());
+        const offen = (_windows?.values ?? []).map(t => (t.appId ?? "").toLowerCase());
         for (const id of ids) {
             if (typeof id !== "string" || id.length === 0)
                 continue;

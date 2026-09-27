@@ -17,7 +17,9 @@ Arten mit einer Datei: einstellungen, bildschirme, webapps → ~/.config/zenos/<
                        laufzeit → ~/.local/state/zenos/laufzeit.json
 
 IDs bestehen nur aus a-z, 0-9 und «-». Geschrieben wird nur, was zum Schema in config/schema/ passt,
-atomar (temporäre Datei, dann umbenennen) und nur bei einer Änderung. Fehlermeldungen nennen nur
+atomar (temporäre Datei, dann umbenennen) und nur bei einer Änderung. Zusätzlich zum Schema: Modi nutzen
+einen Akzent aus den Tokens, Raster-Bereiche bleiben im Bildschirm (x + b und y + h höchstens 100) und
+haben eindeutige IDs, Bildschirm-Profile eindeutige Namen. Fehlermeldungen nennen nur
 Datei und Schema-Pfad, nie Inhalte.
 
 Exit: 0 in Ordnung · 1 ungültig oder nicht gefunden · 2 Aufruf- oder Systemfehler.
@@ -229,6 +231,53 @@ def befunde(art, daten):
         akzente = _akzente()
         if akzente and daten["akzent"] not in akzente:
             ergebnis.append("properties/akzent – unbekannter Akzent (siehe shell/theme/tokens.json)")
+    if art == "raster":
+        ergebnis.extend(_raster_befunde(daten))
+    if art == "bildschirme":
+        ergebnis.extend(_bildschirme_befunde(daten))
+    return ergebnis
+
+
+def _ganz(wert):
+    return isinstance(wert, int) and not isinstance(wert, bool)
+
+
+def _raster_befunde(daten):
+    """Was das Schema nicht ausdrücken kann: Bereiche bleiben im Bildschirm, IDs der Bereiche eindeutig."""
+    bereiche = daten.get("bereiche")
+    if not isinstance(bereiche, list):
+        return []
+    ergebnis = []
+    gesehen = set()
+    for i, bereich in enumerate(bereiche):
+        if not isinstance(bereich, dict):
+            continue
+        x, y, b, h = (bereich.get(k) for k in ("x", "y", "b", "h"))
+        if _ganz(x) and _ganz(b) and x + b > 100:
+            ergebnis.append(f"bereiche/{i} – x + b grösser als 100 (ragt rechts über den Bildschirm)")
+        if _ganz(y) and _ganz(h) and y + h > 100:
+            ergebnis.append(f"bereiche/{i} – y + h grösser als 100 (ragt unten über den Bildschirm)")
+        bereich_id = bereich.get("id")
+        if isinstance(bereich_id, str):
+            if bereich_id in gesehen:
+                ergebnis.append(f"bereiche/{i}/id – doppelt (jeder Bereich braucht eine eigene id)")
+            gesehen.add(bereich_id)
+    return ergebnis
+
+
+def _bildschirme_befunde(daten):
+    """Profilnamen sind eindeutig: Modi verweisen über den Namen auf ein Profil."""
+    profile = daten.get("profile")
+    if not isinstance(profile, list):
+        return []
+    ergebnis = []
+    gesehen = set()
+    for i, profil in enumerate(profile):
+        name = profil.get("name") if isinstance(profil, dict) else None
+        if isinstance(name, str):
+            if name in gesehen:
+                ergebnis.append(f"profile/{i}/name – doppelt (jedes Profil braucht einen eigenen Namen)")
+            gesehen.add(name)
     return ergebnis
 
 

@@ -16,9 +16,43 @@ Item {
 
     signal clicked
 
+    // In einer scrollbaren Navigation (Flickable) den gewählten oder fokussierten Eintrag ins Bild holen
+    function _insBild(): void {
+        const f = _flickable(parent);
+        if (!f || f.height <= 0 || !visible)
+            return;
+        const y = mapToItem(f.contentItem, 0, 0).y;
+        const rand = 8;
+        // nach oben mit Platz für einen Abschnittstitel darüber
+        if (y - rand < f.contentY)
+            f.contentY = Math.max(0, y - 44);
+        else if (y + height + rand > f.contentY + f.height)
+            f.contentY = Math.max(0, Math.min(f.contentHeight - f.height, y + height + rand - f.height));
+    }
+
+    function _flickable(item: var): var {
+        let f = item;
+        while (f && (f.contentY === undefined || f.flickableDirection === undefined))
+            f = f.parent;
+        return f ?? null;
+    }
+
     implicitHeight: 34
     implicitWidth: 236
     activeFocusOnTab: true
+
+    onGewaehltChanged: {
+        if (gewaehlt)
+            Qt.callLater(_insBild);
+    }
+    onActiveFocusChanged: {
+        if (activeFocus)
+            _insBild();
+    }
+    Component.onCompleted: {
+        if (gewaehlt)
+            Qt.callLater(_insBild);
+    }
 
     Accessible.role: Accessible.Button
     Accessible.name: text

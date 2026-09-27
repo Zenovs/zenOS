@@ -8,8 +8,8 @@ import qs.theme
 import qs.dienste
 import qs.komponenten
 
-// Modus- und Zustandswahl: kleine Menüs unter den Chips der Leiste (Klick) oder mittig
-// (Super+M / Super+Z über zenos-ipc modus waehlen bzw. zustand waehlen). Tastatur: Pfeile, Enter, Esc.
+// Modus- und Zustandswahl: kleine Menüs unter den Chips der Leiste (Klick, Oberflaeche.wahlAnker) oder
+// mittig (Super+M / Super+Z über zenos-ipc modus waehlen bzw. zustand waehlen). Tastatur: Pfeile, Enter, Esc.
 // IPC «modus»: waehlen(), wechseln(id), aktiv() · «zustand»: waehlen(), starten(id), beenden(), aktiv()
 Scope {
     id: root
@@ -24,9 +24,10 @@ Scope {
             schliessen();
             return;
         }
-        zentriert = mittig;
+        _centerRequested = mittig;
         Oberflaeche.modusWahlOffen = art === "modus";
         Oberflaeche.zustandWahlOffen = art === "zustand";
+        _centerRequested = false;
     }
 
     function schliessen(): void {
@@ -34,9 +35,44 @@ Scope {
         Oberflaeche.zustandWahlOffen = false;
     }
 
-    // Anker unter dem Chip. Die Leiste darf Oberflaeche.wahlAnker = { bildschirm, x } setzen;
-    // sonst wird die Lage der Chips aus ihrem Aufbau berechnet (Leiste: Rand 10, Zeichen 30, Abstand 6).
-    readonly property var _anchor: Oberflaeche["wahlAnker"] ?? null
+    // Ort der Karte, beim Öffnen festgehalten: Die Leiste setzt Oberflaeche.wahlAnker = { bildschirm, x }
+    // vor dem Klick auf einen Chip (x in Fensterkoordinaten der Leiste = des Bildschirms). Mittig (Super+M/Z)
+    // erscheint die Karte auf dem Bildschirm des aktiven Fensters, sonst dort, wo zuletzt gewählt wurde.
+    // Festhalten statt binden: Sobald die Karte den Tastaturfokus hat, ist kein Fenster mehr aktiv.
+    property string _screenName: ""
+    property real _anchorX: -1
+    property bool _centerRequested: false
+    // Hier gebunden, damit ToplevelManager schon beim Start die Fenster kennt (er füllt sich erst nach dem
+    // ersten Zugriff, asynchron)
+    readonly property var _activeToplevel: ToplevelManager.activeToplevel
+
+    readonly property var _screen: {
+        const screens = Quickshell.screens;
+        const s = _screenName !== "" ? screens.find(x => x.name === _screenName) : null;
+        return s ?? (screens.length > 0 ? screens[0] : null);
+    }
+
+    function _remember(): void {
+        const anchor = Oberflaeche.wahlAnker;
+        const anchorScreen = anchor && typeof anchor.bildschirm === "string" ? anchor.bildschirm : "";
+        zentriert = _centerRequested;
+        if (zentriert) {
+            _anchorX = -1;
+            _screenName = _screenOf(_activeToplevel) || anchorScreen;
+        } else {
+            _anchorX = anchor && typeof anchor.x === "number" && isFinite(anchor.x) ? Math.max(0, anchor.x) : -1;
+            _screenName = anchorScreen;
+        }
+    }
+
+    // Name des (ersten) Bildschirms eines Fensters (Toplevel) oder ""
+    function _screenOf(toplevel: var): string {
+        const screens = toplevel ? toplevel.screens : null;
+        const s = screens && screens.length > 0 ? screens[0] : null;
+        return s && typeof s.name === "string" ? s.name : "";
+    }
+
+    // Ohne Anker (ältere Leiste): Lage der Chips aus dem Aufbau der Leiste (Rand 10, Zeichen 30, Abstand 6)
     readonly property string _stufe: Zustaende.wirksam?.leiste === "aus" ? "aus" : "sichtbar"
     readonly property string _modeName: {
         const m = Modi.aktiv;
@@ -47,20 +83,10 @@ Scope {
     readonly property real _modeChipWidth: Math.ceil(modeMetrics.advanceWidth) + (_modeName !== "" ? 53 : 38)
     readonly property real _stateChipX: _stufe === "aus" ? 10 : _modeChipX + _modeChipWidth + 6
 
-    function _anchorX(): real {
-        if (_anchor && typeof _anchor.x === "number")
-            return _anchor.x;
+    function _anchorLeft(): real {
+        if (_anchorX >= 0)
+            return _anchorX;
         return offen === "zustand" ? _stateChipX : _modeChipX;
-    }
-
-    function _screen(): var {
-        const screens = Quickshell.screens;
-        if (_anchor && typeof _anchor.bildschirm === "string") {
-            const s = screens.find(s => s.name === _anchor.bildschirm);
-            if (s)
-                return s;
-        }
-        return screens.length > 0 ? screens[0] : null;
     }
 
     function _duration(z: var): string {
@@ -81,16 +107,20 @@ Scope {
         target: Oberflaeche
 
         function onModusWahlOffenChanged(): void {
-            if (Oberflaeche.modusWahlOffen)
+            if (Oberflaeche.modusWahlOffen) {
                 Oberflaeche.zustandWahlOffen = false;
-            else if (!Oberflaeche.zustandWahlOffen)
+                root._remember();
+            } else if (!Oberflaeche.zustandWahlOffen) {
                 root.zentriert = false;
+            }
         }
         function onZustandWahlOffenChanged(): void {
-            if (Oberflaeche.zustandWahlOffen)
+            if (Oberflaeche.zustandWahlOffen) {
                 Oberflaeche.modusWahlOffen = false;
-            else if (!Oberflaeche.modusWahlOffen)
+                root._remember();
+            } else if (!Oberflaeche.modusWahlOffen) {
                 root.zentriert = false;
+            }
         }
         function onBefehlsfeldOffenChanged(): void {
             if (Oberflaeche.befehlsfeldOffen)
@@ -146,7 +176,7 @@ Scope {
     PanelWindow {
         id: fenster
 
-        screen: root._screen()
+        screen: root._screen
         visible: root.offen !== ""
         anchors {
             top: true
@@ -171,10 +201,13 @@ Scope {
         Loader {
             id: lader
 
+            // Breite des Bildschirms statt des Fensters: das Fenster kennt seine Breite erst nach dem Einblenden
+            readonly property real _spanWidth: root._screen?.width ?? fenster.width
+
             active: fenster.visible
             focus: true
             sourceComponent: root.offen === "zustand" ? zustandKarte : modusKarte
-            x: Math.round(root.zentriert ? (fenster.width - width) / 2 : Math.max(Theme.a2, Math.min(fenster.width - width - Theme.a2, root._anchorX())))
+            x: Math.round(root.zentriert ? (_spanWidth - width) / 2 : Math.max(Theme.a2, Math.min(_spanWidth - width - Theme.a2, root._anchorLeft())))
             y: root.zentriert ? Math.max(Theme.a1, Theme.befehlsfeldOben - Theme.leisteHoehe) : Theme.a1
         }
     }
@@ -183,7 +216,7 @@ Scope {
         id: modusKarte
 
         WahlKarte {
-            id: karte
+            id: modusKarteInhalt
 
             titel: "Modus"
             focus: true
@@ -196,7 +229,7 @@ Scope {
                     required property var modelData
                     required property int index
 
-                    width: karte.width - 2 * Theme.a2
+                    width: modusKarteInhalt.width - 2 * Theme.a2
                     text: typeof modelData.name === "string" && modelData.name.trim() !== "" ? modelData.name : modelData.id
                     mitPunkt: true
                     punktFarbe: Theme.akzentFarbe(Theme.akzentNamen.indexOf(modelData.akzent) >= 0 ? modelData.akzent : Theme.standardAkzent)
@@ -211,7 +244,7 @@ Scope {
 
             Item {
                 visible: Modi.liste.length === 0
-                width: karte.width - 2 * Theme.a2
+                width: modusKarteInhalt.width - 2 * Theme.a2
                 height: 36
 
                 Text {
@@ -225,7 +258,7 @@ Scope {
             }
 
             Trenner {
-                width: karte.width - 2 * Theme.a2
+                width: modusKarteInhalt.width - 2 * Theme.a2
                 height: 1
             }
 
@@ -235,7 +268,7 @@ Scope {
             }
 
             WahlEintrag {
-                width: karte.width - 2 * Theme.a2
+                width: modusKarteInhalt.width - 2 * Theme.a2
                 text: "Neuer Modus …"
                 symbol: "plus"
                 gedaempft: true
@@ -248,7 +281,7 @@ Scope {
 
             WahlEintrag {
                 visible: Modi.liste.length > 0
-                width: karte.width - 2 * Theme.a2
+                width: modusKarteInhalt.width - 2 * Theme.a2
                 text: "Modi bearbeiten"
                 symbol: "zahnrad"
                 gedaempft: true
@@ -264,7 +297,7 @@ Scope {
         id: zustandKarte
 
         WahlKarte {
-            id: karte
+            id: zustandKarteInhalt
 
             titel: Modi.aktiv ? "Zustand · " + root._modeName : "Zustand"
             focus: true
@@ -273,7 +306,7 @@ Scope {
             // Aktiver Zustand zuerst: beenden
             WahlEintrag {
                 visible: Zustaende.aktivId !== ""
-                width: karte.width - 2 * Theme.a2
+                width: zustandKarteInhalt.width - 2 * Theme.a2
                 text: (Zustaende.aktiv?.name ?? Zustaende.aktivId) + " beenden"
                 symbol: "x"
                 wert: Zustaende.restMinuten >= 0 ? "noch " + Zustaende.restMinuten + " Min." : (Freigabe.aktiv && Zustaende.ausloeser === "bildschirmfreigabe" ? "geteilt" : "")
@@ -286,7 +319,7 @@ Scope {
 
             Trenner {
                 visible: Zustaende.aktivId !== ""
-                width: karte.width - 2 * Theme.a2
+                width: zustandKarteInhalt.width - 2 * Theme.a2
                 height: 1
             }
 
@@ -297,7 +330,7 @@ Scope {
                     required property var modelData
                     required property int index
 
-                    width: karte.width - 2 * Theme.a2
+                    width: zustandKarteInhalt.width - 2 * Theme.a2
                     text: typeof modelData.name === "string" && modelData.name.trim() !== "" ? modelData.name : modelData.id
                     wert: root._duration(modelData)
                     gewaehlt: modelData.id === Zustaende.aktivId
@@ -311,7 +344,7 @@ Scope {
 
             Item {
                 visible: Zustaende.startbar.length === 0
-                width: karte.width - 2 * Theme.a2
+                width: zustandKarteInhalt.width - 2 * Theme.a2
                 height: 36
 
                 Text {
@@ -327,7 +360,7 @@ Scope {
             }
 
             Trenner {
-                width: karte.width - 2 * Theme.a2
+                width: zustandKarteInhalt.width - 2 * Theme.a2
                 height: 1
             }
 
@@ -337,7 +370,7 @@ Scope {
             }
 
             WahlEintrag {
-                width: karte.width - 2 * Theme.a2
+                width: zustandKarteInhalt.width - 2 * Theme.a2
                 text: "Zustände bearbeiten"
                 symbol: "zahnrad"
                 gedaempft: true
