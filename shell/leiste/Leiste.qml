@@ -1,7 +1,196 @@
-// Platzhalter von M3 – wird von M4 ersetzt
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import Quickshell
+import Quickshell.Io
+import Quickshell.Wayland
+import qs.theme
+import qs.dienste
 
-// Leiste oben, pro Bildschirm (Variants mit PanelWindows)
+// Leiste oben auf jedem Bildschirm (40 px, reserviert ihren Platz), dazu das System- und das
+// Raster-Menü. Modus- und Zustandswahl (Oberflaeche.modusWahlOffen/zustandWahlOffen) zeigt
+// modi/Umschalter.qml, die Zentrale (Oberflaeche.zentraleOffen) mitteilungen/Mitteilungen.qml.
 Scope {
+    id: root
+
+    // Offenes Menü: "" | "system" | "raster", auf dem Bildschirm menueBildschirm
+    property string menue: ""
+    property string menueBildschirm: ""
+    // Anker in Fensterkoordinaten (siehe LeistenInhalt.menueGewuenscht)
+    property real menueX: 0
+
+    // umschalten: ein zweiter Klick auf denselben Knopf schliesst das Menü wieder
+    function menueOeffnen(name: string, bildschirm: string, x: real, umschalten: bool): void {
+        if (umschalten && menue === name && menueBildschirm === bildschirm) {
+            menueSchliessen();
+            return;
+        }
+        menueX = x;
+        menueBildschirm = bildschirm;
+        menue = name;
+        if (name === "system")
+            System.aktualisieren();
+    }
+
+    function menueSchliessen(): void {
+        menue = "";
+    }
+
+    SystemClock {
+        id: uhr
+
+        precision: SystemClock.Minutes
+    }
+
+    Variants {
+        id: leisten
+
+        model: Quickshell.screens
+
+        delegate: Scope {
+            id: proBildschirm
+
+            required property ShellScreen modelData
+            // beim Abziehen des Bildschirms wird modelData null, der Name bleibt
+            property string bildschirmName: ""
+            readonly property bool menueHier: root.menue !== "" && root.menueBildschirm === bildschirmName
+
+            function menueOeffnen(name: string): void {
+                root.menueOeffnen(name, bildschirmName, inhalt.menueX(name), false);
+            }
+
+            Component.onCompleted: bildschirmName = modelData?.name ?? ""
+            // Bildschirm weg: sein Menü schliessen (kommt beim Wiedereinstecken nicht zurück)
+            Component.onDestruction: {
+                if (root.menueBildschirm === bildschirmName)
+                    root.menueSchliessen();
+            }
+
+            PanelWindow {
+                screen: proBildschirm.modelData
+                anchors {
+                    top: true
+                    left: true
+                    right: true
+                }
+                implicitHeight: Theme.leisteHoehe
+                exclusiveZone: Theme.leisteHoehe
+                color: Theme.grund
+
+                WlrLayershell.layer: WlrLayer.Top
+                WlrLayershell.namespace: "zenos-leiste"
+                WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+
+                LeistenInhalt {
+                    id: inhalt
+
+                    anchors.fill: parent
+                    jetzt: uhr.date
+                    offenesMenue: proBildschirm.menueHier ? root.menue : ""
+                    onMenueGewuenscht: (name, x) => root.menueOeffnen(name, proBildschirm.bildschirmName, x, true)
+                }
+            }
+
+            // Menüfläche unter der Leiste: fängt Klicks daneben ab (schliesst), Esc schliesst.
+            // Die Leiste selbst bleibt bedienbar.
+            PanelWindow {
+                id: menueFenster
+
+                screen: proBildschirm.modelData
+                visible: proBildschirm.menueHier
+                anchors {
+                    top: true
+                    bottom: true
+                    left: true
+                    right: true
+                }
+                margins.top: Theme.leisteHoehe
+                exclusionMode: ExclusionMode.Ignore
+                color: Theme.durchsichtig
+
+                WlrLayershell.layer: WlrLayer.Top
+                WlrLayershell.namespace: "zenos-leiste-menue"
+                WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: root.menueSchliessen()
+                }
+
+                Loader {
+                    id: menueLader
+
+                    active: menueFenster.visible
+                    focus: true
+                    sourceComponent: root.menue === "raster" ? rasterMenue : systemMenue
+                    // System-Menü rechtsbündig unter dem Knopf, Raster-Menü linksbündig.
+                    // Begrenzt mit der Bildschirmbreite: das Fenster kennt seine Breite erst nach dem Einblenden.
+                    x: Math.round(Math.max(Theme.a2, Math.min((proBildschirm.modelData?.width ?? 0) - width - Theme.a2, root.menue === "raster" ? root.menueX : root.menueX - width)))
+                    y: Theme.a1
+                }
+
+                Component {
+                    id: systemMenue
+
+                    SystemMenue {
+                        onSchliessen: root.menueSchliessen()
+                    }
+                }
+
+                Component {
+                    id: rasterMenue
+
+                    RasterMenue {
+                        onSchliessen: root.menueSchliessen()
+                    }
+                }
+            }
+        }
+    }
+
+    // Andere Oberflächen gehen vor: Menüs der Leiste schliessen
+    Connections {
+        target: Oberflaeche
+
+        function onBefehlsfeldOffenChanged(): void {
+            if (Oberflaeche.befehlsfeldOffen)
+                root.menueSchliessen();
+        }
+        function onZentraleOffenChanged(): void {
+            if (Oberflaeche.zentraleOffen)
+                root.menueSchliessen();
+        }
+        function onModusWahlOffenChanged(): void {
+            if (Oberflaeche.modusWahlOffen)
+                root.menueSchliessen();
+        }
+        function onZustandWahlOffenChanged(): void {
+            if (Oberflaeche.zustandWahlOffen)
+                root.menueSchliessen();
+        }
+        function onEinstellungenOffenChanged(): void {
+            if (Oberflaeche.einstellungenOffen)
+                root.menueSchliessen();
+        }
+        function onSperrenAngefordert(): void {
+            root.menueSchliessen();
+        }
+    }
+
+    // zenos-ipc leiste menue system|raster · zenos-ipc leiste schliessen
+    // (für Tests und eigene Tastenkürzel; öffnet auf dem ersten Bildschirm)
+    IpcHandler {
+        target: "leiste"
+
+        function menue(name: string): void {
+            if (name !== "system" && name !== "raster")
+                return;
+            const instanz = leisten.instances.length > 0 ? leisten.instances[0] : null;
+            instanz?.menueOeffnen(name);
+        }
+
+        function schliessen(): void {
+            root.menueSchliessen();
+        }
+    }
 }
