@@ -1,7 +1,7 @@
 # Prüft jeden Push und jeden Pull Request auf dev und main mit scripts/pruefen.sh: gitleaks über den ganzen
-# Verlauf und den Arbeitsstand, shellcheck, Python-Syntax, JSON-Schemas, Hex- und sh-c-Regel, Dateinamen und
-# qmllint (ohne Quickshell-Typen: rot nur bei Syntaxfehlern). Der Teil mit der laufenden Oberfläche wird ohne
-# labwc und Quickshell übersprungen.
+# Verlauf und den Arbeitsstand, shellcheck, Python-Syntax, JSON-Schemas, Hex- und sh-c-Regel, Dateinamen,
+# Einheitentests unter test/einheiten (python3, node, fish) und qmllint (ohne Quickshell-Typen: rot nur bei
+# Syntaxfehlern). Der Teil mit der laufenden Oberfläche wird ohne labwc und Quickshell übersprungen.
 # Läuft in Ubuntu 26.04 wie der Pi, auf einem arm64-Runner. Einzige fremde Action ist actions/checkout, auf
 # einen Commit festgelegt. Keine Geheimnisse, nur Leserechte, nichts wird hochgeladen.
 
@@ -35,12 +35,14 @@ jobs:
       run:
         shell: bash
     steps:
-      # git vor dem Auschecken, sonst lädt actions/checkout nur ein Archiv ohne Verlauf
+      # git vor dem Auschecken, sonst lädt actions/checkout nur ein Archiv ohne Verlauf.
+      # nodejs und fish nur für die Einheitentests (ohne sie überspringt pruefen.sh diese Tests).
       - name: Werkzeuge installieren
         run: |
-          apt-get update -qq
-          apt-get install -y -qq --no-install-recommends \
-            ca-certificates git shellcheck gitleaks python3 python3-jsonschema qt6-declarative-dev-tools
+          apt-get -o Acquire::Retries=3 update -qq
+          apt-get -o Acquire::Retries=3 install -y -qq --no-install-recommends \
+            ca-certificates git shellcheck gitleaks python3 python3-jsonschema qt6-declarative-dev-tools \
+            nodejs fish
 
       - name: Auschecken (ganzer Verlauf für gitleaks)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

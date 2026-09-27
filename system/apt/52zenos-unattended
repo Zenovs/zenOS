@@ -5,7 +5,8 @@
 // Updates auch aus den Paketquellen der Hersteller. Wirkt nur, wenn die Quelle eingerichtet ist
 // (zen apps installieren). Erkannt an Origin, Label und Server der signierten Release-Datei.
 Unattended-Upgrade::Origins-Pattern {
-	// Google Chrome: https://dl.google.com/linux/chrome/deb stable
+	// Google Chrome: https://dl.google.com/linux/chrome-stable/deb/ stable (wie zenos-apps und das
+	// Chrome-Paket selbst; …/linux/chrome/deb/ hat dieselbe Release-Datei)
 	"origin=Google LLC,label=Google,site=dl.google.com";
 	// Visual Studio Code: https://packages.microsoft.com/repos/code stable
 	"origin=code stable,label=code stable,site=packages.microsoft.com";
