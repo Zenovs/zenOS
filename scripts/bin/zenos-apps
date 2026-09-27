@@ -1,0 +1,1054 @@
+#!/usr/bin/env bash
+# zenos-apps – proprietäre Apps aus den offiziellen Quellen der Hersteller (zen apps).
+#
+# Aufruf:
+#   zenos-apps status [--json] [--netz]
+#   zenos-apps installieren [--ja] [--fenster] [app …]
+#   zenos-apps aktualisieren [--ja] [--fenster] [app …]
+#   zenos-apps benutzer [--melden]
+#
+# Apps: chrome vscode 1password cli coremail nubix. Ohne Angabe: alle, die es für diese Architektur
+# gibt (dpkg --print-architecture, arm64 oder amd64).
+#
+# installieren zeigt vorher genau, was passiert (Quellen, Schlüssel, Dateien, Pakete), fragt einmal
+# nach (j/N) und holt sich Root-Rechte mit sudo. Bereits Installiertes wird übersprungen.
+#   --ja       ohne Rückfrage (für Tests; die Einrichtung nutzt es nie)
+#   --fenster  am Ende auf Enter warten (Terminal-Fenster aus der Einrichtung)
+# aktualisieren holt für 1Password (Archiv), coremail und Nubix (GitHub) die neueste Version.
+# Chrome, VS Code und die 1Password-CLI kommen aus Paketquellen und werden über apt aktualisiert.
+# status zeigt, was installiert ist; --netz fragt zusätzlich die GitHub-Releases von coremail und
+# Nubix ab (höchstens alle 12 Stunden, Ergebnis in ~/.cache/zenos/apps.json).
+# benutzer zieht die Benutzerteile nach (Chrome-Starter über zenos-chrome, Web-Apps, SSH-Agent von
+# 1Password); --melden gibt pro Änderung eine Zeile aus (für install.sh).
+#
+# Nie als root und nie im Image: Proprietäre Software kommt erst mit deiner Zustimmung auf das Gerät.
+# Exit: 0 in Ordnung · 1 Fehler · 2 falscher Aufruf · 3 abgebrochen
+
+set -euo pipefail
+
+BIN=$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")" && pwd -P)
+SELBST="$BIN/zenos-apps"
+ALLE=(chrome vscode 1password cli coremail nubix)
+
+# Offizielle Quellen. Fingerabdrücke der Hauptschlüssel, geprüft am 27.09.2026 gegen die Schlüssel der
+# Hersteller und deren Doku (1Password: support.1password.com/install-linux, «3FEF…EA22»).
+GOOGLE_SCHLUESSEL=https://dl.google.com/linux/linux_signing_key.pub
+GOOGLE_FPR=EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796
+# Dieselbe Quelle, die das Chrome-Paket selbst einträgt (chrome-stable); ältere Anleitungen nennen
+# …/linux/chrome/deb/ – beide liefern dieselben Pakete.
+GOOGLE_QUELLE=https://dl.google.com/linux/chrome-stable/deb/
+MICROSOFT_SCHLUESSEL=https://packages.microsoft.com/keys/microsoft.asc
+MICROSOFT_FPR=BC528686B50D79E339D3721CEB3E94ADBE1229CF
+MICROSOFT_QUELLE=https://packages.microsoft.com/repos/code
+OP_SCHLUESSEL=https://downloads.1password.com/linux/keys/1password.asc
+OP_FPR=3FEF9748469ADBE15DA7CA80AC2D62742012EA22
+OP_ARCHIV_BASIS=https://downloads.1password.com/linux/tar/stable
+OP_QUELLE_BASIS=https://downloads.1password.com/linux/debian
+GITHUB_API=https://api.github.com/repos
+COREMAIL_REPO=Zenovs/coremail
+NUBIX_REPO=Zenovs/Nubix
+
+KEYRINGS=/etc/apt/keyrings
+QUELLEN=/etc/apt/sources.list.d
+OP_ZIEL=/opt/1Password
+OP_STAND=$OP_ZIEL/.zenos-stand
+
+CACHE=${XDG_CACHE_HOME:-$HOME/.cache}/zenos
+NETZ_CACHE=$CACHE/apps.json
+AGENT_SOCKET=$HOME/.1password/agent.sock
+AGENT_ENV=$HOME/.config/environment.d/zenos-1password.conf
+AGENT_FISH=$HOME/.config/fish/conf.d/zenos-1password.fish
+
+ARCH=$(dpkg --print-architecture 2>/dev/null || true)
+case "$ARCH" in
+  arm64) TAR_ARCH=aarch64 GH_ARCH='arm64|aarch64' ;;
+  amd64) TAR_ARCH=x86_64 GH_ARCH='amd64|x86_64' ;;
+  *) TAR_ARCH="" GH_ARCH="" ;;
+esac
+
+CURL=(curl --proto "=https" --tlsv1.2 -fsSL --retry 2 --connect-timeout 15)
+# Grosse Downloads mit Fortschrittsbalken im Terminal; bricht ab, wenn eine Minute lang kaum etwas kommt
+_laden() { # URL ZIEL [KOPF]
+  local -a extra=(-s -S)
+  [[ -t 2 ]] && extra=(--progress-bar)
+  [[ -z "${3:-}" ]] || extra+=(-D "$3")
+  curl --proto =https --tlsv1.2 -fL --retry 2 --connect-timeout 15 --speed-limit 1024 --speed-time 60 \
+    "${extra[@]}" -o "$2" "$1"
+}
+
+# Aufräumen der Schritte (laufen als eigener Prozess): Downloads des Benutzers und Root-Arbeitsordner
+_TMP_BENUTZER=""
+_TMP_ROOT=""
+_tmp_aufraeumen() {
+  [[ -z "$_TMP_BENUTZER" ]] || rm -rf -- "$_TMP_BENUTZER"
+  [[ -z "$_TMP_ROOT" ]] || sudo -n rm -rf -- "$_TMP_ROOT" 2>/dev/null || true
+}
+
+meldung() { printf 'zenos-apps: %s\n' "$*" >&2; }
+schritt() { printf '\n── %s\n' "$*"; }
+info() { printf '   %s\n' "$*"; }
+
+# --- Angaben zu den Apps ---------------------------------------------------
+
+_name() {
+  case "$1" in
+    chrome) echo "Google Chrome" ;;
+    vscode) echo "Visual Studio Code" ;;
+    1password) echo "1Password" ;;
+    cli) echo "1Password-CLI" ;;
+    coremail) echo "coremail" ;;
+    nubix) echo "Nubix" ;;
+  esac
+}
+
+_hersteller() {
+  case "$1" in
+    chrome) echo "Google" ;;
+    vscode) echo "Microsoft" ;;
+    1password | cli) echo "AgileBits" ;;
+    coremail) echo "github.com/$COREMAIL_REPO" ;;
+    nubix) echo "github.com/$NUBIX_REPO" ;;
+  esac
+}
+
+_herkunft() {
+  case "$1" in
+    chrome) echo "Paketquelle dl.google.com" ;;
+    vscode) echo "Paketquelle packages.microsoft.com" ;;
+    1password) echo "Archiv mit Signaturprüfung · SSH-Agent" ;;
+    cli) echo "Paketquelle downloads.1password.com" ;;
+    coremail | nubix) echo "Release mit Prüfsumme" ;;
+  esac
+}
+
+# Ungefähre Downloadgrösse in MB (Stand 09/2026; coremail und Nubix aus der Release-Abfrage)
+_groesse() {
+  case "$1" in
+    chrome) echo 135 ;;
+    vscode) echo 220 ;;
+    1password) echo 215 ;;
+    cli) echo 10 ;;
+    coremail) echo 95 ;;
+    nubix) echo 90 ;;
+  esac
+}
+
+_paket() {
+  case "$1" in
+    chrome) echo google-chrome-stable ;;
+    vscode) echo code ;;
+    cli) echo 1password-cli ;;
+    coremail) echo coremail-desktop ;;
+    nubix) echo nubix ;;
+  esac
+}
+
+_gueltige_app() {
+  local a
+  for a in "${ALLE[@]}"; do [[ "$a" == "$1" ]] && return 0; done
+  return 1
+}
+
+# Upstream-Version ohne Epoche und Debian-Revision
+_kurz() {
+  local v=${1#*:}
+  [[ "$v" == *-* ]] && v=${v%-*}
+  printf '%s' "$v"
+}
+
+# Gibt die installierte Version aus (leer, wenn unbekannt); Rückgabe 0 = installiert
+_installiert() {
+  local app=$1 zeile
+  if [[ "$app" == 1password ]]; then
+    # Vollständig erst nach after-install.sh (zenOS schreibt dann den Stand; eine Installation von
+    # Hand erkennt man am Befehl /usr/bin/1password)
+    [[ -x "$OP_ZIEL/1password" ]] || return 1
+    [[ -f "$OP_STAND" || -L /usr/bin/1password ]] || return 1
+    sed -n '/^version=/{s///p;q}' "$OP_STAND" 2>/dev/null || true
+    return 0
+  fi
+  zeile=$(dpkg-query -W -f='${db:Status-Status} ${Version}' "$(_paket "$app")" 2>/dev/null) || return 1
+  [[ "$zeile" == "installed "* ]] || return 1
+  _kurz "${zeile#installed }"
+  return 0
+}
+
+# --- Netz: GitHub-Releases -------------------------------------------------
+
+# Liest die neueste Release von REPO. Setzt GH_VERSION, GH_ASSET, GH_URL, GH_GROESSE, GH_DIGEST,
+# GH_SUMMEN (URL der Prüfsummen-Datei oder leer). Rückgabe 1, wenn die Abfrage scheitert.
+_github_release() {
+  local repo=$1 datei zeile
+  datei=$(mktemp "${TMPDIR:-/tmp}/zenos-apps-release.XXXXXX")
+  if ! "${CURL[@]}" --max-time 20 -H "Accept: application/vnd.github+json" \
+    -o "$datei" "$GITHUB_API/$repo/releases/latest" 2>/dev/null; then
+    rm -f -- "$datei"
+    return 1
+  fi
+  zeile=$(python3 - "$datei" "$repo" "$GH_ARCH" <<'PY'
+import json
+import re
+import sys
+
+datei, repo, arch = sys.argv[1:4]
+try:
+    with open(datei, encoding="utf-8") as f:
+        daten = json.load(f)
+except (OSError, ValueError):
+    sys.exit(1)
+if not isinstance(daten, dict) or daten.get("draft") or daten.get("prerelease"):
+    sys.exit(1)
+version = re.sub(r"^[vV]", "", str(daten.get("tag_name") or ""))
+if not re.fullmatch(r"[0-9A-Za-z.+~-]{1,40}", version):
+    sys.exit(1)
+praefix = f"https://github.com/{repo}/releases/download/"
+deb = summen = None
+for a in daten.get("assets") or []:
+    if not isinstance(a, dict):
+        continue
+    name, url = str(a.get("name") or ""), str(a.get("browser_download_url") or "")
+    if not url.startswith(praefix) or "\x1f" in name or "\n" in name:
+        continue
+    if arch and deb is None and re.search(r"[-_.](" + arch + r")\.deb$", name, re.I):
+        deb = a
+    if re.fullmatch(r"(sha256sums|checksums)(\.txt)?", name, re.I):
+        summen = a
+digest = ""
+if deb and re.fullmatch(r"sha256:[0-9a-f]{64}", str(deb.get("digest") or "")):
+    digest = deb["digest"][7:]
+felder = [version,
+          deb["name"] if deb else "", deb["browser_download_url"] if deb else "",
+          str(int(deb.get("size") or 0)) if deb else "0", digest,
+          summen["browser_download_url"] if summen else ""]
+print("\x1f".join(felder))
+PY
+  ) || { rm -f -- "$datei"; return 1; }
+  rm -f -- "$datei"
+  IFS=$'\x1f' read -r GH_VERSION GH_ASSET GH_URL GH_GROESSE GH_DIGEST GH_SUMMEN <<< "$zeile"
+  return 0
+}
+
+# Erwartete SHA-256 des Assets aus der Prüfsummen-Datei und der Angabe von GitHub. Beide müssen
+# übereinstimmen, wenn es beide gibt; ohne beides wird nicht installiert.
+_github_pruefsumme() {
+  local summe="" datei
+  if [[ -n "$GH_SUMMEN" ]]; then
+    datei=$(mktemp "${TMPDIR:-/tmp}/zenos-apps-summen.XXXXXX")
+    if "${CURL[@]}" --max-time 30 -o "$datei" "$GH_SUMMEN" 2>/dev/null; then
+      summe=$(python3 - "$datei" "$GH_ASSET" <<'PY'
+import re
+import sys
+
+datei, name = sys.argv[1:3]
+with open(datei, encoding="utf-8", errors="replace") as f:
+    for zeile in f:
+        m = re.match(r"^([0-9A-Fa-f]{64})\s+\*?(.+?)\s*$", zeile)
+        if m and m.group(2) == name:
+            print(m.group(1).lower())
+            break
+PY
+      ) || summe=""
+    fi
+    rm -f -- "$datei"
+  fi
+  if [[ -n "$summe" && -n "$GH_DIGEST" && "$summe" != "$GH_DIGEST" ]]; then
+    meldung "Prüfsummen widersprechen sich ($GH_ASSET): SHA256SUMS und GitHub nennen verschiedene Werte"
+    return 1
+  fi
+  summe=${summe:-$GH_DIGEST}
+  [[ "$summe" =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf '%s\n' "$summe"
+}
+
+# Ergebnis der letzten Release-Abfrage (coremail, Nubix) aus dem Cache; aktualisiert mit --netz
+_netz_pruefen() {
+  local erzwingen=${1:-0} alter app repo
+  mkdir -p -- "$CACHE"
+  if [[ "$erzwingen" != 1 && -f "$NETZ_CACHE" ]]; then
+    alter=$(( $(date +%s) - $(stat -c %Y -- "$NETZ_CACHE" 2>/dev/null || echo 0) ))
+    (( alter < 43200 )) && return 0
+  fi
+  local -a zeilen=()
+  for app in coremail nubix; do
+    repo=$COREMAIL_REPO
+    [[ "$app" == nubix ]] && repo=$NUBIX_REPO
+    if _github_release "$repo"; then
+      zeilen+=("$app" "$GH_VERSION" "$GH_ASSET" "$GH_GROESSE")
+    else
+      zeilen+=("$app" "" "" "-1")
+    fi
+  done
+  python3 - "$NETZ_CACHE" "${zeilen[@]}" <<'PY'
+import json
+import os
+import sys
+import tempfile
+import time
+
+ziel, rest = sys.argv[1], sys.argv[2:]
+try:
+    with open(ziel, encoding="utf-8") as f:
+        alt = json.load(f)
+except (OSError, ValueError):
+    alt = {}
+daten = {"geprueft": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
+for i in range(0, len(rest), 4):
+    app, version, asset, groesse = rest[i:i + 4]
+    if groesse == "-1":
+        # Abfrage gescheitert: den letzten bekannten Stand behalten
+        if isinstance(alt.get(app), dict):
+            daten[app] = alt[app]
+        continue
+    daten[app] = {"version": version, "asset": asset, "groesse": int(groesse or 0)}
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(ziel), prefix=".apps.", suffix=".tmp")
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    json.dump(daten, f, ensure_ascii=False)
+os.replace(tmp, ziel)
+PY
+}
+
+# Liest einen Wert aus dem Cache: _cache APP FELD
+_cache() {
+  [[ -f "$NETZ_CACHE" ]] || return 0
+  python3 - "$NETZ_CACHE" "$1" "$2" <<'PY' 2>/dev/null || true
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        wert = (json.load(f).get(sys.argv[2]) or {}).get(sys.argv[3])
+except (OSError, ValueError, AttributeError):
+    wert = None
+if wert is not None:
+    print(wert)
+PY
+}
+
+# Gibt es die App für diese Architektur? Rückgabe 0 = ja; sonst steht der Grund in GRUND.
+GRUND=""
+_verfuegbar() {
+  local app=$1 asset
+  GRUND=""
+  if [[ -z "$TAR_ARCH" ]]; then
+    GRUND="nicht für ${ARCH:-diese Architektur}"
+    return 1
+  fi
+  case "$app" in
+    nubix)
+      asset=$(_cache nubix asset)
+      if [[ -z "$asset" ]]; then
+        GRUND="noch kein ARM-Build"
+        [[ "$ARCH" == amd64 ]] && GRUND="Verfügbarkeit noch nicht geprüft"
+        return 1
+      fi
+      ;;
+    coremail)
+      if [[ -f "$NETZ_CACHE" ]] && [[ -n "$(_cache coremail version)" && -z "$(_cache coremail asset)" ]]; then
+        GRUND="kein $ARCH-Paket in der neuesten Version"
+        return 1
+      fi
+      ;;
+  esac
+  return 0
+}
+
+# --- status ----------------------------------------------------------------
+
+_json_text() {
+  local s=$1
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  s=${s//$'\n'/ }
+  s=${s//$'\t'/ }
+  printf '"%s"' "$s"
+}
+
+_befehl_status() {
+  local als_json=0 netz=0 arg app version installiert verfuegbar groesse mb erste=1
+  for arg in "$@"; do
+    case "$arg" in
+      --json) als_json=1 ;;
+      --netz) netz=1 ;;
+      *) meldung "unbekannte Option «$arg» (erlaubt: --json, --netz)"; return 2 ;;
+    esac
+  done
+  if (( netz )); then _netz_pruefen || true; fi
+
+  if (( als_json )); then
+    printf '{"arch":%s,"apps":[' "$(_json_text "$ARCH")"
+  else
+    printf 'Apps (%s)\n' "${ARCH:-unbekannt}"
+  fi
+  for app in "${ALLE[@]}"; do
+    installiert=false
+    version=""
+    if version=$(_installiert "$app"); then installiert=true; else version=""; fi
+    verfuegbar=true
+    _verfuegbar "$app" || verfuegbar=false
+    mb=$(_groesse "$app")
+    if [[ "$app" == coremail || "$app" == nubix ]]; then
+      groesse=$(_cache "$app" groesse)
+      [[ "$groesse" =~ ^[0-9]+$ ]] && (( groesse > 0 )) && mb=$(( (groesse + 524288) / 1048576 ))
+    fi
+    if (( als_json )); then
+      (( erste )) || printf ','
+      erste=0
+      printf '{"id":%s,"name":%s,"hersteller":%s,"herkunft":%s,"groesseMb":%s,"installiert":%s,"version":%s,"verfuegbar":%s,"hinweis":%s,"neueste":%s}' \
+        "$(_json_text "$app")" "$(_json_text "$(_name "$app")")" "$(_json_text "$(_hersteller "$app")")" \
+        "$(_json_text "$(_herkunft "$app")")" "$mb" "$installiert" "$(_json_text "$version")" "$verfuegbar" \
+        "$(_json_text "$GRUND")" "$(_json_text "$(_cache "$app" version)")"
+    else
+      if [[ "$installiert" == true ]]; then
+        printf '  ✓ %-20s %s\n' "$(_name "$app")" "${version:-installiert}"
+      elif [[ "$verfuegbar" == true ]]; then
+        printf '  · %-20s nicht installiert (zen apps installieren %s)\n' "$(_name "$app")" "$app"
+      else
+        printf '  · %-20s %s\n' "$(_name "$app")" "$GRUND"
+      fi
+    fi
+  done
+  local agent=false konfiguriert=false
+  [[ -S "$AGENT_SOCKET" ]] && agent=true
+  [[ -f "$AGENT_ENV" ]] && konfiguriert=true
+  if (( als_json )); then
+    printf '],"agent":{"konfiguriert":%s,"socket":%s},"geprueft":%s}\n' "$konfiguriert" "$agent" \
+      "$(_json_text "$( [[ -f "$NETZ_CACHE" ]] && python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("geprueft",""))' "$NETZ_CACHE" 2>/dev/null || true)")"
+  elif _installiert 1password >/dev/null; then
+    if [[ "$agent" == true ]]; then
+      printf '\nSSH-Agent von 1Password: läuft (%s)\n' "${AGENT_SOCKET/#"$HOME"/"~"}"
+    else
+      printf '\nSSH-Agent von 1Password: aus. In 1Password unter Einstellungen → Entwickler einschalten.\n'
+    fi
+  fi
+}
+
+# --- Plan ------------------------------------------------------------------
+
+_fpr_lesbar() { sed -E 's/(.{4})/\1 /g; s/ $//' <<< "$1"; }
+
+_plan() {
+  local app=$1 modus=$2 name
+  name=$(_name "$app")
+  printf '\n  %s · %s\n' "$name" "$(_hersteller "$app")"
+  case "$app" in
+    chrome)
+      info "Schlüssel  $GOOGLE_SCHLUESSEL"
+      info "           Fingerabdruck $(_fpr_lesbar "$GOOGLE_FPR") (wird geprüft)"
+      info "           → $KEYRINGS/zenos-google-chrome.gpg"
+      info "Quelle     $GOOGLE_QUELLE stable main ($ARCH, signed-by)"
+      info "           → $QUELLEN/zenos-google-chrome.sources"
+      info "Datei      /etc/default/google-chrome (Chrome legt keine zweite Quelle an)"
+      info "Paket      google-chrome-stable (≈ $(_groesse chrome) MB)"
+      info "Benutzer   ~/.local/share/applications/google-chrome.desktop (Start über zenos-chrome)"
+      info "           Standardbrowser, falls noch keiner gesetzt ist"
+      ;;
+    vscode)
+      info "Schlüssel  $MICROSOFT_SCHLUESSEL"
+      info "           Fingerabdruck $(_fpr_lesbar "$MICROSOFT_FPR") (wird geprüft)"
+      info "           → $KEYRINGS/zenos-microsoft.gpg"
+      info "Quelle     $MICROSOFT_QUELLE stable main ($ARCH, signed-by)"
+      info "           → $QUELLEN/zenos-vscode.sources"
+      info "debconf    code/add-microsoft-repo = false (VS Code legt keine zweite Quelle an)"
+      info "Paket      code (≈ $(_groesse vscode) MB)"
+      ;;
+    1password)
+      info "Archiv     $OP_ARCHIV_BASIS/$TAR_ARCH/1password-latest.tar.gz"
+      info "           dazu die Signatur …/1password-latest.tar.gz.sig (zusammen ≈ $(_groesse 1password) MB)"
+      info "Schlüssel  $OP_SCHLUESSEL"
+      info "           Fingerabdruck $(_fpr_lesbar "$OP_FPR") (wird geprüft)"
+      info "Ziel       $OP_ZIEL, danach $OP_ZIEL/after-install.sh (Hersteller:"
+      info "           Gruppe onepassword, chrome-sandbox setuid, Starter, /usr/bin/1password;"
+      info "           legt /usr/local/share/desktop-directories an, falls es fehlt)"
+      info "Benutzer   ~/.config/environment.d/zenos-1password.conf und"
+      info "           ~/.config/fish/conf.d/zenos-1password.fish (SSH_AUTH_SOCK für den SSH-Agent)"
+      if [[ "$modus" == aktualisieren ]]; then
+        info "           Eine laufende App bleibt offen; nach einem Neustart gilt die neue Version"
+      fi
+      ;;
+    cli)
+      info "Schlüssel  $OP_SCHLUESSEL"
+      info "           Fingerabdruck $(_fpr_lesbar "$OP_FPR") (wird geprüft)"
+      info "           → $KEYRINGS/zenos-1password.gpg"
+      info "Quelle     $OP_QUELLE_BASIS/$ARCH stable main ($ARCH, signed-by)"
+      info "           → $QUELLEN/zenos-1password.sources"
+      info "Paket      1password-cli (≈ $(_groesse cli) MB)"
+      ;;
+    coremail | nubix)
+      info "Release    github.com/$( [[ "$app" == coremail ]] && echo "$COREMAIL_REPO" || echo "$NUBIX_REPO" ) · Version $GH_VERSION"
+      info "Datei      $GH_ASSET (≈ $(( (GH_GROESSE + 524288) / 1048576 )) MB)"
+      info "Prüfsumme  SHA-256 $GH_ERWARTET"
+      info "           (aus $( [[ -n "$GH_SUMMEN" ]] && printf '%s' "${GH_SUMMEN##*/}" || printf 'der Angabe von GitHub'))"
+      info "Paket      apt install ./$GH_ASSET"
+      ;;
+  esac
+}
+
+# --- Schritte (laufen als eigener Prozess, damit «set -e» dort sicher greift) --
+
+_sudo() { sudo -p "[sudo] Passwort für %p: " "$@"; }
+
+_root_tmp() { _sudo mktemp -d /var/tmp/zenos-apps.XXXXXX; }
+
+# Lädt einen Schlüssel, prüft den Fingerabdruck des Hauptschlüssels und legt ihn als Keyring ab.
+_schluessel() {
+  local url=$1 fpr=$2 ziel=$3 tmp gefunden
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/zenos-apps-schluessel.XXXXXX")
+  if ! "${CURL[@]}" --max-time 60 -o "$tmp/schluessel.asc" "$url"; then
+    rm -rf -- "$tmp"
+    meldung "Schlüssel von $url nicht erreichbar"
+    return 1
+  fi
+  gefunden=$(gpg --homedir "$tmp" --batch --quiet --show-keys --with-colons "$tmp/schluessel.asc" 2>/dev/null |
+    awk -F: '$1 == "pub" { erwarte = 1; next } erwarte && $1 == "fpr" { print $10; erwarte = 0 }')
+  if [[ "$gefunden" != "$fpr" ]]; then
+    rm -rf -- "$tmp"
+    meldung "Schlüssel von $url hat nicht den erwarteten Fingerabdruck – abgebrochen"
+    meldung "erwartet: $fpr · gefunden: ${gefunden//$'\n'/, }"
+    return 1
+  fi
+  gpg --homedir "$tmp" --batch --yes --dearmor -o "$tmp/keyring.gpg" "$tmp/schluessel.asc"
+  if ! _sudo cmp -s -- "$tmp/keyring.gpg" "$ziel" 2>/dev/null; then
+    _sudo install -D -m 0644 -o root -g root -- "$tmp/keyring.gpg" "$ziel"
+    info "Schlüssel $ziel (Fingerabdruck geprüft)"
+  fi
+  rm -rf -- "$tmp"
+}
+
+# Schreibt eine Datei als root (0644), nur wenn der Inhalt abweicht; Inhalt von stdin
+_root_datei() {
+  local ziel=$1 tmp
+  tmp=$(mktemp "${TMPDIR:-/tmp}/zenos-apps-datei.XXXXXX")
+  cat > "$tmp"
+  if ! _sudo cmp -s -- "$tmp" "$ziel" 2>/dev/null; then
+    _sudo install -D -m 0644 -o root -g root -- "$tmp" "$ziel"
+    info "Datei $ziel"
+  fi
+  rm -f -- "$tmp"
+}
+
+_quelle() { # NAME URI KEYRING
+  _root_datei "$QUELLEN/$1.sources" <<EOF
+# zenOS (zen apps): offizielle Paketquelle, nur mit dem Schlüssel unten gültig
+Types: deb
+URIs: $2
+Suites: stable
+Components: main
+Architectures: $ARCH
+Signed-By: $3
+EOF
+}
+
+_schritt_quellen() {
+  local app
+  _sudo install -d -m 0755 -o root -g root "$KEYRINGS"
+  for app in "$@"; do
+    case "$app" in
+      chrome)
+        _schluessel "$GOOGLE_SCHLUESSEL" "$GOOGLE_FPR" "$KEYRINGS/zenos-google-chrome.gpg"
+        # Ohne diese Datei trägt das Chrome-Paket bei der Installation und täglich per cron eine
+        # eigene Quelle ein (google-chrome.sources)
+        _root_datei /etc/default/google-chrome <<'EOF'
+# zenOS (zen apps): Die Paketquelle für Chrome verwaltet zenOS in zenos-google-chrome.sources.
+repo_add_once="false"
+repo_reenable_on_distupgrade="false"
+EOF
+        _quelle zenos-google-chrome "$GOOGLE_QUELLE" "$KEYRINGS/zenos-google-chrome.gpg"
+        ;;
+      vscode)
+        _schluessel "$MICROSOFT_SCHLUESSEL" "$MICROSOFT_FPR" "$KEYRINGS/zenos-microsoft.gpg"
+        printf 'code code/add-microsoft-repo boolean false\n' | _sudo debconf-set-selections
+        _quelle zenos-vscode "$MICROSOFT_QUELLE" "$KEYRINGS/zenos-microsoft.gpg"
+        ;;
+      cli)
+        _schluessel "$OP_SCHLUESSEL" "$OP_FPR" "$KEYRINGS/zenos-1password.gpg"
+        _quelle zenos-1password "$OP_QUELLE_BASIS/$ARCH" "$KEYRINGS/zenos-1password.gpg"
+        ;;
+    esac
+  done
+  info "Paketlisten aktualisieren"
+  _sudo env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 update -q
+}
+
+_apt_installieren() {
+  _sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get -o DPkg::Lock::Timeout=300 \
+    install -y -q --no-install-recommends "$@"
+}
+
+_schritt_apt() {
+  local app=$1
+  _apt_installieren "$(_paket "$app")"
+  # Hat ein Paket trotzdem eine eigene Quelle angelegt, wäre sie doppelt: entfernen
+  case "$app" in
+    chrome)
+      if [[ -f "$QUELLEN/google-chrome.sources" || -f "$QUELLEN/google-chrome.list" ]]; then
+        _sudo rm -f -- "$QUELLEN/google-chrome.sources" "$QUELLEN/google-chrome.list"
+        info "Zweite Quelle von Chrome entfernt"
+      fi
+      ;;
+    vscode)
+      if [[ -f "$QUELLEN/vscode.sources" || -f "$QUELLEN/vscode.list" ]]; then
+        _sudo rm -f -- "$QUELLEN/vscode.sources" "$QUELLEN/vscode.list"
+        info "Zweite Quelle von VS Code entfernt"
+      fi
+      ;;
+  esac
+}
+
+# 0, wenn das Archiv auf dem Server dasselbe ist wie das installierte (Last-Modified)
+_op_aktuell() {
+  local stand alt
+  [[ -f "$OP_STAND" ]] || return 1
+  alt=$(sed -n '/^stand=/{s///p;q}' "$OP_STAND" 2>/dev/null) || alt=""
+  stand=$("${CURL[@]}" --max-time 30 -I "$OP_ARCHIV_BASIS/$TAR_ARCH/1password-latest.tar.gz" 2>/dev/null |
+    tr -d '\r' | sed -n 's/^[Ll]ast-[Mm]odified: //p' | tail -n 1) || stand=""
+  [[ -n "$stand" && "$stand" == "$alt" ]]
+}
+
+# Lädt 1Password (Archiv + Signatur), prüft die Signatur mit dem Schlüssel des Herstellers und
+# installiert nach /opt/1Password. ARG: installieren|aktualisieren
+_schritt_1password() {
+  local modus=$1 tmp root url stand pruefsumme version ordner
+  url="$OP_ARCHIV_BASIS/$TAR_ARCH/1password-latest.tar.gz"
+  mkdir -p -- "$CACHE"
+  trap _tmp_aufraeumen EXIT
+  tmp=$(mktemp -d "$CACHE/1password.XXXXXX")
+  _TMP_BENUTZER=$tmp
+  info "Archiv laden …"
+  _laden "$url" "$tmp/1password.tar.gz" "$tmp/kopf"
+  "${CURL[@]}" --max-time 60 -o "$tmp/1password.tar.gz.sig" "$url.sig"
+  "${CURL[@]}" --max-time 60 -o "$tmp/1password.asc" "$OP_SCHLUESSEL"
+  mkdir -m 0700 "$tmp/gnupg"
+  local gefunden
+  gefunden=$(gpg --homedir "$tmp/gnupg" --batch --quiet --show-keys --with-colons "$tmp/1password.asc" 2>/dev/null |
+    awk -F: '$1 == "pub" { erwarte = 1; next } erwarte && $1 == "fpr" { print $10; erwarte = 0 }')
+  if [[ "$gefunden" != "$OP_FPR" ]]; then
+    meldung "Schlüssel von 1Password hat nicht den erwarteten Fingerabdruck – abgebrochen"
+    return 1
+  fi
+  gpg --homedir "$tmp/gnupg" --batch --quiet --import "$tmp/1password.asc" 2>/dev/null
+  # Gültig nur mit VALIDSIG des Hauptschlüssels (letztes Feld: Fingerabdruck des Hauptschlüssels)
+  if ! gpg --homedir "$tmp/gnupg" --batch --status-fd 1 --verify "$tmp/1password.tar.gz.sig" "$tmp/1password.tar.gz" 2>/dev/null |
+    awk -v fpr="$OP_FPR" '$1 == "[GNUPG:]" && $2 == "VALIDSIG" && $NF == fpr { ok = 1 } END { exit !ok }'; then
+    meldung "Signatur des 1Password-Archivs ist ungültig – nichts installiert"
+    return 1
+  fi
+  info "Signatur geprüft (Fingerabdruck $(_fpr_lesbar "$OP_FPR"))"
+  pruefsumme=$(sha256sum "$tmp/1password.tar.gz" | cut -d' ' -f1)
+  stand=$(tr -d '\r' < "$tmp/kopf" | sed -n 's/^[Ll]ast-[Mm]odified: //p' | tail -n 1)
+
+  ordner=$(tar -tzf "$tmp/1password.tar.gz" | sed -n 1p)
+  ordner=${ordner%%/*}
+  if [[ ! "$ordner" =~ ^1password-([0-9][0-9A-Za-z.+~-]*)\.[a-z0-9_]+$ ]]; then
+    meldung "Unerwarteter Aufbau des Archivs ($ordner) – nichts installiert"
+    return 1
+  fi
+  version=${BASH_REMATCH[1]}
+  if [[ "$modus" == aktualisieren && "$version" == "$(_installiert 1password)" ]]; then
+    printf 'version=%s\nsha256=%s\nstand=%s\n' "$version" "$pruefsumme" "$stand" | _root_datei "$OP_STAND" >/dev/null
+    info "1Password ist aktuell ($version)"
+    return 0
+  fi
+
+  # Als root: geprüftes Archiv übernehmen, Prüfsumme erneut vergleichen, dann entpacken
+  root=$(_root_tmp)
+  _TMP_ROOT=$root
+  _sudo install -m 0644 -o root -g root -- "$tmp/1password.tar.gz" "$root/1password.tar.gz"
+  if [[ "$(_sudo sha256sum "$root/1password.tar.gz" | cut -d' ' -f1)" != "$pruefsumme" ]]; then
+    meldung "Archiv hat sich nach der Prüfung verändert – nichts installiert"
+    return 1
+  fi
+  _sudo install -d -m 0755 -o root -g root "$root/neu"
+  _sudo tar -xzf "$root/1password.tar.gz" -C "$root/neu" --no-same-owner --no-same-permissions
+  _sudo test -x "$root/neu/$ordner/1password"
+  _sudo chown -R root:root "$root/neu/$ordner"
+  _sudo chmod -R u+rwX,go+rX,go-w "$root/neu/$ordner"
+  if _sudo test -e "$OP_ZIEL"; then
+    _sudo rm -rf -- "$OP_ZIEL.alt"
+    _sudo mv -- "$OP_ZIEL" "$OP_ZIEL.alt"
+  fi
+  _sudo mv -- "$root/neu/$ordner" "$OP_ZIEL"
+  # after-install.sh legt den Starter mit xdg-desktop-menu an. Das bricht ohne einen Ordner
+  # desktop-directories ab, den Ubuntu Server ohne Desktop nicht hat.
+  if [[ ! -d /usr/share/desktop-directories && ! -d /usr/local/share/desktop-directories ]]; then
+    _sudo install -d -m 0755 -o root -g root /usr/local/share/desktop-directories
+    info "Ordner /usr/local/share/desktop-directories (für den Starter von 1Password)"
+  fi
+  if ! _sudo "$OP_ZIEL/after-install.sh"; then
+    meldung "after-install.sh von 1Password ist fehlgeschlagen – «zen apps installieren 1password» versucht es erneut"
+    return 1
+  fi
+  _sudo rm -rf -- "$OP_ZIEL.alt"
+  printf 'version=%s\nsha256=%s\nstand=%s\n' "$version" "$pruefsumme" "$stand" | _root_datei "$OP_STAND" >/dev/null
+  info "1Password $version nach $OP_ZIEL"
+}
+
+# coremail und Nubix aus der GitHub-Release. ARGE: APP URL ASSET SHA256
+_schritt_github() {
+  local app=$1 url=$2 asset=$3 summe=$4 tmp root paket
+  [[ "$summe" =~ ^[0-9a-f]{64}$ ]] || { meldung "keine gültige Prüfsumme"; return 1; }
+  [[ "$asset" =~ ^[A-Za-z0-9][A-Za-z0-9._+~-]*\.deb$ ]] || { meldung "unerwarteter Dateiname: $asset"; return 1; }
+  mkdir -p -- "$CACHE"
+  trap _tmp_aufraeumen EXIT
+  tmp=$(mktemp -d "$CACHE/$app.XXXXXX")
+  _TMP_BENUTZER=$tmp
+  info "$asset laden …"
+  _laden "$url" "$tmp/$asset"
+  root=$(_root_tmp)
+  _TMP_ROOT=$root
+  _sudo chmod 0755 "$root"
+  _sudo install -m 0644 -o root -g root -- "$tmp/$asset" "$root/$asset"
+  if [[ "$(_sudo sha256sum "$root/$asset" | cut -d' ' -f1)" != "$summe" ]]; then
+    meldung "SHA-256 von $asset stimmt nicht – nichts installiert"
+    return 1
+  fi
+  info "SHA-256 geprüft"
+  paket=$(dpkg-deb -f "$root/$asset" Package)
+  [[ "$paket" =~ ^[a-z0-9][a-z0-9+.-]+$ ]] || { meldung "Paketname im Archiv ungültig"; return 1; }
+  _apt_installieren "$root/$asset"
+}
+
+_schritt() {
+  local art=$1
+  shift
+  case "$art" in
+    quellen) _schritt_quellen "$@" ;;
+    apt) _schritt_apt "$@" ;;
+    1password) _schritt_1password "$@" ;;
+    github) _schritt_github "$@" ;;
+    *) meldung "unbekannter Schritt"; return 2 ;;
+  esac
+}
+
+# --- Benutzerteile -----------------------------------------------------------
+
+_benutzer_datei() { # ZIEL MELDEN – Inhalt von stdin, nur bei Abweichung
+  local ziel=$1 melden=$2 tmp
+  mkdir -p -- "$(dirname -- "$ziel")"
+  tmp=$(mktemp "$(dirname -- "$ziel")/.zenos-apps.XXXXXX")
+  cat > "$tmp"
+  if cmp -s -- "$tmp" "$ziel"; then
+    rm -f -- "$tmp"
+    return 0
+  fi
+  chmod 0644 "$tmp"
+  mv -f -- "$tmp" "$ziel"
+  (( melden )) && printf '%s\n' "${ziel/#"$HOME"/"~"}"
+  return 0
+}
+
+_befehl_benutzer() {
+  local melden=0 arg
+  for arg in "$@"; do
+    case "$arg" in
+      --melden) melden=1 ;;
+      *) meldung "unbekannte Option «$arg» (erlaubt: --melden)"; return 2 ;;
+    esac
+  done
+  if (( EUID == 0 )); then
+    meldung "läuft als normaler Benutzer, nicht als root"
+    return 2
+  fi
+
+  # SSH-Agent von 1Password: nur, wenn 1Password installiert ist
+  if _installiert 1password >/dev/null; then
+    _benutzer_datei "$AGENT_ENV" "$melden" <<EOF
+# zenOS (zen apps): SSH-Agent von 1Password für Apps der Sitzung.
+# Einschalten in 1Password: Einstellungen → Entwickler → SSH-Agent. Wirkt ab der nächsten Anmeldung.
+SSH_AUTH_SOCK=$AGENT_SOCKET
+EOF
+    _benutzer_datei "$AGENT_FISH" "$melden" <<'EOF'
+# zenOS (zen apps): SSH-Agent von 1Password im Terminal. Per SSH bleibt ein weitergeleiteter Agent.
+if not set -q SSH_CONNECTION
+    set -gx SSH_AUTH_SOCK $HOME/.1password/agent.sock
+else if not set -q SSH_AUTH_SOCK; and test -S $HOME/.1password/agent.sock
+    set -gx SSH_AUTH_SOCK $HOME/.1password/agent.sock
+end
+EOF
+  else
+    local datei
+    for datei in "$AGENT_ENV" "$AGENT_FISH"; do
+      if [[ -f "$datei" ]] && grep -q '^# zenOS (zen apps)' "$datei"; then
+        rm -f -- "$datei"
+        (( melden )) && printf 'entfernt: %s\n' "${datei/#"$HOME"/"~"}"
+      fi
+    done
+  fi
+
+  # Web-Apps und Chrome-Starter (über zenos-chrome)
+  if [[ -x "$BIN/zenos-webapp" ]]; then
+    if (( melden )); then
+      "$BIN/zenos-webapp" synchronisieren --melden || meldung "Web-Apps nicht vollständig abgeglichen"
+    else
+      "$BIN/zenos-webapp" synchronisieren || meldung "Web-Apps nicht vollständig abgeglichen"
+    fi
+  fi
+
+  # Chrome als Standardbrowser, solange keiner gesetzt ist
+  local mime=${XDG_CONFIG_HOME:-$HOME/.config}/mimeapps.list
+  if _installiert chrome >/dev/null && command -v xdg-mime >/dev/null 2>&1 &&
+    [[ -f "${XDG_DATA_HOME:-$HOME/.local/share}/applications/google-chrome.desktop" ]] &&
+    ! grep -qs '^x-scheme-handler/https=' "$mime"; then
+    local art
+    for art in x-scheme-handler/http x-scheme-handler/https text/html; do
+      if [[ -z "$(xdg-mime query default "$art" 2>/dev/null)" ]]; then
+        if xdg-mime default google-chrome.desktop "$art" 2>/dev/null; then
+          (( melden )) && printf 'Standardbrowser für %s: Google Chrome\n' "$art"
+        fi
+      fi
+    done
+  fi
+  return 0
+}
+
+# --- installieren / aktualisieren --------------------------------------------
+
+_GEWARTET=0
+_warten_fenster() {
+  (( FENSTER && ! _GEWARTET )) || return 0
+  _GEWARTET=1
+  [[ -t 0 ]] || return 0
+  printf '\n'
+  read -r -p "Enter schliesst dieses Fenster. " _ || true
+}
+
+SUDO_HALTER=""
+_aufraeumen() {
+  local rc=$?
+  [[ -z "$SUDO_HALTER" ]] || kill "$SUDO_HALTER" 2>/dev/null || true
+  # Unerwartet beendet: das Fenster bleibt offen, damit die Meldung lesbar ist
+  if (( FENSTER && ! _GEWARTET && rc != 0 )); then
+    printf '\nzen apps ist unerwartet beendet worden (Exit %s).\n' "$rc" >&2
+    _warten_fenster
+  fi
+}
+
+_befehl_installieren() {
+  local modus=$1 ja=0 arg app
+  shift
+  FENSTER=0
+  local -a gewuenscht=()
+  for arg in "$@"; do
+    case "$arg" in
+      --ja) ja=1 ;;
+      --fenster) FENSTER=1 ;;
+      -*) meldung "unbekannte Option «$arg» (erlaubt: --ja, --fenster)"; return 2 ;;
+      *)
+        if ! _gueltige_app "$arg"; then
+          meldung "unbekannte App «$arg» (erlaubt: ${ALLE[*]})"
+          return 2
+        fi
+        gewuenscht+=("$arg")
+        ;;
+    esac
+  done
+  trap _aufraeumen EXIT
+  if (( EUID == 0 )); then
+    meldung "läuft als normaler Benutzer (holt sich Root-Rechte selbst mit sudo), nicht als root"
+    return 2
+  fi
+  if [[ "${ZENOS_IMAGE:-0}" == 1 ]]; then
+    meldung "nie im Image: proprietäre Apps kommen erst beim ersten Start mit Zustimmung"
+    return 2
+  fi
+  if [[ -z "$TAR_ARCH" ]]; then
+    meldung "Architektur ${ARCH:-unbekannt} wird nicht unterstützt (arm64 oder amd64)"
+    _warten_fenster
+    return 1
+  fi
+
+  # Nie zwei Läufe gleichzeitig
+  local sperre=${XDG_RUNTIME_DIR:-$CACHE}/zenos-apps.lock
+  mkdir -p -- "$(dirname -- "$sperre")"
+  exec 9> "$sperre"
+  if ! flock -n 9; then
+    meldung "zen apps läuft schon in einem anderen Fenster"
+    _warten_fenster
+    return 1
+  fi
+
+  local standard=0
+  if (( ${#gewuenscht[@]} == 0 )); then
+    standard=1
+    gewuenscht=("${ALLE[@]}")
+  fi
+
+  schritt "zenOS · Apps $( [[ "$modus" == aktualisieren ]] && echo aktualisieren || echo installieren ) ($ARCH)"
+  if [[ " ${gewuenscht[*]} " == *" coremail "* || " ${gewuenscht[*]} " == *" nubix "* ]]; then
+    info "Release-Angaben von GitHub abfragen …"
+    _netz_pruefen 1 || true
+  fi
+
+  local -a plan=() apt_apps=() uebersprungen=()
+  declare -A GH_INFO=()
+  local version
+  for app in "${gewuenscht[@]}"; do
+    if [[ "$modus" == aktualisieren ]]; then
+      case "$app" in
+        chrome | vscode | cli)
+          (( standard )) || uebersprungen+=("$(_name "$app"): kommt aus der Paketquelle (sudo apt upgrade oder automatisch)")
+          continue
+          ;;
+      esac
+      if ! version=$(_installiert "$app"); then
+        (( standard )) || uebersprungen+=("$(_name "$app"): nicht installiert (zen apps installieren $app)")
+        continue
+      fi
+    elif version=$(_installiert "$app"); then
+      uebersprungen+=("$(_name "$app"): bereits installiert${version:+ ($version)}")
+      continue
+    fi
+    if [[ "$modus" == aktualisieren && "$app" == 1password ]] && _op_aktuell; then
+      uebersprungen+=("1Password: aktuell ($version)")
+      continue
+    fi
+    if ! _verfuegbar "$app"; then
+      if [[ "$app" == nubix ]]; then
+        uebersprungen+=("Nubix: $GRUND (neueste Version ${GH_NUBIX_VERSION:-$(_cache nubix version)}) – wird angeboten, sobald es einen gibt")
+      else
+        uebersprungen+=("$(_name "$app"): $GRUND")
+      fi
+      continue
+    fi
+    case "$app" in
+      coremail | nubix)
+        local repo=$COREMAIL_REPO
+        [[ "$app" == nubix ]] && repo=$NUBIX_REPO
+        if ! _github_release "$repo"; then
+          uebersprungen+=("$(_name "$app"): Release-Angaben nicht abrufbar (Netz? GitHub-Limit?)")
+          continue
+        fi
+        if [[ -z "$GH_URL" ]]; then
+          uebersprungen+=("$(_name "$app"): kein $ARCH-Paket in Version $GH_VERSION")
+          continue
+        fi
+        if [[ "$modus" == aktualisieren && "$GH_VERSION" == "$version" ]]; then
+          uebersprungen+=("$(_name "$app"): aktuell ($version)")
+          continue
+        fi
+        if ! GH_ERWARTET=$(_github_pruefsumme); then
+          uebersprungen+=("$(_name "$app"): keine verlässliche Prüfsumme veröffentlicht – nicht installiert")
+          continue
+        fi
+        GH_INFO[$app]="$GH_URL"$'\x1f'"$GH_ASSET"$'\x1f'"$GH_ERWARTET"$'\x1f'"$GH_VERSION"$'\x1f'"$GH_GROESSE"$'\x1f'"$GH_SUMMEN"
+        ;;
+      chrome | vscode | cli) apt_apps+=("$app") ;;
+    esac
+    plan+=("$app")
+  done
+
+  local zeile
+  for zeile in "${uebersprungen[@]}"; do info "· $zeile"; done
+  if (( ${#plan[@]} == 0 )); then
+    printf '\nNichts zu tun.\n'
+    _befehl_benutzer >/dev/null 9>&- || true
+    _warten_fenster
+    return 0
+  fi
+
+  printf '\nDas passiert jetzt:\n'
+  for app in "${plan[@]}"; do
+    if [[ -n "${GH_INFO[$app]:-}" ]]; then
+      IFS=$'\x1f' read -r GH_URL GH_ASSET GH_ERWARTET GH_VERSION GH_GROESSE GH_SUMMEN <<< "${GH_INFO[$app]}"
+    fi
+    _plan "$app" "$modus"
+  done
+  printf '\n  Alles kommt direkt von den Herstellern. Updates kommen danach von dort (apt) bzw. mit\n'
+  printf '  «zen apps aktualisieren» (1Password, coremail, Nubix). Nichts davon geht ins Repo oder Image.\n\n'
+
+  if (( ! ja )); then
+    if [[ ! -t 0 ]]; then
+      meldung "keine Bestätigung möglich (kein Terminal) – mit --ja bestätigen"
+      return 3
+    fi
+    local antwort=""
+    read -r -p "Fortfahren? Dafür braucht zenOS dein sudo-Passwort. [j/N] " antwort || true
+    case "${antwort,,}" in
+      j | ja | y | yes) ;;
+      *)
+        printf 'Abgebrochen, nichts geändert.\n'
+        _warten_fenster
+        return 3
+        ;;
+    esac
+  fi
+
+  # sudo einmal fragen und während des Laufs frisch halten
+  if ! _sudo -v; then
+    meldung "ohne sudo geht es nicht – nichts geändert"
+    _warten_fenster
+    return 1
+  fi
+  # Ohne die Sperre (fd 9): Sie gehört nur diesem Lauf, nicht den Hilfsprozessen
+  ( exec 9>&-; while kill -0 "$$" 2>/dev/null; do sleep 50; sudo -n -v 2>/dev/null || exit 0; done ) &
+  SUDO_HALTER=$!
+
+  local -a ok=() fehlgeschlagen=()
+  local quellen_ok=1
+  if (( ${#apt_apps[@]} > 0 )); then
+    schritt "Paketquellen"
+    if ! "$SELBST" _schritt quellen "${apt_apps[@]}" 9>&-; then
+      quellen_ok=0
+      meldung "Paketquellen nicht vollständig eingerichtet"
+    fi
+  fi
+  for app in "${plan[@]}"; do
+    schritt "$(_name "$app")"
+    local rc=0
+    case "$app" in
+      chrome | vscode | cli)
+        if (( quellen_ok )); then "$SELBST" _schritt apt "$app" 9>&- || rc=$?; else rc=1; fi
+        ;;
+      1password) "$SELBST" _schritt 1password "$modus" 9>&- || rc=$? ;;
+      coremail | nubix)
+        IFS=$'\x1f' read -r GH_URL GH_ASSET GH_ERWARTET GH_VERSION GH_GROESSE GH_SUMMEN <<< "${GH_INFO[$app]}"
+        "$SELBST" _schritt github "$app" "$GH_URL" "$GH_ASSET" "$GH_ERWARTET" 9>&- || rc=$?
+        ;;
+    esac
+    if (( rc == 0 )) && version=$(_installiert "$app"); then
+      ok+=("$app")
+    else
+      fehlgeschlagen+=("$app")
+    fi
+  done
+
+  schritt "Benutzerteile"
+  _befehl_benutzer --melden 9>&- | sed 's/^/   /' || true
+
+  schritt "Ergebnis"
+  for app in "${ok[@]}"; do info "✓ $(_name "$app") $(_installiert "$app" || true)"; done
+  for app in "${fehlgeschlagen[@]}"; do info "✗ $(_name "$app") – fehlgeschlagen (Meldungen oben)"; done
+  for app in "${ok[@]}"; do
+    [[ "$modus" == installieren ]] || break
+    case "$app" in
+      1password)
+        printf '\n   SSH-Agent: In 1Password unter Einstellungen → Entwickler «SSH-Agent verwenden» einschalten.\n'
+        printf '   Apps der Sitzung nutzen ihn ab der nächsten Anmeldung, neue Terminals sofort\n'
+        printf '   (SSH_AUTH_SOCK=~/.1password/agent.sock). ~/.ssh bleibt unverändert.\n'
+        ;;
+      cli)
+        printf '\n   1Password-CLI: In 1Password unter Einstellungen → Entwickler «Mit 1Password CLI\n'
+        printf '   integrieren» einschalten, dann «op vault list» ausprobieren.\n'
+        ;;
+    esac
+  done
+  _warten_fenster
+  (( ${#fehlgeschlagen[@]} == 0 ))
+}
+
+# --- Hauptteil ---------------------------------------------------------------
+
+_hilfe() { sed -n '2,25p' "$SELBST" | sed 's/^# \{0,1\}//'; }
+
+FENSTER=0
+befehl=${1:-}
+(( $# == 0 )) || shift
+case "$befehl" in
+  status) _befehl_status "$@" ;;
+  installieren) _befehl_installieren installieren "$@" ;;
+  aktualisieren) _befehl_installieren aktualisieren "$@" ;;
+  benutzer) _befehl_benutzer "$@" ;;
+  _schritt) _schritt "$@" ;;
+  -h | --hilfe | hilfe) _hilfe ;;
+  "") _hilfe; exit 2 ;;
+  *) meldung "unbekannter Befehl «$befehl» (zenos-apps --hilfe)"; exit 2 ;;
+esac
