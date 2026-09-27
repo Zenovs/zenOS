@@ -11,5 +11,7 @@ modul_benutzer() {
   benutzer_ordner_sicherstellen "$ZENOS_HOME/.config/zenos/zustaende"
   benutzer_ordner_sicherstellen "$ZENOS_HOME/.config/zenos/raster"
   benutzer_ordner_sicherstellen "$ZENOS_HOME/.local/state/zenos" 0700
+  # Nutzungsstatistik des Befehlsfelds
+  benutzer_ordner_sicherstellen "$ZENOS_HOME/.local/share/zenos" 0700
   benutzer_ordner_sicherstellen "$ZENOS_HOME/Bilder/Screenshots"
 }

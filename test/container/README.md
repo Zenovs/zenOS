@@ -11,10 +11,10 @@ Der Container ersetzt den Test auf echter Hardware nicht: Es gibt keine GPU-Besc
 
 | Datei | Läuft auf | Zweck |
 |---|---|---|
-| `Dockerfile` | Mac | Basis-Image `zenos-test:basis`: Ubuntu 26.04, systemd, sudo, alle Laufzeitpakete, Prüfwerkzeuge (shellcheck, gitleaks, qmllint), Quickshell v0.3.1 vorgebaut |
+| `Dockerfile` | Mac | Basis-Image `zenos-test:basis`: Ubuntu 26.04, systemd, sudo, Man-Seiten (auch Deutsch), alle Laufzeitpakete, Prüfwerkzeuge (shellcheck, gitleaks, qmllint, nodejs), Testwerkzeuge (expect, tmux, wtype, foot), Quickshell v0.3.1 vorgebaut |
 | `starten.sh <name>` | Mac | Container starten (oder auffrischen) und den Arbeitsstand nach `/home/tester/zenOS` bringen |
 | `arbeitsstand.sh` | Container | überträgt den Stand von `/repo` nach `~/zenOS` (von `starten.sh` aufgerufen) |
-| `oberflaeche.sh` | Container | labwc + Quickshell ohne Bildschirm, Bildschirmfotos, IPC, hell/dunkel |
+| `oberflaeche.sh` | Container | labwc + Quickshell ohne Bildschirm (direkt oder als Sitzung wie auf dem Pi), Bildschirmfotos, IPC, hell/dunkel, Tastatureingaben |
 | `holen.sh <container> <ordner>` | Mac | Bildschirmfotos aus dem Container holen |
 
 ## Basis-Image bauen
@@ -28,6 +28,15 @@ danach `tar -C /usr -cf /srv/usr-local.tar local` herauskopieren.
 ```
 docker build -t zenos-test:basis test/container
 ```
+
+Ein neues Image mit demselben Namen ändert laufende Container nicht; sie laufen mit dem alten Image weiter,
+bis sie neu gestartet werden. Sicherer ist, unter einem anderen Namen zu bauen, einen Container daraus zu
+prüfen und erst dann umzubenennen (`docker tag … zenos-test:basis`).
+
+Das Ubuntu-Image für Container ist «minimiert» (keine Man-Seiten). Das Dockerfile hebt das nur für die
+Man-Seiten auf (wie `unminimize`): Ausschlüsse von dpkg entfernen, die Pakete des Basis-Images mit
+Man-Seiten neu installieren, den Platzhalter für `/usr/bin/man` entfernen. So ist es wie auf dem Pi
+(Ubuntu Server ist nicht minimiert), und `?` im Terminal findet die Optionen in `man`.
 
 colima hat nur 2 CPUs und 4 GB: Container schlank halten und nach dem Test entfernen.
 
@@ -52,7 +61,7 @@ Im Container:
 
 ```
 ./scripts/install.sh        # zweimal: der zweite Lauf meldet «0 Änderungen»
-./scripts/pruefen.sh        # shellcheck, JSON-Schemas, Hex-Regel, qmllint, gitleaks, Start-Test …
+./scripts/pruefen.sh        # shellcheck, JSON-Schemas, Hex-Regel, Einheitentests, qmllint, gitleaks, Start-Test …
 zen doctor
 ```
 
@@ -112,8 +121,34 @@ test/container/oberflaeche.sh stopp
   `quickshell ipc call` in diesen Fällen mit Exit 0 und schreibt die Meldung auf stdout.
 - `log` zeigt das Protokoll ohne Farbcodes. Eine Auswertung wie im Start-Test macht `scripts/pruefen.sh start`.
 - `starte kitty` startet ein Programm in der Sitzung (Protokoll in `/srv/oberflaeche/`).
+- `tippe tester` und `taste Return` geben Text und Tasten über wtype ein (z. B. das Passwort in die Sperre).
+  wtype kennt kein `--`; Text, der mit `-` beginnt, lehnt `tippe` ab.
 - Im Software-Backend fehlen `MultiEffect` und `RectangularShadow` (brauchen RHI). Schatten dort nicht
   beurteilen. `Shape` mit `preferredRendererType: Shape.CurveRenderer` rendert sauber.
+
+## Sitzung wie auf dem Pi
+
+```
+./scripts/install.sh                                   # Einheiten, /opt/zenos, ~/.config/labwc …
+test/container/oberflaeche.sh start --sitzung          # labwc → autostart → zenos-sitzung.target
+test/container/oberflaeche.sh status                   # Target und Dienste (shell, idle, kanshi)
+zen lock                                               # wie per SSH, auch aus einem anderen docker exec
+test/container/oberflaeche.sh ipc sperre status        # gesperrt
+test/container/oberflaeche.sh tippe tester
+test/container/oberflaeche.sh taste Return             # entsperrt
+test/container/oberflaeche.sh log 40                   # Journal von zenos-shell.service seit dem Start
+test/container/oberflaeche.sh stopp                    # stoppt das Target, labwc und die Umgebung
+```
+
+- labwc bekommt einen eigenen Konfigurationsordner (`/srv/oberflaeche/labwc-sitzung`) mit Verweisen auf
+  alles aus `~/.config/labwc` ausser `autostart`. Das eigene autostart setzt die Auflösung und
+  `QT_QUICK_BACKEND=software` für die systemd-Benutzerdienste (kein GPU im Container) und ruft dann das echte
+  `~/.config/labwc/autostart` (`system/labwc/autostart`), das `zenos-sitzung.target` startet.
+- Die Oberfläche läuft als `zenos-shell.service` aus `~/.config/quickshell` → `/opt/zenos/shell`, nicht aus
+  `~/zenOS`. Änderungen erst mit `./scripts/install.sh` übernehmen (QML lädt Quickshell dann selbst neu).
+- `ipc`, `thema`, `bild` und `status` finden die Oberfläche auch nach einem Neustart durch systemd
+  (`kill` der Quickshell: `Restart=always`, neue PID aus `systemctl --user show -p MainPID`).
+- Wie `zenos-sitzung` löscht der Start den Marker `$XDG_RUNTIME_DIR/zenos/gesperrt`.
 
 Bilder auf den Mac holen und ansehen:
 

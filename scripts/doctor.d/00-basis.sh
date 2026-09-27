@@ -40,8 +40,8 @@ _basis_system() {
     frei=$(awk -v k="$frei_kb" 'BEGIN { printf "%.1f", k / 1048576 }' | tr . ,)
     if (( frei_kb < 1048576 )); then
       fehler "Nur $frei GB frei auf /"
-    elif (( frei_kb < 3145728 )); then
-      warnung "Nur $frei GB frei auf / (Quickshell-Bau braucht etwa 2 GB)"
+    elif (( frei_kb < 3670016 )); then
+      warnung "Nur $frei GB frei auf / (ein neuer Quickshell-Bau, etwa nach einem Qt-Update, braucht etwa 3,5 GB in /var/tmp)"
     else
       ok "$frei GB frei auf /"
     fi

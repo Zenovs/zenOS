@@ -2,7 +2,7 @@
 # pruefen.sh – Selbsttest des Repos. Läuft unter Linux (Testcontainer, Pi, CI), nicht auf dem Mac-Host.
 #
 #   scripts/pruefen.sh [--ausfuehrlich] [teil …]
-#   Teile: shellcheck python json hex shc namen qmllint gitleaks start (ohne Angabe: alle)
+#   Teile: shellcheck python json hex shc namen einheiten qmllint gitleaks start (ohne Angabe: alle)
 #
 # Geprüft werden alle Dateien des Arbeitsstands, die Git nicht ignoriert (versioniert oder neu).
 #
@@ -27,6 +27,9 @@
 #   Kommentarzeilen zählen nicht; pruefen.sh selbst ist ausgenommen (enthält die Muster).
 # Teil namen: Dateinamen nur ASCII; install.sh, zen, pruefen.sh, scripts/bin/*, test/container/*.sh und
 #   .githooks/* ausführbar.
+# Teil einheiten: Einheitentests unter test/einheiten/: *.test.mjs mit «node --test» (nur wenn node da ist,
+#   sonst Hinweis), jede *.test.py mit python3, jede *.test.fish mit «fish --no-config» (nur wenn fish da
+#   ist). Ein Exit ungleich 0 ist ein Fehler; die Tests laufen im Repo und brauchen weder Netz noch Sitzung.
 # Teil qmllint: Quickshell erzeugt die qmldir-Dateien der qs.*-Module erst zur Laufzeit. pruefen.sh baut sie
 #   im Temp-Ordner nach (qs.<ordner>, Singletons über «pragma Singleton», «//@ pragma Internal»),
 #   kopiert shell/ dorthin und prüft die Kopien mit -I <temp> -I /usr/local/lib/qt6/qml (so sieht qmllint
@@ -35,8 +38,12 @@
 #   Fehler: Syntaxfehler und andere kritische Meldungen. Alle anderen Befunde sind Warnungen und
 #   lassen den Test nicht scheitern (Liste mit --ausfuehrlich). Vier bekannte Fehlalarme aus Quickshells
 #   Typdaten (FileView.adapter, Process.onExited, Notification.actions, PanelWindow.margins) bleiben immer
-#   Warnungen und werden getrennt gezählt. Ohne Quickshell-Module (z. B. in CI) zählen nur Syntaxfehler.
-#   Fehlt qmllint, wird übersprungen.
+#   Warnungen und werden getrennt gezählt. Doppelte ids («syntax.duplicate-ids») sind Warnungen: qmllint 6.10
+#   meldet sie auch für getrennte implizite Komponenten (zwei Delegates mit derselben id), die die QML-Engine
+#   annimmt; eine echte Doppelung lädt nicht («id is not unique») und fällt im Teil start auf.
+#   Ohne Quickshell-Module (/usr/local/lib/qt6/qml/Quickshell, z. B. in CI) zählen nur echte Syntaxfehler
+#   (Kategorie «syntax»): qmllint kennt dann die Quickshell-Typen nicht, und fast alle übrigen Befunde sind
+#   Folgefehler davon. Fehlt qmllint, wird übersprungen.
 # Teil gitleaks: «gitleaks detect --redact» über den Git-Verlauf und über eine Kopie des Arbeitsstands
 #   (--no-git), Syntax von gitleaks 8.16. Gefundene Geheimnisse erscheinen nur geschwärzt.
 # Teil start: startet jede Einstiegsdatei (shell/shell.qml, dazu jede kleingeschriebene .qml-Datei unter shell/
@@ -65,7 +72,7 @@ cd -- "$WURZEL" || exit 1
 
 AUSFUEHRLICH=0
 TEILE=()
-ALLE_TEILE=(shellcheck python json hex shc namen qmllint gitleaks start)
+ALLE_TEILE=(shellcheck python json hex shc namen einheiten qmllint gitleaks start)
 for arg in "$@"; do
   case "$arg" in
     --ausfuehrlich | -v) AUSFUEHRLICH=1 ;;
@@ -73,7 +80,7 @@ for arg in "$@"; do
       sed -n '2,5p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
-    shellcheck | python | json | hex | shc | namen | qmllint | gitleaks | start) TEILE+=("$arg") ;;
+    shellcheck | python | json | hex | shc | namen | einheiten | qmllint | gitleaks | start) TEILE+=("$arg") ;;
     *) printf 'pruefen.sh: unbekannter Teil «%s» (%s)\n' "$arg" "${ALLE_TEILE[*]}" >&2; exit 2 ;;
   esac
 done
@@ -387,6 +394,133 @@ pruefe_namen() {
   fi
 }
 
+# --- Einheitentests --------------------------------------------------------
+
+EINHEITEN_ZEITLIMIT=300 # Sekunden je Aufruf
+
+# einheiten_lauf LOG BEFEHL… – führt einen Testlauf aus; Rückgabe wie der Befehl (124: Zeitlimit)
+einheiten_lauf() {
+  local log=$1 rc=0
+  shift
+  NO_COLOR=1 timeout "$EINHEITEN_ZEITLIMIT" "$@" < /dev/null > "$log" 2>&1 || rc=$?
+  if (( rc == 124 )); then printf 'Zeitlimit von %s s überschritten\n' "$EINHEITEN_ZEITLIMIT" >> "$log"; fi
+  return "$rc"
+}
+
+# Ausschnitt eines gescheiterten Laufs für die Details: bei TAP (node) die Blöcke «not ok …» bis «...»,
+# sonst die letzten Zeilen (höchstens 40)
+einheiten_auszug() { # TITEL LOG
+  local auszug
+  auszug=$(sed 's/\x1b\[[0-9;]*m//g' "$2" |
+    awk '/^[[:space:]]*not ok [0-9]/ { an = 1 } an { print } an && /^[[:space:]]*\.\.\.$/ { an = 0 }' | head -n 60)
+  [[ -n "$auszug" ]] || auszug=$(sed 's/\x1b\[[0-9;]*m//g' "$2" | tail -n 40)
+  printf '%s:\n' "$1" >> "$TMP/einheiten-details"
+  printf '%s\n' "$auszug" | sed 's/^/  /' >> "$TMP/einheiten-details"
+}
+
+pruefe_einheiten() {
+  local f
+  local -a node=() python=() fish=()
+  for f in "${DATEIEN[@]}"; do
+    [[ -f "$f" && ! -L "$f" ]] || continue
+    case "$f" in
+      test/einheiten/*.test.mjs) node+=("$f") ;;
+      test/einheiten/*.test.py) python+=("$f") ;;
+      test/einheiten/*.test.fish) fish+=("$f") ;;
+    esac
+  done
+  if (( ${#node[@]} + ${#python[@]} + ${#fish[@]} == 0 )); then
+    hinweis "einheiten · keine Tests unter test/einheiten"
+    return
+  fi
+
+  local -a teile=() fehlend=()
+  local gescheitert=0 log n_ok n_fehl n_skip
+  : > "$TMP/einheiten-details"
+
+  # node: TAP-Ausgabe, Zusammenfassung «# pass N» / «# fail N»
+  if (( ${#node[@]} > 0 )); then
+    if ! command -v node > /dev/null; then
+      fehlend+=("node fehlt, $(dateien "${#node[@]}") (.mjs) übersprungen (Paket nodejs)")
+    else
+      log="$TMP/einheiten-node"
+      if einheiten_lauf "$log" node --test --test-reporter=tap "${node[@]}"; then
+        n_ok=$(sed -n 's/^# pass \([0-9]*\)$/\1/p' "$log" | tail -n 1)
+        teile+=("node $(anzahl "${n_ok:-0}" Test Tests)")
+      else
+        gescheitert=1
+        n_fehl=$(sed -n 's/^# fail \([0-9]*\)$/\1/p' "$log" | tail -n 1)
+        teile+=("node: ${n_fehl:-?} fehlgeschlagen")
+        einheiten_auszug "node --test ${node[*]}" "$log"
+      fi
+    fi
+  fi
+
+  # python3: unittest meldet «Ran N tests» und am Ende OK oder FAILED
+  if (( ${#python[@]} > 0 )); then
+    if ! command -v python3 > /dev/null; then
+      fehlend+=("python3 fehlt, $(dateien "${#python[@]}") (.py) übersprungen")
+    else
+      local summe=0 schlecht=0 n
+      for f in "${python[@]}"; do
+        log="$TMP/einheiten-python-$(basename -- "$f")"
+        if einheiten_lauf "$log" env PYTHONPYCACHEPREFIX="$TMP/pycache" PYTHONDONTWRITEBYTECODE=1 python3 "$f"; then
+          n=$(sed -n 's/^Ran \([0-9]*\) tests\{0,1\} in .*/\1/p' "$log" | tail -n 1)
+          summe=$((summe + ${n:-0}))
+        else
+          schlecht=$((schlecht + 1))
+          einheiten_auszug "python3 $f" "$log"
+        fi
+      done
+      if (( schlecht == 0 )); then
+        teile+=("python $(anzahl "$summe" Test Tests)")
+      else
+        gescheitert=1
+        teile+=("python: $(dateien "$schlecht") mit Fehlern")
+      fi
+    fi
+  fi
+
+  # fish: die Tests enden mit «N bestanden · N fehlgeschlagen · N übersprungen» und Exit 0 nur ohne Fehler
+  if (( ${#fish[@]} > 0 )); then
+    if ! command -v fish > /dev/null; then
+      fehlend+=("fish fehlt, $(dateien "${#fish[@]}") (.fish) übersprungen (Paket fish)")
+    else
+      local ok_summe=0 skip_summe=0 schlecht_fish=0
+      for f in "${fish[@]}"; do
+        log="$TMP/einheiten-fish-$(basename -- "$f")"
+        if einheiten_lauf "$log" fish --no-config "$f"; then
+          read -r n_ok n_fehl n_skip <<< "$(sed -n 's/^\([0-9]*\) bestanden · \([0-9]*\) fehlgeschlagen · \([0-9]*\) übersprungen$/\1 \2 \3/p' "$log" | tail -n 1)"
+          ok_summe=$((ok_summe + ${n_ok:-0}))
+          skip_summe=$((skip_summe + ${n_skip:-0}))
+        else
+          schlecht_fish=$((schlecht_fish + 1))
+          einheiten_auszug "fish --no-config $f" "$log"
+        fi
+      done
+      if (( schlecht_fish == 0 )); then
+        local text
+        text="fish $(anzahl "$ok_summe" Test Tests)"
+        (( skip_summe == 0 )) || text+=" ($skip_summe übersprungen)"
+        teile+=("$text")
+      else
+        gescheitert=1
+        teile+=("fish: $(dateien "$schlecht_fish") mit Fehlern")
+      fi
+    fi
+  fi
+
+  local zusammen
+  zusammen=$(IFS='|'; printf '%s' "${teile[*]}" | sed 's/|/ · /g')
+  if (( gescheitert )); then
+    fehler "einheiten · $zusammen"
+    details < "$TMP/einheiten-details"
+  elif (( ${#teile[@]} > 0 )); then
+    ok "einheiten · $zusammen"
+  fi
+  for f in "${fehlend[@]}"; do hinweis "einheiten · $f"; done
+}
+
 # --- qmllint ---------------------------------------------------------------
 
 qmllint_finden() {
@@ -471,11 +605,19 @@ BEKANNT = [
 # (auch in der Blockform «margins { top: … }», deshalb bis sechs Zeilen danach).
 MARGINS = re.compile(r"unknown grouped property scope margins\.|Type margins is used but it is not resolved")
 KANTE = re.compile(r'Could not find property "(top|bottom|left|right)"')
+# Echte Syntaxfehler (Parser). Nur diese zählen ohne Quickshell-Module.
+SYNTAX = "syntax"
+# qmllint 6.10 meldet dieselbe id in getrennten impliziten Komponenten (z. B. «delegate: Item { id: zeile }»
+# in zwei Repeatern) als kritisch, obwohl die QML-Engine sie annimmt (jede Komponente hat eigene ids, im
+# Container geprüft). Eine echte Doppelung im selben Bereich lädt nicht («id is not unique») und fällt im
+# Teil start auf. Deshalb nur Warnung.
+DOPPELTE_ID = "syntax.duplicate-ids"
 
 fehler = []
 warnungen = {}
 details = []
 bekannt = 0
+doppelt = 0
 for datei in bericht.get("files", []):
     name = "shell/" + os.path.relpath(datei.get("filename", "?"), wurzel)
     liste = datei.get("warnings", [])
@@ -490,7 +632,13 @@ for datei in bericht.get("files", []):
                 or (KANTE.search(meldung) and any(0 <= zeile - m <= 6 for m in margins))):
             bekannt += 1
             details.append(text + " (bekannter Fehlalarm)")
-        elif kennung == "syntax" or (mit_quickshell and art in ("critical", "error")):
+        elif kennung == SYNTAX:
+            fehler.append(text)
+        elif kennung == DOPPELTE_ID:
+            doppelt += 1
+            warnungen[name] = warnungen.get(name, 0) + 1
+            details.append(text + " (echte Doppelungen meldet der Teil start)")
+        elif mit_quickshell and art in ("critical", "error"):
             fehler.append(text)
         else:
             warnungen[name] = warnungen.get(name, 0) + 1
@@ -502,22 +650,31 @@ for name, anzahl in sorted(warnungen.items()):
 if ausfuehrlich:
     for z in details:
         print("D " + z)
-print(f"# {len(bericht.get('files', []))} {len(fehler)} {sum(warnungen.values())} {bekannt}")
+print(f"# {len(bericht.get('files', []))} {len(fehler)} {sum(warnungen.values())} {bekannt} {doppelt}")
 sys.exit(1 if fehler else 0)
 PY
-  local zeile anzahl_qml n_fehler n_warn n_bekannt zusatz=""
+  local zeile anzahl_qml n_fehler n_warn n_bekannt n_doppelt art=Fehler warn zusatz=""
   zeile=$(grep '^# ' "$TMP/qmllint" | tail -n 1)
-  read -r _ anzahl_qml n_fehler n_warn n_bekannt <<< "$zeile"
+  read -r _ anzahl_qml n_fehler n_warn n_bekannt n_doppelt <<< "$zeile"
+  warn=$(anzahl "${n_warn:-0}" Warnung Warnungen)
   if (( mit_quickshell )); then
+    [[ "${n_doppelt:-0}" == 0 ]] || warn+=" ($(anzahl "$n_doppelt" 'doppelte id' 'doppelte ids'), prüft der Teil start)"
     [[ "${n_bekannt:-0}" == 0 ]] || zusatz=", dazu ${n_bekannt} bekannte Fehlalarme aus Quickshells Typdaten"
   else
-    zusatz=" (ohne Quickshell-Module: nur Syntaxfehler zählen)"
+    art=Syntaxfehler
   fi
   if (( rc == 0 )); then
-    ok "qmllint · $(dateien "${anzahl_qml:-0}") ohne Fehler, ${n_warn:-0} Warnungen${zusatz}"
+    ok "qmllint · $(dateien "${anzahl_qml:-0}") ohne $art, $warn$zusatz"
   else
-    fehler "qmllint · ${n_fehler:-?} Fehler${zusatz}"
+    fehler "qmllint · ${n_fehler:-?} $art, $warn$zusatz"
     grep '^F ' "$TMP/qmllint" | cut -c3- | details
+  fi
+  if (( ! mit_quickshell )); then
+    details <<'TEXT'
+Ohne Quickshell-Module (/usr/local/lib/qt6/qml/Quickshell) kennt qmllint die Quickshell-Typen nicht; fast
+alle Befunde sind Folgefehler davon. Hier zählen deshalb nur echte Syntaxfehler, alles andere ist Warnung.
+Vollständig prüft qmllint im Testcontainer oder auf dem Pi.
+TEXT
   fi
   if (( AUSFUEHRLICH )); then
     grep '^D ' "$TMP/qmllint" | cut -c3- | details

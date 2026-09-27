@@ -22,7 +22,8 @@
   `sudo ./scripts/install.sh` aufgerufen, läuft es als der aufrufende Benutzer weiter. Als root ohne
   sudo (chroot) gibt es keine Benutzerteile.
 - `--image`: für den Image-Bau im chroot. Keine Benutzerteile, kein Zugriff auf `~`, Dienste werden nur
-  aktiviert, nie gestartet. Mit `ZENOS_KANAL=main` bekommt ein frisches Image den Kanal `main`.
+  aktiviert, nie gestartet. `ZENOS_KANAL=<kanal>` legt den Kanal beim ersten Mal fest (der Image-Bau
+  setzt `dev`, solange `main` keine Releases trägt).
 - `--nur-benutzer`: nur die Benutzerteile, ohne sudo. Läuft auch beim Sitzungsstart (mit `--ruhig`).
 - `--ruhig`: im Terminal nur Warnungen und Fehler, alles andere ins Log.
 - Log: `/var/log/zenos/install.log` (gehört dem Benutzer, Gruppe `adm`, 0640). Kann `--nur-benutzer`
@@ -71,9 +72,18 @@ modul_benutzer() {  # optional; als Benutzer, ohne sudo, nie im --image-Modus
 
 ## zen
 
-```
-zen update | rollback <tag> | doctor [--kurz] | version | benutzer [--ruhig] | hilfe [befehl] | …
-```
+| Befehl | Modul | Was es tut |
+|---|---|---|
+| `zen update` | M1 | neuen Stand vom Kanal holen und installieren |
+| `zen rollback <tag>` | M1 | zu einem getaggten Stand zurück und installieren |
+| `zen doctor [--kurz]` | M1 | Prüfbericht ohne Geheimnisse, Exit 1 bei Fehlern |
+| `zen version` | M1 | zenOS-Version, Kanal, Commit, Quickshell, labwc, Ubuntu, Architektur |
+| `zen benutzer [--ruhig]` | M1 | nur die Benutzerteile einrichten (`install.sh --nur-benutzer`) |
+| `zen hilfe [befehl]` | M1 | Übersicht oder Hilfe zu einem Befehl |
+| `zen lock` | M7 | Sitzung sperren, auch per SSH (Notfall-Sperre, falls die Oberfläche nicht antwortet) |
+| `zen thema [hell\|dunkel\|tageszeit\|wechseln]` | M3 | Erscheinungsbild setzen oder anzeigen |
+| `zen firewall [status\|aktivieren]` | M11 | ufw anzeigen; `aktivieren` erst nach Prüfung der SSH-Regeln und der Eingabe «aktivieren» |
+| `zen apps [installieren\|aktualisieren\|status] [app …]` | M12 | Chrome, VS Code, 1Password, CLI, coremail aus offiziellen Quellen, mit Rückfrage |
 
 - `zen <befehl>` sourct `zen.d/<befehl>.sh` und ruft `befehl_<befehl>` auf (Bindestriche werden zu
   Unterstrichen). Unbekannter Befehl: Hilfe und Exit 2.
@@ -101,9 +111,16 @@ Bekannte offene Punkte sind Hinweise, keine Fehler.
 ## pruefen.sh
 
 ```
-./scripts/pruefen.sh [--ausfuehrlich] [shellcheck|python|json|hex|shc|namen|qmllint|gitleaks …]
+./scripts/pruefen.sh [--ausfuehrlich] [shellcheck|python|json|hex|shc|namen|einheiten|qmllint|gitleaks|start …]
 ```
 
 Läuft im Testcontainer, auf dem Pi oder in CI (braucht shellcheck, python3-jsonschema, gitleaks und
-optional qmllint aus `qt6-declarative-dev-tools`). Die Regeln und Namenskonventionen für JSON-Schemas
-stehen im Kopf der Datei. Exit 1, wenn ein Teil Fehler findet.
+optional qmllint aus `qt6-declarative-dev-tools`, nodejs und fish für die Einheitentests). Die Regeln und
+Namenskonventionen für JSON-Schemas stehen im Kopf der Datei. Exit 1, wenn ein Teil Fehler findet.
+
+- `einheiten`: Tests unter `test/einheiten/`: `*.test.mjs` mit `node --test`, `*.test.py` mit python3,
+  `*.test.fish` mit fish. Fehlt node oder fish, werden deren Tests mit Hinweis übersprungen.
+- `qmllint`: Ohne Quickshell-Module (`/usr/local/lib/qt6/qml/Quickshell`, etwa in CI) zählen nur echte
+  Syntaxfehler; alle anderen Befunde sind dort Folgefehler der unbekannten Quickshell-Typen und nur
+  Warnungen. Doppelte ids sind immer Warnungen (echte Doppelungen findet der Teil `start`).
+- `start`: startet die Oberfläche in einer abgeschotteten Testsitzung (nur mit labwc und Quickshell).

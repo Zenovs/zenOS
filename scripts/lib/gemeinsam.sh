@@ -17,6 +17,7 @@
 #   modul_geaendert                      wahr, wenn das laufende Modul schon etwas geändert hat
 #   pakete_sicherstellen PAKET…          installiert nur fehlende Pakete (siehe unten)
 #   datei_installieren QUELLE ZIEL [MODUS=0644] [BESITZER=root:root]
+#                                        legt fehlende Elternordner an; Symlinks im Pfad bleiben erhalten
 #   datei_schreiben ZIEL [MODUS=0644] [BESITZER=root:root]      Inhalt von stdin
 #   benutzer_datei_schreiben ZIEL [MODUS=0644]                  Inhalt von stdin, als Benutzer
 #   verknuepfen QUELLE ZIEL              Symlink als Benutzer
@@ -228,6 +229,17 @@ _zenos_unit_merken() {
   esac
 }
 
+# Legt den Elternordner von ZIEL als root an, nur wenn er fehlt. Nie «install -D»: uutils (Ubuntu 26.04)
+# ersetzt damit einen Symlink auf einen Ordner im Pfad durch einen leeren Ordner (z. B. /etc/xdg/systemd/user).
+# mkdir -p folgt Symlinks wie erwartet.
+_zenos_eltern_anlegen() {
+  local eltern s
+  eltern=$(dirname -- "$1")
+  s=$(_zenos_lese_sudo "$eltern")
+  $s test -d "$eltern" && return 0
+  $SUDO mkdir -p -- "$eltern"
+}
+
 # 0, wenn ZIEL eine reguläre Datei mit gleichem Inhalt, Modus und Besitzer wie QUELLE ist
 _zenos_datei_gleich() {
   local quelle=$1 ziel=$2 modus=$3 besitzer=$4 s ist
@@ -330,7 +342,8 @@ datei_installieren() {
   s=$(_zenos_lese_sudo "$ziel")
   if $s test -d "$ziel" && ! $s test -L "$ziel"; then abbruch "$ziel ist ein Ordner, erwartet war eine Datei"; fi
   if $s test -L "$ziel"; then $SUDO rm -f -- "$ziel"; fi
-  $SUDO install -D -m "$modus" -o "${besitzer%%:*}" -g "${besitzer##*:}" -- "$quelle" "$ziel"
+  _zenos_eltern_anlegen "$ziel"
+  $SUDO install -m "$modus" -o "${besitzer%%:*}" -g "${besitzer##*:}" -- "$quelle" "$ziel"
   _zenos_unit_merken "$ziel"
   aenderung "$ziel"
 }

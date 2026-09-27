@@ -26,10 +26,18 @@ modul_system() {
     *) log_warnung "Architektur $arch ist nicht vorgesehen (arm64 oder amd64). Die Installation läuft trotzdem weiter." ;;
   esac
 
+  # Quickshell wird in /var/tmp gebaut: der Build-Ordner hat vor dem Strip rund 2,5 GB, 25-quickshell bricht
+  # unter 3,5 GB frei ab. Hier nur eine frühe Warnung, solange Quickshell noch nicht gebaut ist.
   local frei
+  if [[ ! -x /usr/local/bin/quickshell || ! -f /usr/local/share/zenos/quickshell.version ]]; then
+    frei=$(df -P -k /var/tmp 2>/dev/null | awk 'NR == 2 { print $4 }')
+    if [[ "$frei" =~ ^[0-9]+$ ]] && (( frei < 3670016 )); then
+      log_warnung "Nur $(( frei / 1024 )) MB frei in /var/tmp – der Quickshell-Bau braucht etwa 3,5 GB."
+    fi
+  fi
   frei=$(df -P -k / | awk 'NR == 2 { print $4 }')
   if [[ "$frei" =~ ^[0-9]+$ ]] && (( frei < 1048576 )); then
-    log_warnung "Weniger als 1 GB frei auf / – der Quickshell-Bau braucht mehr Platz."
+    log_warnung "Weniger als 1 GB frei auf / – für die Pakete wird es knapp."
   fi
 
   # Werkzeuge, die install.sh selbst braucht (10-code, json_pruefen)

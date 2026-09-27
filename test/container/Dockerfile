@@ -5,15 +5,30 @@ FROM ubuntu:26.04
 
 ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
 
-# Grundsystem wie Ubuntu Server: systemd, sudo, dbus
-RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+# Man-Seiten wie auf dem Pi (Ubuntu Server ist nicht minimiert; «?» im Terminal liest Optionen daraus).
+# Wie «unminimize», aber nur für Man-Seiten: die Ausschlüsse von dpkg entfernen, die Pakete des
+# Basis-Images mit Man-Seiten neu installieren und den Platzhalter für /usr/bin/man aufheben.
+# Danach das Grundsystem wie Ubuntu Server: systemd, sudo, dbus.
+RUN set -e; \
+    rm -f /etc/dpkg/dpkg.cfg.d/excludes; \
+    apt-get update -qq; \
+    dpkg -S /usr/share/man/ | sed 's|, |\n|g; s|: [^:]*$||' | sort -u \
+      | xargs apt-get install -y -qq --reinstall --no-install-recommends; \
+    if [ "$(dpkg-divert --truename /usr/bin/man)" = /usr/bin/man.REAL ]; then \
+      rm -f /usr/bin/man; dpkg-divert --quiet --remove --rename /usr/bin/man; \
+    fi; \
+    apt-get install -y -qq --no-install-recommends \
       systemd systemd-sysv dbus dbus-user-session sudo locales ca-certificates \
       git curl gnupg less file procps psmisc iproute2 kmod udev \
-    && rm -rf /var/lib/apt/lists/*
+      man-db manpages manpages-de; \
+    rm -rf /var/lib/apt/lists/*
 
 # Laufzeit, Build-Abhängigkeiten von Quickshell und Prüfwerkzeuge.
 # Die Liste ist bewusst grösser als nötig, damit Modul-Tests schnell sind;
 # install.sh muss trotzdem alles selbst sicherstellen.
+# Dazu Testwerkzeuge: expect und tmux (interaktive Abläufe wie zen firewall), wtype (Tastatureingaben in
+# die Sitzung, z. B. Passwort in die Sperre), foot (zweites Terminal), nodejs (Einheitentests, pruefen.sh),
+# rsync (wie auf Ubuntu Server; Beispiel im Test von «?»).
 RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
       labwc kitty fish greetd pipewire wireplumber pipewire-pulse \
       xdg-desktop-portal xdg-desktop-portal-wlr xdg-desktop-portal-gtk \
@@ -30,9 +45,10 @@ RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
       qt6-shadertools-dev qt6-wayland-dev qt6-svg-dev spirv-tools libcli11-dev libjemalloc-dev \
       libdrm-dev libgbm-dev libegl-dev libvulkan-dev libwayland-dev wayland-protocols \
       libpipewire-0.3-dev libpam0g-dev libpolkit-agent-1-dev libpolkit-gobject-1-dev libglib2.0-dev \
-      eza bat zoxide fzf tealdeer man-db \
+      eza bat zoxide fzf tealdeer \
       unattended-upgrades ufw i2c-tools python3-smbus python3-libgpiod \
       shellcheck gitleaks qt6-declarative-dev-tools \
+      expect tmux wtype foot nodejs rsync \
     && rm -rf /var/lib/apt/lists/*
 
 # Quickshell v0.3.1, vorgebaut (gleicher Stand wie scripts/module/25-quickshell.sh)
