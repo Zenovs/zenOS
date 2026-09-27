@@ -5,19 +5,24 @@ Aufruf:
   zenos-labwc [--raster ID | --profil NAME | --profil-hex HEX] [--melden] [--kein-neuladen]
   zenos-labwc --ausgeben [--raster ID | --profil NAME]   rc.xml auf stdout, nichts schreiben
   zenos-labwc --pruefen                                  Exit 0, wenn rc.xml aktuell ist, sonst 1
+  zenos-labwc --befehle                                  Programme der Tastenkürzel und des Menüs prüfen
+                                                         (Exit 0 alle vorhanden, 1 wenn eines fehlt)
   zenos-labwc --status                                   aktives Raster und Profil als JSON
 
 Das aktive Raster kommt aus --raster, sonst aus --profil (Bildschirm-Profil in bildschirme.json;
 der aktive Modus kann pro Profil ein eigenes Raster festlegen), sonst aus laufzeit.json («raster»),
-sonst gilt 4er-grid. Mit --raster oder --profil wird das Ergebnis in laufzeit.json festgehalten
-(über zenos-konfig). --profil-hex nimmt den Profilnamen als Hex-Kodierung (UTF-8); so ruft kanshi
-zenos-labwc auf, weil kanshi «exec» über /bin/sh ausführt und Namen dort nie auftauchen dürfen.
+sonst gilt 4er-grid. Mit --raster oder --profil wird das Ergebnis zuerst in laufzeit.json festgehalten,
+nur über «zenos-konfig aendere laufzeit» (führt Schlüssel zusammen; «modus» und «zustand» bleiben);
+schlägt das fehl, bleibt auch rc.xml, wie sie ist (Exit 2). --profil-hex nimmt den Profilnamen als
+Hex-Kodierung (UTF-8); so ruft kanshi zenos-labwc auf, weil kanshi «exec» über /bin/sh ausführt und
+Namen dort nie auftauchen dürfen.
 Raster liegen unter ~/.config/zenos/raster/<id>.json, fehlende Vorlagen kommen
 aus config/vorlagen/raster/. Werte für Schrift, Radius und Lücke stammen aus shell/theme/tokens.json.
 
 rc.xml wird nur bei einer Änderung geschrieben; läuft labwc, lädt es die Konfiguration dann neu
 (wie «labwc --reconfigure»). Eine fremde rc.xml wird einmal nach rc.xml.vor-zenos gesichert.
---melden gibt pro Änderung eine Zeile aus (für install.sh).
+--melden gibt pro Änderung eine Zeile aus (für install.sh). labwc startet «Execute»-Befehle ohne
+Shell (Argumentliste); eine Vorlage, die eine Shell startet, wird abgelehnt.
 
 Exit: 0 in Ordnung · 1 Raster oder Profil ungültig bzw. nicht gefunden · 2 Aufruf- oder Systemfehler.
 """
@@ -26,6 +31,8 @@ import fcntl
 import json
 import os
 import re
+import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -36,6 +43,7 @@ import xml.etree.ElementTree as ET
 CODE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 BIN = os.path.join(CODE, "scripts", "bin")
 TEMPLATE = os.path.join(CODE, "system", "labwc", "rc.xml.in")
+MENU = os.path.join(CODE, "system", "labwc", "menu.xml")
 TOKENS = os.path.join(CODE, "shell", "theme", "tokens.json")
 SCHEMA = os.path.join(CODE, "config", "schema", "raster.schema.json")
 TEMPLATES_RASTER = os.path.join(CODE, "config", "vorlagen", "raster")
@@ -51,9 +59,11 @@ RC_XML = os.path.join(LABWC, "rc.xml")
 DEFAULT_RASTER = "4er-grid"
 MARKER = "Erzeugt von zenos-labwc"
 ID_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
-SAFE_PATH = re.compile(r"^/[A-Za-z0-9/._+-]*$")
+SAFE_PATH = re.compile(r"^/[A-Za-z0-9/_.+-]*$")
 PLACEHOLDER = re.compile(r"@@[A-Z_]+@@")
 MAX_KEYS = 4
+# Programme, die labwc nie direkt starten darf (Befehle immer als Argumentliste, nie über eine Shell)
+SHELLS = {"sh", "bash", "dash", "zsh", "fish", "ksh", "mksh", "busybox"}
 
 
 class Fehler(Exception):
@@ -283,18 +293,17 @@ def raster_for_profile(name, state):
 
 
 def persist(changes):
-    """Schreibt Schlüssel nach laufzeit.json (über zenos-konfig, das sperrt und prüft)."""
+    """Führt Schlüssel in laufzeit.json zusammen, nur über «zenos-konfig aendere laufzeit» (sperrt,
+    prüft, schreibt atomar; andere Schlüssel wie «modus» und «zustand» bleiben). Fehler → Fehler(2)."""
     konfig = os.path.join(BIN, "zenos-konfig")
     try:
         result = subprocess.run([konfig, "aendere", "laufzeit"], input=json.dumps(changes, ensure_ascii=False),
                                 text=True, capture_output=True, timeout=20, check=False)
     except (OSError, subprocess.TimeoutExpired) as e:
-        warn(f"laufzeit.json nicht aktualisiert ({type(e).__name__})")
-        return False
+        raise Fehler(f"laufzeit.json nicht aktualisiert ({type(e).__name__}), rc.xml bleibt", 2) from None
     if result.returncode != 0:
-        warn("laufzeit.json nicht aktualisiert: " + (result.stderr.strip().splitlines() or ["?"])[-1])
-        return False
-    return True
+        grund = (result.stderr.strip().splitlines() or ["?"])[-1]
+        raise Fehler(f"laufzeit.json nicht aktualisiert, rc.xml bleibt: {grund}", 2)
 
 
 # ---------------------------------------------------------------- rc.xml
@@ -370,7 +379,67 @@ def render(raster_id, raster):
         raise Fehler(f"erzeugte rc.xml ist kein gültiges XML ({e})", 2) from None
     if root.tag != "labwc_config":
         raise Fehler("erzeugte rc.xml hat kein <labwc_config>", 2)
+    check_no_shell(root, "system/labwc/rc.xml.in")
     return text
+
+
+# ---------------------------------------------------------------- Befehle der Tastenkürzel und des Menüs
+
+def execute_commands(root):
+    """(Auslöser, argv) aller Execute-Aktionen, zerlegt wie labwc (g_shell_parse_argv, ohne Shell)."""
+    found = []
+    for parent in root.iter():
+        for action in parent.findall("action"):
+            if action.get("name", "").lower() != "execute":
+                continue
+            command = action.get("command") or action.findtext("command") or action.get("execute") or ""
+            where = parent.get("key") or parent.get("label") or parent.tag
+            try:
+                argv = shlex.split(command)
+            except ValueError:
+                argv = []
+            found.append((where, argv))
+    return found
+
+
+def check_no_shell(root, source):
+    """Leitplanke: labwc startet Befehle als Argumentliste, nie über eine Shell."""
+    for where, argv in execute_commands(root):
+        if not argv:
+            raise Fehler(f"{source}: leerer oder unlesbarer Befehl bei «{where}»", 2)
+        if os.path.basename(argv[0]) in SHELLS:
+            raise Fehler(f"{source}: «{where}» startet eine Shell (nur Argumentlisten erlaubt)", 2)
+
+
+def program_found(program):
+    if os.sep in program:
+        return os.path.isfile(program) and os.access(program, os.X_OK)
+    return shutil.which(program) is not None
+
+
+def check_programs(args):
+    """Gibt jede Execute-Aktion aus rc.xml und menu.xml mit ok/fehlt aus. 0 = alle da, sonst 1."""
+    try:
+        text = generate(args)[2]
+    except Fehler as e:
+        # Exit 1 heisst hier «Programm fehlt»; eine rc.xml, die sich nicht erzeugen lässt, ist mehr
+        raise Fehler(str(e), 2) from None
+    sources = [("rc.xml", ET.fromstring(text.encode("utf-8")))]
+    try:
+        with open(MENU, encoding="utf-8") as f:
+            menu = ET.fromstring(f.read().encode("utf-8"))
+    except (OSError, ET.ParseError) as e:
+        raise Fehler(f"system/labwc/menu.xml nicht lesbar ({type(e).__name__})", 2) from None
+    check_no_shell(menu, "system/labwc/menu.xml")
+    sources.append(("menu.xml", menu))
+    missing = 0
+    for source, root in sources:
+        for where, argv in execute_commands(root):
+            ok = program_found(argv[0])
+            missing += not ok
+            # Tabulator-getrennt: Zustand, Datei, Auslöser, Programm, Argumente
+            print("\t".join(["ok" if ok else "fehlt", source, where, argv[0], shlex.join(argv[1:])]))
+    return 1 if missing else 0
 
 
 # ---------------------------------------------------------------- labwc neu laden
@@ -467,7 +536,7 @@ def parse_args(argv):
             args["melden"] = True
         elif a == "--kein-neuladen":
             args["neuladen"] = False
-        elif a in ("--ausgeben", "--pruefen", "--status"):
+        elif a in ("--ausgeben", "--pruefen", "--status", "--befehle"):
             args["modus"] = a[2:]
         elif a in ("-h", "--hilfe", "--help"):
             args["modus"] = "hilfe"
@@ -503,8 +572,14 @@ def main(argv):
                     return 0 if f.read() == text else 1
             except OSError:
                 return 1
+        if args["modus"] == "befehle":
+            return check_programs(args)
         with Lock():
             rid, changes, text, state = generate(args)
+            # Erst laufzeit.json (die Oberfläche zeigt, was dort steht), dann rc.xml
+            pending = {k: v for k, v in changes.items() if state.get(k) != v}
+            if pending:
+                persist(pending)
             backed_up = backup_foreign(RC_XML)
             changed = write_if_changed(RC_XML, text)
             if changed and args["neuladen"]:
@@ -513,9 +588,6 @@ def main(argv):
                 print(f"labwc rc.xml (Raster {rid})")
             if backed_up and args["melden"]:
                 print("eigene rc.xml gesichert (rc.xml.vor-zenos)")
-            pending = {k: v for k, v in changes.items() if state.get(k) != v}
-            if pending:
-                persist(pending)
         return 0
     except Fehler as e:
         warn(str(e))

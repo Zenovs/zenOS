@@ -1,6 +1,7 @@
 # zenOS: Bildschirm-Profile mit kanshi. Gestartet von zenos-sitzung.target (Wants=).
 # zenos-kanshi erzeugt vorher ~/.config/kanshi/config aus ~/.config/zenos/bildschirme.json; kanshi wendet
-# das passende Profil an und ruft zenos-labwc --profil <Name> auf (Raster des Profils bzw. des Modus).
+# das passende Profil an und ruft zenos-labwc --profil-hex <Name als Hex> auf (Raster des Profils bzw.
+# des Modus).
 # Neu laden nach Änderungen: zenos-kanshi (schickt kanshi ein SIGHUP) oder systemctl --user reload.
 [Unit]
 Description=zenOS Bildschirm-Profile (kanshi)

@@ -32,6 +32,19 @@ pruefe_raster() {
       fehler "$labwc_rc ist kein gültiges XML – labwc lädt dann Vorgaben"
     fi
   fi
+
+  # Tastenkürzel und Menü: Gibt es jedes Programm, das labwc startet? (nur feste Programmnamen)
+  local befehle fehlend
+  rc=0
+  befehle=$("$bin/zenos-labwc" --befehle 2>/dev/null) || rc=$?
+  case "$rc" in
+    0) ok "Tastenkürzel und Menü: alle $(grep -c . <<< "$befehle") Befehle startbar" ;;
+    1)
+      fehlend=$(awk -F '\t' '$1 == "fehlt" { n = split($4, t, "/"); print t[n] }' <<< "$befehle" | sort -u | paste -sd, - | sed 's/,/, /g')
+      warnung "Tastenkürzel oder Menü starten ein fehlendes Programm: $fehlend"
+      ;;
+    *) fehler "zenos-labwc kann die Tastenkürzel nicht prüfen (Exit $rc)" ;;
+  esac
   if [[ -L "$HOME/.config/labwc/menu.xml" && "$(readlink -- "$HOME/.config/labwc/menu.xml")" == /opt/zenos/system/labwc/menu.xml ]]; then
     ok "labwc-Menü verknüpft"
   else

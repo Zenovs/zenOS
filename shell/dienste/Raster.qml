@@ -9,7 +9,9 @@ import qs.dienste
 
 // Raster (~/.config/zenos/raster/<id>.json) und das aktive Raster (laufzeit.json, Schlüssel «raster»).
 // setzen(id) erzeugt die labwc-Konfiguration neu (zenos-labwc --raster <id>); zenos-labwc hält das Raster
-// in laufzeit.json fest. Wechselt kanshi beim Anschliessen eines Bildschirms das Profil, ruft es
+// in laufzeit.json fest, nur über «zenos-konfig aendere laufzeit» («modus» und «zustand» von Modi und
+// Zustaende bleiben). Dieser Dienst schreibt laufzeit.json nie selbst, er liest sie nur. Wechselt kanshi
+// beim Anschliessen eines Bildschirms das Profil, ruft es
 // zenos-labwc --profil auf; die Änderung an laufzeit.json kommt hier über den Dateibeobachter an.
 // Ändert sich das aktive Raster oder bildschirme.json (Einstellungen oder von Hand), werden labwc bzw.
 // kanshi neu eingerichtet. Im Greeter (ohne ~/.config/zenos) wird nichts gestartet.
