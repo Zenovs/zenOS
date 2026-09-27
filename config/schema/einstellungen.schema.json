@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "zenOS Einstellungen (~/.config/zenos/einstellungen.json)",
+  "description": "Persönliche Einstellungen aus der Einrichtung und den Einstellungen. Unbekannte Schlüssel bleiben erlaubt (andere Teile von zenOS dürfen eigene ablegen).",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "eingerichtet": { "type": "boolean" },
+    "name": { "type": "string", "maxLength": 60 },
+    "ort": { "type": "string", "maxLength": 100 },
+    "erscheinungsbild": { "enum": ["hell", "dunkel", "tageszeit"] },
+    "tagAb": { "$ref": "#/$defs/uhrzeit" },
+    "nachtAb": { "$ref": "#/$defs/uhrzeit" },
+    "sperreNachMinuten": {
+      "description": "Automatische Sperre nach Minuten ohne Eingabe. Leitplanke: immer 1–15, nicht abschaltbar.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 15
+    },
+    "mitteilungenStandard": {
+      "description": "Bündelung ohne aktiven Zustand",
+      "type": "string",
+      "pattern": "^(alle|nur-dringend|keine|gebuendelt-([1-9][0-9]{0,2}|1[0-3][0-9]{2}|14[0-3][0-9]|1440))$"
+    }
+  },
+  "$defs": {
+    "uhrzeit": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$" }
+  }
+}

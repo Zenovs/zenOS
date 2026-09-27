@@ -1,0 +1,543 @@
+#!/usr/bin/env python3
+"""zenos-konfig: persönliche Konfiguration von zenOS lesen, prüfen und sicher schreiben.
+
+Aufruf:
+  zenos-konfig liste <art>              JSON-Array aller Einträge einer Ordner-Art, je mit "id"
+  zenos-konfig alle                     JSON-Objekt mit allen Arten ausser einstellungen (Start der Oberfläche)
+  zenos-konfig lese <art> [<id>]        JSON-Objekt (Datei-Arten ohne <id>)
+  zenos-konfig schreibe <art> [<id>]    JSON-Objekt von stdin prüfen und atomar schreiben
+  zenos-konfig aendere <art> [<id>]     JSON-Objekt von stdin mit der Datei zusammenführen
+                                        (oberste Ebene; null entfernt einen Schlüssel), prüfen, schreiben
+  zenos-konfig loesche <art> [<id>]     Datei entfernen
+  zenos-konfig pruefe [--json]          alle Dateien gegen ihr Schema prüfen (für zen doctor)
+  zenos-konfig pfad <art> [<id>]        Pfad der Datei ausgeben
+
+Arten mit Ordner (je eine Datei <id>.json): modi, zustaende, raster  → ~/.config/zenos/<art>/
+Arten mit einer Datei: einstellungen, bildschirme, webapps → ~/.config/zenos/<art>.json,
+                       laufzeit → ~/.local/state/zenos/laufzeit.json
+
+IDs bestehen nur aus a-z, 0-9 und «-». Geschrieben wird nur, was zum Schema in config/schema/ passt,
+atomar (temporäre Datei, dann umbenennen) und nur bei einer Änderung. Fehlermeldungen nennen nur
+Datei und Schema-Pfad, nie Inhalte.
+
+Exit: 0 in Ordnung · 1 ungültig oder nicht gefunden · 2 Aufruf- oder Systemfehler.
+"""
+
+import fcntl
+import json
+import os
+import re
+import sys
+import tempfile
+
+CODE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+SCHEMAS = os.path.join(CODE, "config", "schema")
+TOKENS = os.path.join(CODE, "shell", "theme", "tokens.json")
+HOME = os.path.expanduser("~")
+KONFIG = os.path.join(HOME, ".config", "zenos")
+ZUSTAND = os.path.join(HOME, ".local", "state", "zenos")
+
+# art → (Ort, Schema)
+ORDNER = {"modi": "modus", "zustaende": "zustand", "raster": "raster"}
+DATEIEN = {"einstellungen": "einstellungen", "bildschirme": "bildschirme", "webapps": "webapps", "laufzeit": "laufzeit"}
+ARTEN = list(ORDNER) + list(DATEIEN)
+
+ID_MUSTER = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+MAX_EINGABE = 1024 * 1024
+
+GRUENDE = {
+    "required": "Pflichtfeld fehlt",
+    "type": "falscher Typ",
+    "enum": "kein erlaubter Wert",
+    "const": "kein erlaubter Wert",
+    "pattern": "Format ungültig",
+    "format": "Format ungültig",
+    "additionalProperties": "unbekannter Schlüssel",
+    "propertyNames": "ungültiger Schlüsselname",
+    "minLength": "zu kurz",
+    "maxLength": "zu lang",
+    "minimum": "zu klein",
+    "maximum": "zu gross",
+    "minItems": "zu wenige Einträge",
+    "maxItems": "zu viele Einträge",
+    "uniqueItems": "doppelte Einträge",
+    "oneOf": "passt zu keiner erlaubten Form",
+    "anyOf": "passt zu keiner erlaubten Form",
+}
+
+
+class Fehler(Exception):
+    """Meldung für stderr; code 1 = ungültig/nicht gefunden, 2 = Aufruf/System."""
+
+    def __init__(self, text, code=1):
+        super().__init__(text)
+        self.code = code
+
+
+def meldung(text):
+    print(f"zenos-konfig: {text}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------- Orte
+
+def pruefe_art(art):
+    if art not in ARTEN:
+        raise Fehler(f"unbekannte Art «{art}» (erlaubt: {', '.join(ARTEN)})", 2)
+
+
+def pruefe_id(eintrag_id):
+    if not isinstance(eintrag_id, str) or len(eintrag_id) > 64 or not ID_MUSTER.match(eintrag_id):
+        raise Fehler("ungültige ID (nur a-z, 0-9 und «-», höchstens 64 Zeichen)", 2)
+
+
+def pfad_fuer(art, eintrag_id=None):
+    pruefe_art(art)
+    if art in ORDNER:
+        if eintrag_id is None:
+            raise Fehler(f"{art} braucht eine ID", 2)
+        pruefe_id(eintrag_id)
+        return os.path.join(KONFIG, art, eintrag_id + ".json")
+    if eintrag_id is not None:
+        raise Fehler(f"{art} hat keine IDs", 2)
+    if art == "laufzeit":
+        return os.path.join(ZUSTAND, "laufzeit.json")
+    return os.path.join(KONFIG, art + ".json")
+
+
+def anzeige(pfad):
+    """Pfad für Meldungen: relativ zum Konfigurations- bzw. Zustandsordner."""
+    for basis in (KONFIG, ZUSTAND):
+        if pfad.startswith(basis + os.sep):
+            return os.path.relpath(pfad, basis)
+    return os.path.basename(pfad)
+
+
+# ---------------------------------------------------------------- JSON
+
+def _ohne_doppelte(paare):
+    ergebnis = {}
+    for schluessel, wert in paare:
+        if schluessel in ergebnis:
+            raise ValueError("doppelter Schlüssel")
+        ergebnis[schluessel] = wert
+    return ergebnis
+
+
+def json_laden(text, ort):
+    try:
+        return json.loads(text, object_pairs_hook=_ohne_doppelte)
+    except json.JSONDecodeError as e:
+        raise Fehler(f"{ort}: kein gültiges JSON (Zeile {e.lineno}, Spalte {e.colno})") from None
+    except ValueError:
+        raise Fehler(f"{ort}: kein gültiges JSON (doppelter Schlüssel)") from None
+
+
+def datei_laden(pfad):
+    """Inhalt der Datei oder None, wenn sie fehlt."""
+    try:
+        with open(pfad, encoding="utf-8") as f:
+            text = f.read()
+    except FileNotFoundError:
+        return None
+    except UnicodeDecodeError:
+        raise Fehler(f"{anzeige(pfad)}: keine UTF-8-Datei") from None
+    except OSError as e:
+        raise Fehler(f"{anzeige(pfad)}: nicht lesbar ({e.strerror})", 2) from None
+    return json_laden(text, anzeige(pfad))
+
+
+def ausgeben(daten):
+    json.dump(daten, sys.stdout, ensure_ascii=False, separators=(",", ":"))
+    sys.stdout.write("\n")
+
+
+def eingabe_lesen(ort):
+    text = sys.stdin.read(MAX_EINGABE + 1)
+    if len(text) > MAX_EINGABE:
+        raise Fehler(f"{ort}: Eingabe zu gross (höchstens 1 MiB)", 2)
+    if not text.strip():
+        raise Fehler(f"{ort}: keine Eingabe auf stdin", 2)
+    daten = json_laden(text, f"{ort} (Eingabe)")
+    if not isinstance(daten, dict):
+        raise Fehler(f"{ort} (Eingabe): erwartet wird ein JSON-Objekt")
+    return daten
+
+
+# ---------------------------------------------------------------- Schema
+
+_schema_cache = {}
+
+
+def _jsonschema():
+    try:
+        import jsonschema  # noqa: PLC0415 – erst laden, wenn wirklich geprüft wird
+    except ImportError:
+        raise Fehler("python3-jsonschema fehlt (sudo apt install python3-jsonschema)", 2) from None
+    return jsonschema
+
+
+def pruefer_fuer(art):
+    """Validator für die Art oder None, wenn es (noch) kein Schema gibt."""
+    name = ORDNER.get(art) or DATEIEN.get(art)
+    if name in _schema_cache:
+        return _schema_cache[name]
+    jsonschema = _jsonschema()
+    pfad = os.path.join(SCHEMAS, name + ".schema.json")
+    try:
+        with open(pfad, encoding="utf-8") as f:
+            schema = json.load(f)
+    except FileNotFoundError:
+        _schema_cache[name] = None
+        return None
+    except (OSError, ValueError):
+        raise Fehler(f"Schema {name}.schema.json ist nicht lesbar", 2) from None
+    klasse = jsonschema.validators.validator_for(schema)
+    try:
+        klasse.check_schema(schema)
+    except jsonschema.exceptions.SchemaError:
+        raise Fehler(f"Schema {name}.schema.json ist ungültig", 2) from None
+    format_pruefer = getattr(klasse, "FORMAT_CHECKER", None) or jsonschema.FormatChecker()
+    pruefer = klasse(schema, format_checker=format_pruefer)
+    _schema_cache[name] = pruefer
+    return pruefer
+
+
+def _akzente():
+    try:
+        with open(TOKENS, encoding="utf-8") as f:
+            return set((json.load(f).get("farben") or {}).get("akzente") or {})
+    except (OSError, ValueError, AttributeError):
+        return set()
+
+
+def befunde(art, daten):
+    """Liste von Meldungen ohne Inhalte: «<schema-pfad> – <grund>». Leer = gültig."""
+    if not isinstance(daten, dict):
+        return ["(Wurzel) – erwartet wird ein JSON-Objekt"]
+    ergebnis = []
+    pruefer = pruefer_fuer(art)
+    if pruefer is not None:
+        fehler = sorted(pruefer.iter_errors(daten), key=lambda e: [str(p) for p in e.absolute_schema_path])
+        for e in fehler:
+            ort = "/".join(str(p) for p in e.absolute_schema_path) or "(Wurzel)"
+            grund = GRUENDE.get(e.validator, "ungültig")
+            if e.validator == "required" and isinstance(e.instance, dict):
+                fehlend = [k for k in e.validator_value if k not in e.instance]
+                grund = f"{grund}: {', '.join(fehlend)}"
+            ergebnis.append(f"{ort} – {grund}")
+    if art == "modi" and isinstance(daten.get("akzent"), str):
+        akzente = _akzente()
+        if akzente and daten["akzent"] not in akzente:
+            ergebnis.append("properties/akzent – unbekannter Akzent (siehe shell/theme/tokens.json)")
+    return ergebnis
+
+
+def gueltig_oder_fehler(art, daten, ort):
+    probleme = befunde(art, daten)
+    if probleme:
+        for p in probleme:
+            meldung(f"{ort}: {p}")
+        raise Fehler(f"{ort}: ungültig, nicht geschrieben")
+
+
+# ---------------------------------------------------------------- Schreiben
+
+class Sperre:
+    """Serialisiert schreibende Aufrufe (mehrere Teile von zenOS schreiben laufzeit.json)."""
+
+    def __enter__(self):
+        laufzeit = os.environ.get("XDG_RUNTIME_DIR", "")
+        if laufzeit and os.path.isdir(laufzeit):
+            ordner = os.path.join(laufzeit, "zenos")
+            name = "konfig.lock"
+        else:
+            ordner = ZUSTAND
+            name = ".konfig.lock"
+        ordner_anlegen(ordner)
+        self.datei = open(os.path.join(ordner, name), "a", encoding="utf-8")  # noqa: SIM115
+        fcntl.flock(self.datei, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *_):
+        fcntl.flock(self.datei, fcntl.LOCK_UN)
+        self.datei.close()
+
+
+def ordner_anlegen(ordner):
+    """Legt fehlende Ordner an; die zenOS-Ordner selbst nur für den Benutzer lesbar (0700)."""
+    for basis in (KONFIG, ZUSTAND):
+        if ordner == basis or ordner.startswith(basis + os.sep):
+            os.makedirs(basis, mode=0o700, exist_ok=True)
+    os.makedirs(ordner, mode=0o700, exist_ok=True)
+
+
+def atomar_schreiben(pfad, daten):
+    """Schreibt nur bei Änderung. Gibt True zurück, wenn geschrieben wurde."""
+    text = json.dumps(daten, ensure_ascii=False, indent=2) + "\n"
+    try:
+        with open(pfad, encoding="utf-8") as f:
+            if f.read() == text:
+                return False
+    except (OSError, UnicodeDecodeError):
+        pass
+    ordner = os.path.dirname(pfad)
+    ordner_anlegen(ordner)
+    try:
+        modus = os.stat(pfad).st_mode & 0o777
+    except OSError:
+        modus = 0o600
+    fd, tmp = tempfile.mkstemp(dir=ordner, prefix=".zenos-konfig.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, modus)
+        os.replace(tmp, pfad)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    try:
+        dfd = os.open(ordner, os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+    except OSError:
+        pass
+    return True
+
+
+# ---------------------------------------------------------------- Befehle
+
+def _ordner_eintraege(art):
+    """(id, pfad) aller Dateien einer Ordner-Art, sortiert; ungültige Namen werden gemeldet."""
+    ordner = os.path.join(KONFIG, art)
+    try:
+        namen = sorted(os.listdir(ordner))
+    except FileNotFoundError:
+        return [], []
+    except OSError as e:
+        raise Fehler(f"{art}/: nicht lesbar ({e.strerror})", 2) from None
+    eintraege, falsch = [], []
+    for name in namen:
+        if name.startswith(".") or not name.endswith(".json"):
+            continue
+        pfad = os.path.join(ordner, name)
+        if not os.path.isfile(pfad):
+            continue
+        eintrag_id = name[: -len(".json")]
+        if ID_MUSTER.match(eintrag_id) and len(eintrag_id) <= 64:
+            eintraege.append((eintrag_id, pfad))
+        else:
+            falsch.append(pfad)
+    return eintraege, falsch
+
+
+def liste(art):
+    ergebnis = []
+    eintraege, falsch = _ordner_eintraege(art)
+    for _ in falsch:
+        meldung(f"übersprungen: {art}/… (Dateiname ist keine gültige ID)")
+    for eintrag_id, pfad in eintraege:
+        try:
+            daten = datei_laden(pfad)
+        except Fehler as e:
+            meldung(f"übersprungen: {e}")
+            continue
+        if not isinstance(daten, dict):
+            meldung(f"übersprungen: {anzeige(pfad)} (kein JSON-Objekt)")
+            continue
+        daten["id"] = eintrag_id
+        ergebnis.append(daten)
+    return ergebnis
+
+
+def befehl_liste(args):
+    if len(args) != 1:
+        raise Fehler("Aufruf: zenos-konfig liste <art>", 2)
+    pruefe_art(args[0])
+    if args[0] not in ORDNER:
+        raise Fehler(f"{args[0]} ist eine einzelne Datei (zenos-konfig lese {args[0]})", 2)
+    ausgeben(liste(args[0]))
+
+
+def befehl_alle(args):
+    if args:
+        raise Fehler("Aufruf: zenos-konfig alle", 2)
+    ergebnis = {art: liste(art) for art in ORDNER}
+    for art in ("bildschirme", "webapps", "laufzeit"):
+        try:
+            daten = datei_laden(pfad_fuer(art))
+        except Fehler as e:
+            meldung(f"übersprungen: {e}")
+            daten = None
+        ergebnis[art] = daten if isinstance(daten, dict) else None
+    ausgeben(ergebnis)
+
+
+def _art_und_id(args, befehl):
+    if len(args) not in (1, 2):
+        raise Fehler(f"Aufruf: zenos-konfig {befehl} <art> [<id>]", 2)
+    pruefe_art(args[0])
+    return args[0], (args[1] if len(args) == 2 else None)
+
+
+def befehl_lese(args):
+    art, eintrag_id = _art_und_id(args, "lese")
+    pfad = pfad_fuer(art, eintrag_id)
+    daten = datei_laden(pfad)
+    if daten is None:
+        raise Fehler(f"{anzeige(pfad)}: nicht vorhanden")
+    ausgeben(daten)
+
+
+def befehl_pfad(args):
+    art, eintrag_id = _art_und_id(args, "pfad")
+    print(pfad_fuer(art, eintrag_id))
+
+
+def befehl_schreibe(args):
+    art, eintrag_id = _art_und_id(args, "schreibe")
+    pfad = pfad_fuer(art, eintrag_id)
+    ort = anzeige(pfad)
+    daten = eingabe_lesen(ort)
+    if art in ORDNER:
+        # Die ID ist der Dateiname, nicht Teil des Inhalts
+        daten.pop("id", None)
+    gueltig_oder_fehler(art, daten, ort)
+    with Sperre():
+        atomar_schreiben(pfad, daten)
+
+
+def befehl_aendere(args):
+    art, eintrag_id = _art_und_id(args, "aendere")
+    pfad = pfad_fuer(art, eintrag_id)
+    ort = anzeige(pfad)
+    teil = eingabe_lesen(ort)
+    if art in ORDNER:
+        teil.pop("id", None)
+    with Sperre():
+        try:
+            daten = datei_laden(pfad)
+        except Fehler:
+            if art != "laufzeit":
+                raise
+            # Laufzeitzustand ist entbehrlich: eine kaputte Datei wird ersetzt
+            meldung(f"{ort}: war ungültig und wird neu angelegt")
+            daten = None
+        if not isinstance(daten, dict):
+            if daten is not None and art != "laufzeit":
+                raise Fehler(f"{ort}: kein JSON-Objekt, nicht geändert")
+            daten = {}
+        vorher = os.path.exists(pfad)
+        for schluessel, wert in teil.items():
+            if wert is None:
+                daten.pop(schluessel, None)
+            else:
+                daten[schluessel] = wert
+        if not daten and not vorher:
+            # Nichts zu speichern: keine leere Datei anlegen
+            return
+        gueltig_oder_fehler(art, daten, ort)
+        atomar_schreiben(pfad, daten)
+
+
+def befehl_loesche(args):
+    art, eintrag_id = _art_und_id(args, "loesche")
+    pfad = pfad_fuer(art, eintrag_id)
+    with Sperre():
+        try:
+            os.unlink(pfad)
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            raise Fehler(f"{anzeige(pfad)}: nicht löschbar ({e.strerror})", 2) from None
+
+
+def befehl_pruefe(args):
+    als_json = False
+    for a in args:
+        if a == "--json":
+            als_json = True
+        else:
+            raise Fehler("Aufruf: zenos-konfig pruefe [--json]", 2)
+    _jsonschema()
+    arten = {}
+    zeilen = []
+    for art in ARTEN:
+        anzahl = ungueltig = 0
+        ohne_schema = pruefer_fuer(art) is None
+        if art in ORDNER:
+            eintraege, falsche_namen = _ordner_eintraege(art)
+            pfade = [p for _, p in eintraege]
+            for _ in falsche_namen:
+                anzahl += 1
+                ungueltig += 1
+                zeilen.append(("fehler", f"{art}/…: Dateiname ist keine gültige ID (nur a-z, 0-9 und «-»)"))
+        else:
+            pfad = pfad_fuer(art)
+            pfade = [pfad] if os.path.exists(pfad) else []
+        for pfad in pfade:
+            anzahl += 1
+            ort = anzeige(pfad)
+            try:
+                daten = datei_laden(pfad)
+                probleme = befunde(art, daten)
+            except Fehler as e:
+                probleme = [str(e).split(": ", 1)[-1]]
+            if probleme:
+                ungueltig += 1
+                for p in probleme:
+                    zeilen.append(("fehler", f"{ort}: {p}"))
+            else:
+                zeilen.append(("ok", ort + (" (ohne Schema, nur JSON geprüft)" if ohne_schema else "")))
+        arten[art] = {"anzahl": anzahl, "ungueltig": ungueltig, "ohneSchema": ohne_schema}
+    gesamt = sum(a["anzahl"] for a in arten.values())
+    falsch = sum(a["ungueltig"] for a in arten.values())
+    if als_json:
+        ausgeben({"dateien": gesamt, "ungueltig": falsch, "arten": arten})
+    else:
+        for art_der_zeile, text in zeilen:
+            print(("  ✓ " if art_der_zeile == "ok" else "  ✗ ") + text)
+        print(f"{gesamt} {'Datei' if gesamt == 1 else 'Dateien'} geprüft · {falsch} ungültig")
+    return 1 if falsch else 0
+
+
+BEFEHLE = {
+    "liste": befehl_liste,
+    "alle": befehl_alle,
+    "lese": befehl_lese,
+    "schreibe": befehl_schreibe,
+    "aendere": befehl_aendere,
+    "loesche": befehl_loesche,
+    "pruefe": befehl_pruefe,
+    "pfad": befehl_pfad,
+}
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--hilfe", "--help", "hilfe"):
+        print(__doc__.strip())
+        return 0 if argv else 2
+    befehl = BEFEHLE.get(argv[0])
+    if befehl is None:
+        meldung(f"unbekannter Befehl «{argv[0]}» (zenos-konfig --hilfe)")
+        return 2
+    try:
+        return befehl(argv[1:]) or 0
+    except Fehler as e:
+        meldung(str(e))
+        return e.code
+    except OSError as e:
+        meldung(f"Systemfehler: {e.strerror or type(e).__name__}")
+        return 2
+    except KeyboardInterrupt:
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

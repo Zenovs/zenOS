@@ -1,0 +1,165 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "zenOS Laufzeitzustand (~/.local/state/zenos/laufzeit.json)",
+  "description": "Was gerade gilt und über Neustarts erhalten bleibt: aktiver Modus, aktiver Zustand, aktives Raster. Schreiben nur über zenos-konfig aendere laufzeit (führt Schlüssel zusammen). Weitere Schlüssel sind erlaubt.",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "modus": {
+      "description": "ID des aktiven Modus (Dateiname ohne .json) oder null",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "zustand": {
+      "description": "Aktiver Zustand oder null",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/eintrag"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "raster": {
+      "description": "ID des aktiven Rasters (M9)",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "profil": {
+      "description": "Name des aktiven Bildschirm-Profils (M9)",
+      "oneOf": [
+        {
+          "type": "string",
+          "maxLength": 100
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "zeit": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+    },
+    "eintrag": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "seit",
+        "endeArt",
+        "ausloeser"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "seit": {
+          "$ref": "#/$defs/zeit"
+        },
+        "ende": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/zeit"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "endeArt": {
+          "enum": [
+            "manuell",
+            "timer",
+            "ausloeser-endet"
+          ]
+        },
+        "ausloeser": {
+          "enum": [
+            "manuell",
+            "bildschirmfreigabe",
+            "uhrzeit",
+            "moduswechsel"
+          ]
+        },
+        "vorher": {
+          "description": "Zustand, der nach einer automatischen Sitzung zurückkommt",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/vorher"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "vorher": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "seit",
+        "endeArt",
+        "ausloeser"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "seit": {
+          "$ref": "#/$defs/zeit"
+        },
+        "ende": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/zeit"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "endeArt": {
+          "enum": [
+            "manuell",
+            "timer",
+            "ausloeser-endet"
+          ]
+        },
+        "ausloeser": {
+          "enum": [
+            "manuell",
+            "bildschirmfreigabe",
+            "uhrzeit",
+            "moduswechsel"
+          ]
+        },
+        "vorher": {
+          "type": "null"
+        }
+      }
+    }
+  }
+}

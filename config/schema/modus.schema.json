@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "zenOS Modus (~/.config/zenos/modi/<id>.json)",
+  "description": "Kontext wie Arbeit oder privat: Akzent, Chrome-Profil, Mail-Konten, «Heute», Apps, Raster und angebotene Zustände. Siehe docs/konfiguration.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name"],
+  "properties": {
+    "name": { "type": "string", "minLength": 1, "maxLength": 60, "pattern": "\\S" },
+    "akzent": {
+      "description": "Name eines Akzents aus shell/theme/tokens.json, z. B. salbei",
+      "type": "string",
+      "pattern": "^[a-z]+$"
+    },
+    "chromeProfil": {
+      "description": "Anzeigename des Chrome-Profils (zenos-chrome startet Chrome damit)",
+      "type": "string",
+      "maxLength": 100
+    },
+    "mailKonten": {
+      "description": "Konten, die coremail in diesem Modus zeigt (freie Liste)",
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+    },
+    "heute": {
+      "description": "Was die «Heute»-Ansicht zeigt (kommt später)",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kalender": { "type": "array", "items": { "type": "string", "maxLength": 200 } },
+        "aufgaben": { "type": "array", "items": { "type": "string", "maxLength": 200 } },
+        "wetter": { "type": "boolean" }
+      }
+    },
+    "oeffnen": {
+      "description": "Apps (Desktop-Datei-ID ohne .desktop), die beim Wechsel öffnen",
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$" }
+    },
+    "raster": {
+      "description": "Bildschirm-Profil (Name aus bildschirme.json) → Raster-ID",
+      "type": "object",
+      "propertyNames": { "minLength": 1, "maxLength": 100 },
+      "additionalProperties": { "$ref": "#/$defs/id" }
+    },
+    "zustaende": {
+      "description": "IDs der Zustände, die dieser Modus anbietet",
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/id" }
+    },
+    "anpassungen": {
+      "description": "Zustand-ID → Werte, die in diesem Modus von der Vorlage abweichen",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/id" },
+      "additionalProperties": { "$ref": "#/$defs/anpassung" }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "maxLength": 64, "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+    "anpassung": {
+      "description": "Wie ein Zustand (zustand.schema.json), aber ohne Namen und alles optional",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mitteilungen": {
+          "type": "string",
+          "pattern": "^(alle|nur-dringend|keine|gebuendelt-([1-9][0-9]{0,2}|1[0-3][0-9]{2}|14[0-3][0-9]|1440))$"
+        },
+        "leiste": { "enum": ["normal", "reduziert", "aus"] },
+        "fenster": { "enum": ["normal", "fokus"] },
+        "heute": { "type": "boolean" },
+        "widgets": { "type": "boolean" },
+        "ausloeser": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^(manuell|bildschirmfreigabe|kalender|moduswechsel|uhrzeit:([01][0-9]|2[0-3]):[0-5][0-9])$"
+          }
+        },
+        "ende": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["art"],
+              "properties": { "art": { "enum": ["manuell", "ausloeser-endet"] } }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["art", "minuten"],
+              "properties": {
+                "art": { "const": "timer" },
+                "minuten": { "type": "integer", "minimum": 1, "maximum": 1440 }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

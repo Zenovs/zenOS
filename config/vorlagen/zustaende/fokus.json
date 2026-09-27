@@ -1,0 +1,10 @@
+{
+  "name": "Fokus",
+  "mitteilungen": "nur-dringend",
+  "leiste": "reduziert",
+  "fenster": "fokus",
+  "heute": false,
+  "widgets": false,
+  "ausloeser": ["manuell"],
+  "ende": { "art": "timer", "minuten": 50 }
+}

@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# zenos-freigabe – Bildschirmfreigabe erkennen (aufgerufen von xdg-desktop-portal-wlr, siehe
+# system/portal/xdpw.conf).
+#
+#   zenos-freigabe start     exec_before: Freigabe beginnt (Marker setzen, Oberfläche benachrichtigen)
+#   zenos-freigabe ende      exec_after: Freigabe endet
+#   zenos-freigabe waehlen   chooser_cmd: Bildschirm mit slurp wählen, «Monitor: <Ausgang>» ausgeben
+#   zenos-freigabe status    «aktiv N» oder «inaktiv»
+#
+# Marker: $XDG_RUNTIME_DIR/zenos/freigabe, eine Zeile pro laufender Freigabe mit dem geteilten
+# Ausgang (oder «*», wenn er nicht bekannt ist). Die Oberfläche (freigabe/Freigabe.qml) liest ihn beim
+# Start und beobachtet ihn; zusätzlich meldet zenos-ipc freigabe gestartet|beendet sofort.
+
+set -euo pipefail
+
+laufzeit=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+ordner=$laufzeit/zenos
+marker=$ordner/freigabe
+wahl=$ordner/freigabe-wahl
+bin=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
+
+meldung() { printf 'zenos-freigabe: %s\n' "$*" >&2; }
+
+ordner_bereit() {
+  if [[ ! -d "$ordner" ]]; then
+    mkdir -p -- "$ordner"
+    chmod 0700 -- "$ordner"
+  fi
+}
+
+# Führt den Rest der Zeile unter einer Sperre aus (start/ende/waehlen können gleichzeitig laufen)
+gesperrt() {
+  ordner_bereit
+  exec {sperre}>> "$ordner/freigabe.lock"
+  flock -w 5 "$sperre" || meldung "Sperre nicht erhalten, fahre trotzdem fort"
+  "$@"
+  flock -u "$sperre" || true
+}
+
+ausgang_gueltig() { [[ "$1" =~ ^[A-Za-z0-9._-]{1,64}$ ]]; }
+
+# Oberfläche benachrichtigen; blockiert das Portal nie lange und scheitert still, wenn keine Shell läuft
+melden() {
+  local ipc=$bin/zenos-ipc
+  [[ -x "$ipc" ]] || return 0
+  timeout 5 "$ipc" freigabe "$1" >/dev/null 2>&1 || true
+}
+
+_start() {
+  local ausgang="*" jetzt alter
+  if [[ -f "$wahl" ]]; then
+    jetzt=$(date +%s)
+    alter=$(stat -c %Y -- "$wahl" 2>/dev/null || echo 0)
+    ausgang=$(head -n 1 -- "$wahl" 2>/dev/null || true)
+    rm -f -- "$wahl"
+    # Eine alte Wahl (z. B. abgebrochene Freigabe) zählt nicht
+    if (( jetzt - alter > 120 )) || ! ausgang_gueltig "$ausgang"; then ausgang="*"; fi
+  fi
+  printf '%s\n' "$ausgang" >> "$marker"
+}
+
+_ende() {
+  [[ -f "$marker" ]] || return 0
+  local -a zeilen=()
+  mapfile -t zeilen < "$marker"
+  if (( ${#zeilen[@]} <= 1 )); then
+    rm -f -- "$marker"
+  else
+    printf '%s\n' "${zeilen[@]:0:${#zeilen[@]}-1}" > "$marker.neu"
+    mv -f -- "$marker.neu" "$marker"
+  fi
+}
+
+# Falls exec_before vor der Auswahl lief: den letzten unbekannten Ausgang nachtragen
+_wahl_merken() {
+  local ausgang=$1 i
+  printf '%s\n' "$ausgang" > "$wahl"
+  [[ -f "$marker" ]] || return 0
+  local -a zeilen=()
+  mapfile -t zeilen < "$marker"
+  for (( i = ${#zeilen[@]} - 1; i >= 0; i-- )); do
+    if [[ "${zeilen[i]}" == "*" ]]; then
+      zeilen[i]=$ausgang
+      printf '%s\n' "${zeilen[@]}" > "$marker.neu"
+      mv -f -- "$marker.neu" "$marker"
+      rm -f -- "$wahl"
+      return 0
+    fi
+  done
+}
+
+befehl_start() {
+  gesperrt _start
+  melden gestartet
+}
+
+befehl_ende() {
+  gesperrt _ende
+  melden beendet
+}
+
+befehl_waehlen() {
+  local ausgang
+  if ! command -v slurp >/dev/null 2>&1; then
+    meldung "slurp fehlt"
+    exit 1
+  fi
+  # Abbruch mit Esc: kein Ausgang, das Portal bricht die Freigabe ab
+  ausgang=$(slurp -f '%o' -or) || exit 1
+  ausgang=${ausgang%%$'\n'*}
+  if ! ausgang_gueltig "$ausgang"; then
+    meldung "unerwartete Ausgabe von slurp"
+    exit 1
+  fi
+  gesperrt _wahl_merken "$ausgang"
+  printf 'Monitor: %s\n' "$ausgang"
+}
+
+befehl_status() {
+  local n=0
+  if [[ -f "$marker" ]]; then n=$(grep -c . "$marker" || true); fi
+  if (( n > 0 )); then echo "aktiv $n"; else echo "inaktiv"; fi
+}
+
+case "${1:-}" in
+  start) befehl_start ;;
+  ende) befehl_ende ;;
+  waehlen) befehl_waehlen ;;
+  status) befehl_status ;;
+  *)
+    sed -n '2,9p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
+    exit 2
+    ;;
+esac

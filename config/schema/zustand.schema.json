@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "zenOS Zustand (~/.config/zenos/zustaende/<id>.json)",
+  "description": "Wie sich zenOS gerade verhält, z. B. Fokus oder Sitzung. Siehe docs/konfiguration.md. Die Leitplanken stehen im Code, nicht hier.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name"],
+  "properties": {
+    "name": { "$ref": "#/$defs/name" },
+    "mitteilungen": { "$ref": "#/$defs/mitteilungen" },
+    "leiste": { "$ref": "#/$defs/leiste" },
+    "fenster": { "$ref": "#/$defs/fenster" },
+    "heute": { "type": "boolean", "description": "«Heute» im Hintergrund zeigen" },
+    "widgets": { "type": "boolean" },
+    "ausloeser": { "$ref": "#/$defs/ausloeser" },
+    "ende": { "$ref": "#/$defs/ende" }
+  },
+  "$defs": {
+    "name": { "type": "string", "minLength": 1, "maxLength": 60, "pattern": "\\S" },
+    "mitteilungen": {
+      "description": "alle · gebuendelt-<minuten> (1–1440) · nur-dringend · keine",
+      "type": "string",
+      "pattern": "^(alle|nur-dringend|keine|gebuendelt-([1-9][0-9]{0,2}|1[0-3][0-9]{2}|14[0-3][0-9]|1440))$"
+    },
+    "leiste": { "enum": ["normal", "reduziert", "aus"] },
+    "fenster": {
+      "description": "fokus: alles ausser dem aktiven Fenster tritt zurück",
+      "enum": ["normal", "fokus"]
+    },
+    "ausloeser": {
+      "description": "manuell · bildschirmfreigabe · kalender (später) · uhrzeit:HH:MM · moduswechsel",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^(manuell|bildschirmfreigabe|kalender|moduswechsel|uhrzeit:([01][0-9]|2[0-3]):[0-5][0-9])$"
+      }
+    },
+    "ende": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["art"],
+          "properties": { "art": { "enum": ["manuell", "ausloeser-endet"] } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["art", "minuten"],
+          "properties": {
+            "art": { "const": "timer" },
+            "minuten": { "type": "integer", "minimum": 1, "maximum": 1440 }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""zenos-chrome: startet Google Chrome im Profil des aktiven Modus.
+
+Aufruf:
+  zenos-chrome [--zenos-profil <Anzeigename>] [Chrome-Argumente …]
+
+Das Profil ist das Chrome-Profil, dessen Anzeigename «chromeProfil» des aktiven Modus ist
+(Modus aus ~/.local/state/zenos/laufzeit.json, Anzeigenamen aus ~/.config/google-chrome/Local State).
+--zenos-profil nennt ein anderes Profil (z. B. für eine Web-App). Gibt es das Profil nicht, keinen
+Modus oder die Argumente enthalten schon --profile-directory, startet Chrome normal.
+Alle übrigen Argumente gehen unverändert als Liste an Chrome (nie über eine Shell).
+"""
+
+import json
+import os
+import shutil
+import sys
+
+HOME = os.path.expanduser("~")
+LAUFZEIT = os.path.join(HOME, ".local", "state", "zenos", "laufzeit.json")
+MODI = os.path.join(HOME, ".config", "zenos", "modi")
+LOCAL_STATE = os.path.join(HOME, ".config", "google-chrome", "Local State")
+PROGRAMME = ("google-chrome", "google-chrome-stable")
+
+
+def lies_json(pfad):
+    try:
+        with open(pfad, encoding="utf-8") as f:
+            daten = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return daten if isinstance(daten, dict) else None
+
+
+def profil_des_modus():
+    laufzeit = lies_json(LAUFZEIT) or {}
+    modus = laufzeit.get("modus")
+    if not isinstance(modus, str) or not modus or "/" in modus or modus.startswith("."):
+        return ""
+    daten = lies_json(os.path.join(MODI, modus + ".json")) or {}
+    name = daten.get("chromeProfil")
+    return name.strip() if isinstance(name, str) else ""
+
+
+def profilordner(anzeigename):
+    """Ordnername (z. B. «Profile 1») zum Anzeigenamen, sonst ""."""
+    if not anzeigename:
+        return ""
+    info = ((lies_json(LOCAL_STATE) or {}).get("profile") or {}).get("info_cache") or {}
+    if not isinstance(info, dict):
+        return ""
+    for suche in (lambda n: n == anzeigename, lambda n: n.casefold() == anzeigename.casefold()):
+        for ordner, werte in sorted(info.items()):
+            name = werte.get("name") if isinstance(werte, dict) else None
+            if isinstance(name, str) and suche(name):
+                return ordner
+    # Auch der Ordnername selbst ist erlaubt («Default», «Profile 2»)
+    return anzeigename if anzeigename in info else ""
+
+
+def main(argv):
+    wunsch = None
+    rest = []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--zenos-profil" and i + 1 < len(argv):
+            wunsch = argv[i + 1]
+            i += 2
+            continue
+        if a.startswith("--zenos-profil="):
+            wunsch = a.split("=", 1)[1]
+            i += 1
+            continue
+        rest.append(a)
+        i += 1
+
+    programm = next((p for p in PROGRAMME if shutil.which(p)), None)
+    if programm is None:
+        print("zenos-chrome: Google Chrome ist nicht installiert (zen apps installieren chrome)", file=sys.stderr)
+        return 127
+
+    befehl = [programm]
+    if not any(a == "--profile-directory" or a.startswith("--profile-directory=") for a in rest):
+        ordner = profilordner(wunsch.strip() if isinstance(wunsch, str) and wunsch.strip() else profil_des_modus())
+        if ordner:
+            befehl.append("--profile-directory=" + ordner)
+    befehl.extend(rest)
+    try:
+        os.execvp(befehl[0], befehl)
+    except OSError as e:
+        print(f"zenos-chrome: Chrome lässt sich nicht starten ({e.strerror})", file=sys.stderr)
+        return 126
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

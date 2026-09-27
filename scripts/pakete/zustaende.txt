@@ -1,0 +1,9 @@
+# M8 · Modi und Zustände
+# Bildschirmfreigabe erkennen (exec_before/exec_after) und Bildschirm wählen
+xdg-desktop-portal-wlr
+slurp
+# zenos-konfig und zenos-chrome
+python3
+python3-jsonschema
+# Ordner beobachten (Konfig-Dienst der Oberfläche)
+qml6-module-qt-labs-folderlistmodel

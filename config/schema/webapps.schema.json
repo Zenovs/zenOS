@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "zenOS Web-Apps (~/.config/zenos/webapps.json)",
+  "description": "Web-Apps in eigenen Chrome-Fenstern. zenos-webapp erzeugt daraus ~/.local/share/applications/zenos-webapp-<id>.desktop. Nichts davon steht im Repo.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["webapps"],
+  "properties": {
+    "webapps": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/webapp" }
+    }
+  },
+  "$defs": {
+    "webapp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "url"],
+      "properties": {
+        "id": { "type": "string", "maxLength": 64, "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 60, "pattern": "\\S" },
+        "url": {
+          "description": "Nur https, ohne Leerzeichen, Steuerzeichen und Anführungszeichen",
+          "type": "string",
+          "maxLength": 2048,
+          "pattern": "^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[^\\s\"'<>\\\\`]*)?$"
+        },
+        "chromeProfil": {
+          "description": "Anzeigename des Chrome-Profils; leer = Profil des aktiven Modus",
+          "type": "string",
+          "maxLength": 100
+        },
+        "symbol": {
+          "description": "Symbolname oder absoluter Pfad zu einem Bild (optional)",
+          "type": "string",
+          "maxLength": 512
+        }
+      }
+    }
+  }
+}
