@@ -15,6 +15,16 @@ modul_system() {
 
 modul_benutzer() {
   local apps="$ZENOS_CODE/scripts/bin/zenos-apps" ausgabe zeile
+  local starter="$ZENOS_HOME/.local/share/applications"
+  # Quickshell beobachtet nur Ordner, die beim Start der Oberfläche schon da sind. Ohne diesen Ordner
+  # erschiene die erste Web-App erst nach dem nächsten Anmelden im Befehlsfeld.
+  if [[ ! -d "$starter" ]]; then
+    if [[ -e "$starter" || -L "$starter" ]]; then
+      log_warnung "$starter ist kein Ordner, neue Starter erscheinen erst nach dem nächsten Anmelden"
+    else
+      benutzer_ordner_sicherstellen "$starter"
+    fi
+  fi
   if [[ ! -x "$apps" ]]; then
     log_warnung "zenos-apps fehlt unter $ZENOS_CODE, Starter für Chrome und Web-Apps nicht abgeglichen"
     return 0

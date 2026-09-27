@@ -20,7 +20,7 @@ FocusScope {
 
     property string fehlerText: ""
     property bool _laeuft: false
-    // Modus, der angelegt wird, sobald ~/.config/zenos bereit ist
+    // Modus, der angelegt wird, sobald die Konfiguration bereit und gelesen ist
     property var _modusWartet: null
 
     implicitWidth: 2 * spalte + luecke
@@ -57,10 +57,16 @@ FocusScope {
             name: modusName,
             akzent: farbwahl.auswahl
         };
-        if (Konfig.verfuegbar)
+        if (_konfigBereit())
             _modusAnlegen();
         else
             konfigWarten.start();
+    }
+
+    // Modi und Zustände sind gelesen: Der neue Modus bekommt die ID, die noch frei ist, und alle
+    // Zustände (Fokus, Sitzung), die schon bereitliegen
+    function _konfigBereit(): bool {
+        return Konfig.verfuegbar && Konfig.geladen;
     }
 
     function ueberspringen(): void {
@@ -85,24 +91,40 @@ FocusScope {
             _abschliessen();
             return;
         }
-        let neueId = "";
-        neueId = Modi.anlegen({
+        const neu = {
             name: daten.name,
-            akzent: Theme.akzentNamen.indexOf(daten.akzent) >= 0 ? daten.akzent : Theme.standardAkzent,
-            zustaende: Zustaende.liste.map(z => z.id)
-        }, (ok, meldung) => {
-            if (ok && neueId !== "") {
-                Modi.wechseln(neueId);
+            akzent: Theme.akzentNamen.indexOf(daten.akzent) >= 0 ? daten.akzent : Theme.standardAkzent
+        };
+        // Ohne Liste bietet ein Modus alle Zustände an; eine leere Liste hiesse «keinen»
+        const zustaende = Zustaende.liste.map(z => z.id);
+        if (zustaende.length > 0)
+            neu.zustaende = zustaende;
+        // anlegen gibt die ID sofort zurück und trägt den Modus gleich in die Liste ein; die Rückmeldung
+        // von zenos-konfig kommt danach. Schlägt das Schreiben fehl, gilt wieder der Modus von vorher.
+        const vorher = Modi.aktivId;
+        let id = "";
+        let abgelehnt = false;
+        id = Modi.anlegen(neu, (ok, meldung) => {
+            if (ok) {
                 root._abschliessen();
-            } else {
-                root.fehlerText = "Der Modus liess sich nicht anlegen" + (meldung ? " (" + meldung + ")" : "") + ". Du kannst ihn später in den Einstellungen anlegen.";
-                root._laeuft = false;
+                return;
             }
+            abgelehnt = true;
+            if (id !== "" && Modi.aktivId === id)
+                Modi.wechseln(Modi.liste.some(m => m.id === vorher) ? vorher : "");
+            root._modusFehler(meldung);
         });
-        if (neueId === "") {
-            fehlerText = "Der Modus liess sich nicht anlegen. Du kannst ihn später in den Einstellungen anlegen.";
-            _laeuft = false;
+        if (id === "") {
+            _modusFehler("");
+            return;
         }
+        if (!abgelehnt)
+            Modi.wechseln(id);
+    }
+
+    function _modusFehler(meldung: string): void {
+        fehlerText = "Der Modus liess sich nicht anlegen" + (meldung ? " (" + meldung + ")" : "") + ". Du kannst ihn später in den Einstellungen anlegen.";
+        _laeuft = false;
     }
 
     function _abschliessen(): void {
@@ -113,12 +135,17 @@ FocusScope {
     Keys.onReturnPressed: einrichten()
     Keys.onEnterPressed: einrichten()
 
-    // ~/.config/zenos entsteht erst mit dem ersten Speichern (frisches Image): kurz warten
+    // ~/.config/zenos entsteht spätestens mit dem ersten Speichern, gelesen wird danach: kurz warten
     Connections {
         target: Konfig
 
         function onVerfuegbarChanged(): void {
-            if (Konfig.verfuegbar && root._modusWartet)
+            if (root._konfigBereit() && root._modusWartet)
+                root._modusAnlegen();
+        }
+
+        function onGeladenChanged(): void {
+            if (root._konfigBereit() && root._modusWartet)
                 root._modusAnlegen();
         }
     }
@@ -268,15 +295,20 @@ FocusScope {
                 onClicked: root.ueberspringen()
             }
         }
+    }
 
-        Text {
-            visible: root.fehlerText.length > 0
-            width: parent.width
-            text: root.fehlerText
-            color: Theme.fehler
-            font.family: Theme.schriftText
-            font.pixelSize: Theme.groesseLabel
-            wrapMode: Text.WordWrap
-        }
+    // Unter dem Formular, ausserhalb der Spalte: Eine Meldung verschiebt nichts
+    Text {
+        visible: root.fehlerText.length > 0
+        x: formular.x
+        y: formular.y + formular.height + 18
+        width: root.spalte
+        text: root.fehlerText
+        color: Theme.fehler
+        font.family: Theme.schriftText
+        font.pixelSize: Theme.groesseLabel
+        lineHeightMode: Text.FixedHeight
+        lineHeight: 20
+        wrapMode: Text.WordWrap
     }
 }
