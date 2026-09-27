@@ -1,0 +1,14 @@
+{
+  "profile": [
+    {
+      "name": "Ein Bildschirm",
+      "ausgaenge": ["HDMI-A-1"],
+      "raster": { "HDMI-A-1": "4er-grid" }
+    },
+    {
+      "name": "Zwei Bildschirme",
+      "ausgaenge": ["DP-1", "DP-2"],
+      "raster": { "DP-1": "haelften", "DP-2": "voll" }
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "name": "Beispiel",
+  "akzent": "salbei",
+  "chromeProfil": "Beispiel",
+  "mailKonten": [],
+  "heute": {
+    "kalender": [],
+    "aufgaben": [],
+    "wetter": false
+  },
+  "oeffnen": ["coremail"],
+  "raster": {
+    "Ein Bildschirm": "4er-grid"
+  },
+  "zustaende": ["fokus", "sitzung"],
+  "anpassungen": {
+    "fokus": {
+      "mitteilungen": "gebuendelt-30"
+    }
+  }
+}

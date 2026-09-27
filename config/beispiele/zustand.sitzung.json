@@ -1,0 +1,10 @@
+{
+  "name": "Sitzung",
+  "mitteilungen": "keine",
+  "leiste": "reduziert",
+  "fenster": "normal",
+  "heute": false,
+  "widgets": false,
+  "ausloeser": ["bildschirmfreigabe"],
+  "ende": { "art": "ausloeser-endet" }
+}
