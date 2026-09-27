@@ -1,0 +1,12 @@
+# M5 · Befehlsfeld und Werkzeuge
+# Farbpipette (zenos-pipette)
+hyprpicker
+# Bildschirmfoto (zenos-bildschirmfoto): Bereich wählen, aufnehmen, Zwischenablage
+slurp
+grim
+wl-clipboard
+# Farben der Auswahl aus den Design-Tokens (zenos-bildschirmfoto)
+jq
+# Dateisuche (find) und Öffnen von Dateien (xdg-open)
+findutils
+xdg-utils

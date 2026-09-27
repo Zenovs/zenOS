@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# zenos-pipette – Farbe vom Bildschirm aufnehmen (hyprpicker) und als Hex-Wert (#RRGGBB) in die
+# Zwischenablage kopieren (wl-copy). Ein kurzer Hinweis erscheint über zenos-ipc.
+#
+#   zenos-pipette
+#
+# Abbruch (Esc) endet still mit Exit 0. Exit 1 bei Fehlern. Gibt den Wert auch auf stdout aus.
+
+set -euo pipefail
+
+BIN=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
+
+meldung() { printf 'zenos-pipette: %s\n' "$*" >&2; }
+hinweis() { "$BIN/zenos-ipc" hinweis zeigen "$1" > /dev/null 2>&1 || true; }
+fehler() { # MELDUNG HINWEIS
+  meldung "$1"
+  hinweis "$2"
+  exit 1
+}
+
+case "${1:-}" in
+  "") ;;
+  -h | --hilfe | --help)
+    sed -n '4,7p' "$0" | sed 's/^# \{0,1\}//'
+    exit 0
+    ;;
+  *)
+    meldung "unbekannte Option «$1»"
+    exit 64
+    ;;
+esac
+
+[[ -n "${WAYLAND_DISPLAY:-}" ]] || fehler "keine Wayland-Sitzung (WAYLAND_DISPLAY fehlt)" "Pipette nicht möglich"
+for programm in hyprpicker wl-copy; do
+  command -v "$programm" > /dev/null || fehler "$programm fehlt" "Pipette nicht möglich: $programm fehlt"
+done
+
+# Nie zwei Pipetten gleichzeitig
+sperrordner="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/zenos"
+[[ -d "$sperrordner" ]] || mkdir -m 0700 -- "$sperrordner" 2> /dev/null || true
+if [[ -d "$sperrordner" && -w "$sperrordner" ]]; then
+  exec 9> "$sperrordner/pipette.lock"
+  flock -n 9 || exit 0
+fi
+
+# Abbruch mit Esc: kein Wert (bzw. ein Fehlercode) – still aufhören.
+# Kein --quiet: hyprpicker 0.4.6 unterdrückt damit auch den Farbwert.
+farbe=$(hyprpicker --format=hex --no-fancy 2> /dev/null | grep -Eo '#[0-9A-Fa-f]{6}' | tail -n 1) || exit 0
+[[ "$farbe" =~ ^#[0-9A-Fa-f]{6}$ ]] || exit 0
+farbe=${farbe^^}
+
+# Sperre freigeben: wl-copy bleibt im Hintergrund und darf sie nicht erben
+exec 9>&-
+if wl-copy -- "$farbe"; then
+  hinweis "Farbe $farbe kopiert"
+else
+  fehler "wl-copy fehlgeschlagen" "Farbe $farbe nicht kopiert"
+fi
+printf '%s\n' "$farbe"
