@@ -44,9 +44,17 @@ if [[ -d "$sperrordner" && -w "$sperrordner" ]]; then
 fi
 
 # Abbruch mit Esc: kein Wert (bzw. ein Fehlercode) – still aufhören.
-# Kein --quiet: hyprpicker 0.4.6 unterdrückt damit auch den Farbwert.
-farbe=$(hyprpicker --format=hex --no-fancy 2> /dev/null | grep -Eo '#[0-9A-Fa-f]{6}' | tail -n 1) || exit 0
-[[ "$farbe" =~ ^#[0-9A-Fa-f]{6}$ ]] || exit 0
+# Kein --quiet: hyprpicker 0.4.6 unterdrückt damit auch den Farbwert. Meldungen und Wert kommen
+# beide auf stdout; der Wert ist der letzte Hex-Wert.
+ausgabe=$(hyprpicker --format=hex --no-fancy 2> /dev/null) || true
+farbe=$(grep -Eo '#[0-9A-Fa-f]{6}' <<< "$ausgabe" | tail -n 1) || true
+if [[ ! "$farbe" =~ ^#[0-9A-Fa-f]{6}$ ]]; then
+  # Ohne Maus beendet sich hyprpicker sofort («cannot work without a pointer»)
+  if grep -q 'without a pointer' <<< "$ausgabe"; then
+    fehler "hyprpicker braucht einen Zeiger (keine Maus gefunden)" "Pipette braucht eine Maus"
+  fi
+  exit 0
+fi
 farbe=${farbe^^}
 
 # Sperre freigeben: wl-copy bleibt im Hintergrund und darf sie nicht erben

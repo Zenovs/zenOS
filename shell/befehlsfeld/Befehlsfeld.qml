@@ -10,7 +10,6 @@ import qs.dienste
 import qs.komponenten
 import "rechner.mjs" as Rechner
 import "suche.mjs" as Suche
-import "../komponenten/symbole.js" as Symbole
 
 // Befehlsfeld (Super+Leertaste) nach Entwurf 2: Apps, Web-Apps, Aktionen, Modus und Zustand,
 // Rechnen, Dateien und Werkzeuge. Eingaben gehen nie an eine Shell; Prozesse starten mit
@@ -76,7 +75,7 @@ Scope {
             id: "abmelden",
             titel: "Abmelden",
             frage: "Wirklich abmelden?",
-            symbol: _symbol("abmelden", ""),
+            symbol: "abmelden",
             woerter: "abmelden logout sitzung",
             gefahr: true
         },
@@ -84,7 +83,7 @@ Scope {
             id: "neustarten",
             titel: "Neu starten",
             frage: "Wirklich neu starten?",
-            symbol: _symbol("neustart", ""),
+            symbol: "neustart",
             woerter: "neustart neustarten reboot",
             gefahr: true
         },
@@ -92,7 +91,7 @@ Scope {
             id: "ausschalten",
             titel: "Ausschalten",
             frage: "Wirklich ausschalten?",
-            symbol: _symbol("ausschalten", ""),
+            symbol: "ausschalten",
             woerter: "ausschalten herunterfahren shutdown poweroff",
             gefahr: true
         },
@@ -247,11 +246,6 @@ Scope {
         }
     }
 
-    // Symbol, falls die Komponente es kennt, sonst Ersatz ("" = Anfangsbuchstabe)
-    function _symbol(name: string, ersatz: string): string {
-        return Symbole.daten[name] !== undefined ? name : ersatz;
-    }
-
     function _buchstabe(text: string): string {
         return text.length > 0 ? text.charAt(0).toUpperCase() : "";
     }
@@ -280,8 +274,7 @@ Scope {
             frage: a.frage ?? "",
             gefahr: a.gefahr === true,
             hinweis: "Aktion",
-            symbol: a.symbol,
-            buchstabe: _buchstabe(a.titel)
+            symbol: a.symbol
         };
     }
 
@@ -297,7 +290,7 @@ Scope {
         };
     }
 
-    // Modi zum Wechseln, angebotene Zustände und der aktive Zustand. q leer: alle, sonst gefiltert.
+    // Modi zum Wechseln, startbare Zustände und der aktive Zustand. q leer: alle, sonst gefiltert.
     function _modusUndZustand(q: string): var {
         const treffer = [];
         const bewerten = (name, woerter) => q.length === 0 ? 1 : Suche.bewerten([
@@ -310,38 +303,41 @@ Scope {
                     gewicht: 0.7
                 }
             ], q);
+        const nameVon = z => typeof z?.name === "string" && z.name.trim().length > 0 ? z.name : z.id;
 
-        const zustaende = Array.isArray(Zustaende.liste) ? Zustaende.liste : [];
-        const aktiverModus = Modi.aktiv;
-        const angeboten = Array.isArray(aktiverModus?.zustaende) ? aktiverModus.zustaende : null;
-        for (const z of zustaende) {
-            if (!z || typeof z.id !== "string" || z.id.length === 0)
+        // Der aktive Zustand lässt sich immer beenden, auch wenn er nicht von Hand startbar ist (Sitzung)
+        const aktivId = Zustaende.aktivId;
+        if (aktivId.length > 0) {
+            const name = nameVon(Zustaende.aktiv ?? {
+                id: aktivId
+            });
+            const p = bewerten(name, "zustand beenden");
+            if (p > 0)
+                treffer.push({
+                    punkte: p + 3,
+                    name: name,
+                    e: {
+                        schluessel: "zustand-ende",
+                        abschnitt: abschnittModus,
+                        art: "zustand-beenden",
+                        titel: name + " beenden",
+                        hinweis: Zustaende.restMinuten >= 0 ? "noch " + Zustaende.restMinuten + " Min." : (Freigabe.aktiv && Zustaende.ausloeser === "bildschirmfreigabe" ? "geteilt" : "aktiv"),
+                        symbol: "kreis-ziel"
+                    }
+                });
+        }
+
+        // Angeboten im aktiven Modus und mit Auslöser «manuell»
+        const startbar = Array.isArray(Zustaende.startbar) ? Zustaende.startbar : [];
+        for (const z of startbar) {
+            if (!z || typeof z.id !== "string" || z.id.length === 0 || z.id === aktivId)
                 continue;
-            const name = typeof z.name === "string" && z.name.length > 0 ? z.name : z.id;
-            if (z.id === Zustaende.aktivId) {
-                const p = bewerten(name, "zustand beenden");
-                if (p > 0)
-                    treffer.push({
-                        punkte: p + 3,
-                        name: name,
-                        e: {
-                            schluessel: "zustand-ende",
-                            abschnitt: abschnittModus,
-                            art: "zustand-beenden",
-                            titel: name + " beenden",
-                            hinweis: Zustaende.restMinuten >= 0 ? "noch " + Zustaende.restMinuten + " Min." : "aktiv",
-                            symbol: "kreis-ziel"
-                        }
-                    });
-                continue;
-            }
-            if (angeboten !== null && angeboten.indexOf(z.id) < 0)
-                continue;
+            const name = nameVon(z);
             const p = bewerten(name, "zustand starten");
             if (p <= 0)
                 continue;
-            // Dauer mit der Anpassung des aktiven Modus
-            const ende = aktiverModus?.anpassungen?.[z.id]?.ende ?? z.ende;
+            // Dauer aus dem wirksamen Zustand (mit der Anpassung des aktiven Modus)
+            const ende = Zustaende.wirksamFuer(z.id)?.ende;
             const minuten = ende?.art === "timer" && Number.isInteger(ende?.minuten) && ende.minuten > 0 ? ende.minuten : 0;
             treffer.push({
                 punkte: p + 1,
@@ -362,7 +358,7 @@ Scope {
         for (const m of modi) {
             if (!m || typeof m.id !== "string" || m.id.length === 0 || m.id === Modi.aktivId)
                 continue;
-            const name = typeof m.name === "string" && m.name.length > 0 ? m.name : m.id;
+            const name = nameVon(m);
             const p = bewerten(name, "modus wechseln");
             if (p <= 0)
                 continue;
@@ -415,7 +411,7 @@ Scope {
                     pfad: t.pfad,
                     titel: Suche.einzeilig(t.name),
                     hinweis: Suche.einzeilig(Suche.pfadAnzeige(t.pfad, Pfade.home)),
-                    symbol: t.ordner ? _symbol("ordner", "raster-voll") : _symbol("datei", "raster-voll")
+                    symbol: t.ordner ? "ordner" : "datei"
                 }));
     }
 
