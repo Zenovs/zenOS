@@ -319,9 +319,10 @@ def kitty_conf(tokens, mode, accent):
         ("active_tab_foreground", p["text"]),
         ("active_tab_background", p["flaeche2"]),
         ("inactive_tab_foreground", p["gedaempft"]),
-        ("inactive_tab_background", p["grund"]),
-        ("tab_bar_background", p["grund"]),
-        ("tab_bar_margin_color", p["grund"]),
+        # Tab-Leiste im Hintergrund des Terminals (Entwurf 2)
+        ("inactive_tab_background", p["fenster"]),
+        ("tab_bar_background", p["fenster"]),
+        ("tab_bar_margin_color", p["fenster"]),
         ("color0", black),
         ("color8", p["gedaempft"]),
         ("color1", p["fehler"]),

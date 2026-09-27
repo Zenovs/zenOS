@@ -9,6 +9,10 @@ var daten = {
     "mond": { d: "M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z", strich: 1.7 },
     "sonne": { d: "M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0zM12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4", strich: 1.7 },
     "wlan": { d: "M5 12.6a11 11 0 0 1 14 0M1.5 9a16 16 0 0 1 21 0M8.5 16.1a6 6 0 0 1 7 0M12 20h.01", strich: 1.8 },
+    // Bögen wie «wlan», hinter dem Strich unterbrochen
+    "wlan-aus": { d: "M1.5 9a16 16 0 0 1 4.67-2.83M10.78 5.12A16 16 0 0 1 22.5 9M5 12.6a11 11 0 0 1 5.23-2.37M16.89 11.23A11 11 0 0 1 19 12.6M8.5 16.1a6 6 0 0 1 7 0M12 20h.01M2 2l20 20", strich: 1.8 },
+    // Netzwerkbuchse (Ethernet)
+    "kabel": { d: "M4 4h16a2 2 0 0 1 2 2v9a2 2 0 0 1 -2 2h-2.5l-3 3h-5l-3 -3h-2.5a2 2 0 0 1 -2 -2v-9a2 2 0 0 1 2 -2zM8 8v2M12 8v2M16 8v2", strich: 1.8 },
     "ton": { d: "M11 5L6 9H2v6h4l5 4zM15.5 8.5a5 5 0 0 1 0 7", strich: 1.8 },
     "ton-aus": { d: "M11 5L6 9H2v6h4l5 4zM22 9l-6 6M16 9l6 6", strich: 1.8 },
     "schloss": { d: "M6 11h12a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-6a2 2 0 0 1 2 -2zM8 11V7a4 4 0 0 1 8 0v4", strich: 1.8 },
@@ -35,6 +39,11 @@ var daten = {
     "wolke": { d: "M17.5 19H9a7 7 0 1 1 6.7-9h1.8a4.5 4.5 0 1 1 0 9z", strich: 1.7 },
     "text-aus-bild": { d: "M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M8 8h8M12 8v8", strich: 1.7 },
     "qr-code": { d: "M4 3h5a1 1 0 0 1 1 1v5a1 1 0 0 1 -1 1h-5a1 1 0 0 1 -1 -1v-5a1 1 0 0 1 1 -1zM15 3h5a1 1 0 0 1 1 1v5a1 1 0 0 1 -1 1h-5a1 1 0 0 1 -1 -1v-5a1 1 0 0 1 1 -1zM4 14h5a1 1 0 0 1 1 1v5a1 1 0 0 1 -1 1h-5a1 1 0 0 1 -1 -1v-5a1 1 0 0 1 1 -1zM14 14h3v3h-3zM20 14v.01M14 20h.01M17 20h4v-3", strich: 1.7 },
-    "zwischenablage": { d: "M9 2h6a1 1 0 0 1 1 1v2a1 1 0 0 1 -1 1h-6a1 1 0 0 1 -1 -1v-2a1 1 0 0 1 1 -1zM16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2", strich: 1.7 }
-
+    "zwischenablage": { d: "M9 2h6a1 1 0 0 1 1 1v2a1 1 0 0 1 -1 1h-6a1 1 0 0 1 -1 -1v-2a1 1 0 0 1 1 -1zM16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2", strich: 1.7 },
+    "thermometer": { d: "M14 4v10.54a4 4 0 1 1 -4 0V4a2 2 0 0 1 4 0z", strich: 1.8 },
+    "ausschalten": { d: "M12 3v9M18.4 6.6a9 9 0 1 1-12.8 0", strich: 1.8 },
+    "neustart": { d: "M3 12a9 9 0 1 0 2.64-6.36L3 8.3M3 3v5.3h5.3", strich: 1.8 },
+    "abmelden": { d: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9", strich: 1.8 },
+    "datei": { d: "M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6", strich: 1.7 },
+    "ordner": { d: "M5 4h3.9a2 2 0 0 1 1.66.9l.88 1.3a2 2 0 0 0 1.66.9H19a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z", strich: 1.7 }
 };

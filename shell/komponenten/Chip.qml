@@ -22,8 +22,11 @@ Item {
 
     signal clicked
 
+    // Der 1-px-Rahmen von «umrandet» kommt zum Innenabstand hinzu (wie border + padding im CSS von Entwurf 2)
+    readonly property int _rand: variante === "umrandet" ? 1 : 0
+
     implicitHeight: 28
-    implicitWidth: content.implicitWidth + content.x + (pfeil ? 8 : 10)
+    implicitWidth: content.implicitWidth + content.x + (pfeil ? 8 : 10) + _rand
     activeFocusOnTab: enabled
     opacity: enabled ? 1 : 0.45
 
@@ -64,7 +67,7 @@ Item {
     Row {
         id: content
 
-        x: 10
+        x: 10 + root._rand
         anchors.verticalCenter: parent.verticalCenter
         spacing: root.symbol.length > 0 ? 6 : 8
 

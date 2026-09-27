@@ -2,6 +2,8 @@ pragma Singleton
 
 import QtQuick
 import Quickshell
+// Werttyp für execDetached({ command, workingDirectory }); qmllint sieht die Nutzung nicht
+import Quickshell.Io // qmllint disable unused-imports
 // eigenes Modul, damit qmllint die Singletons dieses Ordners kennt
 import qs.dienste
 
@@ -24,7 +26,9 @@ Singleton {
             console.warn("Aktionen: App nicht gefunden", typeof eintrag === "string" ? eintrag : "");
             return;
         }
-        const command = Array.from(entry.command);
+        // Exec schreibt ein «%» als «%%». Quickshell v0.3.1 lässt «%%» in Anführungszeichen stehen, GLib nicht
+        // (z. B. "--app=https://…%%25…" einer Web-App). Eine gültige Adresse enthält nie «%%».
+        const command = Array.from(entry.command).map(a => String(a).replace(/%%/g, "%"));
         _launch(entry.runInTerminal ? ["kitty", "--"].concat(command) : command, entry.workingDirectory);
     }
 

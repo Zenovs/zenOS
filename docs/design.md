@@ -76,6 +76,7 @@ Alle drei stehen unter der SIL Open Font License und dürfen ins Image.
 
 **kitty-Palette:** Grün = Akzent, Rot = `fehler`, Gelb = `warnung`, Hell-Schwarz = `gedaempft`. Blau, Magenta und
 Cyan kommen aus den übrigen Akzenten (bevorzugt Blau, Ton, Salbei; der aktive Akzent wird übersprungen).
+Die Tab-Leiste liegt im Hintergrund des Terminals (`fenster`), der aktive Tab ist mit `flaeche2` hinterlegt.
 
 ## Komponenten
 
@@ -88,6 +89,13 @@ Tastaturfokus zeigt ein 2-px-Ring im Akzent; Zeigen und Drücken färben leicht 
 - **Links, «wo bin ich»:** Zeichen, Modus-Chip, Zustand-Chip (nur wenn aktiv), Raster.
 - **Mitte:** Datum, Uhrzeit, nächster Termin.
 - **Rechts, höchstens drei Dinge:** Dev-Server (nur wenn einer läuft), Mitteilungen mit nächster Zustellung, System-Knopf (WLAN, Ton, 1Password, Temperatur).
+- **System- und Raster-Menü:** klappen unter ihrem Knopf auf. Karte in `flaeche` mit 1-px-Rahmen `linie2`, Radius 12,
+  ohne Schatten. Einträge 36 px hoch (Radius 8, Zeigen und Tastaturfokus hinterlegen mit `flaeche2`), Symbol links,
+  Wert rechts in Geist Mono. Abmelden, Neustart und Ausschalten fragen einmal nach («Wirklich ausschalten?»), erst
+  der zweite Klick löst aus. Esc oder ein Klick daneben schliesst.
+- **Zustand und Leiste:** Ein Zustand kann die Leiste zurücknehmen (Schlüssel `leiste`). `reduziert` blendet Raster
+  und Hell/Dunkel aus, `aus` lässt nur Zustand und Uhrzeit stehen. Der Platz bleibt in beiden Fällen reserviert,
+  damit Fenster nicht springen. Einzelheiten in `docs/module/m4.md`.
 
 ### Befehlsfeld
 
