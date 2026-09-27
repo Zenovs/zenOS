@@ -1,4 +1,9 @@
 //@ pragma IconTheme Adwaita
+// Quickshell selbst braucht weder das Qt-Plattform-Theme noch die Portal-Dienste von Qt (Farben aus Theme,
+// Symbole über IconTheme). Ohne sie wartet der Start nicht auf das Desktop-Portal, und dessen Warnungen
+// entfallen. Nur für diesen Prozess: gestartete Apps erben die Umgebung der Sitzung unverändert.
+//@ pragma Env QT_QPA_PLATFORMTHEME=
+//@ pragma Env QT_NO_XDG_DESKTOP_PORTAL=1
 
 import QtQuick
 import Quickshell

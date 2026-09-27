@@ -2,8 +2,8 @@ pragma Singleton
 
 import QtQuick
 import Quickshell
-// Werttyp für execDetached({ command, workingDirectory }); qmllint sieht die Nutzung nicht
-import Quickshell.Io // qmllint disable unused-imports
+// Process; dazu der Werttyp für execDetached({ command, workingDirectory })
+import Quickshell.Io
 // eigenes Modul, damit qmllint die Singletons dieses Ordners kennt
 import qs.dienste
 
@@ -48,7 +48,17 @@ Singleton {
         _launch([Pfade.bin + "/zenos-pipette"]);
     }
 
+    // Über zenos-abmelden: stoppt erst die Sitzungsdienste, dann labwc (sonst enden sie als «failed»).
+    // Nur wenn es sich nicht starten lässt, wird labwc direkt beendet.
     function abmelden(): void {
+        if (abmeldenProzess.running)
+            return;
+        abmeldenProzess.gestartet = false;
+        abmeldenProzess.command = [Pfade.bin + "/zenos-abmelden"];
+        abmeldenProzess.running = true;
+    }
+
+    function _labwcBeenden(): void {
         // labwc --exit braucht LABWC_PID; fehlt sie in der Umgebung des Dienstes,
         // wird labwc des eigenen Benutzers direkt beendet.
         if (Quickshell.env("LABWC_PID"))
@@ -68,6 +78,32 @@ Singleton {
     // seite: z. B. "modi", "allgemein"; leer = Startseite der Einstellungen
     function einstellungen(seite: var): void {
         Oberflaeche.einstellungenOeffnen(typeof seite === "string" ? seite : "");
+    }
+
+    Process {
+        id: abmeldenProzess
+
+        property bool gestartet: false
+
+        workingDirectory: Pfade.home
+        stderr: StdioCollector {
+            id: abmeldenFehler
+        }
+
+        onStarted: gestartet = true
+        // Lässt sich das Programm nicht starten (fehlt, nicht ausführbar), meldet Process nur «läuft nicht mehr»
+        onRunningChanged: {
+            if (!running && !gestartet)
+                root._labwcBeenden();
+        }
+        // 0: Abmelden läuft (die Sitzung endet gleich). Endet es mit einem Fehler, bleibt die Sitzung offen.
+        // Ein Signal (Status 1) kommt nur vom Ende der Sitzung selbst.
+        onExited: (code, status) => {
+            if (code === 0 || status !== 0)
+                return;
+            console.warn("Aktionen: zenos-abmelden endete mit", code, abmeldenFehler.text.trim());
+            Oberflaeche.hinweis("Abmelden hat nicht geklappt", "warnung");
+        }
     }
 
     function _launch(command: var, dir: var): void {

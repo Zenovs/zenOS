@@ -3,11 +3,13 @@ import qs.theme
 
 // Kurzer, ruhiger Hinweis: Pille mit Text, optional mit Symbol.
 // zeigen(text) blendet ein (120 ms) und nach «dauer» wieder aus (200 ms).
+// Das Symbol erscheint im Akzent, «warnung» in warnung, «x» in fehler.
 Item {
     id: root
 
     property string text
     property string symbol: "haken"
+    property color symbolFarbe: symbol === "warnung" ? Theme.warnung : symbol === "x" ? Theme.fehler : Theme.akzent
     property int dauer: 2500
     readonly property bool sichtbar: _shown || pill.opacity > 0
 
@@ -30,7 +32,8 @@ Item {
     Rectangle {
         id: pill
 
-        width: Math.min(content.implicitWidth + 32, 560)
+        // ganze Pixel: das Fenster ist so breit wie die Pille, ein Bruchteil würde rechts abgeschnitten
+        width: Math.ceil(Math.min(content.implicitWidth + 32, 560))
         height: 40
         radius: Theme.radiusPille
         color: Theme.flaeche
@@ -56,7 +59,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 name: root.symbol
                 groesse: 15
-                farbe: Theme.akzent
+                farbe: root.symbolFarbe
             }
 
             Text {

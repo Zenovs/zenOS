@@ -21,15 +21,18 @@ Singleton {
     // (null = Standardort). Die Leiste setzt es beim Klick auf einen Chip.
     property var wahlAnker: null
 
-    // Kurzer Hinweis (Toast), z. B. «Farbe kopiert»
-    signal hinweisGezeigt(string text)
+    // Kurzer Hinweis (Toast), z. B. «Farbe kopiert». symbol: Name aus qs.komponenten/Symbol
+    // (z. B. "warnung", "info"); leer = Standard (Haken).
+    signal hinweisGezeigt(string text, string symbol)
     // Die Sperre (sperre/Sperre.qml) reagiert darauf
     signal sperrenAngefordert
 
-    function hinweis(text: var): void {
+    // symbol ist optional: hinweis("Farbe kopiert"), hinweis("Raster lässt sich nicht setzen", "warnung")
+    function hinweis(text: var, symbol: var): void {
         const t = typeof text === "string" ? text.trim() : "";
+        const s = typeof symbol === "string" ? symbol.trim() : "";
         if (t.length > 0)
-            hinweisGezeigt(t);
+            hinweisGezeigt(t, s);
     }
 
     function sperren(): void {
