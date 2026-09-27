@@ -1,11 +1,11 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import Quickshell
 import qs.theme
 import qs.dienste
 import qs.komponenten
 import "zeit.js" as Zeit
-import "../komponenten/symbole.js" as Symbole
 
 // Inhalt der Leiste nach Entwurf 2 (Innenabstand 0 10 px):
 // links «wo bin ich» (Zeichen, Modus, Zustand, Raster), in der Mitte Datum und Uhrzeit,
@@ -17,6 +17,8 @@ Item {
     property var jetzt: new Date()
     // offenes Menü dieser Leiste: "" | "system" | "raster"
     property string offenesMenue: ""
+    // Name des Bildschirms dieser Leiste (Anker für Modus-/Zustandswahl und Zentrale)
+    property string bildschirm: ""
 
     // x in Fensterkoordinaten: Raster-Menü beginnt an der linken Kante des Knopfs,
     // das System-Menü endet an der rechten Kante des System-Knopfs
@@ -26,6 +28,59 @@ Item {
         if (name === "raster")
             return rasterChip.mapToItem(null, 0, 0).x;
         return systemKnopf.mapToItem(null, systemKnopf.width, 0).x;
+    }
+
+    // Modus- bzw. Zustandswahl unter dem Chip (modi/Umschalter.qml). Ein zweiter Klick schliesst;
+    // ist die Wahl auf einem anderen Bildschirm offen, wandert sie hierher.
+    // wahlAnker und zentraleBildschirm stellt Oberflaeche (M3) bereit; ohne sie bleibt es beim Umschalten.
+    function _toggleChoice(kind: string, chip: Item): void {
+        const isOpen = kind === "modus" ? Oberflaeche.modusWahlOffen : Oberflaeche.zustandWahlOffen;
+        const hasAnchor = "wahlAnker" in Oberflaeche;
+        const anchor = hasAnchor ? Oberflaeche.wahlAnker : null;
+        const close = () => {
+            if (kind === "modus")
+                Oberflaeche.modusWahlOffen = false;
+            else
+                Oberflaeche.zustandWahlOffen = false;
+        };
+        if (isOpen) {
+            close();
+            if (!anchor || anchor.bildschirm === bildschirm)
+                return;
+        }
+        if (hasAnchor)
+            Oberflaeche.wahlAnker = {
+                bildschirm: bildschirm,
+                x: chip.mapToItem(null, 0, 0).x
+            };
+        // Wahl und Zentrale beanspruchen beide die Tastatur: nur eine von beiden offen
+        Oberflaeche.zentraleOffen = false;
+        if (kind === "modus")
+            Oberflaeche.modusWahlOffen = true;
+        else
+            Oberflaeche.zustandWahlOffen = true;
+    }
+
+    // Zentrale auf diesem Bildschirm offen (leerer Name = erster Bildschirm)
+    readonly property bool _centerHere: {
+        if (!Oberflaeche.zentraleOffen)
+            return false;
+        if (!("zentraleBildschirm" in Oberflaeche))
+            return true;
+        const name = Oberflaeche.zentraleBildschirm !== "" ? Oberflaeche.zentraleBildschirm : (Quickshell.screens[0]?.name ?? "");
+        return name === bildschirm;
+    }
+
+    function _toggleCenter(): void {
+        if (_centerHere) {
+            Oberflaeche.zentraleOffen = false;
+            return;
+        }
+        if ("zentraleBildschirm" in Oberflaeche)
+            Oberflaeche.zentraleBildschirm = bildschirm;
+        Oberflaeche.modusWahlOffen = false;
+        Oberflaeche.zustandWahlOffen = false;
+        Oberflaeche.zentraleOffen = true;
     }
 
     // Leiste laut wirksamem Zustand: "normal" | "reduziert" (ohne Raster und Hell/Dunkel) |
@@ -132,20 +187,11 @@ Item {
 
     // --- System ---
 
-    // Symbole, die es (noch) nicht in qs.komponenten gibt, werden weggelassen statt leer gezeichnet
-    function _symbolKnown(name: string): bool {
-        return Symbole.daten[name] !== undefined;
-    }
-    readonly property string _networkSymbol: {
-        if (System.netzArt === "wlan")
-            return "wlan";
-        if (System.netzArt === "kabel")
-            return _symbolKnown("kabel") ? "kabel" : "";
-        return _symbolKnown("wlan-aus") ? "wlan-aus" : "wlan";
-    }
+    // WLAN ohne Standardroute («ohne Internet») bleibt beim WLAN-Symbol, dann gedämpft
+    readonly property string _networkSymbol: System.netzArt === "kabel" ? "kabel" : System.netzArt === "wlan" || System.wlanVerbunden ? "wlan" : "wlan-aus"
     readonly property string _systemDescription: {
         const parts = [];
-        parts.push(System.netzArt === "wlan" ? "WLAN verbunden" : System.netzArt === "kabel" ? "Kabel verbunden" : "nicht verbunden");
+        parts.push(System.netzArt === "wlan" ? "WLAN verbunden" : System.netzArt === "kabel" ? "Kabel verbunden" : System.wlanVerbunden ? "WLAN ohne Internet" : "nicht verbunden");
         parts.push(!System.tonVerfuegbar ? "kein Tonausgang" : System.stumm ? "Ton stumm" : "Lautstärke " + Math.round(System.lautstaerke * 100) + " %");
         if (System.einsPasswortInstalliert)
             parts.push(System.einsPasswortLaeuft ? "1Password läuft" : "1Password nicht gestartet");
@@ -248,7 +294,7 @@ Item {
             mitPunkt: root._modeName !== ""
             pfeil: true
             Accessible.name: root._modeName !== "" ? "Modus wechseln, aktuell " + root._modeName : "Modus wählen, kein Modus aktiv"
-            onClicked: Oberflaeche.modusWahlOffen = !Oberflaeche.modusWahlOffen
+            onClicked: root._toggleChoice("modus", modusChip)
         }
 
         Chip {
@@ -262,7 +308,7 @@ Item {
             punktFarbe: Theme.sitzung
             randFarbe: root._sharing ? Theme.sitzung : Theme.eingabeRand
             Accessible.name: "Zustand " + stateMetrics.text + (zusatz !== "" ? ", " + zusatz : "")
-            onClicked: Oberflaeche.zustandWahlOffen = !Oberflaeche.zustandWahlOffen
+            onClicked: root._toggleChoice("zustand", zustandChip)
         }
 
         Chip {
@@ -338,9 +384,9 @@ Item {
 
             visible: root.stufe !== "aus"
             abstand: 6
-            aktiv: Oberflaeche.zentraleOffen
+            aktiv: root._centerHere
             beschreibung: root._noticeDescription
-            onClicked: Oberflaeche.zentraleOffen = !Oberflaeche.zentraleOffen
+            onClicked: root._toggleCenter()
 
             Symbol {
                 anchors.verticalCenter: parent.verticalCenter
@@ -387,11 +433,9 @@ Item {
 
             Symbol {
                 anchors.verticalCenter: parent.verticalCenter
-                visible: root._networkSymbol !== ""
                 name: root._networkSymbol
                 groesse: 14
                 farbe: System.netzVerbunden ? Theme.text : Theme.gedaempft
-                opacity: System.netzVerbunden ? 1 : 0.6
             }
 
             Symbol {

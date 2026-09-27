@@ -25,6 +25,10 @@ Scope {
             menueSchliessen();
             return;
         }
+        // Wahl und Zentrale liegen auf der Ebene Overlay über dem Menü: vorher schliessen
+        Oberflaeche.modusWahlOffen = false;
+        Oberflaeche.zustandWahlOffen = false;
+        Oberflaeche.zentraleOffen = false;
         menueX = x;
         menueBildschirm = bildschirm;
         menue = name;
@@ -86,6 +90,7 @@ Scope {
 
                     anchors.fill: parent
                     jetzt: uhr.date
+                    bildschirm: proBildschirm.bildschirmName
                     offenesMenue: proBildschirm.menueHier ? root.menue : ""
                     onMenueGewuenscht: (name, x) => root.menueOeffnen(name, proBildschirm.bildschirmName, x, true)
                 }

@@ -76,10 +76,11 @@ Menuekarte {
 
     // --- Netz ---
 
+    // Symbole wie in der Leiste
     Statuszeile {
-        symbol: System.netzArt === "wlan" || System.netzArt === "" ? "wlan" : ""
+        symbol: System.netzArt === "kabel" ? "kabel" : System.netzArt === "wlan" || System.wlanVerbunden ? "wlan" : "wlan-aus"
         gedaempft: !System.netzVerbunden
-        titel: System.netzArt === "wlan" ? "WLAN" : System.netzArt === "kabel" ? "Kabel" : "Netzwerk"
+        titel: System.netzArt === "kabel" ? "Kabel" : System.netzArt === "wlan" || System.wlanVerbunden ? "WLAN" : "Netzwerk"
         wert: {
             if (!System.netzVerbunden)
                 return System.wlanVerbunden ? "WLAN ohne Internet" : "nicht verbunden";
@@ -128,6 +129,7 @@ Menuekarte {
 
     Statuszeile {
         visible: System.temperatur >= 0 || System.luefter >= 0
+        symbol: "thermometer"
         titel: "Temperatur"
         wert: {
             const parts = [];
@@ -166,6 +168,7 @@ Menuekarte {
     // Beenden erst nach Rückfrage (zweiter Klick)
     MenueEintrag {
         width: parent.width
+        symbol: "abmelden"
         text: "Abmelden"
         bestaetigen: true
         frage: "Wirklich abmelden?"
@@ -177,6 +180,7 @@ Menuekarte {
 
     MenueEintrag {
         width: parent.width
+        symbol: "neustart"
         text: "Neustart"
         bestaetigen: true
         frage: "Wirklich neu starten?"
@@ -188,6 +192,7 @@ Menuekarte {
 
     MenueEintrag {
         width: parent.width
+        symbol: "ausschalten"
         text: "Ausschalten"
         bestaetigen: true
         frage: "Wirklich ausschalten?"

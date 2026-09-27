@@ -72,6 +72,21 @@ Singleton {
         return isFinite(n) && n > -40 && n < 150 ? Math.round(n) : -1;
     }
 
+    // zenos-argon schreibt alle 5 s; ältere Werte (Dienst hängt oder ist beendet) gelten als unbekannt
+    readonly property int _argonMaxAgeMs: 30000
+    // zuletzt gelesene Werte aus argon.json: { luefter, temperatur, zeit (ms seit 1970, NaN wenn unbekannt) }
+    property var _argonData: null
+
+    function _applyArgon(): void {
+        const d = _argonData;
+        const age = d ? Date.now() - d.zeit : NaN;
+        // ohne gültige Zeit oder mehr als 30 s daneben (auch in der Zukunft, z. B. nach einer Uhrkorrektur)
+        const fresh = isFinite(age) && Math.abs(age) <= _argonMaxAgeMs;
+        const fan = fresh ? Number(d.luefter) : NaN;
+        _fan = isFinite(fan) && fan >= 0 && fan <= 100 ? Math.round(fan) : -1;
+        _argonTemperature = fresh ? _celsius(d.temperatur) : -1;
+    }
+
     FileView {
         id: thermalFile
 
@@ -94,13 +109,17 @@ Singleton {
             } catch (e) {
                 // wird gerade geschrieben oder ist ungültig: beim nächsten Mal wieder
             }
-            const fan = Number(data?.luefter);
-            root._fan = isFinite(fan) && fan >= 0 && fan <= 100 ? Math.round(fan) : -1;
-            root._argonTemperature = root._celsius(data?.temperatur);
+            // «zeit» ist ISO 8601 mit Zeitzone, z. B. «2026-09-27T18:12:05+02:00»
+            root._argonData = data && typeof data === "object" ? {
+                luefter: data.luefter,
+                temperatur: data.temperatur,
+                zeit: typeof data.zeit === "string" ? Date.parse(data.zeit) : NaN
+            } : null;
+            root._applyArgon();
         }
         onLoadFailed: {
-            root._fan = -1;
-            root._argonTemperature = -1;
+            root._argonData = null;
+            root._applyArgon();
         }
     }
 
@@ -252,11 +271,14 @@ Singleton {
 
     // --- 1Password ---
 
-    // Nach der Installation legt 1Password 1password.desktop an (DesktopEntries beobachtet das)
+    // Starter von 1Password (DesktopEntries beobachtet die Ordner): after-install.sh legt seit 8.12
+    // com.onepassword.OnePassword.desktop an, ältere Versionen 1password.desktop
+    readonly property list<string> _opDesktopIds: ["com.onepassword.onepassword", "1password"]
     readonly property bool _opDesktopEntry: {
         const apps = DesktopEntries.applications.values;
         for (let i = 0; i < apps.length; i++) {
-            if (apps[i]?.id === "1password")
+            const id = String(apps[i]?.id ?? "").toLowerCase();
+            if (_opDesktopIds.includes(id))
                 return true;
         }
         return false;
@@ -287,6 +309,8 @@ Singleton {
     function _poll(full: bool): void {
         thermalFile.reload();
         argonFile.reload();
+        // falls argon.json nicht mehr geschrieben wird: Alter auch ohne neues Laden prüfen
+        _applyArgon();
         routeFile.reload();
         route6File.reload();
         wirelessFile.reload();
