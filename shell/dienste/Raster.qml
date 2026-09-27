@@ -56,7 +56,7 @@ Singleton {
         _labwc(["--raster", neu], ok => {
             if (!ok && root.aktivId === neu) {
                 root.aktivId = alt;
-                Oberflaeche.hinweis("Raster lässt sich nicht setzen");
+                Oberflaeche.hinweis("Raster lässt sich nicht setzen", "warnung");
             }
             root.gesetzt(neu, ok);
         });
