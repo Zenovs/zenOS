@@ -1,0 +1,21 @@
+// zenOS: Ergänzung zu 50unattended-upgrades aus dem Paket unattended-upgrades.
+// Quelle im Repo: system/apt/52zenos-unattended, installiert von scripts/module/70-sicherheit.sh.
+// Änderungen direkt in /etc/apt/apt.conf.d/ überschreibt der nächste Lauf von install.sh.
+
+// Updates auch aus den Paketquellen der Hersteller. Wirkt nur, wenn die Quelle eingerichtet ist
+// (zen apps installieren). Erkannt an Origin, Label und Server der signierten Release-Datei.
+Unattended-Upgrade::Origins-Pattern {
+	// Google Chrome: https://dl.google.com/linux/chrome/deb stable
+	"origin=Google LLC,label=Google,site=dl.google.com";
+	// Visual Studio Code: https://packages.microsoft.com/repos/code stable
+	"origin=code stable,label=code stable,site=packages.microsoft.com";
+	// 1Password-CLI: https://downloads.1password.com/linux/debian/<arch> stable
+	"origin=. stable,label=. stable,site=downloads.1password.com";
+};
+
+// Keine automatischen Neustarts. Ob und wann neu gestartet wird, entscheidet der Benutzer;
+// zen doctor zeigt an, wenn nach einem Update ein Neustart ansteht.
+Unattended-Upgrade::Automatic-Reboot "false";
+
+// Berichte bleiben auf dem Gerät: keine Mail. Protokoll unter /var/log/unattended-upgrades/.
+Unattended-Upgrade::Mail "";

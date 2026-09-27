@@ -1,0 +1,56 @@
+# Prüft jeden Push und jeden Pull Request auf dev und main mit scripts/pruefen.sh: gitleaks über den ganzen
+# Verlauf und den Arbeitsstand, shellcheck, Python-Syntax, JSON-Schemas, Hex- und sh-c-Regel, Dateinamen und
+# qmllint (ohne Quickshell-Typen: rot nur bei Syntaxfehlern). Der Teil mit der laufenden Oberfläche wird ohne
+# labwc und Quickshell übersprungen.
+# Läuft in Ubuntu 26.04 wie der Pi, auf einem arm64-Runner. Einzige fremde Action ist actions/checkout, auf
+# einen Commit festgelegt. Keine Geheimnisse, nur Leserechte, nichts wird hochgeladen.
+
+name: pruefen
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pruefen-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pruefen:
+    name: scripts/pruefen.sh
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    container:
+      # ubuntu:26.04, festgelegt auf den Stand vom 12.09.2026 (Index-Digest für alle Architekturen).
+      # Neuer Stand: docker buildx imagetools inspect ubuntu:26.04 → «Digest:» hier eintragen.
+      image: ubuntu:26.04@sha256:da6fc2be547864451aa253836dd926da33623312df4a9a243e35dc877c378a78
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # git vor dem Auschecken, sonst lädt actions/checkout nur ein Archiv ohne Verlauf
+      - name: Werkzeuge installieren
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates git shellcheck gitleaks python3 python3-jsonschema qt6-declarative-dev-tools
+
+      - name: Auschecken (ganzer Verlauf für gitleaks)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Der Arbeitsordner gehört im Container einem anderen Benutzer als root
+      - name: Arbeitsordner für git freigeben
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: scripts/pruefen.sh
+        run: ./scripts/pruefen.sh

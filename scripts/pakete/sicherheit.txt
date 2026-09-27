@@ -1,0 +1,9 @@
+# M11 · Sicherheit
+# 20-pakete installiert die Vereinigung aller Listen; 70-sicherheit prüft nach und richtet ein.
+
+# Automatische Sicherheitsupdates (Konfiguration aus system/apt/)
+unattended-upgrades
+# Firewall: Regeln werden vorbereitet, aktiviert wird sie erst mit «zen firewall aktivieren»
+ufw
+# Geheimnis-Scanner für den Pre-Commit-Hook (.githooks/pre-commit) und scripts/pruefen.sh
+gitleaks

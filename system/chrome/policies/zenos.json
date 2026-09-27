@@ -1,0 +1,15 @@
+{
+  "HttpsOnlyMode": "force_enabled",
+  "SafeBrowsingProtectionLevel": 2,
+  "PasswordManagerEnabled": false,
+  "AutofillCreditCardEnabled": false,
+  "BlockThirdPartyCookies": true,
+  "ExtensionInstallBlocklist": ["*"],
+  "ExtensionInstallAllowlist": ["aeblfdkhhhdcdjpifhhbdiojplfjncoa"],
+  "ExtensionInstallForcelist": ["aeblfdkhhhdcdjpifhhbdiojplfjncoa;https://clients2.google.com/service/update2/crx"],
+  "MetricsReportingEnabled": false,
+  "UrlKeyedAnonymizedDataCollectionEnabled": false,
+  "DomainReliabilityAllowed": false,
+  "FeedbackSurveysEnabled": false,
+  "SafeBrowsingSurveysEnabled": false
+}

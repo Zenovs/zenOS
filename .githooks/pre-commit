@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# pre-commit – prüft die gestagten Änderungen mit gitleaks. Findet es ein mögliches Geheimnis, bricht
+# der Commit ab; das Geheimnis erscheint nur geschwärzt. Ohne gitleaks wird nicht committet.
+#
+# Aktiv über «git config core.hooksPath .githooks». Das setzt scripts/module/70-sicherheit.sh im Repo,
+# aus dem install.sh läuft (z. B. ~/zenOS).
+# Fehlalarm: die Zeile mit dem Kommentar «gitleaks:allow» versehen oder den Fingerabdruck aus der
+# Meldung in .gitleaksignore eintragen.
+
+set -uo pipefail
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  cat >&2 <<'EOF'
+pre-commit: gitleaks fehlt – Commit abgebrochen.
+  Ohne Prüfung auf Geheimnisse wird nicht committet. Installieren mit:
+    sudo apt install gitleaks
+EOF
+  exit 1
+fi
+
+# Ab gitleaks 8.19 heisst es «gitleaks git --staged», davor (Ubuntu 26.04: 8.16) «gitleaks protect --staged».
+if gitleaks help 2>/dev/null | grep -qE '^[[:space:]]+git[[:space:]]'; then
+  befehl=(gitleaks git --staged)
+else
+  befehl=(gitleaks protect --staged)
+fi
+
+# Eigener Exit-Code für Funde, damit sie sich von technischen Fehlern unterscheiden
+rc=0
+"${befehl[@]}" --redact --no-banner --verbose --log-level warn --exit-code 3 || rc=$?
+
+case "$rc" in
+  0) exit 0 ;;
+  3)
+    cat >&2 <<'EOF'
+
+pre-commit: gitleaks hat in den gestagten Änderungen mögliche Geheimnisse gefunden (oben, geschwärzt).
+  Commit abgebrochen. Geheimnisse gehören nicht ins Repo, sondern in 1Password (zur Laufzeit über «op»).
+  Datei aus dem Commit nehmen: git restore --staged <datei>
+  Fehlalarm: «gitleaks:allow» als Kommentar in die Zeile oder den Fingerabdruck in .gitleaksignore.
+EOF
+    exit 1
+    ;;
+  *)
+    printf '\npre-commit: gitleaks ist mit Exit %s abgebrochen – Commit abgebrochen.\n' "$rc" >&2
+    exit 1
+    ;;
+esac
