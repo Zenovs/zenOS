@@ -52,9 +52,32 @@ Im Container:
 
 ```
 ./scripts/install.sh        # zweimal: der zweite Lauf meldet «0 Änderungen»
-./scripts/pruefen.sh        # shellcheck, JSON-Schemas, Hex-Regel, qmllint, gitleaks …
+./scripts/pruefen.sh        # shellcheck, JSON-Schemas, Hex-Regel, qmllint, gitleaks, Start-Test …
 zen doctor
 ```
+
+## Start-Test
+
+```
+scripts/pruefen.sh start                 # nur der Start-Test (rund 30 s)
+scripts/pruefen.sh --ausfuehrlich start  # dazu alle Warnungen von Qt/Quickshell
+```
+
+Startet `shell/shell.qml`, `shell/greeter.qml` und den Notfall-Login (jede kleingeschriebene `.qml`-Datei
+unter `shell/` mit `ShellRoot`) nacheinander in labwc ohne Bildschirm, wartet auf «Configuration Loaded»
+und wertet das Quickshell-Protokoll aus. In `shell.qml` folgt ein Rundgang über IPC (Thema hin und zurück,
+Befehlsfeld, Zentrale, Umschalter, jede Einstellungen-Seite, Einrichtung, Hinweis, Bildschirmfreigabe,
+zuletzt die Sperre).
+Gemeldet werden die gefundenen Zeilen: Ladefehler («Type … unavailable», «is not a type»),
+ReferenceError/TypeError, «Cannot assign», «Binding loop», jede Warnung aus einer Datei unter `shell/`,
+`console.warn`/`console.error`, gescheiterte IPC-Aufrufe und eine Sperre, die nicht «gesperrt» meldet.
+Bekannte harmlose Meldungen stehen mit Begründung in `START_BEKANNT` (pruefen.sh). Hängt ein Einstieg
+beim Laden, bricht der Test ihn nach 90 s ab und räumt die Testsitzung samt Kindprozessen weg.
+
+Die Testsitzung ist abgeschottet (eigenes HOME, eigene XDG-Ordner und eigener Sitzungsbus im Temp-Ordner,
+HTTP(S) ins Leere) und beginnt wie ein erster Start. Sie läuft unabhängig von `oberflaeche.sh` und darf
+auch in einer echten Sitzung auf dem Pi laufen. Ohne labwc oder Quickshell (z. B. in CI) wird der Teil
+übersprungen.
 
 Wichtig: `/tmp` ist im Container ein tmpfs. `docker cp` nach `/tmp` landet unsichtbar darunter; für
 Dateien, die hinein oder heraus sollen, `/srv/<modul>/` verwenden. Bind-Mounts aus `/private/tmp` des Macs
@@ -87,6 +110,7 @@ test/container/oberflaeche.sh stopp
   `~/.config/zenos/einstellungen.json`.
 - `ipc` meldet Fehler (unbekanntes Ziel, falsche Argumente) mit Exit 1. Quickshell v0.3.1 selbst beendet
   `quickshell ipc call` in diesen Fällen mit Exit 0 und schreibt die Meldung auf stdout.
+- `log` zeigt das Protokoll ohne Farbcodes. Eine Auswertung wie im Start-Test macht `scripts/pruefen.sh start`.
 - `starte kitty` startet ein Programm in der Sitzung (Protokoll in `/srv/oberflaeche/`).
 - Im Software-Backend fehlen `MultiEffect` und `RectangularShadow` (brauchen RHI). Schatten dort nicht
   beurteilen. `Shape` mit `preferredRendererType: Shape.CurveRenderer` rendert sauber.

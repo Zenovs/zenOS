@@ -140,7 +140,7 @@ befehl__innen() {
   wlr-randr --output "${ausgang:-HEADLESS-1}" --custom-mode "$ZENOS_TEST_GROESSE" || true
   printf '%s\n' "$WAYLAND_DISPLAY" > "$ZENOS_TEST_ZUSTAND/wayland"
   echo "$$" > "$ZENOS_TEST_ZUSTAND/quickshell.pid"
-  exec quickshell -p "$ZENOS_TEST_SHELL" > "$ZENOS_TEST_ZUSTAND/quickshell.log" 2>&1
+  exec quickshell --no-color -p "$ZENOS_TEST_SHELL" > "$ZENOS_TEST_ZUSTAND/quickshell.log" 2>&1
 }
 
 befehl_bild() {
