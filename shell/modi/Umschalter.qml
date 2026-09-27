@@ -16,18 +16,18 @@ Scope {
 
     // "modus" | "zustand" | ""
     readonly property string offen: Oberflaeche.modusWahlOffen ? "modus" : Oberflaeche.zustandWahlOffen ? "zustand" : ""
-    // Über ein Tastenkürzel geöffnet: mittig statt unter dem Chip
+    // Ohne Anker (Tastenkürzel, Befehlsfeld): mittig statt unter dem Chip
     property bool zentriert: false
 
-    function umschalten(art: string, mittig: bool): void {
+    // Über IPC (Super+M / Super+Z): immer mittig, auch wenn vorher ein Chip geklickt wurde
+    function umschalten(art: string): void {
         if (offen === art) {
             schliessen();
             return;
         }
-        _centerRequested = mittig;
+        Oberflaeche.wahlAnker = null;
         Oberflaeche.modusWahlOffen = art === "modus";
         Oberflaeche.zustandWahlOffen = art === "zustand";
-        _centerRequested = false;
     }
 
     function schliessen(): void {
@@ -35,13 +35,13 @@ Scope {
         Oberflaeche.zustandWahlOffen = false;
     }
 
-    // Ort der Karte, beim Öffnen festgehalten: Die Leiste setzt Oberflaeche.wahlAnker = { bildschirm, x }
-    // vor dem Klick auf einen Chip (x in Fensterkoordinaten der Leiste = des Bildschirms). Mittig (Super+M/Z)
-    // erscheint die Karte auf dem Bildschirm des aktiven Fensters, sonst dort, wo zuletzt gewählt wurde.
+    // Ort der Karte, beim Öffnen festgehalten. Die Leiste setzt Oberflaeche.wahlAnker = { bildschirm, x }
+    // vor dem Klick auf einen Chip (x in Fensterkoordinaten der Leiste = des Bildschirms); wer ohne Chip
+    // öffnet, setzt ihn auf null. Ohne gültigen Anker erscheint die Karte mittig auf dem Bildschirm des
+    // aktiven Fensters, sonst auf dem ersten.
     // Festhalten statt binden: Sobald die Karte den Tastaturfokus hat, ist kein Fenster mehr aktiv.
     property string _screenName: ""
     property real _anchorX: -1
-    property bool _centerRequested: false
     // Hier gebunden, damit ToplevelManager schon beim Start die Fenster kennt (er füllt sich erst nach dem
     // ersten Zugriff, asynchron)
     readonly property var _activeToplevel: ToplevelManager.activeToplevel
@@ -54,14 +54,17 @@ Scope {
 
     function _remember(): void {
         const anchor = Oberflaeche.wahlAnker;
-        const anchorScreen = anchor && typeof anchor.bildschirm === "string" ? anchor.bildschirm : "";
-        zentriert = _centerRequested;
-        if (zentriert) {
-            _anchorX = -1;
-            _screenName = _screenOf(_activeToplevel) || anchorScreen;
+        const name = anchor && typeof anchor.bildschirm === "string" ? anchor.bildschirm : "";
+        const x = anchor && typeof anchor.x === "number" && isFinite(anchor.x) ? Math.max(0, anchor.x) : -1;
+        // Ein Anker auf einem inzwischen abgezogenen Bildschirm gilt nicht
+        if (name !== "" && x >= 0 && Quickshell.screens.some(s => s.name === name)) {
+            zentriert = false;
+            _anchorX = x;
+            _screenName = name;
         } else {
-            _anchorX = anchor && typeof anchor.x === "number" && isFinite(anchor.x) ? Math.max(0, anchor.x) : -1;
-            _screenName = anchorScreen;
+            zentriert = true;
+            _anchorX = -1;
+            _screenName = _screenOf(_activeToplevel) || (Quickshell.screens[0]?.name ?? "");
         }
     }
 
@@ -72,34 +75,15 @@ Scope {
         return s && typeof s.name === "string" ? s.name : "";
     }
 
-    // Ohne Anker (ältere Leiste): Lage der Chips aus dem Aufbau der Leiste (Rand 10, Zeichen 30, Abstand 6)
-    readonly property string _stufe: Zustaende.wirksam?.leiste === "aus" ? "aus" : "sichtbar"
     readonly property string _modeName: {
         const m = Modi.aktiv;
         const name = m && typeof m.name === "string" ? m.name.trim() : "";
         return name !== "" ? name : (m ? Modi.aktivId : "");
     }
-    readonly property real _modeChipX: 10 + 30 + 6
-    readonly property real _modeChipWidth: Math.ceil(modeMetrics.advanceWidth) + (_modeName !== "" ? 53 : 38)
-    readonly property real _stateChipX: _stufe === "aus" ? 10 : _modeChipX + _modeChipWidth + 6
-
-    function _anchorLeft(): real {
-        if (_anchorX >= 0)
-            return _anchorX;
-        return offen === "zustand" ? _stateChipX : _modeChipX;
-    }
 
     function _duration(z: var): string {
         const w = Zustaende.wirksamFuer(z.id);
         return w?.ende?.art === "timer" ? w.ende.minuten + " Min." : "";
-    }
-
-    TextMetrics {
-        id: modeMetrics
-
-        font.family: Theme.schriftText
-        font.pixelSize: Theme.groesseLabel
-        text: root._modeName !== "" ? root._modeName : "Kein Modus"
     }
 
     // Andere Oberflächen gehen vor
@@ -139,7 +123,7 @@ Scope {
         target: "modus"
 
         function waehlen(): void {
-            root.umschalten("modus", true);
+            root.umschalten("modus");
         }
 
         function wechseln(id: string): void {
@@ -156,7 +140,7 @@ Scope {
         target: "zustand"
 
         function waehlen(): void {
-            root.umschalten("zustand", true);
+            root.umschalten("zustand");
         }
 
         function starten(id: string): void {
@@ -207,7 +191,7 @@ Scope {
             active: fenster.visible
             focus: true
             sourceComponent: root.offen === "zustand" ? zustandKarte : modusKarte
-            x: Math.round(root.zentriert ? (_spanWidth - width) / 2 : Math.max(Theme.a2, Math.min(_spanWidth - width - Theme.a2, root._anchorLeft())))
+            x: Math.round(root.zentriert ? (_spanWidth - width) / 2 : Math.max(Theme.a2, Math.min(_spanWidth - width - Theme.a2, root._anchorX)))
             y: root.zentriert ? Math.max(Theme.a1, Theme.befehlsfeldOben - Theme.leisteHoehe) : Theme.a1
         }
     }

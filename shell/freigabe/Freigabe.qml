@@ -40,7 +40,8 @@ Scope {
             id: fenster
 
             required property ShellScreen modelData
-            readonly property bool geteilt: Dienste.Freigabe.betrifft(modelData.name)
+            // Beim Abziehen des Bildschirms wird modelData kurz null, bevor das Fenster verschwindet
+            readonly property bool geteilt: Dienste.Freigabe.betrifft(modelData?.name ?? "")
 
             screen: modelData
             visible: geteilt || rahmen.opacity > 0

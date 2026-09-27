@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "zenOS Raster (~/.config/zenos/raster/<id>.json)",
-  "description": "Bereiche in Prozent der nutzbaren Bildschirmfläche (ohne Leiste), in die Fenster einrasten. zenos-labwc macht daraus die labwc-Regionen r1 … rN; Super+1 bis Super+4 rasten in die ersten vier. labwc rechnet nur mit ganzen Prozenten. x + b und y + h dürfen 100 nicht übersteigen (prüft zenos-labwc). Siehe docs/konfiguration.md.",
+  "description": "Bereiche in Prozent der nutzbaren Bildschirmfläche (ohne Leiste), in die Fenster einrasten. zenos-labwc macht daraus die labwc-Regionen r1 … rN; Super+1 bis Super+4 rasten in die ersten vier. labwc rechnet nur mit ganzen Prozenten. x + b und y + h dürfen 100 nicht übersteigen (prüfen zenos-konfig und zenos-labwc; Bereich-IDs eindeutig). Siehe docs/konfiguration.md.",
   "type": "object",
   "additionalProperties": false,
   "required": ["name", "bereiche"],

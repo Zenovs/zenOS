@@ -25,7 +25,7 @@
       "required": ["name", "ausgaenge"],
       "properties": {
         "name": {
-          "description": "Anzeigename, eindeutig; Modi verweisen darauf (modi/<id>.json, Schlüssel raster)",
+          "description": "Anzeigename, eindeutig (prüft zenos-konfig); Modi verweisen darauf (modi/<id>.json, Schlüssel raster)",
           "type": "string",
           "minLength": 1,
           "maxLength": 60,

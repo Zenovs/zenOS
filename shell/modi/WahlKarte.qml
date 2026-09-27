@@ -54,6 +54,11 @@ FocusScope {
         border.color: Theme.linie2
     }
 
+    // Klicks auf Titel, Trenner und Ränder der Karte nicht an die Fläche dahinter durchreichen (die schliesst)
+    MouseArea {
+        anchors.fill: parent
+    }
+
     Column {
         id: spalte
 
