@@ -1,11 +1,14 @@
 #!/bin/sh
 # zenOS: Start der Sitzung (~/.config/labwc/autostart verweist hierher, labwc führt es mit sh aus).
 # Gibt die Umgebung an systemd und D-Bus weiter (Dienste und Portale brauchen WAYLAND_DISPLAY) und
-# startet zenos-sitzung.target mit der Oberfläche. LABWC_PID braucht «labwc --exit» (Abmelden).
+# startet zenos-sitzung.target mit der Oberfläche. LABWC_PID brauchen zenos-abmelden und «labwc --exit».
+# XDG_SESSION_ID (von greetd/pam_systemd): Benutzerdienste wie zenos-idle laufen ausserhalb der
+# Anmeldesitzung; die ID nennt ihnen die Sitzung ausdrücklich (loginctl, lock-session), statt dass
+# logind sie errät. Ohne logind-Sitzung ist sie ungesetzt und wird übergangen.
 
 dbus-update-activation-environment --systemd \
   WAYLAND_DISPLAY DISPLAY LABWC_PID \
-  XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE \
+  XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE XDG_SESSION_ID \
   QT_QPA_PLATFORM QT_QPA_PLATFORMTHEME QT_WAYLAND_DISABLE_WINDOWDECORATION \
   MOZ_ENABLE_WAYLAND ELECTRON_OZONE_PLATFORM_HINT \
   XCURSOR_THEME XCURSOR_SIZE

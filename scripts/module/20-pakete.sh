@@ -4,8 +4,9 @@
 #
 # Liest scripts/pakete/*.txt (ein Paket pro Zeile, «#» Kommentar) ausser quickshell-bau.txt und installiert
 # nur, was fehlt. Pakete starten ihre Dienste dabei nicht (policy-rc.d in pakete_sicherstellen), greetd
-# läuft also erst nach dem Neustart. Fehlt ein Paket in den Paketquellen (z. B. nicht für diese
-# Architektur), wird es mit einer Warnung übersprungen, statt die ganze Installation aufzuhalten.
+# läuft also erst nach dem Neustart; den System-Bus lädt das Modul danach selbst neu. Fehlt ein Paket in
+# den Paketquellen (z. B. nicht für diese Architektur), wird es mit einer Warnung übersprungen, statt die
+# ganze Installation aufzuhalten.
 
 modul_system() {
   local paket
@@ -24,6 +25,7 @@ modul_system() {
   # Erster Versuch mit allem, was fehlt. In einer Subshell, damit ein unbekanntes Paket nicht sofort
   # abbricht (die Zähler sind subshell-fest).
   if (pakete_sicherstellen "${fehlend[@]}"); then
+    _pakete_dbus_neu_laden
     return 0
   fi
 
@@ -34,6 +36,19 @@ modul_system() {
   (( ${#unbekannt[@]} > 0 )) || abbruch "Paketinstallation fehlgeschlagen (Details oben und in /var/log/apt/term.log)"
   log_warnung "Nicht in den Paketquellen, übersprungen: ${unbekannt[*]}"
   (( ${#verfuegbar[@]} == 0 )) || pakete_sicherstellen "${verfuegbar[@]}"
+  _pakete_dbus_neu_laden
+}
+
+# Neue Pakete bringen D-Bus-Richtlinien für eben angelegte Systembenutzer mit (z. B. polkitd). Ihr postinst
+# lädt den System-Bus mit «invoke-rc.d dbus reload» neu, das blockiert policy-rc.d während der Installation.
+# Ohne Neuladen startet polkit bis zum nächsten Neustart nicht (Neustart/Ausschalten im Login, Sperre vor
+# dem Standby). Neu laden trennt keine Verbindungen.
+_pakete_dbus_neu_laden() {
+  [[ "$ZENOS_SYSTEMD" == 1 ]] || return 0
+  modul_geaendert || return 0
+  systemctl is-active --quiet dbus.service 2> /dev/null || return 0
+  $SUDO systemctl reload dbus.service > /dev/null 2>&1 ||
+    log_warnung "System-Bus (dbus) liess sich nicht neu laden; nach dem nächsten Neustart ist es erledigt"
 }
 
 # Vereinigung aller Listen, sortiert und ohne Doppelte

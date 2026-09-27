@@ -140,6 +140,11 @@ _sitzung_login() {
     fehler "Autologin ([initial_session]) in /etc/greetd/config.toml"
   fi
 
+  # polkit: Neustart/Ausschalten im Login und die Sperre vor dem Standby (swayidle braucht die Erlaubnis von logind)
+  if systemctl --quiet is-failed polkit.service 2> /dev/null; then
+    warnung "polkit ist ausgefallen (Neustart/Ausschalten im Login, Sperre vor dem Standby). Ein Neustart behebt es"
+  fi
+
   if [[ "$(systemctl get-default 2> /dev/null)" == graphical.target ]]; then
     ok "Standardziel graphical.target"
   else
@@ -196,7 +201,7 @@ _sitzung_sitzung() {
   for datei in autostart environment shutdown; do
     ziel=$(readlink "$HOME/.config/labwc/$datei" 2> /dev/null)
     if [[ "$ziel" != "$_sitzung_code/system/labwc/$datei" ]]; then
-      warnung "$HOME/.config/labwc/$datei zeigt nicht auf $_sitzung_code/system/labwc/$datei (zen benutzer)"
+      warnung "labwc: ~/.config/labwc/$datei zeigt nicht auf $_sitzung_code/system/labwc/$datei (zen benutzer)"
       links_ok=0
     fi
   done

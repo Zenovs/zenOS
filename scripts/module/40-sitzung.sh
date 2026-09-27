@@ -6,8 +6,9 @@
 # laufende SSH-Sitzung bleibt unberührt. Standardziel ist graphical.target.
 # Die Benutzereinheiten liegen in /etc/systemd/user: systemd 259 sucht /etc/xdg/systemd/user nur, wenn
 # XDG_CONFIG_DIRS gesetzt ist (in der Benutzerinstanz nicht). Ubuntu verweist /etc/xdg/systemd/user auf
-# /etc/systemd/user; install -D aus uutils (Ubuntu 26.04) ersetzt diesen Verweis durch einen Ordner.
-# Das Modul stellt ihn wieder her. labwc bekommt autostart, environment und shutdown als Verweise.
+# /etc/systemd/user; frühere zenOS-Stände haben diesen Verweis mit install -D (uutils, Ubuntu 26.04) durch
+# einen Ordner ersetzt. Das Modul stellt ihn wieder her. labwc bekommt autostart, environment und
+# shutdown als Verweise.
 
 modul_system() {
   local code=$ZENOS_CODE einheit
@@ -60,8 +61,9 @@ _sitzung_standardziel() {
 }
 
 # /etc/xdg/systemd/user ist im systemd-Paket ein Verweis auf ../../systemd/user. Wurde er durch einen
-# Ordner ersetzt (install -D von uutils), kommen die zenOS-Einheiten daraus nach /etc/systemd/user
-# und der Verweis zurück. Fremde Dateien darin bleiben unangetastet (dann nur eine Warnung).
+# Ordner ersetzt (install -D von uutils in datei_installieren bis zur Korrektur in gemeinsam.sh), kommen
+# die zenOS-Einheiten daraus nach /etc/systemd/user und der Verweis zurück. Fremde Dateien darin bleiben
+# unangetastet (dann nur eine Warnung). Im Normalfall (Verweis intakt) ändert sich nichts.
 _sitzung_xdg_verweis() {
   local xdg=/etc/xdg/systemd/user ziel=/etc/systemd/user datei name
   [[ -d "$xdg" && ! -L "$xdg" && -d "$ziel" ]] || return 0

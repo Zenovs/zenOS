@@ -15,6 +15,9 @@ Type=simple
 Slice=session.slice
 ExecStart=/usr/local/bin/quickshell --no-color
 Environment=QT_QPA_PLATFORM=wayland
+# Qt meldet bei jeder neuen Fläche mit Texteingabe (Befehlsfeld, Sperre) «Try to enable surface … with
+# focusing …» als Warnung; harmlos. Nur diese Kategorie, alle anderen Warnungen bleiben im Journal.
+Environment=QT_LOGGING_RULES=qt.qpa.wayland.textinput.warning=false
 Restart=always
 RestartSec=1
 # 255: Wayland-Verbindung weg (labwc beendet die Clients vor dem shutdown-Skript) – beim Abmelden normal

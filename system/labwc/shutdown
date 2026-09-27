@@ -1,6 +1,8 @@
 #!/bin/sh
-# zenOS: Ende der Sitzung (~/.config/labwc/shutdown verweist hierher). labwc führt es beim Beenden aus
-# und wartet darauf. Danach zeigt nichts mehr auf den beendeten Wayland-Bildschirm.
+# zenOS: Ende der Sitzung (~/.config/labwc/shutdown verweist hierher). labwc 0.9 startet es beim Beenden,
+# wartet aber nicht darauf und trennt gleich danach die Clients. Zum Abmelden stoppt deshalb zenos-abmelden
+# die Dienste schon vorher; hier wird nur noch aufgeräumt, auch wenn labwc anders endet (labwc --exit).
+# Danach zeigt nichts mehr auf den beendeten Wayland-Bildschirm und die beendete Anmeldesitzung.
 
 systemctl --user stop zenos-sitzung.target graphical-session.target
-systemctl --user unset-environment WAYLAND_DISPLAY DISPLAY LABWC_PID
+systemctl --user unset-environment WAYLAND_DISPLAY DISPLAY LABWC_PID XDG_SESSION_ID

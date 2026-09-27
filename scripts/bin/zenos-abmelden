@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# zenos-abmelden – beendet die zenOS-Sitzung sauber: erst die Dienste der Sitzung (Oberfläche, automatische
+# Sperre, kanshi, Portale), dann labwc. Danach erscheint wieder der Login.
+#
+#   zenos-abmelden            Abmelden (die Oberfläche ruft es über Aktionen.abmelden auf)
+#   zenos-abmelden --direkt   ohne eigene Einheit (intern)
+#
+# labwc 0.9 startet ~/.config/labwc/shutdown beim Beenden, wartet aber nicht darauf und trennt gleich
+# danach alle Clients. Was dann noch läuft, verliert die Verbindung und endet mit einem Fehler (z. B.
+# kanshi). Deshalb stoppt zenos-abmelden die Ziele, solange labwc noch läuft, und beendet labwc danach.
+# Aus der Oberfläche aufgerufen, gehört es zu zenos-shell.service und würde beim Stoppen mitbeendet; es
+# startet sich deshalb als eigene kurzlebige Einheit der systemd-Benutzerinstanz.
+#
+# Exit 0 Abmelden ausgelöst · 1 fehlgeschlagen · 2 falscher Aufruf · 3 keine laufende labwc-Sitzung
+
+set -uo pipefail
+
+selbst=$(readlink -f -- "${BASH_SOURCE[0]}")
+einheit=zenos-abmelden
+
+meldung() { printf 'zenos-abmelden: %s\n' "$*" >&2; }
+
+if [[ -z "${XDG_RUNTIME_DIR:-}" ]]; then
+  XDG_RUNTIME_DIR=/run/user/$(id -u)
+  export XDG_RUNTIME_DIR
+fi
+
+# 0, wenn PID ein labwc des eigenen Benutzers ist
+ist_labwc() {
+  local pid=$1
+  [[ "$pid" =~ ^[1-9][0-9]*$ && -r "/proc/$pid/comm" ]] || return 1
+  [[ "$(cat "/proc/$pid/comm" 2> /dev/null)" == labwc ]] || return 1
+  [[ "$(stat -c %u "/proc/$pid" 2> /dev/null)" == "$(id -u)" ]]
+}
+
+# labwc der Sitzung: LABWC_PID (aus autostart, auch in der Umgebung der Benutzerinstanz), sonst das
+# einzige labwc des Benutzers
+labwc_finden() {
+  local pid
+  local -a alle
+  pid=${LABWC_PID:-}
+  if [[ -z "$pid" ]]; then
+    pid=$(systemctl --user show-environment 2> /dev/null | sed -n 's/^LABWC_PID=//p' | head -n 1)
+  fi
+  if ist_labwc "$pid"; then
+    printf '%s\n' "$pid"
+    return 0
+  fi
+  mapfile -t alle < <(pgrep -u "$(id -u)" -x labwc 2> /dev/null)
+  if (( ${#alle[@]} == 1 )) && ist_labwc "${alle[0]}"; then
+    printf '%s\n' "${alle[0]}"
+    return 0
+  fi
+  return 1
+}
+
+abmelden() {
+  local pid
+  pid=$(labwc_finden) || { meldung "keine laufende labwc-Sitzung"; return 3; }
+
+  # Dienste zuerst, solange sie labwc noch erreichen (je höchstens TimeoutStopSec, dann geht es weiter)
+  timeout 30 systemctl --user stop zenos-sitzung.target graphical-session.target 2> /dev/null ||
+    meldung "Sitzungsdienste liessen sich nicht vollständig stoppen, labwc wird trotzdem beendet"
+
+  # wie «labwc --exit»: SIGTERM an labwc; labwc führt dann shutdown aus
+  if ! kill -TERM "$pid" 2> /dev/null; then
+    ist_labwc "$pid" || return 0
+    meldung "labwc (PID $pid) liess sich nicht beenden"
+    return 1
+  fi
+  return 0
+}
+
+case "${1:-}" in
+  --direkt)
+    (( $# == 1 )) || { meldung "Aufruf: zenos-abmelden [--direkt]"; exit 2; }
+    abmelden
+    exit $?
+    ;;
+  "") ;;
+  -h | --hilfe | --help) sed -n '2,14p' "$selbst" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  *) meldung "unbekannte Option «$1»"; exit 2 ;;
+esac
+
+labwc_finden > /dev/null || { meldung "keine laufende labwc-Sitzung"; exit 3; }
+
+# Eigene Einheit: überlebt das Stoppen der Oberfläche. Läuft sie schon (Doppelklick), genügt das.
+if command -v systemd-run > /dev/null && systemctl --user show-environment > /dev/null 2>&1; then
+  if systemd-run --user --quiet --collect --unit="$einheit" \
+    --description="zenOS abmelden" -- "$selbst" --direkt 2> /dev/null; then
+    exit 0
+  fi
+  if systemctl --user --quiet is-active "$einheit.service" 2> /dev/null; then
+    exit 0
+  fi
+  meldung "systemd-run fehlgeschlagen, melde direkt ab"
+fi
+abmelden
