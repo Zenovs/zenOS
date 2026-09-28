@@ -8,7 +8,9 @@ ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
 # Man-Seiten wie auf dem Pi (Ubuntu Server ist nicht minimiert; «?» im Terminal liest Optionen daraus).
 # Wie «unminimize», aber nur für Man-Seiten: die Ausschlüsse von dpkg entfernen, die Pakete des
 # Basis-Images mit Man-Seiten neu installieren und den Platzhalter für /usr/bin/man aufheben.
-# Danach das Grundsystem wie Ubuntu Server: systemd, sudo, dbus.
+# Danach das Grundsystem wie Ubuntu Server: systemd, dbus und sudo (sudo-rs wie Ubuntu Server 26.04:
+# «sudo» empfiehlt sudo-rs nur, mit --no-install-recommends fehlte es; update-alternatives macht sudo-rs
+# zum Standard für /usr/bin/sudo).
 RUN set -e; \
     rm -f /etc/dpkg/dpkg.cfg.d/excludes; \
     apt-get update -qq; \
@@ -18,7 +20,7 @@ RUN set -e; \
       rm -f /usr/bin/man; dpkg-divert --quiet --remove --rename /usr/bin/man; \
     fi; \
     apt-get install -y -qq --no-install-recommends \
-      systemd systemd-sysv dbus dbus-user-session sudo locales ca-certificates \
+      systemd systemd-sysv dbus dbus-user-session sudo sudo-rs locales ca-certificates \
       git curl gnupg less file procps psmisc iproute2 kmod udev \
       man-db manpages manpages-de; \
     rm -rf /var/lib/apt/lists/*
@@ -56,6 +58,9 @@ ADD cache/usr-local.tar /usr/
 
 # Testbenutzer mit derselben temporären sudo-Regel wie auf dem Pi während des Baus
 # (Das Ubuntu-Image bringt einen Benutzer «ubuntu» mit UID 1000 mit; er wird ersetzt.)
+# linger: docker exec erzeugt keine logind-Sitzung. Ohne linger liefe keine systemd-Benutzerinstanz (kein
+# Sitzungsbus, kein PipeWire, kein «oberflaeche.sh start --sitzung»). Auf dem Pi läuft sie nur während
+# einer Anmeldung (Login oder SSH).
 RUN set -e; if id ubuntu >/dev/null 2>&1; then userdel -r ubuntu; fi; \
     useradd -m -u 1000 -s /bin/bash tester; \
     echo 'tester:tester' | chpasswd; \
@@ -65,9 +70,13 @@ RUN set -e; if id ubuntu >/dev/null 2>&1; then userdel -r ubuntu; fi; \
 
 # systemd im Container: keine Getty, keine Hardware-Dienste
 # greetd wird vom Paket sofort aktiviert; im Test soll es wie auf einem frischen Pi aus sein.
+# Zuletzt die Docker-eigene /usr/sbin/policy-rc.d («exit 101») weg: Sie verbietet jeden Dienststart durch apt,
+# und pakete_sicherstellen liesse sie als fremde Datei stehen. Ohne sie setzt es wie auf dem Pi die eigene
+# Richtlinie (greetd startet nicht, «dbus reload» bleibt erlaubt). Bis hierher hat sie den Bau geschützt.
 RUN systemctl mask getty@tty1.service serial-getty@ttyS0.service systemd-udevd.service \
       systemd-networkd-wait-online.service 2>/dev/null || true; \
-    systemctl disable greetd.service 2>/dev/null || true; rm -f /etc/systemd/system/display-manager.service
+    systemctl disable greetd.service 2>/dev/null || true; rm -f /etc/systemd/system/display-manager.service; \
+    rm -f /usr/sbin/policy-rc.d
 
 STOPSIGNAL SIGRTMIN+3
 CMD ["/sbin/init"]

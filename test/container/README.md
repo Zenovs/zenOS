@@ -5,13 +5,15 @@ Ubuntu 26.04 arm64 (gleiche Architektur wie der Pi 5), systemd als PID 1, einem 
 einer Oberfläche ohne Bildschirm (labwc headless, Quickshell im Software-Backend).
 
 Der Container ersetzt den Test auf echter Hardware nicht: Es gibt keine GPU-Beschleunigung, kein VT
-(greetd lässt sich nicht wirklich anmelden), kein I2C/GPIO (Argon ONE) und keine echte Tastatur.
+(greetd lässt sich nicht wirklich anmelden), kein I2C/GPIO (Argon ONE) und keine echte Tastatur. Die
+systemd-Benutzerinstanz von `tester` läuft dauernd (linger), weil `docker exec` keine logind-Sitzung
+erzeugt; auf dem Pi läuft sie nur während einer Anmeldung (Login oder SSH).
 
 ## Bestandteile
 
 | Datei | Läuft auf | Zweck |
 |---|---|---|
-| `Dockerfile` | Mac | Basis-Image `zenos-test:basis`: Ubuntu 26.04, systemd, sudo, Man-Seiten (auch Deutsch), alle Laufzeitpakete, Prüfwerkzeuge (shellcheck, gitleaks, qmllint, nodejs), Testwerkzeuge (expect, tmux, wtype, foot), Quickshell v0.3.1 vorgebaut |
+| `Dockerfile` | Mac | Basis-Image `zenos-test:basis`: Ubuntu 26.04, systemd, sudo-rs (wie Ubuntu Server 26.04), ohne die Docker-eigene `policy-rc.d`, Man-Seiten (auch Deutsch), alle Laufzeitpakete, Prüfwerkzeuge (shellcheck, gitleaks, qmllint, nodejs), Testwerkzeuge (expect, tmux, wtype, foot), Quickshell v0.3.1 vorgebaut |
 | `starten.sh <name>` | Mac | Container starten (oder auffrischen) und den Arbeitsstand nach `/home/tester/zenOS` bringen |
 | `arbeitsstand.sh` | Container | überträgt den Stand von `/repo` nach `~/zenOS` (von `starten.sh` aufgerufen) |
 | `oberflaeche.sh` | Container | labwc + Quickshell ohne Bildschirm (direkt oder als Sitzung wie auf dem Pi), Bildschirmfotos, IPC, hell/dunkel, Tastatureingaben |
@@ -32,6 +34,12 @@ docker build -t zenos-test:basis test/container
 Ein neues Image mit demselben Namen ändert laufende Container nicht; sie laufen mit dem alten Image weiter,
 bis sie neu gestartet werden. Sicherer ist, unter einem anderen Namen zu bauen, einen Container daraus zu
 prüfen und erst dann umzubenennen (`docker tag … zenos-test:basis`).
+
+Wie auf dem Pi: `/usr/bin/sudo` ist sudo-rs (das Paket `sudo` empfiehlt es nur; mit
+`--no-install-recommends` fehlte es bisher, deshalb steht es ausdrücklich in der Liste). Die Docker-eigene
+`/usr/sbin/policy-rc.d` («exit 101») entfernt der letzte Schritt. Bis dahin verhindert sie Dienststarts beim
+Bau; danach setzt `pakete_sicherstellen` wie auf dem Pi die zenOS-Richtlinie (greetd startet nicht,
+`dbus reload` bleibt erlaubt). Ein `apt-get install` von Hand startet Dienste im Container jetzt wie auf dem Pi.
 
 Das Ubuntu-Image für Container ist «minimiert» (keine Man-Seiten). Das Dockerfile hebt das nur für die
 Man-Seiten auf (wie `unminimize`): Ausschlüsse von dpkg entfernen, die Pakete des Basis-Images mit

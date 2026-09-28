@@ -37,6 +37,11 @@
 #   benutzer_datei_entfernen ZIEL        dasselbe als Benutzer
 #   paket_installiert PAKET              wahr, wenn das Paket installiert ist
 #   apt_quellen_geaendert                nach neuen Paketquellen: nächstes pakete_sicherstellen macht apt-get update
+#   apt_warten [SEKUNDEN=1200]           wartet, solange ein anderer Paketvorgang läuft (apt-daily,
+#                                        unattended-upgrades, apt in einem anderen Terminal); meldet sich
+#                                        dabei einmal. 1, wenn die Frist abgelaufen ist. Nie im Image-Modus.
+#   apt_ausfuehren ARG…                  apt-get als root, nicht-interaktiv, nach apt_warten; scheitert apt an
+#                                        einer Sperre eines anderen Vorgangs, noch einmal (siehe unten)
 #   zenos_version [PFAD]                 «git describe --tags --always --dirty» des Checkouts (Standard ZENOS_CODE)
 #   git_code ARG…                        lesendes git in ZENOS_CODE als Benutzer (safe.directory)
 #   aufraeumen_bei_ende BEFEHL [ARG…]    führt den Befehl am Ende von install.sh aus (auch bei Abbruch);
@@ -50,18 +55,26 @@
 #   - Root-Funktionen (pakete_sicherstellen, datei_*, system_verknuepfen, ordner_sicherstellen,
 #     dienst_*, systemd_neu_laden) sind nur in modul_system erlaubt, Benutzerfunktionen
 #     (benutzer_*, verknuepfen) nur in modul_benutzer. Ein Verstoss bricht mit Meldung ab.
-#   - Dienststarts durch apt: pakete_sicherstellen legt für die Dauer von apt-get ein
-#     /usr/sbin/policy-rc.d an (Markierung in der zweiten Zeile), das Starts, Stopps und Neustarts
+#   - Dienststarts durch apt: Während pakete_sicherstellen Pakete installiert, liegt ein
+#     /usr/sbin/policy-rc.d (Markierung in der zweiten Zeile), das Starts, Stopps und Neustarts
 #     verbietet (exit 101). Damit starten Pakete wie greetd ihre Dienste nicht sofort; aktiviert
 #     (enable) werden sie trotzdem. Einzige Ausnahme mit laufendem systemd (nie mit --image): den
 #     laufenden System-Bus neu laden («invoke-rc.d dbus reload|force-reload»), wie es postinst-Skripte
 #     nach einem neuen Systembenutzer tun (polkitd), sonst kennt der Bus ihn bis zum Neustart nicht.
-#     Eine schon vorhandene fremde policy-rc.d bleibt unangetastet. Die Datei wird direkt nach
-#     apt-get entfernt, spätestens beim Ende von install.sh (auch nach einem Abbruch), und eine
-#     liegengebliebene eigene Datei aus einem abgestürzten Lauf räumt der nächste Lauf weg.
+#     Die Richtlinie gilt nur, solange das eigene apt-get die dpkg-Sperre hält: apt setzt sie über
+#     DPkg::Pre-Invoke ein und nimmt sie über DPkg::Post-Invoke wieder weg. Solange apt auf einen
+#     anderen Paketvorgang wartet (unattended-upgrades), gibt es sie nicht; dessen Neustarts nach
+#     Sicherheitsupdates bleiben erlaubt. Eine schon vorhandene fremde policy-rc.d bleibt unangetastet
+#     (dann ohne eigene Richtlinie). Post-Invoke läuft auch nach einem Fehler von dpkg; bricht apt vorher
+#     ab, entfernt pakete_sicherstellen die Datei, spätestens das Ende von install.sh (auch nach einem
+#     Abbruch), und eine liegengebliebene eigene Datei aus einem abgestürzten Lauf räumt der nächste Lauf weg.
 #     Module, die einen Dienst sofort brauchen, starten ihn mit dienst_neustarten_falls.
 #   - apt-get läuft nicht-interaktiv (DEBIAN_FRONTEND=noninteractive, confdef/confold,
-#     needrestart ausgesetzt) und wartet bis zu 5 Minuten auf die dpkg-Sperre.
+#     needrestart ausgesetzt). Vorher wartet apt_warten höchstens 20 Minuten, bis kein anderer
+#     Paketvorgang mehr läuft: apt-daily und apt-daily-upgrade aktiv oder eine Sperre von apt/dpkg
+#     belegt (apt selbst wartet nur auf die dpkg-Sperre, 5 Minuten; an der Sperre der Paketlisten und
+#     des Paket-Caches scheitert es sofort). Scheitert apt trotzdem an einer Sperre, versucht
+#     apt_ausfuehren es innerhalb der Frist erneut, insgesamt höchstens dreimal.
 
 # Standardwerte, falls die Datei ausserhalb von install.sh gesourct wird
 : "${ZENOS_CODE:=/opt/zenos}"
@@ -93,7 +106,14 @@ _ZENOS_MODUL_START=0
 _ZENOS_POLICY=/usr/sbin/policy-rc.d
 _ZENOS_POLICY_MARKE='# zenOS: temporär während apt-get, verhindert Dienststarts (scripts/lib/gemeinsam.sh)'
 _ZENOS_POLICY_AKTIV=0
+_ZENOS_POLICY_ORDNER=""
+_ZENOS_POLICY_OPTIONEN=()
 _ZENOS_APT_AKTUELL=0
+# Sperren von apt und dpkg (fcntl) und wie lange/wie oft apt_warten nachsieht (Sekunden)
+_ZENOS_APT_SPERREN=(/var/lib/apt/lists/lock /var/cache/apt/archives/lock /var/lib/dpkg/lock-frontend
+  /var/lib/dpkg/lock)
+: "${_ZENOS_APT_FRIST:=1200}"
+: "${_ZENOS_APT_TAKT:=5}"
 _ZENOS_UNITS_GEAENDERT=0
 _ZENOS_BENUTZER_UNITS_GEAENDERT=0
 _ZENOS_AUFRAEUMEN=()
@@ -272,6 +292,81 @@ _zenos_apt() {
     apt-get -o DPkg::Lock::Timeout=300 "$@"
 }
 
+# Wahr, wenn gerade ein anderer Paketvorgang läuft; gibt dann aus, wer (Dienst oder Prozess).
+# apt-daily und apt-daily-upgrade sind Type=oneshot und während des Laufs «activating» («systemctl
+# is-active» meldet dann Exit 3), deshalb der ActiveState. Die Sperren stehen ohne root lesbar in
+# /proc/locks («1: POSIX ADVISORY WRITE PID MAJOR:MINOR:INODE 0 EOF», Gerät hexadezimal).
+_zenos_apt_belegt() {
+  local einheit zustand datei geraet inode pid name
+  local -a wer=() felder=()
+  local -A sperren=() gesehen=()
+  if [[ "$ZENOS_SYSTEMD" == 1 ]]; then
+    for einheit in apt-daily.service apt-daily-upgrade.service; do
+      zustand=$(systemctl show --property=ActiveState --value "$einheit" 2>/dev/null) || zustand=""
+      case "$zustand" in activating | active | deactivating | reloading | refreshing) wer+=("$einheit") ;; esac
+    done
+  fi
+  if [[ -r /proc/locks ]]; then
+    for datei in "${_ZENOS_APT_SPERREN[@]}"; do
+      read -r geraet inode < <(stat -c '%d %i' -- "$datei" 2>/dev/null) || continue
+      [[ "$geraet" =~ ^[0-9]+$ && "$inode" =~ ^[0-9]+$ ]] || continue
+      sperren[$(printf '%02x:%02x:%s' \
+        $(( ((geraet >> 8) & 0xfff) | ((geraet >> 32) & ~0xfff) )) \
+        $(( (geraet & 0xff) | ((geraet >> 12) & ~0xff) )) "$inode")]=1
+    done
+    while read -r -a felder; do
+      # Wartende («1: -> POSIX …») halten die Sperre nicht
+      (( ${#felder[@]} >= 6 )) && [[ "${felder[1]}" != '->' ]] || continue
+      [[ -n "${sperren[${felder[5]}]:-}" ]] || continue
+      pid=${felder[4]}
+      [[ -z "${gesehen[$pid]:-}" ]] || continue
+      gesehen[$pid]=1
+      name=$(cat -- "/proc/$pid/comm" 2>/dev/null) || name=""
+      wer+=("${name:-Prozess} (PID $pid)")
+    done < /proc/locks
+  fi
+  (( ${#wer[@]} > 0 )) || return 1
+  printf '%s' "${wer[0]}"
+  (( ${#wer[@]} == 1 )) || printf ', %s' "${wer[@]:1}"
+  printf '\n'
+}
+
+_zenos_dauer() { # SEKUNDEN → «N s» bzw. aufgerundet «N Minuten»
+  local m=$(( ($1 + 59) / 60 ))
+  if (( $1 < 60 )); then printf '%s s' "$1"; elif (( m == 1 )); then printf '1 Minute'; else printf '%s Minuten' "$m"; fi
+}
+
+apt_warten() {
+  [[ "$ZENOS_IMAGE" != 1 ]] || return 0
+  local frist=${1:-$_ZENOS_APT_FRIST} start=$SECONDS wer
+  [[ "$frist" =~ ^[0-9]+$ ]] || abbruch "apt_warten [SEKUNDEN]"
+  wer=$(_zenos_apt_belegt) || return 0
+  log_info "Warte auf einen anderen Paketvorgang: $wer – höchstens $(_zenos_dauer "$frist") …"
+  while wer=$(_zenos_apt_belegt); do
+    if (( SECONDS - start >= frist )); then
+      log_warnung "Nach $(_zenos_dauer "$frist") läuft noch immer ein anderer Paketvorgang: $wer. apt versucht es trotzdem."
+      return 1
+    fi
+    sleep "$_ZENOS_APT_TAKT"
+  done
+  log_info "Der andere Paketvorgang ist fertig (nach $(( SECONDS - start )) s)."
+}
+
+apt_ausfuehren() {
+  _zenos_nur_system apt_ausfuehren
+  local ende=$(( SECONDS + _ZENOS_APT_FRIST )) versuch=1 rc
+  while :; do
+    apt_warten "$(( ende > SECONDS ? ende - SECONDS : 0 ))" || true
+    rc=0
+    _zenos_apt "$@" || rc=$?
+    (( rc != 0 )) || return 0
+    (( versuch < 3 && SECONDS < ende )) || return "$rc"
+    _zenos_apt_belegt >/dev/null || return "$rc"
+    log_info "apt ist an der Sperre eines anderen Paketvorgangs gescheitert, neuer Versuch"
+    versuch=$(( versuch + 1 ))
+  done
+}
+
 # Inhalt der temporären policy-rc.d. Aufruf (invoke-rc.d, deb-systemd-invoke):
 #   policy-rc.d [--quiet] <Dienst> "<Aktion …>" [<Runlevel>] → 0 erlaubt, 101 verboten.
 # Erlaubt ist nur «dbus reload|force-reload», und nur, solange der Bus läuft und neu laden kann:
@@ -298,31 +393,54 @@ exit 0
 SH
 }
 
+# Bereitet die Richtlinie für den nächsten apt-get-Aufruf vor: Inhalt als root in einem eigenen Ordner
+# (/tmp/zenos-policy.*, 0700, für den Benutzer nicht beschreibbar), dazu die apt-Optionen in
+# _ZENOS_POLICY_OPTIONEN. apt führt DPkg::Pre-Invoke erst aus, wenn es lock-frontend hält, also nach dem
+# Warten auf einen anderen Paketvorgang, und DPkg::Post-Invoke nach dpkg (auch nach einem Fehler), noch
+# mit der Sperre. Mit einer fremden policy-rc.d bleiben die Optionen leer.
 _zenos_policy_an() {
-  # Fremde respektieren; eine eigene aus einem abgebrochenen Lauf wird mit dem aktuellen Inhalt überschrieben
-  if [[ -e "$_ZENOS_POLICY" || -L "$_ZENOS_POLICY" ]] &&
-    ! grep -qxF -- "$_ZENOS_POLICY_MARKE" "$_ZENOS_POLICY" 2>/dev/null; then
-    return 0
+  _ZENOS_POLICY_OPTIONEN=()
+  if [[ -e "$_ZENOS_POLICY" || -L "$_ZENOS_POLICY" ]]; then
+    grep -qxF -- "$_ZENOS_POLICY_MARKE" "$_ZENOS_POLICY" 2>/dev/null || return 0
+    # Eigene aus einem abgebrochenen Lauf: sofort weg, sie gälte sonst auch für fremde Paketvorgänge
+    $SUDO rm -f -- "$_ZENOS_POLICY"
   fi
-  $SUDO rm -f -- "$_ZENOS_POLICY"
-  _zenos_policy_inhalt | $SUDO tee "$_ZENOS_POLICY" >/dev/null
-  $SUDO chmod 0755 "$_ZENOS_POLICY"
+  local ordner
+  ordner=$($SUDO mktemp -d /tmp/zenos-policy.XXXXXXXX)
+  [[ "$ordner" =~ ^/tmp/zenos-policy\.[A-Za-z0-9]+$ ]] || abbruch "Unerwarteter Ordner für die policy-rc.d: $ordner"
+  _ZENOS_POLICY_ORDNER=$ordner
   _ZENOS_POLICY_AKTIV=1
+  _zenos_policy_inhalt | $SUDO tee "$ordner/policy-rc.d" >/dev/null
+  $SUDO chmod 0755 "$ordner/policy-rc.d"
+  # apt führt diese Befehle mit /bin/sh aus; sie enthalten nur feste Pfade und den geprüften Ordner.
+  # Scheitert Pre-Invoke, bricht apt ab, bevor dpkg läuft.
+  _ZENOS_POLICY_OPTIONEN=(
+    -o "DPkg::Pre-Invoke::=install -m 0755 $ordner/policy-rc.d $_ZENOS_POLICY"
+    -o "DPkg::Post-Invoke::=if cmp -s $ordner/policy-rc.d $_ZENOS_POLICY; then rm -f $_ZENOS_POLICY; fi"
+  )
 }
 
 _zenos_policy_aus() {
   [[ "$_ZENOS_POLICY_AKTIV" == 1 ]] || return 0
   _ZENOS_POLICY_AKTIV=0
+  _ZENOS_POLICY_OPTIONEN=()
   _zenos_policy_altlast_entfernen
 }
 
-# Entfernt eine policy-rc.d, die zenOS angelegt hat (erkennbar an der Markierung)
+# Entfernt eine policy-rc.d, die zenOS angelegt hat (erkennbar an der Markierung), und die Ordner mit
+# ihrem Inhalt, auch aus einem abgebrochenen Lauf
 _zenos_policy_altlast_entfernen() {
-  [[ -e "$_ZENOS_POLICY" ]] || return 0
   [[ -n "$SUDO" ]] || (( EUID == 0 )) || return 0
-  if grep -qxF -- "$_ZENOS_POLICY_MARKE" "$_ZENOS_POLICY" 2>/dev/null; then
+  if [[ -e "$_ZENOS_POLICY" ]] && grep -qxF -- "$_ZENOS_POLICY_MARKE" "$_ZENOS_POLICY" 2>/dev/null; then
     $SUDO rm -f -- "$_ZENOS_POLICY" 2>/dev/null || true
   fi
+  local ordner
+  for ordner in /tmp/zenos-policy.*; do
+    [[ -d "$ordner" && ! -L "$ordner" ]] || continue
+    [[ "$(stat -c '%U' -- "$ordner" 2>/dev/null)" == root ]] || continue
+    $SUDO rm -rf -- "$ordner" 2>/dev/null || true
+  done
+  _ZENOS_POLICY_ORDNER=""
 }
 
 pakete_sicherstellen() {
@@ -338,12 +456,12 @@ pakete_sicherstellen() {
 
   if [[ "$_ZENOS_APT_AKTUELL" != 1 ]]; then
     log_info "Paketlisten aktualisieren"
-    _zenos_apt update -qq || abbruch "apt-get update ist fehlgeschlagen"
+    apt_ausfuehren update -qq || abbruch "apt-get update ist fehlgeschlagen"
     _ZENOS_APT_AKTUELL=1
   fi
   log_info "Pakete installieren: ${fehlend[*]}"
   _zenos_policy_an
-  _zenos_apt install -y -q --no-install-recommends \
+  apt_ausfuehren "${_ZENOS_POLICY_OPTIONEN[@]}" install -y -q --no-install-recommends \
     -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
     "${fehlend[@]}" || rc=$?
   _zenos_policy_aus

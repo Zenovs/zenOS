@@ -66,9 +66,15 @@ modul_benutzer() {  # optional; als Benutzer, ohne sudo, nie im --image-Modus
 - Pakete: `pakete_sicherstellen` installiert nur Fehlendes, macht höchstens einmal pro Lauf
   `apt-get update` und verhindert mit einem temporären `/usr/sbin/policy-rc.d`, dass Pakete ihre Dienste
   sofort starten (greetd!). Aktiviert werden sie trotzdem. Erlaubt bleibt nur, den laufenden System-Bus
-  neu zu laden (`invoke-rc.d dbus reload`, etwa im postinst von polkitd). Wer einen Dienst sofort braucht, ruft
+  neu zu laden (`invoke-rc.d dbus reload`, etwa im postinst von polkitd). Die Richtlinie gilt nur, solange
+  das eigene apt-get die dpkg-Sperre hält (apt setzt sie über `DPkg::Pre-Invoke` ein), nie für ein
+  gleichzeitig laufendes unattended-upgrade. Wer einen Dienst sofort braucht, ruft
   `dienst_neustarten_falls` (nur mit laufendem systemd, nie im Image-Modus, nur nach einer Änderung im
   selben Modul). Nach neuen Paketquellen `apt_quellen_geaendert` aufrufen.
+- Läuft gerade ein anderer Paketvorgang (apt-daily, unattended-upgrades, apt in einem anderen Terminal),
+  wartet `pakete_sicherstellen` darauf, höchstens 20 Minuten, mit einer Meldung. Eigene apt-Aufrufe
+  ausserhalb von `pakete_sicherstellen` laufen über `apt_ausfuehren ARG…` (wartet, wiederholt nach einer
+  fremden Sperre); `apt_warten` wartet nur.
 - Die ganze API mit allen Parametern steht im Kopf von `lib/gemeinsam.sh`.
 
 ## zen
