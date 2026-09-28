@@ -210,17 +210,7 @@ Scope {
             color: Theme.grund
 
             Item {
-                id: inhalt
-
                 anchors.fill: parent
-
-                // Grosser Bogen als Wasserzeichen, sehr zurückhaltend
-                Zeichen {
-                    anchors.centerIn: parent
-                    groesse: Math.round(Math.min(760, inhalt.height * 0.85))
-                    strichbreite: 0.9
-                    farbe: Theme.wasserzeichen
-                }
 
                 MouseArea {
                     anchors.fill: parent
@@ -401,18 +391,17 @@ Scope {
                     }
                 }
 
+                // Zeichen 16 px einfarbig, auf ganzen Pixeln (sonst verschwimmt die Pixel-Variante)
                 Row {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    anchors.bottom: parent.bottom
-                    anchors.bottomMargin: Theme.a6
+                    x: Math.round((parent.width - width) / 2)
+                    y: Math.round(parent.height - Theme.a6 - height)
                     spacing: Theme.a2
 
-                    Symbol {
-                        anchors.verticalCenter: parent.verticalCenter
-                        name: "schloss"
-                        groesse: 13
-                        strichbreite: 1.8
-                        farbe: Theme.gedaempft
+                    ZenZeichen {
+                        y: Math.round((parent.height - height) / 2)
+                        groesse: 16
+                        obenFarbe: Theme.gedaempft
+                        einfarbig: true
                     }
 
                     Text {

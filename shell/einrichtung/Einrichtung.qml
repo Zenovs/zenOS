@@ -5,7 +5,6 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
 import qs.theme
-import qs.komponenten
 import qs.dienste
 
 // Erster Start nach Entwurf 2: erscheint beim Sitzungsstart, solange die Einrichtung nicht
@@ -109,15 +108,6 @@ Scope {
             MouseArea {
                 anchors.fill: parent
                 acceptedButtons: Qt.AllButtons
-            }
-
-            // Grosser Bogen als Wasserzeichen, sehr zurückhaltend (Entwurf: 900 px, links −280, oben 140)
-            Zeichen {
-                x: Math.round((parent.width - 1440) / 2) - 280
-                y: Math.round((parent.height - 900) / 2) + 140
-                groesse: 900
-                strichbreite: 0.8
-                farbe: Theme.wasserzeichen
             }
 
             Loader {

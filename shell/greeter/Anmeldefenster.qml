@@ -6,8 +6,8 @@ import Quickshell.Wayland
 import qs.theme
 import qs.komponenten
 
-// Ein Bildschirm des Logins, gestaltet wie der Sperrbildschirm in Entwurf 2: Bogen als Wasserzeichen,
-// grosse Uhrzeit, Datum, Konto, Formular. Formular, Knöpfe und Tastaturfokus nur auf einem Bildschirm.
+// Ein Bildschirm des Logins, gestaltet wie der Sperrbildschirm in Entwurf 2: grosse Uhrzeit, Datum, Konto,
+// Formular, unten die Bildmarke. Formular, Knöpfe und Tastaturfokus nur auf einem Bildschirm.
 PanelWindow {
     id: root
 
@@ -39,13 +39,6 @@ PanelWindow {
         anchors.fill: parent
         enabled: root.mitFormular
         onClicked: formular.fokussieren()
-    }
-
-    Zeichen {
-        anchors.centerIn: parent
-        groesse: Math.min(760, root.height * 0.85)
-        strichbreite: 0.9
-        farbe: Theme.wasserzeichen
     }
 
     Column {
@@ -140,26 +133,13 @@ PanelWindow {
         }
     }
 
-    // Unten: Bildmarke und Name, rechts Neustart und Ausschalten
-    Row {
+    // Unten die Bildmarke (48 px, unterer Stein im Standardakzent), rechts Neustart und Ausschalten
+    ZenZeichen {
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
-        anchors.bottomMargin: 32
-        spacing: 8
-
-        Zeichen {
-            anchors.verticalCenter: parent.verticalCenter
-            groesse: 14
-            farbe: Theme.akzent
-        }
-
-        Text {
-            anchors.verticalCenter: parent.verticalCenter
-            text: "zenOS"
-            color: Theme.gedaempft
-            font.family: Theme.schriftMono
-            font.pixelSize: Theme.groesseKlein
-        }
+        anchors.bottomMargin: Theme.a6
+        groesse: 48
+        akzent: Theme.standardAkzent
     }
 
     Energie {

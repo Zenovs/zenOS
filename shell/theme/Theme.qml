@@ -26,7 +26,6 @@ Singleton {
     readonly property color eingabeRand: _paletteColor("eingabeRand")
     readonly property color tasteRand: _paletteColor("tasteRand")
     readonly property color abgesetzt: _paletteColor("abgesetzt")
-    readonly property color wasserzeichen: _paletteColor("wasserzeichen")
     readonly property color schatten: _paletteColor("schatten")
     readonly property color text: _paletteColor("text")
     readonly property color text2: _paletteColor("text2")
@@ -86,6 +85,16 @@ Singleton {
     readonly property int befehlsfeldBreite: _number(_t?.befehlsfeld?.breite, 720)
     readonly property int befehlsfeldOben: _number(_t?.befehlsfeld?.abstandOben, 104)
 
+    // Bildmarke «Zwei Steine» (docs/bildmarke.md): SVG-Pfade in der ViewBox 0 0 raster raster,
+    // unter zeichenPixelUnter px gilt die Pixel-Variante. Ohne Eintrag bleiben die Pfade leer.
+    readonly property int zeichenPixelUnter: _number(_t?.zeichen?.pixelUnter, 24)
+    readonly property int zeichenRaster: Math.max(1, _number(_t?.zeichen?.normal?.raster, 64))
+    readonly property string zeichenOben: _pfad(_t?.zeichen?.normal?.oben)
+    readonly property string zeichenUnten: _pfad(_t?.zeichen?.normal?.unten)
+    readonly property int zeichenPixelRaster: Math.max(1, _number(_t?.zeichen?.pixel?.raster, 16))
+    readonly property string zeichenPixelOben: _pfad(_t?.zeichen?.pixel?.oben)
+    readonly property string zeichenPixelUnten: _pfad(_t?.zeichen?.pixel?.unten)
+
     // Farbe eines Akzents im aktuellen Erscheinungsbild
     function akzentFarbe(name: string): color {
         const pair = _t?.farben?.akzente?.[name] ?? _t?.farben?.akzente?.[standardAkzent];
@@ -131,6 +140,10 @@ Singleton {
 
     function _number(value: var, fallback: int): int {
         return typeof value === "number" && isFinite(value) ? Math.round(value) : fallback;
+    }
+
+    function _pfad(value: var): string {
+        return typeof value === "string" ? value : "";
     }
 
     function _load(): void {

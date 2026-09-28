@@ -266,17 +266,16 @@ Item {
             }
         }
 
-        // Zeichen (18 px, nur der Bogen) mit 6 px Luft links und rechts
+        // Zeichen (18 px, Pixel-Variante, unterer Stein im Modus-Akzent) mit 6 px Luft links und rechts
         Item {
             visible: root.stufe !== "aus"
             width: 30
             height: 28
 
-            Zeichen {
+            ZenZeichen {
                 x: 6
-                anchors.verticalCenter: parent.verticalCenter
+                y: 5
                 groesse: 18
-                farbe: Theme.akzent
             }
         }
 

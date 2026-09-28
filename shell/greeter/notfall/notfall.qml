@@ -3,6 +3,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Shapes
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
@@ -10,13 +11,14 @@ import Quickshell.Services.Greetd
 import "pam.js" as Pam
 
 // Notfall-Login. zenos-greeter startet ihn, wenn greeter.qml nicht lädt (z. B. ein Fehler in einem Dienst
-// unter shell/dienste). Absichtlich ohne qs.*-Module: nur Quickshell selbst. Farben kommen aus
-// theme/tokens.json (dunkel), ist die Datei unlesbar, aus der Systempalette.
+// unter shell/dienste). Absichtlich ohne qs.*-Module: nur Quickshell selbst. Farben und Bildmarke kommen
+// aus theme/tokens.json (dunkel), ist die Datei unlesbar, Farben aus der Systempalette und keine Marke.
 ShellRoot {
     id: root
 
     property var _farben: ({})
     property string _akzent: ""
+    property var _zeichen: ({})
     property string schrift: "sans-serif"
     readonly property color grund: _farben.grund ?? system.window
     readonly property color flaeche: _farben.flaeche ?? system.base
@@ -67,6 +69,9 @@ ShellRoot {
             const name = t?.farben?.standardAkzent ?? "";
             _akzent = t?.farben?.akzente?.[name]?.dunkel ?? "";
             schrift = t?.schrift?.text ?? schrift;
+            const z = t?.zeichen?.normal;
+            if (typeof z?.oben === "string" && typeof z?.unten === "string" && z?.raster > 0)
+                _zeichen = z;
         } catch (e) {
             console.warn("Notfall-Login: tokens.json nicht lesbar, Systemfarben");
         }
@@ -174,6 +179,43 @@ ShellRoot {
             anchors.centerIn: parent
             width: 380
             spacing: 10
+
+            // Bildmarke 48 px wie im Login (docs/bildmarke.md): oberer Stein text, unterer im Standardakzent
+            Item {
+                visible: typeof root._zeichen.oben === "string"
+                width: 48
+                height: 48 + 14
+
+                Shape {
+                    id: marke
+
+                    readonly property real einheit: width / (root._zeichen.raster ?? 64)
+
+                    width: 48
+                    height: 48
+                    preferredRendererType: Shape.CurveRenderer
+
+                    ShapePath {
+                        scale: Qt.size(marke.einheit, marke.einheit)
+                        strokeWidth: -1
+                        fillColor: root.text
+
+                        PathSvg {
+                            path: root._zeichen.oben ?? ""
+                        }
+                    }
+
+                    ShapePath {
+                        scale: Qt.size(marke.einheit, marke.einheit)
+                        strokeWidth: -1
+                        fillColor: root.akzent
+
+                        PathSvg {
+                            path: root._zeichen.unten ?? ""
+                        }
+                    }
+                }
+            }
 
             Text {
                 text: "zenOS"

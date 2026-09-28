@@ -34,7 +34,6 @@ abgedunkelt, nie weichgezeichnet.
 | `eingabeRand` | `#3A3A36` | `#D6D2C9` | Rahmen von Eingabefeldern, umrandeten Chips (Zustand) und Knöpfen mit Rahmen |
 | `tasteRand` | `#3A3A36` | `#DFDCD4` | Rahmen der Tastenkappen (Kbd) |
 | `abgesetzt` | `#1F1F1D` | `#E6E3DC` | leicht abgesetzter Hintergrund, z. B. der System-Knopf in der Leiste |
-| `wasserzeichen` | `#1B1B19` | `#E6E3DC` | sehr zurückhaltender Bogen im Hintergrund (Sperrbildschirm, Login, Erster Start) |
 | `schatten` | `rgba(0, 0, 0, 0.55)` | `rgba(27, 27, 25, 0.16)` | Schatten schwebender Flächen (ohne Weichzeichnen der Umgebung); der helle Wert ist abgeleitet, Entwurf 2 zeigt nur dunkel |
 
 Linien werden im Dunkeln etwas heller, im Hellen etwas dunkler, damit sie auf beiden Gründen gleich stark wirken.
@@ -82,6 +81,21 @@ Alle drei stehen unter der SIL Open Font License und dürfen ins Image (`assets/
   Menüs, Karten und Hinweise haben einen Rahmen statt eines Schattens.
 - **Ruhe:** Nichts blinkt. Textcursor sind ein stehender Strich (1 px, `text`), auch in Sperre und Login.
 
+## Bildmarke
+
+«Zwei Steine»: ein Kiesel, diagonal geteilt, der untere Stein im Akzent des aktiven Modus. Konstruktion, Farben,
+Dateien und Regeln stehen in [`docs/bildmarke.md`](bildmarke.md).
+
+- `ZenZeichen` (`qs.komponenten`) zeichnet die Marke mit den Pfaden aus `tokens.json` → `zeichen`; unter 24 px die
+  Pixel-Variante. `obenFarbe` ist `text`, `akzent` der Name des Akzents für den unteren Stein (Standard: aktiver
+  Modus), `einfarbig` setzt beide Steine auf `obenFarbe`.
+- Nur ein neuer Akzent blendet den unteren Stein in 200 ms über. Hell/dunkel schaltet beide Steine im selben Bild um;
+  die einfarbige Marke bewegt sich nie.
+- Leiste 18 px · Login 48 px (unterer Stein `salbei`) · Sperrbildschirm 16 px und Befehlsfeld ohne Treffer 32 px,
+  beide einfarbig `gedaempft` · Erster Start 44 px.
+- Kein Wasserzeichen: Die Marke steht nie gross im Hintergrund.
+- App-Icon `zenos` (hicolor 48–512 px) legt Modul `45-thema` unter `~/.local/share/icons` ab.
+
 ## Tokens in der Oberfläche
 
 - `shell/theme/Theme.qml` liest `tokens.json` beim Start (synchron, damit schon das erste Bild stimmt) und übernimmt
@@ -103,7 +117,7 @@ Die Tab-Leiste liegt im Hintergrund des Terminals (`fenster`), der aktive Tab is
 
 ## Komponenten
 
-Gemeinsame Bausteine liegen unter `shell/komponenten/` (`import qs.komponenten`): `Symbol`, `Zeichen`, `Chip`,
+Gemeinsame Bausteine liegen unter `shell/komponenten/` (`import qs.komponenten`): `Symbol`, `ZenZeichen`, `Chip`,
 `Knopf`, `Eingabe`, `Kbd`, `Trenner`, `Abschnittstitel`, `Schalter`, `Farbwahl`, `Toast`, `Karte`, `Fokusrahmen`.
 Tastaturfokus zeigt ein 2-px-Ring im Akzent; Zeigen und Drücken färben leicht ein (120 ms, `OutCubic`).
 Beschriftungen sind immer reiner Text (keine Auszeichnungen), auch wenn sie von aussen kommen.
@@ -140,7 +154,8 @@ Formularfehler erscheinen nicht als Hinweis, sondern ruhig unter dem Formular.
 
 ### Leiste (40 px)
 
-- **Links, «wo bin ich»:** Zeichen, Modus-Chip, Zustand-Chip (nur wenn aktiv, mit Restzeit), Raster (Kurzname).
+- **Links, «wo bin ich»:** Zeichen (18 px, unterer Stein im Modus-Akzent), Modus-Chip, Zustand-Chip (nur wenn aktiv,
+  mit Restzeit), Raster (Kurzname).
 - **Mitte:** Datum und Uhrzeit in Geist Mono. Der nächste Termin kommt «Danach».
 - **Rechts:** Mitteilungen mit nächster Zustellung («3 · 10:00», «2 warten»), Hell/Dunkel (Mond im Hellen, Sonne im
   Dunkeln), System-Knopf auf `abgesetzt` (Netz, Ton, 1Password, Temperatur). Die Dev-Server-Übersicht kommt «Danach».
@@ -161,6 +176,7 @@ Während einer Freigabe und bei `heute: false` blendet der Inhalt aus (200 ms).
 - Eingabezeile 62 px, Einträge 44 px (Radius 8, Auswahl `flaeche2`), Werkzeug-Chips 34 px.
 - Reihenfolge der Abschnitte: Rechnen, Apps und Aktionen, Modus und Zustand, Dateien, Werkzeuge. «Projekt» kommt
   «Danach».
+- Findet eine Suche nichts: Zeichen 32 px einfarbig `gedaempft`, darunter «Keine Treffer».
 - `Esc` schliesst, `Tab` springt zu den Werkzeugen. Fusszeile: «↑↓ wählen · ↵ ausführen · Tab Werkzeuge · Esc
   schliessen».
 
@@ -189,15 +205,15 @@ markiert und nicht bedienbar.
 
 ### Sperrbildschirm und Login
 
-- Grosse Uhrzeit (Instrument Serif 180 px), Datum, Anzahl Mitteilungen ohne Inhalt, Passwortfeld, Bogen als
-  Wasserzeichen.
-- Unten: «zenOS gesperrt · 1Password gesperrt».
-- Der Login sieht aus wie der Sperrbildschirm und ist immer dunkel.
+- Grosse Uhrzeit (Instrument Serif 180 px), Datum, Anzahl Mitteilungen ohne Inhalt, Passwortfeld.
+- Unten: Zeichen 16 px einfarbig `gedaempft`, daneben «zenOS gesperrt · 1Password gesperrt».
+- Der Login sieht aus wie der Sperrbildschirm und ist immer dunkel. Unten mittig steht das Zeichen 48 px
+  (unterer Stein `salbei`), rechts Neustart und Ausschalten.
 
 ### Erster Start
 
-Bogen als Wasserzeichen links, Titel «Willkommen bei zenOS.» in Instrument Serif 76 px, rechts das Formular 01–04
-(Name, Ort, Erscheinungsbild, erster Modus mit Akzent). Danach die Zustimmung zu den Apps.
+Links das Zeichen 44 px (unterer Stein im Akzent), Titel «Willkommen bei zenOS.» in Instrument Serif 76 px, rechts
+das Formular 01–04 (Name, Ort, Erscheinungsbild, erster Modus mit Akzent). Danach die Zustimmung zu den Apps.
 
 ### Terminal
 

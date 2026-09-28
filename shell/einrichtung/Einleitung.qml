@@ -4,7 +4,7 @@ import QtQuick
 import qs.theme
 import qs.komponenten
 
-// Linke Spalte des Erster-Start-Bildschirms (Entwurf 2): Zeichen 44 px im Akzent, Titel in
+// Linke Spalte des Erster-Start-Bildschirms (Entwurf 2): Zeichen 44 px (unterer Stein im Akzent), Titel in
 // Instrument Serif 76 px, Text 17 px gedämpft und eine Zeile in Geist Mono 12.
 Column {
     id: root
@@ -16,10 +16,8 @@ Column {
 
     spacing: 24
 
-    Zeichen {
+    ZenZeichen {
         groesse: 44
-        strichbreite: 1.8
-        farbe: Theme.akzent
     }
 
     Text {

@@ -944,20 +944,34 @@ Scope {
                                 }
                             }
 
-                            // Nichts gefunden (erst, wenn auch die Dateisuche fertig ist)
+                            // Nichts gefunden (erst, wenn auch die Dateisuche fertig ist): Zeichen 32 px einfarbig
                             Item {
                                 visible: root.anfrage.length > 0 && root.eintraege.length === 0 && !dateisuche.sucht
                                 width: spalte.width
-                                height: visible ? 52 : 0
+                                height: visible ? leerInhalt.implicitHeight + 2 * Theme.a5 : 0
 
-                                Text {
-                                    x: 20
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    anchors.verticalCenterOffset: 4
-                                    text: "Keine Treffer"
-                                    color: Theme.gedaempft
-                                    font.family: Theme.schriftText
-                                    font.pixelSize: Theme.groesseText
+                                Column {
+                                    id: leerInhalt
+
+                                    // ganze Pixel, damit das Zeichen scharf bleibt
+                                    x: Math.round((parent.width - width) / 2)
+                                    y: Theme.a5
+                                    spacing: Theme.a3
+
+                                    ZenZeichen {
+                                        x: Math.round((leerInhalt.width - width) / 2)
+                                        groesse: 32
+                                        obenFarbe: Theme.gedaempft
+                                        einfarbig: true
+                                    }
+
+                                    Text {
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                        text: "Keine Treffer"
+                                        color: Theme.gedaempft
+                                        font.family: Theme.schriftText
+                                        font.pixelSize: Theme.groesseText
+                                    }
                                 }
                             }
                         }
