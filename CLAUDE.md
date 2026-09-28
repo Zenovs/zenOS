@@ -42,13 +42,14 @@ zenos/
 ├── ROADMAP.md             Checkpoints
 ├── docs/                  Architektur, Konfiguration, Design, Sicherheit, Image, Baufortschritt
 ├── assets/                Zeichen, Schriften
-├── shell/                 Quickshell-Oberfläche (QML)
+├── shell/                 Quickshell-Oberfläche (QML), Einstieg shell.qml, Login greeter.qml
 │   └── theme/tokens.json  einzige Quelle für Farben, Schrift, Radien, Bewegung
-├── system/                Konfiguration für labwc, kitty, fish, Chrome-Richtlinien
-├── scripts/               install.sh (idempotent) und das zen-Werkzeug
+├── system/                Konfiguration für labwc, greetd, systemd, Portale, PAM, kitty, fish, apt, Richtlinien
+├── scripts/               install.sh (idempotent, Module), zen, Hilfsprogramme, pruefen.sh
 ├── image/                 Bau des Pi-Images
-├── config/beispiele/      neutrale Beispiele für Modi, Zustände, Raster
-└── .github/workflows/     Image-Build und Releases
+├── config/                Schemas, Vorlagen (Zustände, Raster) und neutrale Beispiele
+├── test/                  Testumgebung im Container (Mac), Einheitentests
+└── .github/workflows/     Prüfung bei jedem Push, Image-Build und Releases
 ```
 
 ## Arbeitsweise
@@ -62,9 +63,10 @@ zenos/
 ## Deploy und Test
 
 - Der Branch `dev` läuft auf dem Pi. Tags `v0.x` dürfen auf den Bürorechner.
-- **Deploy auf den Pi:** pushen, dann per SSH `zen update` auslösen. Das Werkzeug entsteht in C1: Es zieht `dev` und führt `scripts/install.sh` aus.
+- **Deploy auf den Pi:** pushen, dann per SSH `zen update` auslösen. Es zieht `dev` und führt `scripts/install.sh` aus.
 - **Live-Reload:** Änderungen an der Oberfläche (QML) lädt Quickshell live nach. Systemänderungen laufen immer über `scripts/install.sh`, das beliebig oft laufen darf.
-- **Wo gebaut wird:** direkt auf dem Pi. Claude Code läuft dort per SSH in einer tmux-Sitzung. Auf dem Mac laufen labwc und Quickshell nicht; eine Linux-Workstation ginge, mit labwc als Fenster.
+- **Wo gebaut wird:** am liebsten direkt auf dem Pi (Claude Code per SSH in einer tmux-Sitzung). Auf dem Mac laufen labwc und Quickshell nicht nativ, aber in der Testumgebung `test/container/` (Docker, Ubuntu 26.04 arm64, headless labwc mit Screenshots). Version 0.1 wurde so gebaut; die Abnahme auf echter Hardware ersetzt das nicht.
+- **Selbsttest:** `scripts/pruefen.sh` (shellcheck, JSON-Schemas, Hex- und sh-c-Regel, Einheitentests, qmllint, gitleaks, Start-Test der Oberfläche).
 - **Zurück:** Jeder funktionierende Stand bekommt einen Tag. Mit `zen rollback <tag>` geht es zurück.
 
 ## Harte Regeln

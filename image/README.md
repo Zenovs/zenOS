@@ -129,12 +129,17 @@ Die Grundlage (Ubuntu-Datei und SHA-256) steht in den Versionshinweisen und in `
 - cloud-init aus dem Ubuntu-Image legt den Benutzer an, erzeugt neue SSH-Hostschlüssel und vergrössert
   Partition und Dateisystem. systemd erzeugt eine neue `machine-id`.
 - **Mit Einstellungen im Raspberry Pi Imager** (Benutzer, Passwort, optional SSH-Schlüssel) geht die erste
-  Anmeldung direkt im zenOS-Login. Das ist der empfohlene Weg.
+  Anmeldung direkt im zenOS-Login. Das ist der empfohlene Weg. Zeitzone und Tastaturbelegung dort ebenfalls
+  setzen: Die Belegung gilt auch für das Passwortfeld im Login, die Zeitzone für Uhr und Mitteilungen. Ohne sie
+  gelten UTC und die Vorgabe-Belegung des Images (nachholen mit `sudo timedatectl set-timezone <Zone>` und
+  `sudo dpkg-reconfigure keyboard-configuration`, danach neu starten).
+- **Bootloader:** Ubuntu 26.04 verlangt auf dem Pi 5 einen Bootloader (EEPROM) vom 11.02.2025 oder neuer
+  (`sudo rpi-eeprom-update` zeigt den Stand). Das Image fasst die Firmware nicht an.
 - **Ohne Einstellungen** (balenaEtcher, oder der Imager bietet keine an) legt cloud-init `ubuntu`/`ubuntu` mit
   abgelaufenem Passwort an. Im zenOS-Login lässt sich das Passwort nicht ändern: greetd 0.10 ruft kein
-  `pam_chauthtok` auf und lehnt ab (`pam_acct_mgmt: NEW_AUTHTOK_REQD`). Der Wechsel geht an der Textkonsole
-  (`Ctrl + Alt + F2`, mit `ubuntu`/`ubuntu` anmelden, neues Passwort setzen, `exit`, zurück mit
-  `Ctrl + Alt + F7`) oder per SSH. greetd läuft auf VT 7, die Textkonsolen auf den anderen. Die
+  `pam_chauthtok` auf und lehnt ab (`pam_acct_mgmt: NEW_AUTHTOK_REQD`); der Login weist darauf hin. Der
+  Wechsel geht an der Textkonsole (`Ctrl + Alt + F2`, mit `ubuntu`/`ubuntu` anmelden, neues Passwort setzen,
+  `exit`, zurück mit `Ctrl + Alt + F7`) oder per SSH. greetd läuft auf VT 7, die Textkonsolen auf den anderen. Die
   Versionshinweise jedes Releases beschreiben das. Die erzwungene Passwortänderung bleibt bewusst, sonst
   bliebe das Standardpasswort bestehen.
 - Die Benutzerteile von zenOS kommen beim ersten Login (`zenos-sitzung` ruft `install.sh --nur-benutzer`).

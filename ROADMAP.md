@@ -4,18 +4,20 @@ Jeder Checkpoint endet mit einem Tag und einer Abnahme durch Zeno auf echter Har
 
 **Version 0.1:** C1 bis C8 werden gemeinsam in einem Durchgang gebaut, nach `BAUAUFTRAG.md`. Den Workflow für C9 baut Claude Code mit; das erste Image entsteht aber erst nach Zenos Abnahme mit dem Tag `v0.1.0`.
 
+**Stand 0.1 (Release-Kandidat `v0.1.0-rc1`):** C1 bis C8 und der Workflow für C9 sind gebaut und im Container getestet, die Abnahme auf dem Pi steht aus. Abweichungen sind unten mit «0.1:» markiert. Was genau umgesetzt ist, steht in `docs/funktionen.md`.
+
 ## C0 · Grundlagen
 
 - [x] Manifest, CLAUDE.md und Doku
 - [ ] Repo öffentlich, Issues deaktiviert, 2FA auf GitHub aktiv
-- [ ] gitleaks als Pre-Commit-Hook
+- [x] gitleaks als Pre-Commit-Hook (dazu gitleaks in GitHub Actions)
 
 ## C1 · Basis auf dem Pi
 
 - Ubuntu Server 26.04 LTS auf dem Pi 5
 - `scripts/install.sh`, idempotent: labwc, Quickshell, kitty, fish, Schriften
-- Autostart: Der Pi bootet direkt in eine leere labwc-Sitzung
-- Sicherheit Basis: automatische Sicherheitsupdates, Firewall, SSH nur mit Schlüssel über den 1Password-Agent
+- Autostart: Der Pi bootet direkt in eine leere labwc-Sitzung (0.1: Login über greetd mit Quickshell-Greeter, kein Autologin)
+- Sicherheit Basis: automatische Sicherheitsupdates, Firewall, SSH nur mit Schlüssel über den 1Password-Agent (0.1: Firewall vorbereitet, aber aus, `zen firewall aktivieren`; SSH-Konfiguration fasst zenOS nicht an)
 - `zen update` und `zen rollback`
 - Argon ONE: Lüftersteuerung als Dienst
 
@@ -24,7 +26,7 @@ Jeder Checkpoint endet mit einem Tag und einer Abnahme durch Zeno auf echter Har
 ## C2 · Tokens und Leiste
 
 - `shell/theme/tokens.json` wird zum Quickshell-Theme
-- Leiste: Modus-Chip (vorerst statisch), Zeit, nächster Termin als Platzhalter, System-Knopf
+- Leiste: Modus-Chip (vorerst statisch), Zeit, nächster Termin als Platzhalter, System-Knopf (0.1: Modus-Chip mit Umschalter; Termine erst «Danach», ohne Platzhalter)
 - Hell und dunkel mit einem Schalter, systemweit für GTK, Qt, Chrome und VS Code
 
 ## C3 · Befehlsfeld
@@ -59,18 +61,18 @@ Jeder Checkpoint endet mit einem Tag und einer Abnahme durch Zeno auf echter Har
 
 - Einrichtung beim ersten Start
 - Installation von Chrome, VS Code und 1Password aus den offiziellen Quellen
-- coremail und Nubix als ARM-Builds
+- coremail und Nubix als ARM-Builds (0.1: Nubix hat noch keinen ARM-Build)
 
 ## C9 · Image und Releases
 
 - GitHub Actions baut `zenos-<version>-pi5-arm64.img.xz`
-- Release mit Prüfsummen, Download direkt von GitHub
+- Release mit Prüfsummen, Download direkt von GitHub (0.1: Tags mit `-rc` bauen nur ein Workflow-Artefakt)
 
 **Abnahme:** Ein frischer Pi wird mit dem Image in zehn Minuten zu zenOS.
 
 ## Danach
 
-Projekt-Starter · Arbeitsstand pro Modus · zenOS-Check · Dev-Server-Übersicht · «Heute»-Ansicht mit Kalender und planbar · Tagesabschluss · Mikropausen · Zeiterfassung aus den Modi · Textbausteine pro Modus · Messen und Kontrast · Clip aufnehmen · Text aus Bild · QR-Codes · Notizzettel · Ans iPhone senden · Musiksteuerung · Abendlicht · Datei-Verlauf · Diktieren · Claude im Befehlsfeld
+Projekt-Starter · Arbeitsstand pro Modus · zenOS-Check · Dev-Server-Übersicht · «Heute»-Ansicht mit Kalender und planbar · Tagesabschluss · Mikropausen · Zeiterfassung aus den Modi · Textbausteine pro Modus · Messen und Kontrast · Clip aufnehmen · Text aus Bild · QR-Codes · Notizzettel · Ans iPhone senden · Musiksteuerung · Abendlicht · Datei-Verlauf · Diktieren · Claude im Befehlsfeld · Fokus-Fenster (Zustand `fenster: fokus`) · Auslöser «Kalender» für Zustände
 
 ## Später
 

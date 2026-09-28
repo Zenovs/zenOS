@@ -21,10 +21,12 @@ Grundsatz 1: Sicherheit ist Standard und geht vor Design und Bequemlichkeit. Sie
     Paketlisten von `esm.ubuntu.com`. Ob er auch abgeschaltet werden soll, ist offen (`docs/module/m11.md`).
   - `apport` sammelt Absturzberichte nur lokal; gesendet wird erst mit `ubuntu-bug` (whoopsie gehört nicht zu
     Ubuntu Server).
-- Die Firewall (`ufw`) blockiert alles Eingehende. SSH ist nur mit Schlüssel und nur im eigenen Netz erlaubt.
-- Festplattenverschlüsselung: auf dem Bürorechner Pflicht. Auf dem Pi ist sie das Ziel; wie sie beim ersten Start eingerichtet wird, klären C4 und C9.
+- Die Firewall (`ufw`) ist vorbereitet: eingehend verweigern, ausgehend erlauben, SSH (22/tcp) nur aus privaten
+  Netzen (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fe80::/10, fd00::/8). Sie bleibt aus, bis Zeno sie mit
+  `zen firewall aktivieren` einschaltet. SSH nur mit Schlüssel ist das Ziel; zenOS ändert die SSH-Konfiguration nicht.
+- Festplattenverschlüsselung: auf dem Bürorechner Pflicht. Auf dem Pi ist sie das Ziel; in 0.1 noch nicht umgesetzt (offen).
 - Secure Boot: auf dem Bürorechner aktiv. Auf dem Pi bewusst nicht, weil dort Schlüssel dauerhaft in den Chip geschrieben werden.
-- Backups laufen automatisch und verschlüsselt auf einen eigenen Server oder ein NAS.
+- Backups sollen automatisch und verschlüsselt auf einen eigenen Server oder ein NAS laufen (Ziel, in 0.1 noch nicht umgesetzt).
 
 ## Oberfläche
 
@@ -33,14 +35,16 @@ Grundsatz 1: Sicherheit ist Standard und geht vor Design und Bequemlichkeit. Sie
 - Automatische Sperre bei Inaktivität und Standby. Sie ist nicht abschaltbar.
 - Bei Bildschirmfreigabe werden Mitteilungsinhalte immer verborgen.
 - Das Befehlsfeld startet Prozesse mit Argument-Listen, nie über `sh -c`.
-- Die Nutzungsstatistik speichert App-Namen und Zeiten, aber keine Fenstertitel.
+- Die Nutzungsstatistik des Befehlsfelds speichert nur Desktop-IDs, Zähler und die Reihenfolge der zuletzt genutzten
+  Apps, keine Zeiten und keine Fenstertitel (`~/.local/share/zenos/`, nur für den Benutzer lesbar).
 - Eine Zwischenablage-Historie, falls sie kommt, ignoriert 1Password und löscht sich selbst.
 
 ## 1Password
 
 - Passwörter, Karten und Schlüssel liegen nur in 1Password.
 - Der SSH-Agent von 1Password authentifiziert Git und SSH. Er funktioniert nicht mit Snap- oder Flatpak-Installationen, deshalb wird 1Password direkt installiert.
-- API-Schlüssel, etwa für Claude, holt zenOS zur Laufzeit über die Kommandozeile `op`.
+- API-Schlüssel, etwa für Claude, holt zenOS später zur Laufzeit über die Kommandozeile `op` (in 0.1 installiert,
+  aber noch von keiner Funktion genutzt).
 - Sperrt zenOS den Bildschirm, sperrt sich 1Password mit.
 
 ## Chrome-Richtlinien
@@ -55,12 +59,13 @@ Datei: `system/chrome/policies/zenos.json`, wird nach `/etc/opt/chrome/policies/
   "AutofillCreditCardEnabled": false,
   "BlockThirdPartyCookies": true,
   "ExtensionInstallBlocklist": ["*"],
-  "ExtensionInstallAllowlist": ["<1Password-Erweiterungs-ID>"],
-  "ExtensionInstallForcelist": ["<1Password-Erweiterungs-ID>"]
+  "ExtensionInstallAllowlist": ["aeblfdkhhhdcdjpifhhbdiojplfjncoa"],
+  "ExtensionInstallForcelist": ["aeblfdkhhhdcdjpifhhbdiojplfjncoa;https://clients2.google.com/service/update2/crx"]
 }
 ```
 
-Die ID der 1Password-Erweiterung vor dem Einbau im Chrome Web Store prüfen.
+`aeblfdkhhhdcdjpifhhbdiojplfjncoa` ist die 1Password-Erweiterung («1Password – Password Manager»), geprüft über den
+Update-Dienst des Chrome Web Store (September 2026).
 
 Dazu kommen fünf Abschaltungen von Telemetrie: `MetricsReportingEnabled`, `UrlKeyedAnonymizedDataCollectionEnabled`,
 `DomainReliabilityAllowed`, `FeedbackSurveysEnabled` und `SafeBrowsingSurveysEnabled`, alle `false`.
@@ -93,7 +98,7 @@ Telemetrie).
 ## Terminal
 
 - Bei gefährlichen Befehlen wie `rm -rf` auf Systemordnern, `curl … | sh` oder Rechte-Änderungen fragt zenOS einmal nach. «Abbrechen» ist die Vorauswahl.
-- Terminal-Ausgaben verlassen den Rechner nie automatisch. «Fehler erklären» mit Claude braucht eine ausdrückliche Aktion und zeigt vorher, was gesendet wird.
+- Terminal-Ausgaben verlassen den Rechner nie automatisch. «Fehler erklären» mit Claude kommt erst «Danach»; es wird eine ausdrückliche Aktion brauchen und vorher zeigen, was gesendet wird.
 
 ## Repo und Releases
 
