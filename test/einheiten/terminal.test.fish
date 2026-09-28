@@ -7,6 +7,9 @@ set -l root (path resolve (path dirname (status filename))/../..)
 set -g fish_function_path $root/system/fish/functions $fish_function_path
 set -gx COLUMNS 100
 set -gx TERM xterm-256color
+# Eingabezeile ohne SSH prüfen: fish_prompt zeigt in SSH-Sitzungen den Rechnernamen (dafür gibt es
+# einen eigenen Fall). Nötig ist nur SSH_CONNECTION, die anderen beiden vorsorglich.
+set -e SSH_CONNECTION SSH_CLIENT SSH_TTY
 set -g passed 0
 set -g failed 0
 set -g skipped 0
@@ -44,6 +47,10 @@ set -l work (mktemp -d)
 set -gx HOME $work/home
 mkdir -p $HOME/proj $HOME/tmp
 cd $HOME/proj
+# git ohne Konfiguration des Benutzers und des Systems, nicht an ein äusseres Repo gebunden (Hooks)
+set -gx GIT_CONFIG_GLOBAL $work/gitconfig
+set -gx GIT_CONFIG_NOSYSTEM 1
+set -e GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 # --- Dauer und Statuszeile -------------------------------------------------
 
@@ -152,6 +159,8 @@ check 'Karte gleich breit' 40 "$widths"
 
 set -g _zenos_prompt_count 1
 check 'Eingabezeile ohne Repo' '~/proj|› ' (fish_prompt | plain | string join '|')
+check 'Eingabezeile per SSH' (prompt_hostname)' ~/proj|› ' \
+    (SSH_CONNECTION='quelle 50000 ziel 22' fish_prompt | plain | string join '|')
 if command -q git
     git -C $HOME/proj init -q -b dev 2>/dev/null; or git -C $HOME/proj init -q
     git -C $HOME/proj symbolic-ref HEAD refs/heads/dev
@@ -166,9 +175,80 @@ if command -q git
     set -g _zenos_prompt_count 4
     check 'Eingabezeile im Unterordner' '~/proj/unter/ordner auf dev|› ' (fish_prompt | plain | string join '|')
     cd $HOME/proj
+
+    # Fremdes Repo (wie aus einem Archiv) mit Filtertreiber in .git/config und veraltetem Index:
+    # git status würde den clean-Filter ausführen, die Eingabezeile zeigt deshalb nur den Branch
+    set -l foreign $HOME/fremd
+    set -l marker $work/filter-lief
+    git init -q -b main $foreign
+    echo inhalt >$foreign/a.txt
+    echo '*.txt filter=x' >$foreign/.gitattributes
+    git -C $foreign add a.txt .gitattributes
+    git -C $foreign config filter.x.clean "touch '$marker'; cat"
+    command cp $foreign/a.txt $foreign/a.neu
+    command mv $foreign/a.neu $foreign/a.txt
+    cd $foreign
+    set -g _zenos_prompt_count 5
+    check 'fremdes Repo mit Filter: nur Branch' main (_zenos_git_info | string join '|')
+    set -g _zenos_prompt_count 6
+    check 'fremdes Repo mit Filter: Eingabezeile' '~/fremd auf main|› ' (fish_prompt | plain | string join '|')
+    if test -e $marker
+        check_false 'fremdes Repo mit Filter: startet nichts' 'der clean-Filter aus .git/config lief'
+    else
+        check_true 'fremdes Repo mit Filter: startet nichts'
+    end
+    # Ein Treiber aus der eigenen ~/.gitconfig (z. B. git-lfs) hält die Zählung nicht auf
+    git -C $foreign config --unset filter.x.clean
+    git config --global filter.x.clean cat
+    set -g _zenos_prompt_count 7
+    check 'Filter aus ~/.gitconfig: zählt weiter' 'main|2' (_zenos_git_info | string join '|')
+    git config --global --unset filter.x.clean
+
+    # Fremdes Repo als Partial Clone mit fehlendem Tree: git status würde ihn beim Remote nachladen
+    # und dabei core.sshCommand aus .git/config ausführen
+    set -l partial $HOME/teilweise
+    git init -q -b main $partial
+    mkdir $partial/d
+    echo b >$partial/d/b
+    git -C $partial add d/b
+    git -C $partial -c user.name=Test -c user.email=test commit -qm eins
+    git -C $partial config core.repositoryformatversion 1
+    git -C $partial config extensions.partialClone origin
+    git -C $partial config remote.origin.url ssh://beispiel.invalid/repo
+    git -C $partial config remote.origin.promisor true
+    git -C $partial config core.sshCommand "touch '$marker'; false"
+    set -l tree (git -C $partial rev-parse HEAD:d)
+    rm -f $partial/.git/objects/(string sub -l 2 -- $tree)/(string sub -s 3 -- $tree) $partial/.git/index
+    rm -f $marker
+    cd $partial
+    set -g _zenos_prompt_count 8
+    check 'Partial Clone: nur Branch' main (_zenos_git_info | string join '|')
+    if test -e $marker
+        check_false 'Partial Clone: lädt nichts nach' 'core.sshCommand aus .git/config lief'
+    else
+        check_true 'Partial Clone: lädt nichts nach'
+    end
+    cd $HOME/proj
 else
     skip 'Eingabezeile im Repo' 'git fehlt'
 end
+
+# --- Erster Start ------------------------------------------------------------
+
+# Beim allerersten interaktiven Start (ohne fish_variables) speichert fish vor der ersten Eingabezeile
+# sein Standardthema universell und löscht dabei globale Farben. zenos.fish muss sie danach neu setzen.
+set -l first $work/erster-start
+mkdir -p $first/config/fish/conf.d
+ln -s $root/system/fish/zenos.fish $first/config/fish/conf.d/zenos.fish
+# Ergebnis in eine Datei: das interaktive fish schreibt auch Terminalsequenzen (OSC 7) auf stdout
+env XDG_CONFIG_HOME=$first/config XDG_DATA_HOME=$first/data XDG_CACHE_HOME=$first/cache \
+    FISH_UNIT_TESTS_RUNNING=1 (status fish-path) -i -c 'emit fish_prompt
+    begin
+        set -qU fish_color_command; and echo universell
+        set -g | string match -r "^fish_color_(?:command|valid_path) .*"
+    end >$argv[1]' $first/farben </dev/null >/dev/null 2>&1
+check 'Farben nach dem ersten Start' 'universell|fish_color_command green|fish_color_valid_path normal' \
+    (string join '|' -- (command cat $first/farben 2>/dev/null))
 
 # --- «?» ------------------------------------------------------------------
 

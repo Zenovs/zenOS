@@ -29,29 +29,13 @@ end
 set -g fish_greeting
 
 # Syntaxfarben: Befehle im Akzent, Tippfehler rot, Kommentare und Vorschläge gedämpft
-set -g fish_color_normal normal
-set -g fish_color_command green
-set -g fish_color_keyword green
-set -g fish_color_param normal
-set -g fish_color_option normal
-set -g fish_color_quote normal
-set -g fish_color_operator normal
-set -g fish_color_escape yellow
-set -g fish_color_redirection brblack
-set -g fish_color_end brblack
-set -g fish_color_error red
-set -g fish_color_comment brblack
-set -g fish_color_autosuggestion brblack
-set -g fish_color_cancel brblack
-set -g fish_color_valid_path normal
-set -g fish_color_search_match --reverse
-set -g fish_color_selection --reverse
-set -g fish_color_history_current --bold
-set -g fish_pager_color_progress brblack
-set -g fish_pager_color_description brblack
-set -g fish_pager_color_prefix normal --bold --underline
-set -g fish_pager_color_completion normal
-set -g fish_pager_color_selected_background --reverse
+_zenos_colors
+# Beim allerersten Start speichert fish vor der ersten Eingabezeile sein Standardthema universell und
+# löscht dabei die globalen Farben (fish_config theme save). Dieser Handler läuft danach, einmal.
+function _zenos_colors_after_init --on-event fish_prompt
+    functions -e _zenos_colors_after_init
+    set -qg fish_color_command; or _zenos_colors
+end
 
 # Statuszeile und Trennlinie nach jedem ausgeführten Befehl
 set -q _zenos_prompt_count; or set -g _zenos_prompt_count 0
