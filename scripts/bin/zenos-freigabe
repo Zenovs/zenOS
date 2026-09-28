@@ -2,15 +2,23 @@
 # zenos-freigabe – Bildschirmfreigabe erkennen (aufgerufen von xdg-desktop-portal-wlr, siehe
 # system/portal/xdpw.conf).
 #
-#   zenos-freigabe start     exec_before: Freigabe beginnt (Marker setzen, Oberfläche benachrichtigen)
-#   zenos-freigabe ende      exec_after: Freigabe endet
-#   zenos-freigabe waehlen   chooser_cmd: Bildschirm mit slurp wählen, Oberfläche benachrichtigen,
-#                            «Monitor: <Ausgang>» ausgeben
-#   zenos-freigabe status    «aktiv N» oder «inaktiv»
+#   zenos-freigabe start          exec_before: Freigabe beginnt (Marker setzen, Oberfläche benachrichtigen)
+#   zenos-freigabe ende           exec_after: Freigabe endet
+#   zenos-freigabe waehlen        chooser_cmd: Bildschirm mit slurp wählen, Oberfläche benachrichtigen,
+#                                 «Monitor: <Ausgang>» ausgeben
+#   zenos-freigabe zuruecksetzen  Portal beendet (auch Absturz): Marker und Wahl löschen, Oberfläche
+#                                 benachrichtigen
+#   zenos-freigabe status         «aktiv N» oder «inaktiv»
 #
 # Marker: $XDG_RUNTIME_DIR/zenos/freigabe, eine Zeile je geteiltem Ausgang (oder «*», wenn er nicht
 # bekannt ist). Die Oberfläche (freigabe/Freigabe.qml) liest ihn beim Start und beobachtet ihn;
 # zusätzlich meldet zenos-ipc freigabe gewaehlt|gestartet|beendet sofort.
+#
+# Stürzt das Portal während einer Freigabe ab (oder wird es beendet), kommt exec_after nicht mehr.
+# Das Drop-in system/systemd/user/xdg-desktop-portal-wlr.service.d/zenos.conf ruft deshalb nach jedem
+# Ende des Dienstes «zuruecksetzen» auf: Mit dem Prozess des Portals verschwindet auch jeder Stream.
+# systemd startet einen neuen Portal-Prozess erst, wenn das durchgelaufen ist; eine neue Freigabe
+# kann den Marker also nicht vorher gesetzt haben.
 #
 # xdg-desktop-portal-wlr 0.8 wartet nicht auf exec_before (Doppel-fork) und legt den Stream gleich
 # danach an; im Container zeigte das erste Bild noch eine Mitteilung mit Inhalt. Auf den Chooser
@@ -140,13 +148,30 @@ befehl_status() {
   if (( n > 0 )); then echo "aktiv $n"; else echo "inaktiv"; fi
 }
 
+# Wie «ende», nur ohne exec_after: Marker, halb geschriebenen Marker und eine offene Wahl löschen.
+# SERVICE_RESULT und EXIT_STATUS setzt systemd für ExecStopPost (z. B. «signal SEGV»).
+_zuruecksetzen() {
+  if [[ -s "$marker" ]]; then
+    meldung "Portal beendet${SERVICE_RESULT:+ ($SERVICE_RESULT${EXIT_STATUS:+ $EXIT_STATUS})}, Freigabe zurückgesetzt"
+  fi
+  rm -f -- "$marker" "$marker.neu" "$wahl"
+}
+
+# Die Oberfläche immer benachrichtigen, auch ohne Marker: Sie könnte eine Wahl ohne Marker halten.
+# Ohne laufende Oberfläche kehrt zenos-ipc sofort zurück.
+befehl_zuruecksetzen() {
+  if [[ -d "$ordner" ]]; then gesperrt _zuruecksetzen; fi
+  melden beendet || true
+}
+
 case "${1:-}" in
   start) befehl_start ;;
   ende) befehl_ende ;;
   waehlen) befehl_waehlen ;;
+  zuruecksetzen) befehl_zuruecksetzen ;;
   status) befehl_status ;;
   *)
-    sed -n '2,9p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
+    sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
     exit 2
     ;;
 esac

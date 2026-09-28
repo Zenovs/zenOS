@@ -15,6 +15,12 @@ modul_system() {
 
   # exec_before/exec_after melden jede Freigabe an zenos-freigabe (Pfade unter /opt/zenos)
   datei_installieren "$ZENOS_CODE/system/portal/xdpw.conf" /etc/xdg/xdg-desktop-portal-wlr/config
+
+  # Endet das Portal ohne exec_after (Absturz), setzt zenos-freigabe die Freigabe zurück. Ein laufendes
+  # Portal übernimmt das nach daemon-reload ohne Neustart.
+  datei_installieren "$ZENOS_CODE/system/systemd/user/xdg-desktop-portal-wlr.service.d/zenos.conf" \
+    /etc/systemd/user/xdg-desktop-portal-wlr.service.d/zenos.conf
+  systemd_neu_laden
 }
 
 modul_benutzer() {

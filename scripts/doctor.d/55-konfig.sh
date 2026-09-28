@@ -75,6 +75,15 @@ if a["modi"]["anzahl"] == 0:
       fehler "$wirksam überdeckt die zenOS-Konfiguration: Bildschirmfreigabe wird nicht erkannt, Mitteilungsinhalte bleiben dabei sichtbar, die Sitzung startet nicht (Datei entfernen oder umbenennen)"
     fi
   fi
+  local dropin=/etc/systemd/user/xdg-desktop-portal-wlr.service.d/zenos.conf
+  if [[ ! -f "$dropin" ]]; then
+    warnung "Drop-in für das Portal fehlt: stürzt es während einer Freigabe ab, bleiben Rahmen und «Inhalte verborgen» bis zur nächsten Anmeldung (install.sh)"
+  elif [[ -r /opt/zenos/system/systemd/user/xdg-desktop-portal-wlr.service.d/zenos.conf ]] \
+    && ! cmp -s "$dropin" /opt/zenos/system/systemd/user/xdg-desktop-portal-wlr.service.d/zenos.conf; then
+    warnung "$dropin weicht von zenOS ab (install.sh stellt es wieder her)"
+  else
+    ok "Freigabe endet auch bei einem Absturz des Portals"
+  fi
   if command -v slurp >/dev/null 2>&1; then
     ok "slurp für die Wahl des Bildschirms"
   else
