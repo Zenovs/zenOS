@@ -91,6 +91,8 @@ Item {
         Text {
             visible: root.text.length > 0
             anchors.verticalCenter: parent.verticalCenter
+            // Beschriftungen kommen auch von aussen (z. B. Aktionen einer Mitteilung): nie als Rich Text
+            textFormat: Text.PlainText
             text: root.text
             color: root.textFarbe
             font.family: root.mono ? Theme.schriftMono : Theme.schriftText
@@ -100,6 +102,7 @@ Item {
         Text {
             visible: root.zusatz.length > 0
             anchors.verticalCenter: parent.verticalCenter
+            textFormat: Text.PlainText
             text: root.zusatz
             color: Theme.gedaempft
             font.family: Theme.schriftMono

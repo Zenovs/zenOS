@@ -65,6 +65,8 @@ Item {
             Text {
                 anchors.verticalCenter: parent.verticalCenter
                 width: Math.min(implicitWidth, 560 - 32 - 23)
+                // Hinweise kommen auch über IPC (z. B. mit Dateinamen): nie als Rich Text
+                textFormat: Text.PlainText
                 text: root.text
                 color: Theme.text
                 font.family: Theme.schriftText

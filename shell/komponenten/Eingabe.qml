@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import qs.theme
 
@@ -75,6 +77,22 @@ Item {
         passwordMaskDelay: 0
         inputMethodHints: root.passwort ? (Qt.ImhHiddenText | Qt.ImhSensitiveData | Qt.ImhNoPredictiveText | Qt.ImhNoAutoUppercase) : Qt.ImhNone
         onAccepted: root.accepted()
+
+        // Ruhig: Der Cursor steht still (ohne Delegate blinkt er im Takt von Qt). Qt blendet einen
+        // eigenen Delegate nicht selbst aus, deshalb die Bindung an cursorVisible (ohne Fokus, nurLesen).
+        cursorDelegate: Rectangle {
+            width: 1
+            color: Theme.text
+            visible: input.cursorVisible
+        }
+
+        // Super-Kombinationen tippen nichts. In der Sperre wertet labwc seine Kürzel nicht aus und reicht
+        // die Taste weiter; Qt fügt den Buchstaben von Super+L sonst ein (es filtert nur Ctrl).
+        // AltGr (ISO_Level3) ist für Qt kein Meta, Zeichen wie @ und ~ kommen weiter an.
+        Keys.onPressed: event => {
+            if (event.modifiers & Qt.MetaModifier)
+                event.accepted = true;
+        }
     }
 
     MouseArea {

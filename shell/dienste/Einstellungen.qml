@@ -11,6 +11,12 @@ import qs.dienste
 // Fehlt die Datei, gelten die Standardwerte und eingerichtet ist false.
 // Änderungen an der Datei werden live übernommen; speichern() schreibt sie
 // und behält dabei Schlüssel, die dieser Dienst nicht kennt.
+//
+// Ungültige Datei (kein JSON-Objekt, z. B. nach einem Tippfehler von Hand, oder nicht lesbar): fehlerhaft
+// ist true, ein Hinweis nennt zen doctor. Im Betrieb bleiben die bisherigen Werte. Beim Start gelten die
+// Standardwerte, eingerichtet aber ist true: Die Einrichtung soll eine vorhandene Datei weder überdecken
+// noch ersetzen. Das nächste speichern() sichert die ungültige Datei zuerst nach einstellungen.json.kaputt
+// (gibt es die schon, mit Zeitstempel) und schreibt dann; eine nicht lesbare Datei bleibt unangetastet.
 Singleton {
     id: root
 
@@ -30,6 +36,16 @@ Singleton {
     property bool geladen: false
     // true, wenn die Datei existiert
     property bool vorhanden: false
+    // true, wenn die Datei existiert, aber kein gültiges JSON-Objekt enthält oder nicht lesbar ist
+    readonly property bool fehlerhaft: _fehlerhaft
+
+    property bool _fehlerhaft: false
+    property bool _unlesbar: false
+    // Die Werte stammen aus der Datei (sie war seit dem Start einmal gültig)
+    property bool _ausDatei: false
+    // Zuletzt gelesener gültiger Inhalt: Ersetzt speichern() eine ungültige Datei, bleiben dessen
+    // unbekannte Schlüssel erhalten
+    property var _zuletztGueltig: null
 
     readonly property var _defaults: ({
             eingerichtet: false,
@@ -44,15 +60,27 @@ Singleton {
 
     function speichern(): void {
         let content = {};
-        const previous = root.vorhanden ? file.text() : "";
-        if (previous) {
-            try {
-                const old = JSON.parse(previous);
-                if (old && typeof old === "object" && !Array.isArray(old))
-                    content = old;
-            } catch (e) {
-                console.warn("Einstellungen: bisherige Datei ist kein gültiges JSON und wird ersetzt");
+        if (root._fehlerhaft) {
+            if (root._unlesbar) {
+                console.warn("Einstellungen: Datei nicht lesbar, nicht gespeichert");
+                Oberflaeche.hinweis("einstellungen.json ist nicht lesbar · nicht gespeichert", "warnung");
+                return;
             }
+            if (file.text().trim().length > 0) {
+                const kopie = root._sichern();
+                if (kopie.length === 0) {
+                    console.warn("Einstellungen: ungültige Datei liess sich nicht sichern, nicht gespeichert");
+                    Oberflaeche.hinweis("einstellungen.json ist ungültig · nicht gespeichert", "warnung");
+                    return;
+                }
+                console.info("Einstellungen: ungültige Datei gesichert als", kopie);
+                Oberflaeche.hinweis("einstellungen.json war ungültig · " + (kopie === "einstellungen.json.kaputt" ? "Kopie: " + kopie : "Kopie in ~/.config/zenos"), "warnung");
+            }
+            root._fehlerhaft = false;
+            content = Object.assign({}, root._zuletztGueltig);
+        } else if (root.vorhanden) {
+            // Wird die Datei gerade ersetzt, ist noch die gesicherte ungültige Fassung geladen
+            content = root._objekt(file.text()) ?? Object.assign({}, root._zuletztGueltig);
         }
         for (const key of Object.keys(root._defaults))
             content[key] = json[key];
@@ -63,6 +91,55 @@ Singleton {
         for (const key of Object.keys(root._defaults)) {
             if (json[key] !== root._defaults[key])
                 json[key] = root._defaults[key];
+        }
+    }
+
+    // Inhalt als Objekt, null wenn er kein JSON-Objekt ist
+    function _objekt(text: string): var {
+        try {
+            const daten = JSON.parse(text);
+            if (daten && typeof daten === "object" && !Array.isArray(daten))
+                return daten;
+        } catch (e) {}
+        return null;
+    }
+
+    function _alsUngueltig(unlesbar: bool): void {
+        // Beim Start: keine Einrichtung über einer vorhandenen Datei (siehe oben)
+        if (!root._ausDatei && !json.eingerichtet)
+            json.eingerichtet = true;
+        const neu = !root._fehlerhaft;
+        root._fehlerhaft = true;
+        root._unlesbar = unlesbar;
+        root.vorhanden = true;
+        if (neu)
+            meldung.restart();
+    }
+
+    // Kopie der ungültigen Datei neben ihr: einstellungen.json.kaputt, gibt es die schon, mit Zeitstempel
+    // (wie .vor-zenos im Installer). Liest und schreibt synchron, Bytes unverändert.
+    // Gibt den Dateinamen zurück, leer bei einem Fehler.
+    function _sichern(): string {
+        const daten = file.data();
+        let name = "einstellungen.json.kaputt";
+        const kopie = sicherung.createObject(root, {
+            path: Pfade.konfig + "/" + name
+        }) as Sicherung;
+        if (!kopie)
+            return "";
+        try {
+            const alt = kopie.text();
+            if (kopie.loaded) {
+                // Dieselbe Kopie liegt schon da
+                if (alt === file.text())
+                    return name;
+                name += "." + Qt.formatDateTime(new Date(), "yyyyMMdd-HHmmss");
+                kopie.path = Pfade.konfig + "/" + name;
+            }
+            kopie.setData(daten);
+            return kopie.fehlgeschlagen ? "" : name;
+        } finally {
+            kopie.destroy();
         }
     }
 
@@ -91,6 +168,17 @@ Singleton {
 
         onFileChanged: reload()
         onLoaded: {
+            // Der JsonAdapter übergeht ungültigen Inhalt nur mit einer Warnung und behält die Werte
+            const daten = root._objekt(file.text());
+            if (daten === null) {
+                root._alsUngueltig(false);
+            } else {
+                root._zuletztGueltig = daten;
+                root._ausDatei = true;
+                root._fehlerhaft = false;
+                root._unlesbar = false;
+                meldung.stop();
+            }
             root.vorhanden = true;
             root.geladen = true;
         }
@@ -100,8 +188,13 @@ Singleton {
                 if (root.vorhanden)
                     root._resetToDefaults();
                 root.vorhanden = false;
+                root._zuletztGueltig = null;
+                root._fehlerhaft = false;
+                root._unlesbar = false;
+                meldung.stop();
             } else {
                 console.warn("Einstellungen: Datei nicht lesbar:", FileViewError.toString(error));
+                root._alsUngueltig(true);
             }
             root.geladen = true;
         }
@@ -113,6 +206,39 @@ Singleton {
             }
         }
         onSaveFailed: error => console.warn("Einstellungen: Speichern fehlgeschlagen:", FileViewError.toString(error))
+    }
+
+    // Sicherung einer ungültigen Datei (siehe _sichern), je Aufruf neu: setData vergliche sonst mit einem alten Stand
+    component Sicherung: FileView {
+        property bool fehlgeschlagen: false
+
+        preload: false
+        blockLoading: true
+        blockWrites: true
+        atomicWrites: true
+        printErrors: false
+        onSaveFailed: fehlgeschlagen = true
+    }
+
+    Component {
+        id: sicherung
+
+        Sicherung {}
+    }
+
+    // Ungültige Datei melden: nicht bei jedem Zwischenstand, den ein Editor beim Schreiben hinterlässt, und
+    // beim Start erst, wenn die Hinweise bereitstehen
+    Timer {
+        id: meldung
+
+        interval: 2000
+        onTriggered: {
+            if (!root._fehlerhaft)
+                return;
+            const folge = root._unlesbar ? "nicht lesbar" : "ungültig";
+            const werte = root._ausDatei ? "bisherige Werte bleiben" : "es gelten Standardwerte";
+            Oberflaeche.hinweis("einstellungen.json ist " + folge + " · " + werte + " · zen doctor", "warnung");
+        }
     }
 
     // Fehlt der Ordner, kann die Datei nicht beobachtet werden: dann selten nachsehen.

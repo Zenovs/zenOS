@@ -93,6 +93,7 @@ Item {
 
         Text {
             anchors.verticalCenter: parent.verticalCenter
+            textFormat: Text.PlainText
             text: root.text
             color: root.textFarbe
             font.family: Theme.schriftText
