@@ -35,8 +35,17 @@ Scope {
         const named = bildschirmName !== "" ? screens.find(s => s.name === bildschirmName) : undefined;
         return named ?? screens[0] ?? null;
     }
-    // Sichtbare Karten wechseln den Bildschirm nicht (nichts springt); erst die nächsten
+    // Vorhandene Karten wechseln den Bildschirm nicht (nichts springt); erst die nächsten
     property var kartenBildschirm: null
+    // Ein Menü der Leiste liegt auf der Ebene Top in derselben Ecke wie die Karten (Overlay). Solange es
+    // auf dem Bildschirm der Karten offen ist, treten die Karten zurück, sonst fingen sie seine Klicks ab.
+    readonly property bool menueUeberKarten: {
+        const offen = Dienste.Oberflaeche.leisteMenueBildschirm;
+        return offen !== "" && offen === (kartenBildschirm?.name ?? "");
+    }
+    // Zurückgetreten: Fenster weg, Karten bleiben erhalten und gelten nicht als angesehen. Bei offener
+    // Zentrale ebenso (die Karten verschwinden dort ohnehin, siehe allesAusblenden).
+    readonly property bool zurueckgetreten: menueUeberKarten || Dienste.Oberflaeche.zentraleOffen
     // Einträge der Sammelkarte (neueste zuerst); verschwindet eine Mitteilung, fällt sie heraus
     readonly property var sammlung: sammlungNummern.length === 0 ? [] : Dienste.Mitteilungen.zugestellt.filter(e => root.sammlungNummern.indexOf(e.nummer) >= 0)
     // Modell der Kartenspalte: { schluessel, eintrag } (eintrag nur bei dringenden Karten)
@@ -127,19 +136,27 @@ Scope {
         }
     }
 
+    // Nur ohne Karten: auch zurückgetretene Karten bleiben auf ihrem Bildschirm
     function kartenBildschirmAktualisieren(): void {
-        if (!fenster.visible && kartenBildschirm !== bildschirm)
+        if (karten.length === 0 && kartenBildschirm !== bildschirm)
             kartenBildschirm = bildschirm;
     }
 
     onBildschirmChanged: kartenBildschirmAktualisieren()
     Component.onCompleted: kartenBildschirm = bildschirm
 
+    // Nach dem Zurücktreten ruhig wieder einblenden (120 ms), nicht auf einen Schlag
+    onZurueckgetretenChanged: if (!zurueckgetreten && karten.length > 0)
+        wiederEinblenden.restart()
+
     onSammlungChanged: if (sammlungOffen && sammlung.length === 0)
         sammlungOffen = false
-    // Geschlossene Mitteilungen aus der Reihenfolge nehmen (später, sonst Bindungsschleife)
-    onKartenChanged: if (karten.length !== reihenfolge.length)
-        Qt.callLater(aufraeumen)
+    onKartenChanged: {
+        kartenBildschirmAktualisieren();
+        // Geschlossene Mitteilungen aus der Reihenfolge nehmen (später, sonst Bindungsschleife)
+        if (karten.length !== reihenfolge.length)
+            Qt.callLater(aufraeumen);
+    }
 
     function aufraeumen(): void {
         const gueltig = karten.map(k => k.schluessel);
@@ -180,8 +197,9 @@ Scope {
         id: sammlungUhr
 
         interval: root.sammlungDauer
-        // Solange der Zeiger auf den Karten liegt, bleibt die Sammelkarte
-        running: root.sammlungOffen && !hover.hovered
+        // Solange der Zeiger auf den Karten liegt oder ein Menü der Leiste sie verdrängt, bleibt die
+        // Sammelkarte; danach beginnen ihre 10 s von vorn
+        running: root.sammlungOffen && !hover.hovered && !root.menueUeberKarten
         onTriggered: root.sammlungOffen = false
     }
 
@@ -234,6 +252,7 @@ Scope {
                 zentraleOffen: Dienste.Oberflaeche.zentraleOffen,
                 bildschirm: root.bildschirm?.name ?? "",
                 kartenBildschirm: root.kartenBildschirm?.name ?? "",
+                kartenSichtbar: fenster.visible,
                 sammelkarte: root.sammlungOffen ? root.sammlung.length : 0,
                 dringendeKarten: root.anzahlDringendKarten,
                 karten: root.karten.map(k => k.schluessel),
@@ -247,7 +266,7 @@ Scope {
     PanelWindow {
         id: fenster
 
-        visible: root.karten.length > 0
+        visible: root.karten.length > 0 && !root.zurueckgetreten
         screen: root.kartenBildschirm
         anchors {
             top: true
@@ -269,7 +288,16 @@ Scope {
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
         WlrLayershell.namespace: "zenos-mitteilungen"
 
-        onVisibleChanged: root.kartenBildschirmAktualisieren()
+        NumberAnimation {
+            id: wiederEinblenden
+
+            target: spalte
+            property: "opacity"
+            from: 0
+            to: 1
+            duration: Theme.dauerKurz
+            easing.type: Theme.kurve
+        }
 
         Column {
             id: spalte

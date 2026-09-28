@@ -20,6 +20,9 @@ Singleton {
     // Wo die Modus-/Zustand-Wahl aufklappt: { bildschirm: ShellScreen.name, x: Fensterkoordinate } oder null
     // (null = Standardort). Die Leiste setzt es beim Klick auf einen Chip.
     property var wahlAnker: null
+    // Name des Bildschirms, auf dem ein Menü der Leiste (System, Raster) offen ist; leer = keins.
+    // Setzt nur die Leiste. Die Mitteilungskarten treten dort zurück, solange es offen ist.
+    property string leisteMenueBildschirm: ""
     // true von Beginn der Sperre bis zum Entsperren; setzt nur sperre/Sperre.qml
     property bool gesperrt: false
 

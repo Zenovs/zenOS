@@ -31,7 +31,8 @@ Scope {
             menueSchliessen();
             return;
         }
-        // Wahl und Zentrale liegen auf der Ebene Overlay über dem Menü: vorher schliessen
+        // Wahl und Zentrale liegen auf der Ebene Overlay über dem Menü: vorher schliessen. Die
+        // Mitteilungskarten (ebenfalls Overlay) treten über Oberflaeche.leisteMenueBildschirm zurück.
         Oberflaeche.modusWahlOffen = false;
         Oberflaeche.zustandWahlOffen = false;
         Oberflaeche.zentraleOffen = false;
@@ -44,6 +45,13 @@ Scope {
 
     function menueSchliessen(): void {
         menue = "";
+    }
+
+    // Bildschirm mit offenem Menü für die anderen Oberflächen (leer = keins)
+    Binding {
+        target: Oberflaeche
+        property: "leisteMenueBildschirm"
+        value: root.menue !== "" ? root.menueBildschirm : ""
     }
 
     SystemClock {
