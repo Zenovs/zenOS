@@ -5,9 +5,9 @@ import qs.theme
 import qs.komponenten
 import qs.dienste
 
-// Schritt 2 des ersten Starts: Zustimmung zu den proprietären Apps. Nichts wird ohne Klick
-// installiert: «Installieren» öffnet ein Terminal mit «zen apps installieren …», das vorher zeigt,
-// was passiert, und nachfragt. «Später» führt zu Einstellungen → Apps.
+// Schritt 2 des ersten Starts: Zustimmung zu den proprietären Apps. Nichts wird ohne Zustimmung im
+// Terminal installiert: «Installieren» öffnet ein Terminal mit «zen apps installieren …», das vorher
+// zeigt, was passiert, und nachfragt. «Später» (Esc) führt zu Einstellungen → Apps.
 FocusScope {
     id: root
 
@@ -23,8 +23,15 @@ FocusScope {
     // Beim Erscheinen gleich bedienbar
     Component.onCompleted: Qt.callLater(fokussieren)
 
+    // Der Fokus liegt sichtbar auf «Installieren», Enter öffnet das Terminal. Solange der Katalog lädt,
+    // ist der Knopf gesperrt: Dann liegt der Fokus auf dem Schritt selbst (Esc = Später), bis der Knopf
+    // bereit ist. Kein Enter am Schritt: Knopf löst nur bei Drücken und Loslassen ohne Wiederholung aus,
+    // eine aus Schritt 1 noch gehaltene Enter-Taste installiert deshalb nichts.
     function fokussieren(): void {
-        root.forceActiveFocus();
+        if (installierenKnopf.enabled)
+            installierenKnopf.forceActiveFocus(Qt.TabFocusReason);
+        else
+            root.forceActiveFocus();
     }
 
     function installieren(): void {
@@ -135,11 +142,19 @@ FocusScope {
             spacing: 12
 
             Knopf {
+                id: installierenKnopf
+
                 text: katalog.allesInstalliert ? "Fertig" : "Installieren"
                 variante: "primaer"
                 schriftGroesse: 15
                 enabled: katalog.allesInstalliert || katalog.gewaehlt.length > 0
                 onClicked: root.installieren()
+                // Bereit geworden (Katalog geladen): den Fokus übernehmen, aber nur, wenn er noch auf dem
+                // Schritt selbst liegt. Ein mit Tab gewählter Platz bleibt.
+                onEnabledChanged: {
+                    if (enabled && Window.activeFocusItem === root)
+                        root.fokussieren();
+                }
             }
 
             Knopf {

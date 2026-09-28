@@ -28,7 +28,7 @@ was davon erst «Danach» kommt oder noch ohne Wirkung ist.
 |---|---|---|
 | Chrome | Standardbrowser, abgesichert über Richtlinien | ✓ (nach Zustimmung) |
 | Firefox | zweiter Browser | noch nicht installiert |
-| coremail | Standard-Mailprogramm | ✓ (nach Zustimmung, arm64-Release) |
+| coremail | Standard-Mailprogramm | ✓ (nach Zustimmung, arm64-Release; noch nicht Standard für `mailto:`, weil sich coremail dafür noch nicht anmeldet – zenOS trägt es ein, sobald es das tut) |
 | VS Code | Editor | ✓ (nach Zustimmung, Telemetrie per Richtlinie aus) |
 | 1Password | Passwörter, SSH-Agent, API-Schlüssel | ✓ (nach Zustimmung, mit CLI `op`) |
 | Nubix | Cloud-Sync | offen: noch kein arm64-Build, wird dann angeboten |

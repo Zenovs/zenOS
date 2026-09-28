@@ -63,8 +63,11 @@ Item {
         const liste = (Array.isArray(ids) ? ids : []).filter(id => /^[a-z0-9]+$/.test(id));
         if (liste.length === 0 || ["installieren", "aktualisieren"].indexOf(befehl) < 0)
             return false;
-        // Eigene systemd-Einheit: ein Neustart der Oberfläche darf apt und dpkg nicht mitten im Lauf beenden
-        Aktionen.programmStarten(["kitty", "--title", befehl === "installieren" ? "zenOS · Apps installieren" : "zenOS · Apps aktualisieren", "-o", "remember_window_size=no", "-o", "initial_window_width=110c", "-o", "initial_window_height=36c", "--directory", Pfade.home, "--", Pfade.code + "/scripts/zen", "apps", befehl, "--fenster"].concat(liste), "zen-apps");
+        // Eigene systemd-Einheit: ein Neustart der Oberfläche darf apt und dpkg nicht mitten im Lauf beenden.
+        // Hoch genug für die ganze Übersicht vor der Frage (rund 60 Zeilen mit allen Apps). Ist der
+        // Bildschirm kleiner, wird das Fenster nur so hoch wie die freie Fläche (labwc meldet kitty die
+        // Grenzen), und zenos-apps weist darauf hin, dass die Übersicht weiter oben beginnt.
+        Aktionen.programmStarten(["kitty", "--title", befehl === "installieren" ? "zenOS · Apps installieren" : "zenOS · Apps aktualisieren", "-o", "remember_window_size=no", "-o", "initial_window_width=110c", "-o", "initial_window_height=64c", "--directory", Pfade.home, "--", Pfade.code + "/scripts/zen", "apps", befehl, "--fenster"].concat(liste), "zen-apps");
         return true;
     }
 

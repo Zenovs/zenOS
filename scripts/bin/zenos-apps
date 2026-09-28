@@ -19,7 +19,8 @@
 # status zeigt, was installiert ist; --netz fragt zusätzlich die GitHub-Releases von coremail und Nubix
 # ab (höchstens alle 12 Stunden, nach einem Fehler nach 10 Minuten; Cache ~/.cache/zenos/apps.json).
 # benutzer zieht die Benutzerteile nach (Chrome-Starter über zenos-chrome, Web-Apps, SSH-Agent von
-# 1Password); --melden gibt pro Änderung eine Zeile aus (für install.sh).
+# 1Password, Standard für Browser und Mail, den zweiten Starter von coremail entfernen); --melden gibt pro
+# Änderung eine Zeile aus (für install.sh).
 #
 # Nie als root und nie im Image: Proprietäre Software kommt erst mit deiner Zustimmung auf das Gerät.
 # Exit: 0 in Ordnung · 1 Fehler · 2 falscher Aufruf · 3 abgebrochen
@@ -67,6 +68,11 @@ AGENT_FISH=$HOME/.config/fish/conf.d/zenos-1password.fish
 # Ubuntus ssh-agent.socket (openssh-client) setzt SSH_AUTH_SOCK beim Start des Benutzer-Managers mit
 # «systemctl --user set-environment» und überdeckt damit environment.d. Dieses Drop-in nimmt das zurück.
 AGENT_DROPIN=$HOME/.config/systemd/user/ssh-agent.socket.d/zenos-1password.conf
+# coremail (bis mindestens 7.2.0) schreibt beim ersten Start jeder neuen Version diesen Starter für seine
+# AppImage-Fassung, auch als .deb (fester Pfad unter $HOME, unabhängig von XDG_DATA_HOME). Siehe
+# _coremail_starter.
+COREMAIL_STARTER=$HOME/.local/share/applications/coremail.desktop
+COREMAIL_WAECHTER=zenos-coremail-starter
 
 ARCH=$(dpkg --print-architecture 2>/dev/null || true)
 case "$ARCH" in
@@ -487,7 +493,7 @@ _plan() {
       info "Datei      /etc/default/google-chrome (Chrome legt keine zweite Quelle an)"
       info "Paket      google-chrome-stable (≈ $(_groesse chrome) MB)"
       info "Benutzer   ~/.local/share/applications/google-chrome.desktop (Start über zenos-chrome)"
-      info "           Standardbrowser, falls noch keiner gesetzt ist"
+      info "           Standardbrowser in ~/.config/mimeapps.list, falls du keinen anderen gewählt hast"
       ;;
     vscode)
       info "Schlüssel  $MICROSOFT_SCHLUESSEL"
@@ -528,6 +534,8 @@ _plan() {
       info "Prüfsumme  SHA-256 $GH_ERWARTET"
       info "           (aus $( [[ -n "$GH_SUMMEN" ]] && printf '%s' "${GH_SUMMEN##*/}" || printf 'der Angabe von GitHub'))"
       info "Paket      apt install ./$GH_ASSET"
+      [[ "$app" != coremail ]] ||
+        info "Benutzer   entfernt ~/.local/share/applications/coremail.desktop (Starter ohne Programm)"
       ;;
   esac
 }
@@ -834,6 +842,114 @@ _agent_manager() {
   return 0
 }
 
+# Hat der Benutzer für TYP selbst eine Standard-App gewählt? Massgeblich sind nur seine mimeapps.list
+# (Abschnitt [Default Applications]). Nicht der Cache der Pakete (mimeinfo.cache): Über ihn meldet
+# «xdg-mime query default» fast immer eine App, auch wenn niemand eine gewählt hat.
+_mime_gewaehlt() { # TYP
+  local datei konfig=${XDG_CONFIG_HOME:-$HOME/.config} daten=${XDG_DATA_HOME:-$HOME/.local/share}
+  for datei in "$konfig"/*-mimeapps.list "$konfig/mimeapps.list" "$daten/applications/mimeapps.list"; do
+    [[ -f "$datei" ]] || continue
+    awk -v typ="$1" '
+      /^[[:space:]]*\[/ { im = ($0 ~ /^[[:space:]]*\[Default Applications\][[:space:]]*$/); next }
+      im && index($0, "=") {
+        schluessel = substr($0, 1, index($0, "=") - 1)
+        wert = substr($0, index($0, "=") + 1)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", schluessel)
+        gsub(/[[:space:];]/, "", wert)
+        if (schluessel == typ && wert != "") { gefunden = 1; exit }
+      }
+      END { exit !gefunden }' "$datei" && return 0
+  done
+  return 1
+}
+
+# Trägt DESKTOP als Standard für die TYPEN ein, für die du noch keine App gewählt hast (eine eigene Wahl
+# bleibt). Gibt die eingetragenen Typen aus, durch Komma getrennt. ARG: DESKTOP TYP…
+_standard_setzen() {
+  local desktop=$1 typ liste=""
+  local -a offen=()
+  shift
+  for typ in "$@"; do _mime_gewaehlt "$typ" || offen+=("$typ"); done
+  (( ${#offen[@]} > 0 )) || return 0
+  # xdg-mime legt den Ordner erst nach der Datei an und verlöre ohne ihn den ersten Typ
+  mkdir -p -- "${XDG_CONFIG_HOME:-$HOME/.config}"
+  xdg-mime default "$desktop" "${offen[@]}" 2>/dev/null || return 1
+  for typ in "${offen[@]}"; do
+    _mime_gewaehlt "$typ" && liste+="${liste:+, }$typ"
+  done
+  printf '%s' "$liste"
+}
+
+# Meldet DATEI (Starter) die App für TYP an (Zeile MimeType)?
+_starter_nimmt() { # DATEI TYP
+  [[ -f "$1" ]] || return 1
+  sed -n 's/^MimeType[[:space:]]*=[[:space:]]*//p' "$1" | tr ';' '\n' | grep -qxF -- "$2"
+}
+
+# Das Programm, das eine Exec-Zeile startet: das erste Wort, bei «env» das erste nach den Zuweisungen
+# NAME=WERT. Rückgabe 1, wenn die Zeile dafür zu verwickelt ist (Anführungszeichen, Optionen von env);
+# dann wird nichts angefasst.
+_exec_programm() { # EXEC
+  local -a teile=()
+  local i=0
+  [[ "$1" != *[\"\'\\\`\$]* ]] || return 1
+  read -r -a teile <<< "$1"
+  (( ${#teile[@]} > 0 )) || return 1
+  if [[ "${teile[0]}" == env || "${teile[0]}" == */env ]]; then
+    i=1
+    while (( i < ${#teile[@]} )) && [[ "${teile[i]}" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; do i=$(( i + 1 )); done
+    (( i < ${#teile[@]} )) && [[ "${teile[i]}" != -* ]] || return 1
+  fi
+  printf '%s' "${teile[i]}"
+}
+
+# coremail (bis mindestens 7.2.0) schreibt beim ersten Start jeder neuen Version
+# ~/.local/share/applications/coremail.desktop für seine AppImage-Fassung
+# (Exec=env APPIMAGE_EXTRACT_AND_RUN=1 … ~/.local/bin/coremail-desktop --no-sandbox), auch wenn es als
+# .deb installiert ist. Das Programm gibt es dann nicht: Das Befehlsfeld zeigte coremail doppelt, und der
+# zweite Eintrag startete nichts. Entfernt wird der Starter nur, wenn das .deb installiert ist (dessen
+# coremail-desktop.desktop bleibt) und das Programm im Starter fehlt. Ein AppImage, das dort wirklich liegt,
+# behält seinen Starter. ARG: MELDEN
+_coremail_starter() {
+  local melden=$1 zeile programm
+  [[ -f "$COREMAIL_STARTER" && ! -L "$COREMAIL_STARTER" ]] || return 0
+  _installiert coremail >/dev/null || return 0
+  zeile=$(sed -n 's/^Exec[[:space:]]*=[[:space:]]*//p' "$COREMAIL_STARTER" | head -n 1)
+  [[ "$zeile" == *coremail* ]] || return 0
+  programm=$(_exec_programm "$zeile") || return 0
+  if [[ "$programm" == */* ]]; then
+    [[ ! -x "$programm" ]] || return 0
+  else
+    ! command -v -- "$programm" >/dev/null 2>&1 || return 0
+  fi
+  rm -f -- "$COREMAIL_STARTER" || return 0
+  (( melden )) && printf 'entfernt: %s (zweiter Starter von coremail, das Programm dazu fehlt)\n' \
+    "${COREMAIL_STARTER/#"$HOME"/"~"}"
+  return 0
+}
+
+# Während der Sitzung entfernt eine vorübergehende Einheit des Benutzer-Managers (systemd-run, .path) den
+# Starter gleich, wenn coremail ihn schreibt, nicht erst bei der nächsten Anmeldung. Sie endet mit dem
+# Benutzer-Manager; im Home liegt dafür nichts. Ohne erreichbaren Manager bleibt es beim Abgleich hier.
+# ARG: an|aus
+_coremail_waechter() {
+  local einheit=$COREMAIL_WAECHTER.path zustand
+  command -v systemd-run >/dev/null 2>&1 || return 0
+  zustand=$(systemctl --user show -p ActiveState --value "$einheit" 2>/dev/null) || return 0
+  if [[ "$1" == aus ]]; then
+    [[ "$zustand" == inactive ]] || systemctl --user stop "$einheit" 2>/dev/null || true
+    return 0
+  fi
+  [[ "$zustand" != active ]] || return 0
+  # Ein angehaltener oder gescheiterter Rest von vorher wäre noch geladen
+  systemctl --user stop "$einheit" "$COREMAIL_WAECHTER.service" 2>/dev/null || true
+  systemctl --user reset-failed "$einheit" "$COREMAIL_WAECHTER.service" 2>/dev/null || true
+  systemd-run --user --quiet --unit="$COREMAIL_WAECHTER" \
+    --description="zenOS: zweiten Starter von coremail entfernen" \
+    --path-property="PathChanged=$COREMAIL_STARTER" -- "$SELBST" _starter >/dev/null 2>&1 || true
+  return 0
+}
+
 _befehl_benutzer() {
   local melden=0 arg
   for arg in "$@"; do
@@ -893,19 +1009,35 @@ EOF
     fi
   fi
 
-  # Chrome als Standardbrowser, solange keiner gesetzt ist
-  local mime=${XDG_CONFIG_HOME:-$HOME/.config}/mimeapps.list
+  # Zweiter Starter von coremail (siehe _coremail_starter): jetzt entfernen und während der Sitzung
+  # gleich wieder, wenn coremail ihn nach einem Versionswechsel neu schreibt
+  if _installiert coremail >/dev/null; then
+    _coremail_starter "$melden"
+    _coremail_waechter an
+  else
+    _coremail_waechter aus
+  fi
+
+  local gesetzt=""
+  # Chrome als Standardbrowser für alles, wofür du keinen anderen gewählt hast. «Gewählt» heisst ein
+  # Eintrag in deiner mimeapps.list, nicht der Cache der Pakete: Chrome prüft genau diese Einträge (mit
+  # xdg-settings) und zeigte sonst in jedem Profil «Google Chrome isn't your default browser». Der Name
+  # google-chrome.desktop, weil Chrome gegen ihn prüft; die Kopie von zenOS startet über zenos-chrome.
   if _installiert chrome >/dev/null && command -v xdg-mime >/dev/null 2>&1 &&
-    [[ -f "${XDG_DATA_HOME:-$HOME/.local/share}/applications/google-chrome.desktop" ]] &&
-    ! grep -qs '^x-scheme-handler/https=' "$mime"; then
-    local art
-    for art in x-scheme-handler/http x-scheme-handler/https text/html; do
-      if [[ -z "$(xdg-mime query default "$art" 2>/dev/null)" ]]; then
-        if xdg-mime default google-chrome.desktop "$art" 2>/dev/null; then
-          (( melden )) && printf 'Standardbrowser für %s: Google Chrome\n' "$art"
-        fi
-      fi
-    done
+    [[ -f "${XDG_DATA_HOME:-$HOME/.local/share}/applications/google-chrome.desktop" ]]; then
+    gesetzt=$(_standard_setzen google-chrome.desktop x-scheme-handler/http x-scheme-handler/https text/html) ||
+      meldung "Chrome liess sich nicht als Standardbrowser eintragen (xdg-mime)"
+    if [[ -n "$gesetzt" ]] && (( melden )); then printf 'Standardbrowser: Google Chrome (%s)\n' "$gesetzt"; fi
+  fi
+
+  # coremail als Standard für mailto:, sobald sein Starter solche Adressen annimmt (MimeType). coremail
+  # 7.2.0 meldet sich dafür nicht an und wertet eine Adresse beim Start nicht aus; bis dahin bleibt es offen.
+  gesetzt=""
+  if _installiert coremail >/dev/null && command -v xdg-mime >/dev/null 2>&1 &&
+    _starter_nimmt /usr/share/applications/coremail-desktop.desktop x-scheme-handler/mailto; then
+    gesetzt=$(_standard_setzen coremail-desktop.desktop x-scheme-handler/mailto) ||
+      meldung "coremail liess sich nicht als Standard für mailto: eintragen (xdg-mime)"
+    if [[ -n "$gesetzt" ]] && (( melden )); then printf 'Standard für E-Mail-Adressen: coremail (%s)\n' "$gesetzt"; fi
   fi
   return 0
 }
@@ -930,6 +1062,22 @@ _aufraeumen() {
     printf '\nzen apps ist unerwartet beendet worden (Exit %s).\n' "$rc" >&2
     _warten_fenster
   fi
+}
+
+# Ist die Übersicht höher als das Fenster, steht ihr Anfang (Quellen, Schlüssel) bei der Frage ausser Sicht:
+# dann eine Zeile, dass sie weiter oben beginnt. Zählt die Zeilen auf dem Bildschirm, lange Zeilen brechen
+# um. ARG: TEXT ZEILEN_DAVOR
+_zurueckblaettern() {
+  local groesse hoehe breite zeile n=$2
+  groesse=$(stty size 2>/dev/null) || return 0
+  read -r hoehe breite <<< "$groesse"
+  [[ "$hoehe" =~ ^[1-9][0-9]*$ && "$breite" =~ ^[1-9][0-9]*$ ]] || return 0
+  while IFS= read -r zeile; do
+    n=$(( n + (${#zeile} > breite ? (${#zeile} + breite - 1) / breite : 1) ))
+  done <<< "$1"
+  # dazu die Leerzeile nach der Übersicht und die Frage
+  (( n + 2 > hoehe )) || return 0
+  printf '↑ Die Übersicht beginnt weiter oben: zurückblättern mit dem Mausrad oder Ctrl+Shift+Bild↑.\n'
 }
 
 _befehl_installieren() {
@@ -982,9 +1130,12 @@ _befehl_installieren() {
     gewuenscht=("${ALLE[@]}")
   fi
 
+  # Zeilen vor der Übersicht (für _zurueckblaettern): Leerzeile und Titel
+  local kopf=2
   schritt "zenOS · Apps $( [[ "$modus" == aktualisieren ]] && echo aktualisieren || echo installieren ) ($ARCH)"
   if [[ " ${gewuenscht[*]} " == *" coremail "* || " ${gewuenscht[*]} " == *" nubix "* ]]; then
     info "Release-Angaben von GitHub abfragen …"
+    kopf=3
     _netz_pruefen 1 || true
   fi
 
@@ -1055,21 +1206,27 @@ _befehl_installieren() {
     return 0
   fi
 
-  printf '\nDas passiert jetzt:\n'
-  for app in "${plan[@]}"; do
-    if [[ -n "${GH_INFO[$app]:-}" ]]; then
-      IFS=$'\x1f' read -r GH_URL GH_ASSET GH_ERWARTET GH_VERSION GH_GROESSE GH_SUMMEN <<< "${GH_INFO[$app]}"
-    fi
-    _plan "$app" "$modus"
-  done
-  printf '\n  Alles kommt direkt von den Herstellern. Updates kommen danach von dort (apt) bzw. mit\n'
-  printf '  «zen apps aktualisieren» (1Password, coremail, Nubix). Nichts davon geht ins Repo oder Image.\n\n'
+  # Als Text, damit sich zählen lässt, ob die Übersicht ins Fenster passt
+  local uebersicht
+  uebersicht=$(
+    printf '\nDas passiert jetzt:\n'
+    for app in "${plan[@]}"; do
+      if [[ -n "${GH_INFO[$app]:-}" ]]; then
+        IFS=$'\x1f' read -r GH_URL GH_ASSET GH_ERWARTET GH_VERSION GH_GROESSE GH_SUMMEN <<< "${GH_INFO[$app]}"
+      fi
+      _plan "$app" "$modus"
+    done
+    printf '\n  Alles kommt direkt von den Herstellern. Updates kommen danach von dort (apt) bzw. mit\n'
+    printf '  «zen apps aktualisieren» (1Password, coremail, Nubix). Nichts davon geht ins Repo oder Image.\n'
+  )
+  printf '%s\n\n' "$uebersicht"
 
   if (( ! ja )); then
     if [[ ! -t 0 ]]; then
       meldung "keine Bestätigung möglich (kein Terminal) – mit --ja bestätigen"
       return 3
     fi
+    _zurueckblaettern "$uebersicht" $(( kopf + ${#uebersprungen[@]} ))
     local antwort=""
     read -r -p "Fortfahren? Dafür braucht zenOS dein sudo-Passwort. [j/N] " antwort || true
     case "${antwort,,}" in
@@ -1132,6 +1289,14 @@ _befehl_installieren() {
   schritt "Ergebnis"
   for app in "${ok[@]}"; do info "✓ $(_name "$app") $(_installiert "$app" || true)"; done
   for app in "${fehlgeschlagen[@]}"; do info "✗ $(_name "$app") – fehlgeschlagen (Meldungen oben)"; done
+  # Die Oberfläche liest die Symbole einmal beim Start (Qt merkt sich auch, was es nicht fand). Neue
+  # Starter erscheinen gleich, ihre Symbole erst nach dem nächsten Anmelden.
+  local mit_symbol=0
+  for app in "${ok[@]}"; do [[ "$app" == cli ]] || mit_symbol=1; done
+  if [[ "$modus" == installieren ]] && (( mit_symbol )); then
+    printf '\n   Symbole der neuen Apps zeigt das Befehlsfeld ab der nächsten Anmeldung, bis dahin den\n'
+    printf '   Anfangsbuchstaben.\n'
+  fi
   for app in "${ok[@]}"; do
     [[ "$modus" == installieren ]] || break
     case "$app" in
@@ -1152,7 +1317,15 @@ _befehl_installieren() {
 
 # --- Hauptteil ---------------------------------------------------------------
 
-_hilfe() { sed -n '2,25p' "$SELBST" | sed 's/^# \{0,1\}//'; }
+_hilfe() { sed -n '2,/^$/p' "$SELBST" | sed 's/^# \{0,1\}//'; }
+
+# Aufruf der Einheit aus _coremail_waechter, wenn coremail seinen Starter schreibt. Kurz warten, bis coremail
+# fertig ist (Datei schreiben, Rechte setzen). Endet immer mit 0: Es gibt nichts, was jemand beheben müsste.
+_starter() {
+  sleep 1
+  _coremail_starter 0 || true
+  return 0
+}
 
 FENSTER=0
 befehl=${1:-}
@@ -1163,6 +1336,7 @@ case "$befehl" in
   aktualisieren) _befehl_installieren aktualisieren "$@" ;;
   benutzer) _befehl_benutzer "$@" ;;
   _schritt) _schritt "$@" ;;
+  _starter) _starter ;;
   -h | --hilfe | hilfe) _hilfe ;;
   "") _hilfe; exit 2 ;;
   *) meldung "unbekannter Befehl «$befehl» (zenos-apps --hilfe)"; exit 2 ;;
