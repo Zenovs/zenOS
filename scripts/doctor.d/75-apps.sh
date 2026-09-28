@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# 75-apps: proprietäre Apps (nur Name und Version), ihre Paketquellen, SSH-Agent von 1Password, Nubix
+# 75-apps: proprietäre Apps (nur Name und Version), zweiter Starter von coremail, Standardbrowser, ihre
+# Paketquellen, SSH-Agent von 1Password, Nubix
 # shellcheck shell=bash
 
 pruefe_apps() {
   abschnitt "Apps"
   _apps_installiert
+  _apps_starter
+  _apps_browser
   _apps_quellen
   _apps_agent
   _apps_nubix
@@ -39,6 +42,54 @@ _apps_installiert() {
   else
     hinweis "1Password nicht installiert (zen apps installieren 1password)"
   fi
+}
+
+# Das Programm einer Exec-Zeile: das erste Wort, bei «env» das erste nach den Zuweisungen NAME=WERT (wie
+# _exec_programm in zenos-apps). Rückgabe 1, wenn die Zeile dafür zu verwickelt ist.
+_apps_exec_programm() { # EXEC
+  local -a teile=()
+  local i=0
+  [[ "$1" != *[\"\'\\\`\$]* ]] || return 1
+  read -r -a teile <<< "$1"
+  (( ${#teile[@]} > 0 )) || return 1
+  if [[ "${teile[0]}" == env || "${teile[0]}" == */env ]]; then
+    i=1
+    while (( i < ${#teile[@]} )) && [[ "${teile[i]}" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; do i=$((i + 1)); done
+    (( i < ${#teile[@]} )) && [[ "${teile[i]}" != -* ]] || return 1
+  fi
+  printf '%s' "${teile[i]}"
+}
+
+# coremail (bis mindestens 7.2.0) schreibt beim ersten Start einer neuen Version einen zweiten Starter für
+# seine AppImage-Fassung, auch als .deb; das Programm darin gibt es dann nicht. zen benutzer entfernt ihn,
+# während der Sitzung auch gleich (zenos-coremail-starter.path). Dieselbe Bedingung wie _coremail_starter
+# in zenos-apps.
+_apps_starter() {
+  local datei=$HOME/.local/share/applications/coremail.desktop zeile programm
+  [[ -f "$datei" && ! -L "$datei" ]] || return 0
+  _apps_version coremail-desktop > /dev/null || return 0
+  zeile=$(sed -n 's/^Exec[[:space:]]*=[[:space:]]*//p' "$datei" | head -n 1)
+  [[ "$zeile" == *coremail* ]] || return 0
+  programm=$(_apps_exec_programm "$zeile") || return 0
+  if [[ "$programm" == */* ]]; then
+    [[ ! -x "$programm" ]] || return 0
+  else
+    ! command -v -- "$programm" > /dev/null 2>&1 || return 0
+  fi
+  warnung "coremail: zweiter Starter ~/.local/share/applications/coremail.desktop zeigt auf ein fehlendes Programm (zen benutzer entfernt ihn)"
+}
+
+# Chrome als Standardbrowser: zen benutzer trägt ihn ein, solange in mimeapps.list nichts anderes gewählt
+# ist. Eine andere Wahl ist erlaubt, deshalb nur ein Hinweis.
+_apps_browser() {
+  local antwort
+  _apps_version google-chrome-stable > /dev/null || return 0
+  command -v xdg-settings > /dev/null || return 0
+  antwort=$(xdg-settings check default-web-browser google-chrome.desktop 2> /dev/null) || return 0
+  case "$antwort" in
+    yes) ok "Chrome ist Standardbrowser" ;;
+    no) hinweis "Chrome ist nicht Standardbrowser (eigene Wahl in ~/.config/mimeapps.list; sonst trägt zen benutzer ihn ein)" ;;
+  esac
 }
 
 # Paketquellen der Hersteller: nur mit signed-by und nicht doppelt

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 20-sitzung: Pakete, Quickshell (Stempel und Qt), Schriften, Login (greetd), Sitzung (Einheiten, labwc), Portale
+# 20-sitzung: Pakete, Quickshell (Stempel und Qt), Schriften, Login (greetd, Notfall-Login), Sitzung (Einheiten,
+# labwc), Portale
 # shellcheck shell=bash
 
 pruefe_sitzung() {
@@ -150,6 +151,22 @@ _sitzung_login() {
   else
     warnung "Standardziel ist $(systemctl get-default 2> /dev/null) statt graphical.target"
   fi
+
+  _sitzung_notfall
+}
+
+# Lief der Login in diesem Boot im Notfall-Modus? zenos-greeter schreibt ins Journal (Systemjournal,
+# lesbar mit der Gruppe adm; ohne diese Rechte keine Ausgabe). «Failed to load configuration» muss dabei
+# sein: Endet labwc des Greeters in den ersten 30 s, meldet zenos-greeter «lädt nicht», obwohl
+# greeter.qml geladen war. Der Grund ist die letzte «caused by»-Zeile: Quickshell nennt die Kette von
+# aussen nach innen («greeter.qml: Type Ablauf unavailable» … «dienste/Oberflaeche.qml: Syntax error»).
+_sitzung_notfall() {
+  local zeilen grund
+  zeilen=$(journalctl -b -q -o cat --no-pager -t zenos-greeter 2> /dev/null) || return 0
+  grep -q 'greeter.qml lädt nicht' <<< "$zeilen" || return 0
+  grep -q 'Failed to load configuration' <<< "$zeilen" || return 0
+  grund=$(sed -n 's/^.*caused by[[:space:]]*//p' <<< "$zeilen" | tail -n 1 | cut -c 1-160)
+  warnung "Login lief im Notfall-Modus${grund:+: $grund} (journalctl -b -t zenos-greeter)"
 }
 
 _sitzung_sitzung() {

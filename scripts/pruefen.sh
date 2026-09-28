@@ -50,12 +50,13 @@
 #   mit «ShellRoot», z. B. greeter.qml) mit Quickshell in labwc ohne Bildschirm und wertet das Protokoll aus.
 #   Die Testsitzung ist abgeschottet: eigenes HOME, eigene XDG-Ordner und eigener Sitzungsbus ohne Dienste im
 #   Temp-Ordner, ZENOS_CODE zeigt auf dieses Repo, PipeWire-Client ohne Echtzeit über RTKit (module-rt aus,
-#   Begründung bei start_lauf). In shell.qml folgt ein Rundgang über IPC (Thema hin und zurück, Befehlsfeld,
-#   Zentrale, Umschalter, jede Einstellungen-Seite, Einrichtung, Hinweis, Bildschirmfreigabe, zuletzt die
-#   Sperre).
+#   Begründung bei start_lauf). In shell.qml folgt ein Rundgang über IPC (Thema hin und zurück, Einrichtung
+#   zu, Befehlsfeld, Zentrale, Umschalter, jede Einstellungen-Seite, Einrichtung auf, Hinweis,
+#   Bildschirmfreigabe, zuletzt die Sperre).
 #   Fehler: kein «Configuration Loaded» im Zeitlimit, Absturz, ERROR-Zeilen, «Type … unavailable», «is not a
 #   type», ReferenceError/TypeError, «Cannot assign», «Binding loop», Warnungen aus Dateien unter shell/,
-#   console.warn/console.error, ein gescheiterter IPC-Aufruf und eine Sperre, die nicht «gesperrt» meldet.
+#   console.warn/console.error, ein gescheiterter IPC-Aufruf, eine andere als die erwartete Antwort (z. B.
+#   Befehlsfeld nach «oeffnen» nicht «offen») und eine Sperre, die nicht «gesperrt» meldet.
 #   Ausnahmen stehen begründet in START_BEKANNT. Ohne labwc, quickshell oder dbus-run-session wird
 #   übersprungen (kein Fehler).
 #
@@ -722,11 +723,17 @@ START_BEKANNT=(
   '^\s*WARN qt\.qpa\.services: Failed to register with host portal'
 )
 
-# Rundgang über IPC in shell/shell.qml (Ziele und Funktionen aus BAUPLAN 6). Jeder Aufruf muss gelingen.
+# Rundgang über IPC in shell/shell.qml (Ziele und Funktionen aus BAUPLAN 6). Jeder Aufruf muss gelingen;
+# «… → ANTWORT» erwartet zusätzlich genau diese Antwort. Die Testsitzung beginnt wie ein erster Start mit
+# offener Einrichtung. Solange sie offen ist, öffnen Befehlsfeld, Umschalter und Einstellungen nicht (sie
+# lägen unsichtbar dahinter); sie geht deshalb vorher zu und kommt erst weiter hinten wieder.
 START_RUNDGANG=(
   "thema wechseln"
   "thema wechseln"
+  "einrichtung schliessen"
+  "einrichtung status → zu"
   "befehlsfeld oeffnen"
+  "befehlsfeld status → offen"
   "befehlsfeld werkzeuge"
   "befehlsfeld schliessen"
   "mitteilungen zentrale"
@@ -742,6 +749,7 @@ START_RUNDGANG=(
   "einstellungen oeffnen allgemein"
   "einstellungen oeffnen system"
   "einrichtung oeffnen"
+  "einrichtung status → offen 1"
   "hinweis zeigen Prüfung"
   "hinweis warnen Prüfung"
   # Bildschirmfreigabe mit offener Zentrale (Leitplanke: Inhalte verborgen), danach zurück
@@ -924,14 +932,27 @@ SH
   else
     start_ruhe "$o/quickshell.log" 3
     if [[ "$datei" == shell/shell.qml ]]; then
-      local aufruf n=0 antwort=1
+      local aufruf erwartet ist n=0 antwort=1
       local -a teile
       for aufruf in "${START_RUNDGANG[@]}"; do
+        erwartet=""
+        if [[ "$aufruf" == *" → "* ]]; then
+          erwartet=${aufruf#* → }
+          aufruf=${aufruf%% → *}
+        fi
         read -r -a teile <<< "$aufruf"
         n=$((n + 1))
         start_ipc "$o" "${teile[@]}"
         case $? in
-          0) ;;
+          0)
+            if [[ -n "$erwartet" ]]; then
+              ist=$(tr '\n' ' ' < "$o/ipc" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+              if [[ "$ist" != "$erwartet" ]]; then
+                befund=1
+                printf 'IPC «%s» antwortet «%s» statt «%s».\n' "$aufruf" "$ist" "$erwartet" >> "$o/bericht"
+              fi
+            fi
+            ;;
           2)
             befund=1 antwort=0
             printf 'IPC «%s»: keine Antwort nach 15 s, Rundgang abgebrochen.\n' "$aufruf" >> "$o/bericht"

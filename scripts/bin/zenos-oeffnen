@@ -14,6 +14,8 @@
 # öffnet es in kitty (zenOS bringt keinen Dateimanager mit).
 #
 # --programm startet BEFEHL und kehrt gleich zurück; NAME (z. B. die Desktop-ID) steht im Namen der Einheit.
+# Vorher prüft es, ob es das Programm gibt, bei «env NAME=WERT … PROGRAMM» (häufig in Startern) das Programm
+# hinter den Zuweisungen: Nach dem Start lässt sich ein Fehler nicht mehr melden.
 #
 # Die App bekommt eine eigene Sitzung (setsid) und, wenn die systemd-Benutzerinstanz erreichbar ist, eine
 # eigene Einheit (app-zenos-<name>-<zeit>.scope in app.slice): Sie läuft weiter, wenn dieses Programm endet
@@ -60,6 +62,40 @@ in_einheit() {
   return "$code"
 }
 
+# Gibt es PROGRAMM? Mit Schrägstrich als Pfad (relativ zum Arbeitsordner, wie bei exec), sonst im PATH;
+# PFAD ersetzt den PATH (Zuweisung PATH=… vor dem Programm): programm_da PROGRAMM [PFAD]
+programm_da() {
+  if [[ "$1" == */* ]]; then
+    [[ -x "$1" && ! -d "$1" ]]
+  elif (( $# > 1 )); then
+    (PATH=$2 && command -v -- "$1" > /dev/null)
+  else
+    command -v -- "$1" > /dev/null
+  fi
+}
+
+# Das Programm, das BEFEHL startet, muss es geben (sonst Exit 127): BEFEHL [ARGUMENT …]
+# Bei env zählt das Programm hinter den Zuweisungen NAME=WERT. Folgt eine Option von env (-u, -i, -S, --)
+# oder nichts mehr, wird nur env geprüft.
+programm_pruefen() {
+  local -a pfad=()
+  local i
+  if ! programm_da "$1"; then
+    meldung "Programm nicht gefunden: $1"
+    exit 127
+  fi
+  [[ "$1" == env || "$1" == */env ]] || return 0
+  for (( i = 2; i <= $#; i++ )); do
+    [[ "${!i}" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || break
+    [[ "${!i}" != PATH=* ]] || pfad=("${!i#PATH=}")
+  done
+  (( i <= $# )) && [[ "${!i}" != -* ]] || return 0
+  if ! programm_da "${!i}" "${pfad[@]}"; then
+    meldung "Programm nicht gefunden: ${!i}"
+    exit 127
+  fi
+}
+
 programm=""
 case "${1:-}" in
   -h | --hilfe | --help)
@@ -82,10 +118,7 @@ esac
 
 # Programm starten: setsid --fork kehrt gleich zurück, das Programm läuft in der Einheit weiter
 if [[ -n "$programm" ]]; then
-  if ! command -v -- "$1" > /dev/null; then
-    meldung "Programm nicht gefunden: $1"
-    exit 127
-  fi
+  programm_pruefen "$@"
   if ! in_einheit "$programm" "Gestartet von zenOS: $programm" setsid --fork -- "$@"; then
     meldung "$1 liess sich nicht starten"
     exit 1
