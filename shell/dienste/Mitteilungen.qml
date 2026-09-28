@@ -6,6 +6,7 @@ import Quickshell
 import Quickshell.Services.Notifications
 // eigenes Modul, damit qmllint die Singletons dieses Ordners kennt
 import qs.dienste
+import "../mitteilungen/bereinigen.js" as Bereinigen
 
 // Mitteilungsdienst von zenOS. Quickshell ist der einzige Dienst für
 // org.freedesktop.Notifications (kein mako, kein dunst).
@@ -39,6 +40,7 @@ Singleton {
     // Einträge: ein Objekt je Mitteilung (siehe Instantiator unten) mit nummer, app, titel,
     // text, symbol, bild, dringend, aktionen, standardAktion, fluechtig, ankunft (date),
     // zugestelltUm (date oder null), zustand ("wartend" | "zugestellt") und gesehen (bool).
+    // Texte sind bereinigt (bereinigen.js); aktionen: [{ identifier, text }] ohne «default».
     // wartend: älteste zuerst · zugestellt: neueste zuerst
     property var wartend: []
     property var zugestellt: []
@@ -164,15 +166,19 @@ Singleton {
             required property Notification modelData
 
             readonly property int nummer: modelData ? modelData.id : 0
-            readonly property string app: root._singleLine(modelData?.appName || modelData?.desktopEntry || "", 80)
-            readonly property string titel: root._singleLine(modelData?.summary ?? "", 200)
-            readonly property string text: root._plainText(modelData?.body ?? "", 2000)
+            readonly property string app: Bereinigen.singleLine(modelData?.appName || modelData?.desktopEntry || "", 80)
+            readonly property string titel: Bereinigen.singleLine(modelData?.summary ?? "", 200)
+            readonly property string text: Bereinigen.plainText(modelData?.body ?? "", 2000)
             readonly property string symbol: root._iconSource(modelData?.appIcon ?? "")
             readonly property string bild: root._imageSource(modelData?.image ?? "")
             readonly property bool dringend: modelData?.urgency === NotificationUrgency.Critical
             readonly property bool fluechtig: modelData?.transient ?? false
             readonly property var standardAktion: Array.from(modelData?.actions ?? []).find(a => a.identifier === "default") ?? null
-            readonly property var aktionen: Array.from(modelData?.actions ?? []).filter(a => a.identifier !== "default" && (a.text ?? "").length > 0)
+            // Nur Kennung und bereinigte Beschriftung; ausgelöst wird über aktionAusfuehren
+            readonly property var aktionen: Array.from(modelData?.actions ?? []).filter(a => a.identifier !== "default").map(a => ({
+                        identifier: String(a.identifier ?? ""),
+                        text: Bereinigen.actionLabel(a.text ?? "", 40)
+                    })).filter(a => a.text.length > 0)
 
             property date ankunft: new Date()
             property var zugestelltUm: null
@@ -487,29 +493,5 @@ Singleton {
             return name && Quickshell.hasThemeIcon(name) ? image : "";
         }
         return image;
-    }
-
-    // Text ohne Markup: bekannte Auszeichnungen entfernen, Entitäten auflösen, Steuer- und
-    // Richtungszeichen entfernen. Dargestellt wird er immer als reiner Text.
-    function _plainText(value: string, max: int): string {
-        let t = String(value ?? "");
-        t = t.replace(/<br\s*\/?>/gi, "\n");
-        t = t.replace(/<\/?(b|i|u|s|a|img|span|p|font|small|big|em|strong|tt|code)(\s[^<>]*)?\/?>/gi, "");
-        t = t.replace(/&(amp|lt|gt|quot|apos|#39|#34);/g, m => ({
-                    "&amp;": "&",
-                    "&lt;": "<",
-                    "&gt;": ">",
-                    "&quot;": "\"",
-                    "&apos;": "'",
-                    "&#39;": "'",
-                    "&#34;": "\""
-                })[m]);
-        t = t.replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000b-\u001f\u007f‪-‮⁦-⁩]/g, "");
-        t = t.replace(/\n{3,}/g, "\n\n").trim();
-        return t.length > max ? t.slice(0, max - 1) + "…" : t;
-    }
-
-    function _singleLine(value: string, max: int): string {
-        return _plainText(value, max).replace(/\s*\n\s*/g, " ");
     }
 }

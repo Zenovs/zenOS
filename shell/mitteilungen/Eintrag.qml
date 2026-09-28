@@ -155,7 +155,8 @@ Item {
                     Chip {
                         required property var modelData
 
-                        text: String(modelData?.text ?? "").slice(0, 40)
+                        // im Dienst bereinigt und gekürzt (bereinigen.js)
+                        text: String(modelData?.text ?? "")
                         variante: "umrandet"
                         onClicked: root.aktion(modelData.identifier)
                     }

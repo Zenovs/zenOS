@@ -195,6 +195,7 @@ PanelWindow {
                         Layout.fillWidth: true
                         visible: fenster.zustandName !== ""
                         text: "Zustand «" + fenster.zustandName + "»" + (Dienste.Zustaende.restMinuten >= 0 ? " · noch " + Dienste.Zustaende.restMinuten + " Min." : "")
+                        textFormat: Text.PlainText
                         color: Theme.gedaempft
                         font.family: Theme.schriftMono
                         font.pixelSize: Theme.groesseKlein
