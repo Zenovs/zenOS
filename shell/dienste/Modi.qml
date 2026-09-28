@@ -12,7 +12,8 @@ import "../modi/zustandslogik.js" as Logik
 // Ein Wechsel setzt den Akzent (Erscheinung liest Modi.aktiv), setzt das Raster des aktuellen
 // Bildschirm-Profils, startet Zustände mit dem Auslöser «moduswechsel» und öffnet die Apps des Modus.
 // Das Chrome-Profil nimmt zenos-chrome beim Start von Chrome aus laufzeit.json; die Apps starten
-// deshalb erst, wenn dort der neue Modus steht.
+// deshalb erst, wenn dort der neue Modus steht. Chrome öffnet auch dann, wenn schon ein Chrome-Fenster
+// da ist, nur nicht in diesem Profil (alle Profile haben dieselbe appId).
 Singleton {
     id: root
 
@@ -94,6 +95,11 @@ Singleton {
     // Offene Fenster (für «Beim Wechsel öffnen»). Schon beim Start gebunden: ToplevelManager füllt sich
     // erst nach dem ersten Zugriff, asynchron. Im Greeter (ohne Konfiguration) nicht.
     readonly property var _windows: Konfig.verfuegbar ? ToplevelManager.toplevels : null
+    // Chrome-Fenster mit dem Profil, in dem sie vermutlich laufen: dem chromeProfil des Modus, der beim
+    // Erscheinen aktiv war (zenos-chrome startet Chrome in diesem Profil, auch beim Wechsel). Unter
+    // Wayland haben alle Chrome-Fenster dieselbe appId, das Profil sieht man ihnen nicht an.
+    // Einträge {fenster, profil}; geschlossene fallen bei der nächsten Änderung der Liste heraus.
+    property var _chromeWindows: []
 
     // Ist die Datei des aktiven Modus weg (von Hand gelöscht, auch vor dem Start), gilt kein Modus
     // mehr, wie beim Löschen in den Einstellungen. Nicht, solange zenos-konfig ihn noch schreibt
@@ -138,12 +144,54 @@ Singleton {
                 console.warn("Modi: App nicht gefunden (Beim Wechsel öffnen)");
                 continue;
             }
-            // Läuft sie schon, nicht noch einmal öffnen (ruhig bleiben)
+            // Läuft sie schon, nicht noch einmal öffnen (ruhig bleiben). Ausnahme Chrome über
+            // zenos-chrome mit einem Profil im Modus: nur, wenn schon ein Fenster in diesem Profil offen
+            // ist; sonst öffnet zenos-chrome ein Fenster im Profil des neuen Modus.
             const kennungen = [entry.id, entry.startupClass, id].filter(k => typeof k === "string" && k.length > 0).map(k => k.toLowerCase().replace(/\.desktop$/, ""));
-            if (offen.some(a => kennungen.indexOf(a) >= 0))
-                continue;
+            if (offen.some(a => kennungen.indexOf(a) >= 0)) {
+                const profil = _chromeProfile(modus);
+                if (profil === "" || !_viaZenosChrome(entry) || _chromeOpenIn(profil))
+                    continue;
+            }
             Aktionen.appStarten(entry);
         }
+    }
+
+    function _chromeProfile(modus: var): string {
+        return typeof modus?.chromeProfil === "string" ? modus.chromeProfil.trim() : "";
+    }
+
+    // Startet der Eintrag Chrome über zenos-chrome (nur dann gilt das Profil des Modus)?
+    function _viaZenosChrome(entry: var): bool {
+        const befehl = entry?.command ?? [];
+        return befehl.length > 0 && /(^|\/)zenos-chrome$/.test(String(befehl[0]));
+    }
+
+    function _isChrome(fenster: var): bool {
+        return /^google-chrome/.test((fenster?.appId ?? "").toLowerCase());
+    }
+
+    // Ist ein Chrome-Fenster offen, das im Profil (Anzeigename) erschienen ist?
+    function _chromeOpenIn(profil: string): bool {
+        const offen = _windows?.values ?? [];
+        const p = profil.toLowerCase();
+        return _chromeWindows.some(e => e.profil.toLowerCase() === p && offen.indexOf(e.fenster) >= 0);
+    }
+
+    // Neue Chrome-Fenster mit dem Profil des aktiven Modus merken, geschlossene vergessen
+    function _trackChromeWindows(): void {
+        const offen = _windows?.values ?? [];
+        const bleibt = _chromeWindows.filter(e => offen.indexOf(e.fenster) >= 0);
+        const profil = _chromeProfile(aktiv);
+        for (const t of offen) {
+            if (_isChrome(t) && !bleibt.some(e => e.fenster === t))
+                bleibt.push({
+                    fenster: t,
+                    profil: profil
+                });
+        }
+        if (bleibt.length !== _chromeWindows.length || bleibt.some((e, i) => _chromeWindows[i] !== e))
+            _chromeWindows = bleibt;
     }
 
     function _applyRaster(modus: var): void {
@@ -163,6 +211,14 @@ Singleton {
             return;
         if (typeof Raster.setzen === "function")
             Raster.setzen(rasterId);
+    }
+
+    Connections {
+        target: root._windows
+
+        function onValuesChanged(): void {
+            root._trackChromeWindows();
+        }
     }
 
     Connections {

@@ -11,17 +11,22 @@ import qs.dienste
 // Ausgang oder «*») und meldet es per IPC «freigabe» (gewaehlt, gestartet, beendet).
 // Der Marker hält den Zustand auch über einen Neustart der Oberfläche. «gewaehlt» kommt schon aus der
 // Bildschirmwahl, bevor das Portal den Stream anlegt (es wartet nicht auf exec_before).
+// Nachlauf: zenos-freigabe löscht den Marker erst 3 s nach dem Ende (Chrome öffnet beim Klick auf
+// «Teilen» gleich eine zweite Sitzung). Endet die Freigabe hier trotzdem (leerer Marker, «beendet»),
+// bleibt «aktiv» noch 2 s stehen; beginnt in der Zeit eine neue, geht es nahtlos weiter. So enden
+// Sitzung und Zurückhalten nie zwischen zwei Streams.
 Singleton {
     id: root
 
-    // true, solange etwas geteilt wird (ab der Wahl des Bildschirms)
-    readonly property bool aktiv: _outputs.length > 0 || _ipcActive || _chosen !== ""
+    // true, solange etwas geteilt wird (ab der Wahl des Bildschirms) und noch 2 s danach. Wird nur in
+    // _update gesetzt und vom Nachlauf gelöscht, nie kurz zwischendurch.
+    readonly property bool aktiv: _active
     // Beginn der Freigabe; ungültig, solange nichts geteilt wird
     property date seit: new Date(NaN)
-    // Geteilte Ausgänge, z. B. ["HDMI-A-1"]; «*» = unbekannt
-    readonly property var ausgaenge: _shown
+    // Geteilte Ausgänge, z. B. ["HDMI-A-1"]; «*» = unbekannt. Im Nachlauf die zuletzt geteilten.
+    readonly property var ausgaenge: _shown.length > 0 ? _shown : (_active ? _lastShown : [])
     // Unbekannt, welcher Bildschirm geteilt wird: dann gelten alle als geteilt
-    readonly property bool alleBildschirme: aktiv && (_shown.length === 0 || _shown.indexOf("*") >= 0)
+    readonly property bool alleBildschirme: aktiv && (ausgaenge.length === 0 || ausgaenge.indexOf("*") >= 0)
 
     // IPC «freigabe gewaehlt <ausgang>»: Bildschirm gewählt, die Freigabe beginnt gleich. Gilt, bis
     // exec_before den Marker setzt; kommt der nicht (das Portal brach nach der Wahl ab), verfällt sie.
@@ -30,32 +35,37 @@ Singleton {
             return;
         _chosen = ausgang;
         chosenExpiry.restart();
+        _update();
     }
 
     // IPC «freigabe gestartet»
     function gestartet(): void {
         _ipcActive = true;
         marker.reload();
+        _update();
     }
 
-    // IPC «freigabe beendet»
+    // IPC «freigabe beendet». Eine Wahl bleibt: Sie gehört zu einer Freigabe, die gleich beginnt
+    // (sie verfällt von selbst oder geht im Marker auf).
     function beendet(): void {
         _ipcActive = false;
-        _chosen = "";
-        chosenExpiry.stop();
         marker.reload();
+        _update();
     }
 
     // Wird dieser Bildschirm (Name des Ausgangs) gerade geteilt? (ab der Wahl, vor dem Marker)
     function betrifft(ausgang: string): bool {
-        return aktiv && (alleBildschirme || _shown.indexOf(ausgang) >= 0);
+        return aktiv && (alleBildschirme || ausgaenge.indexOf(ausgang) >= 0);
     }
 
+    property bool _active: false
     property bool _ipcActive: false
     property var _outputs: []
     // Gewählter Ausgang, bevor der Marker da ist
     property string _chosen: ""
     readonly property var _shown: _outputs.length > 0 ? _outputs : (_chosen !== "" ? [_chosen] : [])
+    // Zuletzt geteilte Ausgänge (für den Rahmen im Nachlauf)
+    property var _lastShown: []
 
     function _read(text: string): void {
         const list = (text ?? "").split("\n").map(s => s.trim()).filter(s => /^(\*|[A-Za-z0-9._-]{1,64})$/.test(s));
@@ -67,23 +77,50 @@ Singleton {
             _chosen = "";
             chosenExpiry.stop();
         }
-        // Leer wird der Marker nur durch «zenos-freigabe ende»: vorbei, auch wenn die IPC-Meldung
-        // danach nicht ankommt (z. B. Portal gerade neu gestartet)
-        if (ended) {
+        // Leer wird der Marker nur durch zenos-freigabe (Ende nach dem Nachlauf, Zurücksetzen): die
+        // gemeldete Freigabe ist vorbei, auch wenn die IPC-Meldung danach nicht ankommt
+        if (ended)
             _ipcActive = false;
-            _chosen = "";
-            chosenExpiry.stop();
+        _update();
+    }
+
+    // «aktiv» sofort an; aus erst, wenn der Nachlauf abläuft, ohne dass etwas Neues kam
+    function _update(): void {
+        if (_shown.length > 0 && JSON.stringify(_shown) !== JSON.stringify(_lastShown))
+            _lastShown = _shown;
+        if (_outputs.length > 0 || _ipcActive || _chosen !== "") {
+            afterglow.stop();
+            if (!_active)
+                _active = true;
+        } else if (_active && !afterglow.running) {
+            afterglow.restart();
         }
     }
 
     onAktivChanged: seit = aktiv ? new Date() : new Date(NaN)
+
+    // Nachlauf der Oberfläche (zusätzlich zu den 3 s von zenos-freigabe)
+    Timer {
+        id: afterglow
+
+        interval: 2000
+        onTriggered: {
+            if (root._outputs.length > 0 || root._ipcActive || root._chosen !== "")
+                return;
+            root._active = false;
+            root._lastShown = [];
+        }
+    }
 
     // exec_before folgt der Wahl sofort (im Container nach rund 10 ms); 10 s reichen auch unter Last
     Timer {
         id: chosenExpiry
 
         interval: 10000
-        onTriggered: root._chosen = ""
+        onTriggered: {
+            root._chosen = "";
+            root._update();
+        }
     }
 
     FileView {

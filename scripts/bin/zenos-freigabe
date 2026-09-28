@@ -3,39 +3,55 @@
 # system/portal/xdpw.conf).
 #
 #   zenos-freigabe start          exec_before: Freigabe beginnt (Marker setzen, Oberfläche benachrichtigen)
-#   zenos-freigabe ende           exec_after: Freigabe endet
+#   zenos-freigabe ende           exec_after: Freigabe endet, nach einem Nachlauf von 3 s
 #   zenos-freigabe waehlen        chooser_cmd: Bildschirm mit slurp wählen, Oberfläche benachrichtigen,
 #                                 «Monitor: <Ausgang>» ausgeben
-#   zenos-freigabe zuruecksetzen  Portal beendet (auch Absturz): Marker und Wahl löschen, Oberfläche
-#                                 benachrichtigen
+#   zenos-freigabe zuruecksetzen  Portal beendet oder startet neu: Marker und Wahl sofort löschen,
+#                                 Oberfläche benachrichtigen
 #   zenos-freigabe status         «aktiv N» oder «inaktiv»
 #
 # Marker: $XDG_RUNTIME_DIR/zenos/freigabe, eine Zeile je geteiltem Ausgang (oder «*», wenn er nicht
-# bekannt ist). Die Oberfläche (freigabe/Freigabe.qml) liest ihn beim Start und beobachtet ihn;
-# zusätzlich meldet zenos-ipc freigabe gewaehlt|gestartet|beendet sofort.
+# bekannt ist). Die Oberfläche (dienste/Freigabe.qml) liest ihn beim Start und beobachtet ihn;
+# zusätzlich meldet zenos-ipc freigabe gewaehlt|gestartet|beendet sofort. Intern stehen die Einträge
+# mit ihrem Aufrufzeitpunkt in freigabe-eintraege; sie gelten nur, solange der Marker besteht
+# (zenos-sitzung löscht bei der Anmeldung nur ihn).
+#
+# Nachlauf: Chrome schliesst beim Klick auf «Teilen» die Sitzung der Vorschau und öffnet sofort eine
+# zweite, ohne Bildschirmwahl (in der VM bei jeder Freigabe; wie Chrome das ohne XDPW_PERSIST_MODE
+# erreicht, ist offen). xdpw ruft dazwischen exec_after und dann exec_before auf, beide per Doppel-fork,
+# ohne zu warten; in der VM fehlte der Marker so 0,6–1,8 s, während der neue Stream schon lief. «ende»
+# löscht den Marker deshalb erst 3 s später, und nur, wenn seither keine neue Freigabe begonnen hat:
+# Die Einträge einer neuen Freigabe bleiben, der Marker ist in der Zwischenzeit nie leer. Ob etwas
+# «seither» begann, entscheidet der Aufrufzeitpunkt (Startzeit des von xdpw gestarteten Prozesses),
+# nicht die Reihenfolge, in der die Skripte an die Sperre kommen: xdpw startet sie nacheinander.
+# Ein noch laufendes «start» und eine frische Wahl nach dem Ende hält der Nachlauf ebenfalls ab.
+#
+# Auf den Chooser wartet xdpw dagegen: Die Wahl meldet die Freigabe (IPC «gewaehlt»), bevor der Stream
+# beginnt; exec_before setzt danach den Marker. Ohne Wahl und ohne vorausgehende Sitzung (gespeichertes
+# Token) bleibt es beim Wettlauf. exec_before läuft nur für die erste von mehreren gleichzeitigen
+# Freigaben, exec_after erst nach der letzten: Eine Wahl während einer laufenden Freigabe trägt ihren
+# Ausgang selbst ein, und «ende» betrifft alles, was vor ihm begann.
 #
 # Stürzt das Portal während einer Freigabe ab (oder wird es beendet), kommt exec_after nicht mehr.
-# Das Drop-in system/systemd/user/xdg-desktop-portal-wlr.service.d/zenos.conf ruft deshalb nach jedem
-# Ende des Dienstes «zuruecksetzen» auf: Mit dem Prozess des Portals verschwindet auch jeder Stream.
-# systemd startet einen neuen Portal-Prozess erst, wenn das durchgelaufen ist; eine neue Freigabe
-# kann den Marker also nicht vorher gesetzt haben.
-#
-# xdg-desktop-portal-wlr 0.8 wartet nicht auf exec_before (Doppel-fork) und legt den Stream gleich
-# danach an; im Container zeigte das erste Bild noch eine Mitteilung mit Inhalt. Auf den Chooser
-# wartet es dagegen. Deshalb meldet schon die Wahl die Freigabe (IPC «gewaehlt»), bevor der Stream
-# beginnt; exec_before setzt danach den Marker. Ohne Wahl (gespeichertes Token, das xdpw nur mit
-# XDPW_PERSIST_MODE ausgibt; zenOS setzt das nicht) bleibt es beim Wettlauf.
-# exec_before läuft nur für die erste von mehreren gleichzeitigen Freigaben, exec_after erst nach
-# der letzten: Eine Wahl während einer laufenden Freigabe trägt ihren Ausgang selbst ein, und «ende»
-# leert den Marker ganz.
+# Das Drop-in system/systemd/user/xdg-desktop-portal-wlr.service.d/zenos.conf ruft «zuruecksetzen»
+# deshalb nach jedem Ende des Dienstes auf (ExecStopPost) und vor jedem Start (ExecStartPre): Nach
+# «systemctl kill» (SIGKILL an die ganze cgroup) tötet systemd 259 auch ExecStopPost sofort. Mit dem
+# Prozess des Portals verschwindet jeder Stream, und vor seinem Start gibt es noch keinen.
 
 set -euo pipefail
 
 laufzeit=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
 ordner=$laufzeit/zenos
 marker=$ordner/freigabe
+eintraege=$ordner/freigabe-eintraege
+ende_datei=$ordner/freigabe-ende
 wahl=$ordner/freigabe-wahl
 bin=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
+
+# Sekunden, die «ende» wartet, bevor es den Marker löscht (Leitplanke, nicht einstellbar)
+readonly NACHLAUF=3
+# So lange gilt eine Wahl als frisch (exec_before folgt ihr sofort)
+readonly WAHL_FRISCH=10
 
 meldung() { printf 'zenos-freigabe: %s\n' "$*" >&2; }
 
@@ -46,13 +62,17 @@ ordner_bereit() {
   fi
 }
 
-# Führt den Rest der Zeile unter einer Sperre aus (start/ende/waehlen können gleichzeitig laufen)
+# Führt den Rest der Zeile unter einer Sperre aus (start/ende/waehlen können gleichzeitig laufen) und
+# gibt dessen Rückgabewert weiter
 gesperrt() {
+  local rc=0
   ordner_bereit
   exec {sperre}>> "$ordner/freigabe.lock"
   flock -w 5 "$sperre" || meldung "Sperre nicht erhalten, fahre trotzdem fort"
-  "$@"
+  "$@" || rc=$?
   flock -u "$sperre" || true
+  exec {sperre}>&-
+  return "$rc"
 }
 
 ausgang_gueltig() { [[ "$1" =~ ^[A-Za-z0-9._-]{1,64}$ ]]; }
@@ -64,65 +84,194 @@ melden() {
   timeout 5 "$ipc" freigabe "$@" >/dev/null 2>&1
 }
 
+# Aufrufzeitpunkt «Takte PID»: Startzeit (Kernel-Takte seit dem Boot, Feld 22 von /proc/PID/stat)
+# und PID des Prozesses, den xdpw gestartet hat. Das ist «sh -c <Befehl>» (dash führt den Befehl in
+# einem Kindprozess aus), sonst dieser Prozess selbst.
+stempel() {
+  local pid=$$ name="" zeile
+  local -a f
+  read -r name 2>/dev/null < "/proc/$PPID/comm" || true
+  if [[ "$name" == sh || "$name" == dash ]]; then pid=$PPID; fi
+  read -r zeile 2>/dev/null < "/proc/$pid/stat" || return 1
+  # Der Name in Klammern kann Leerzeichen enthalten; danach folgt Feld 3
+  read -r -a f <<< "${zeile##*) }"
+  [[ "${f[19]:-}" =~ ^[0-9]+$ ]] || return 1
+  printf '%s %s\n' "${f[19]}" "$pid"
+}
+
+# neuer A B: Ist Stempel A später als Stempel B? Bei gleichem Takt entscheidet die PID (fortlaufend
+# vergeben; ein Überlauf nach pid_max zählt als später).
+neuer() {
+  local -a a b
+  read -r -a a <<< "$1"
+  read -r -a b <<< "$2"
+  [[ "${a[0]:-}" =~ ^[0-9]+$ && "${a[1]:-}" =~ ^[0-9]+$ && "${b[0]:-}" =~ ^[0-9]+$ && "${b[1]:-}" =~ ^[0-9]+$ ]] || return 1
+  if (( a[0] != b[0] )); then
+    (( a[0] > b[0] ))
+    return
+  fi
+  local d=$(( a[1] - b[1] ))
+  (( (d > 0 && d < 2097152) || d < -2097152 ))
+}
+
 marker_schreiben() {
   printf '%s\n' "$@" > "$marker.neu"
   mv -f -- "$marker.neu" "$marker"
 }
 
-_start() {
-  local ausgang="*" jetzt alter
-  if [[ -f "$wahl" ]]; then
-    jetzt=$(date +%s)
-    alter=$(stat -c %Y -- "$wahl" 2>/dev/null || echo 0)
-    ausgang=$(head -n 1 -- "$wahl" 2>/dev/null || true)
-    rm -f -- "$wahl"
-    # Eine alte Wahl (z. B. abgebrochene Freigabe) zählt nicht
-    if (( jetzt - alter > 120 )) || ! ausgang_gueltig "$ausgang"; then ausgang="*"; fi
+# Einträge («Takte PID Ausgang») nach E lesen. Ohne Marker gelten sie nicht. Ein Marker ohne Einträge
+# (von einem älteren Stand) zählt als früher begonnen als alles andere.
+eintraege_lesen() {
+  local z
+  E=()
+  [[ -s "$marker" ]] || return 0
+  if [[ -s "$eintraege" ]]; then
+    while IFS= read -r z; do
+      [[ "$z" =~ ^[0-9]+\ [0-9]+\ (\*|[A-Za-z0-9._-]{1,64})$ ]] && E+=("$z")
+    done < "$eintraege"
   fi
-  printf '%s\n' "$ausgang" >> "$marker"
+  if (( ${#E[@]} == 0 )); then
+    while IFS= read -r z; do
+      [[ "$z" == "*" ]] || ausgang_gueltig "$z" && E+=("0 0 $z")
+    done < "$marker"
+  fi
+  return 0
 }
 
-# exec_after kommt erst nach der letzten Freigabe: alles ist zu Ende
-_ende() {
-  rm -f -- "$marker" "$marker.neu"
-}
-
-# Gewählten Ausgang festhalten; «start» übernimmt ihn in den Marker. Steht schon etwas im Marker,
-# läuft eine Freigabe, und xdpw ruft exec_before nicht noch einmal auf: dann gleich eintragen
-# (einen unbekannten Ausgang «*» ersetzen, falls exec_before vor der Wahl lief).
-_wahl_merken() {
-  local ausgang=$1 i
-  local -a zeilen=()
-  if [[ -s "$marker" ]]; then
-    mapfile -t zeilen < "$marker"
-    for (( i = ${#zeilen[@]} - 1; i >= 0; i-- )); do
-      if [[ "${zeilen[i]}" == "*" ]]; then
-        zeilen[i]=$ausgang
-        marker_schreiben "${zeilen[@]}"
-        return 0
-      fi
-    done
-    for (( i = 0; i < ${#zeilen[@]}; i++ )); do
-      [[ "${zeilen[i]}" == "$ausgang" ]] && return 0
-    done
-    marker_schreiben "${zeilen[@]}" "$ausgang"
+# E zurückschreiben: Einträge und Marker (jeder Ausgang einmal). Leer: beides löschen.
+eintraege_schreiben() {
+  local z a
+  local -a ausg=()
+  if (( ${#E[@]} == 0 )); then
+    rm -f -- "$marker" "$marker.neu" "$eintraege" "$eintraege.neu"
     return 0
   fi
-  printf '%s\n' "$ausgang" > "$wahl"
+  printf '%s\n' "${E[@]}" > "$eintraege.neu"
+  mv -f -- "$eintraege.neu" "$eintraege"
+  for z in "${E[@]}"; do
+    a=${z##* }
+    [[ " ${ausg[*]} " == *" $a "* ]] || ausg+=("$a")
+  done
+  marker_schreiben "${ausg[@]}"
+}
+
+# Stempel des letzten «ende», dessen Nachlauf läuft, oder leer
+ende_offen() {
+  local e=""
+  if [[ -s "$ende_datei" ]]; then read -r e < "$ende_datei" || true; fi
+  printf '%s' "$e"
+}
+
+# Läuft eine Freigabe, die nach dem letzten «ende» begann?
+laeuft() {
+  local e z
+  e=$(ende_offen)
+  for z in "${E[@]}"; do
+    if [[ -z "$e" ]] || neuer "${z% *}" "$e"; then return 0; fi
+  done
+  return 1
+}
+
+# Frische Wahl (Ausgang in E_WAHL), getroffen nach Stempel $1 (leer: egal wann)?
+wahl_frisch() {
+  local w_ausgang="" w_stempel="" alter
+  E_WAHL=""
+  [[ -f "$wahl" ]] || return 1
+  { read -r w_ausgang || true; read -r w_stempel || true; } < "$wahl"
+  alter=$(( $(date +%s) - $(stat -c %Y -- "$wahl" 2>/dev/null || echo 0) ))
+  (( alter >= 0 && alter <= WAHL_FRISCH )) || return 1
+  ausgang_gueltig "$w_ausgang" || return 1
+  if [[ -n "${1:-}" ]] && ! neuer "$w_stempel" "$1"; then return 1; fi
+  E_WAHL=$w_ausgang
+}
+
+_start() {
+  local s=$1 ausgang="*"
+  local -a E
+  eintraege_lesen
+  if wahl_frisch ""; then ausgang=$E_WAHL; fi
+  rm -f -- "$wahl"
+  E+=("$s $ausgang")
+  eintraege_schreiben
+}
+
+_ende_merken() {
+  local e=$1 alt
+  alt=$(ende_offen)
+  if [[ -n "$alt" ]] && neuer "$alt" "$e"; then return 0; fi
+  printf '%s\n' "$e" > "$ende_datei"
+}
+
+# Nach dem Nachlauf: 0 = zu Ende (Oberfläche benachrichtigen), 1 = nichts mehr zu tun (eine neue
+# Freigabe läuft, ein späteres «ende» oder das Zurücksetzen hat übernommen), 2 = später nochmals
+_ende_abschliessen() {
+  local e=$1 z
+  local -a E rest=()
+  [[ "$(ende_offen)" == "$e" ]] || return 1
+  # Ein «start», der noch nicht eingetragen ist (xdpw wartet nicht auf ihn)
+  if pgrep -u "$(id -u)" -f -- 'zenos-freigabe start$' >/dev/null 2>&1; then return 2; fi
+  eintraege_lesen
+  for z in "${E[@]}"; do
+    if neuer "${z% *}" "$e"; then rest+=("$z"); fi
+  done
+  if (( ${#rest[@]} > 0 )); then
+    E=("${rest[@]}")
+    eintraege_schreiben
+    rm -f -- "$ende_datei"
+    return 1
+  fi
+  # Nach dem Ende gewählt: exec_before folgt gleich, bis dahin bleibt der Marker
+  if wahl_frisch "$e"; then return 2; fi
+  E=()
+  eintraege_schreiben
+  # Eine Wahl von vor dem Ende gehört zu keiner Freigabe mehr
+  rm -f -- "$ende_datei" "$wahl"
+  return 0
+}
+
+# Gewählten Ausgang festhalten; «start» übernimmt ihn in den Marker. Läuft schon eine Freigabe, ruft
+# xdpw exec_before nicht noch einmal auf: dann gleich eintragen.
+_wahl_merken() {
+  local w=$1 ausgang=$2
+  local -a E
+  eintraege_lesen
+  if laeuft; then
+    E+=("$w $ausgang")
+    eintraege_schreiben
+    return 0
+  fi
+  printf '%s\n%s\n' "$ausgang" "$w" > "$wahl.neu"
+  mv -f -- "$wahl.neu" "$wahl"
 }
 
 befehl_start() {
-  gesperrt _start
+  local s
+  s=$(stempel) || s="999999999999 $$"
+  gesperrt _start "$s"
   melden gestartet || true
 }
 
 befehl_ende() {
-  gesperrt _ende
-  melden beendet || true
+  local e rc i
+  # Ohne Stempel nichts löschen, was später begonnen haben könnte
+  e=$(stempel) || e="0 $$"
+  gesperrt _ende_merken "$e"
+  sleep "$NACHLAUF"
+  for (( i = 0; i < 40; i++ )); do
+    rc=0
+    gesperrt _ende_abschliessen "$e" || rc=$?
+    case $rc in
+      0) melden beendet || true; return 0 ;;
+      1) return 0 ;;
+    esac
+    sleep 0.5
+  done
+  meldung "Freigabe nach dem Ende nicht abgeschlossen, Marker bleibt"
 }
 
 befehl_waehlen() {
-  local ausgang
+  local ausgang w
+  w=$(stempel) || w="999999999999 $$"
   if ! command -v slurp >/dev/null 2>&1; then
     meldung "slurp fehlt"
     exit 1
@@ -134,7 +283,7 @@ befehl_waehlen() {
     meldung "unerwartete Ausgabe von slurp"
     exit 1
   fi
-  gesperrt _wahl_merken "$ausgang"
+  gesperrt _wahl_merken "$w" "$ausgang"
   # Vor der Ausgabe melden: xdpw legt den Stream erst an, wenn der Chooser endet. zenos-ipc kehrt
   # zurück, sobald die Oberfläche die Meldung verarbeitet hat; das Bild ohne Inhalte folgt ein bis
   # zwei Bildwechsel später, deshalb kurz warten.
@@ -148,20 +297,34 @@ befehl_status() {
   if (( n > 0 )); then echo "aktiv $n"; else echo "inaktiv"; fi
 }
 
-# Wie «ende», nur ohne exec_after: Marker, halb geschriebenen Marker und eine offene Wahl löschen.
-# SERVICE_RESULT und EXIT_STATUS setzt systemd für ExecStopPost (z. B. «signal SEGV»).
+# Wie «ende» ohne Nachlauf (ohne Portal gibt es keinen Stream): alles löschen. SERVICE_RESULT und
+# EXIT_STATUS setzt systemd für ExecStopPost (z. B. «signal SEGV»), für ExecStartPre nicht.
+# Rückgabe 0, wenn es etwas zurückzusetzen gab.
 _zuruecksetzen() {
+  local da=1
   if [[ -s "$marker" ]]; then
-    meldung "Portal beendet${SERVICE_RESULT:+ ($SERVICE_RESULT${EXIT_STATUS:+ $EXIT_STATUS})}, Freigabe zurückgesetzt"
+    if [[ -n "${SERVICE_RESULT:-}" ]]; then
+      meldung "Portal beendet ($SERVICE_RESULT${EXIT_STATUS:+ $EXIT_STATUS}), Freigabe zurückgesetzt"
+    else
+      meldung "Freigabe zurückgesetzt"
+    fi
+    da=0
   fi
-  rm -f -- "$marker" "$marker.neu" "$wahl"
+  [[ -e "$wahl" || -e "$ende_datei" ]] && da=0
+  rm -f -- "$marker" "$marker.neu" "$eintraege" "$eintraege.neu" "$ende_datei" "$wahl" "$wahl.neu"
+  return "$da"
 }
 
-# Die Oberfläche immer benachrichtigen, auch ohne Marker: Sie könnte eine Wahl ohne Marker halten.
-# Ohne laufende Oberfläche kehrt zenos-ipc sofort zurück.
+# Die Oberfläche benachrichtigen, wenn es etwas zurückzusetzen gab (sonst kehrt das Portal ohne
+# Verzögerung zurück)
 befehl_zuruecksetzen() {
-  if [[ -d "$ordner" ]]; then gesperrt _zuruecksetzen; fi
-  melden beendet || true
+  local rc=1
+  if [[ -d "$ordner" ]]; then
+    rc=0
+    gesperrt _zuruecksetzen || rc=$?
+  fi
+  if (( rc == 0 )); then melden beendet || true; fi
+  return 0
 }
 
 case "${1:-}" in

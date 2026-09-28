@@ -16,8 +16,8 @@ modul_system() {
   # exec_before/exec_after melden jede Freigabe an zenos-freigabe (Pfade unter /opt/zenos)
   datei_installieren "$ZENOS_CODE/system/portal/xdpw.conf" /etc/xdg/xdg-desktop-portal-wlr/config
 
-  # Endet das Portal ohne exec_after (Absturz), setzt zenos-freigabe die Freigabe zurück. Ein laufendes
-  # Portal übernimmt das nach daemon-reload ohne Neustart.
+  # Endet das Portal ohne exec_after (Absturz), setzt zenos-freigabe die Freigabe zurück, beim Ende und
+  # beim nächsten Start des Portals. Ein laufendes Portal übernimmt das nach daemon-reload ohne Neustart.
   datei_installieren "$ZENOS_CODE/system/systemd/user/xdg-desktop-portal-wlr.service.d/zenos.conf" \
     /etc/systemd/user/xdg-desktop-portal-wlr.service.d/zenos.conf
   systemd_neu_laden
@@ -62,7 +62,8 @@ _zustaende_enthaelt() {
 }
 
 # Läuft das Portal schon (Sitzung aktiv) und ist die Konfiguration neuer, neu starten – aber nie
-# während einer laufenden Freigabe. Kein Zähler: Das ist keine Änderung am System.
+# während einer laufenden Freigabe (auch nicht im Nachlauf nach ihrem Ende: der Marker steht dann
+# noch). Kein Zähler: Das ist keine Änderung am System.
 _zustaende_portal_neu_laden() {
   local einheit=xdg-desktop-portal-wlr.service conf=/etc/xdg/xdg-desktop-portal-wlr/config
   local laufzeit=${XDG_RUNTIME_DIR:-/run/user/$EUID} seit_text seit geaendert
