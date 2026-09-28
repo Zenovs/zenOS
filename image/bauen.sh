@@ -45,6 +45,15 @@ Aufruf: sudo image/bauen.sh [optionen]
 EOF
 }
 
+# Eigener, privater Mount-Namensraum: Die Einhängepunkte des Images bleiben für den Host und seine Dienste
+# unsichtbar und verschwinden spätestens mit dem Ende des Skripts. Sonst übernehmen Dienste mit eigenem
+# Namensraum (auf dem GitHub-Runner z. B. systemd-resolved, systemd-logind, ModemManager) eine Kopie und
+# halten das Loop-Gerät fest; e2fsck meldet es beim Verkleinern dann als belegt.
+if (( EUID == 0 )) && [[ "${ZENOS_BAU_NAMENSRAUM:-}" != 1 ]] && command -v unshare >/dev/null; then
+  export ZENOS_BAU_NAMENSRAUM=1
+  exec unshare --mount --propagation private -- bash "${BASH_SOURCE[0]}" "$@"
+fi
+
 # --- Optionen --------------------------------------------------------------
 
 opt_ref=HEAD
