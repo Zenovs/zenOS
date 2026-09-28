@@ -97,9 +97,13 @@ Scope {
         },
         {
             id: "apps",
-            titel: "Apps installieren",
+            titel: "Apps verwalten",
+            // wenn die Suche nach dem Installieren fragt (Wort «installieren» oder eine fehlende App)
+            titelInstallieren: "Apps installieren",
             symbol: "plus",
-            woerter: "apps installieren programme chrome vscode code 1password"
+            woerter: "apps programme verwalten installieren",
+            // Apps aus «zen apps»: zählen nur, solange keine installierte App zur Suche passt
+            appNamen: "chrome vscode code 1password coremail"
         }
     ]
 
@@ -149,6 +153,10 @@ Scope {
     }
 
     function oeffnen(werkzeugeZuerst: bool): void {
+        // Nicht während der Einrichtung: Was das Befehlsfeld öffnet (Einstellungen, Apps), läge
+        // unsichtbar hinter ihrer Vollfläche, und die Tastatur bliebe bei ihr
+        if (Oberflaeche.einrichtungOffen)
+            return;
         if (!offen)
             Oberflaeche.befehlsfeldOffen = true;
         werkzeugModus = werkzeugeZuerst;
@@ -454,17 +462,22 @@ Scope {
         }
 
         const treffer = [];
+        // Passt eine installierte App (Web-Apps zählen nicht: sie starten über zenos-chrome)?
+        let appGefunden = false;
         for (const app of _apps) {
             const p = Suche.bewerten(app.felder, q);
-            if (p > 0)
+            if (p > 0) {
                 treffer.push({
                     punkte: p + Suche.nutzungBonus(daten, app.id),
                     name: app.name,
                     e: _appEintrag(app)
                 });
+                if (!app.webApp)
+                    appGefunden = true;
+            }
         }
         for (const a of aktionen) {
-            const roh = Suche.bewerten([
+            const felder = [
                 {
                     text: Suche.normalisieren(a.titel),
                     gewicht: 1
@@ -473,15 +486,30 @@ Scope {
                     text: a.woerter,
                     gewicht: 0.9
                 }
-            ], q);
+            ];
+            let roh = Suche.bewerten(felder, q);
+            // «chrome», «code» …: der Weg zur Installation nur, solange die App fehlt
+            const ueberAppNamen = roh === 0 && typeof a.appNamen === "string" && !appGefunden;
+            if (ueberAppNamen)
+                roh = Suche.bewerten(felder.concat([
+                    {
+                        text: a.appNamen,
+                        gewicht: 0.9
+                    }
+                ]), q);
             // Aktionen mit Folgen nur bei klaren Treffern (Anfang eines Worts)
             const p = roh * (a.gefahr === true ? 0.9 : 0.95);
-            if (p > 0 && (a.gefahr !== true || p >= 70))
-                treffer.push({
-                    punkte: p,
-                    name: a.titel,
-                    e: _aktionEintrag(a)
-                });
+            if (p <= 0 || (a.gefahr === true && p < 70))
+                continue;
+            const installieren = typeof a.titelInstallieren === "string" && (ueberAppNamen || Suche.woerter(q).some(w => Suche.wortBewerten("installieren", w) === 100));
+            const aktion = installieren ? Object.assign({}, a, {
+                titel: a.titelInstallieren
+            }) : a;
+            treffer.push({
+                punkte: p,
+                name: aktion.titel,
+                e: _aktionEintrag(aktion)
+            });
         }
         for (const w of werkzeuge) {
             const p = Suche.bewerten([
@@ -675,6 +703,12 @@ Scope {
         function onSperrenAngefordert(): void {
             root.schliessen();
         }
+
+        // Öffnet die Einrichtung (IPC), geht das Befehlsfeld zu (siehe oeffnen())
+        function onEinrichtungOffenChanged(): void {
+            if (Oberflaeche.einrichtungOffen)
+                root.schliessen();
+        }
     }
 
     IpcHandler {
@@ -697,6 +731,11 @@ Scope {
 
         function werkzeuge(): void {
             root.oeffnen(true);
+        }
+
+        // "offen" oder "zu" (für Tests und die Abnahme); "zu" erst, wenn die Fläche weg ist
+        function status(): string {
+            return root.offen || fenster.visible ? "offen" : "zu";
         }
     }
 
