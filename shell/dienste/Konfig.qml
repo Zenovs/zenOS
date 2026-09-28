@@ -70,18 +70,31 @@ Singleton {
         return _running[key] === true || _waiting[key] !== undefined;
     }
 
-    // Liste einer Ordner-Art neu lesen
+    // Liste einer Ordner-Art neu lesen. Eine Antwort, die älter sein kann als die vorab angepasste Liste,
+    // wird nicht übernommen: Endete seit dem Start ein Schreibauftrag dieser Art, wird gleich neu gelesen,
+    // läuft oder wartet noch einer, nach dem letzten (_next).
     function neuLaden(art: string): void {
         if (!verfuegbar || _folderKinds.indexOf(art) < 0)
             return;
+        if (_writesOpen(art)) {
+            _readAfterWrite[art] = true;
+            return;
+        }
         if (_reading[art]) {
             _readAgain[art] = true;
             return;
         }
         _reading[art] = true;
+        const stand = _writesDone[art] ?? 0;
         _run(["liste", art], "", (ok, text, meldung) => {
             _reading[art] = false;
-            if (ok) {
+            if (ok && _writesOpen(art)) {
+                // Das Lesen nach dem letzten Auftrag deckt auch ein inzwischen gewünschtes ab
+                _readAfterWrite[art] = true;
+                _readAgain[art] = false;
+            } else if (ok && (_writesDone[art] ?? 0) !== stand) {
+                _readAgain[art] = true;
+            } else if (ok) {
                 const list = _parse(text, null);
                 _apply(art, list ?? []);
                 // Scheiterte das erste Lesen, zählt ein späteres erfolgreiches der Modi
@@ -108,6 +121,9 @@ Singleton {
     // Schreibaufträge je Datei: einer läuft, weitere werden zusammengefasst
     property var _running: ({})
     property var _waiting: ({})
+    // Je Art: Anzahl beendeter Schreibaufträge; ein Lesen, das auf das Ende der Aufträge wartet
+    property var _writesDone: ({})
+    property var _readAfterWrite: ({})
     property var _watchers: []
     property bool _watcherWarned: false
 
@@ -117,6 +133,44 @@ Singleton {
         } catch (e) {
             return fallback;
         }
+    }
+
+    // Rückrufe einzeln aufrufen: Einer, der wirft (z. B. von einer schon geschlossenen Seite), hält weder
+    // die anderen noch die Warteschlange der Datei an
+    function _callAll(callbacks: var, ok: bool, meldung: string): void {
+        for (const cb of callbacks) {
+            try {
+                cb(ok, meldung);
+            } catch (e) {
+                console.warn("Konfig:", e);
+            }
+        }
+    }
+
+    // Läuft oder wartet ein Schreibauftrag dieser Art?
+    function _writesOpen(art: string): bool {
+        const prefix = art + "/";
+        return Object.keys(_running).some(k => _running[k] === true && k.startsWith(prefix)) || Object.keys(_waiting).some(k => k.startsWith(prefix));
+    }
+
+    // Zurückgestelltes Lesen nachholen (Datei-Arten ohne Beobachtung haben keins)
+    function _reread(art: string): void {
+        _readAfterWrite[art] = false;
+        if (art === "bildschirme")
+            bildschirmeDatei.reload();
+        else if (art === "webapps")
+            webappsDatei.reload();
+        else
+            neuLaden(art);
+    }
+
+    // Inhalt einer beobachteten Datei übernehmen, während eines Schreibauftrags dieser Art erst nach dem letzten
+    function _fileRead(art: string, daten: var): void {
+        if (_writesOpen(art)) {
+            _readAfterWrite[art] = true;
+            return;
+        }
+        _apply(art, daten);
     }
 
     function _apply(art: string, daten: var): void {
@@ -161,7 +215,7 @@ Singleton {
             waiting.callbacks.push(report);
         } else if (waiting) {
             // Der neuere Auftrag ersetzt den wartenden (z. B. mehrmals Speichern beim Tippen)
-            waiting.callbacks.forEach(cb => cb(true, ""));
+            _callAll(waiting.callbacks, true, "");
             _waiting[key] = {
                 befehl: befehl,
                 art: art,
@@ -223,18 +277,19 @@ Singleton {
         const input = job.daten ? JSON.stringify(job.daten) : "";
         _run(args, input, (ok, text, meldung) => {
             _running[key] = false;
+            _writesDone[job.art] = (_writesDone[job.art] ?? 0) + 1;
             if (!ok)
                 console.warn("Konfig:", meldung || "zenos-konfig hat abgelehnt");
-            job.callbacks.forEach(cb => cb(ok, ok ? "" : (meldung || "Nicht gespeichert")));
-            // Nach einem Schreiben meldet sich der Ordner selbst; abgelehnt oder ohne Beobachtung neu lesen,
-            // damit die vorab angepasste Liste wieder stimmt
-            if (_folderKinds.indexOf(job.art) >= 0 && (!ok || _watchers.length === 0))
-                neuLaden(job.art);
-            else if (!ok && job.art === "bildschirme")
-                bildschirmeDatei.reload();
-            else if (!ok && job.art === "webapps")
-                webappsDatei.reload();
+            _callAll(job.callbacks, ok, ok ? "" : (meldung || "Nicht gespeichert"));
             _next(key);
+            // Nach einem Schreiben meldet sich der Ordner bzw. die Datei selbst. Selbst neu lesen, wenn
+            // zenos-konfig ablehnte (die vorab angepasste Liste stimmt dann nicht), ohne Beobachtung und für ein
+            // zurückgestelltes Lesen; mit weiteren Aufträgen dieser Art erst nach dem letzten
+            if (!ok || _readAfterWrite[job.art] === true || (_folderKinds.indexOf(job.art) >= 0 && _watchers.length === 0)) {
+                _readAfterWrite[job.art] = true;
+                if (!_writesOpen(job.art))
+                    _reread(job.art);
+            }
         });
     }
 
@@ -254,13 +309,26 @@ Singleton {
     }
 
     function _loadAll(): void {
+        const stand = Object.assign({}, _writesDone);
         _run(["alle"], "", (ok, text, meldung) => {
             if (ok) {
                 const d = _parse(text, {});
-                for (const art of ["modi", "zustaende", "raster", "bildschirme", "webapps"])
+                let modiRead = false;
+                for (const art of ["modi", "zustaende", "raster", "bildschirme", "webapps"]) {
+                    // Inzwischen geschrieben: wie bei neuLaden nicht übernehmen, sondern neu lesen
+                    if (_writesOpen(art) || (_writesDone[art] ?? 0) !== (stand[art] ?? 0)) {
+                        _readAfterWrite[art] = true;
+                        if (!_writesOpen(art))
+                            _reread(art);
+                        continue;
+                    }
                     _apply(art, d[art]);
-                // Erst nach dem Übernehmen: wer darauf wartet, sieht schon die gelesene Liste
-                if (Array.isArray(d.modi))
+                    if (art === "modi")
+                        modiRead = Array.isArray(d.modi);
+                }
+                // Erst nach dem Übernehmen: wer darauf wartet, sieht schon die gelesene Liste (sonst setzt es
+                // das spätere Lesen der Modi)
+                if (modiRead)
                     root._listsRead = true;
             } else {
                 console.warn("Konfig:", meldung || "Konfiguration nicht lesbar");
@@ -355,8 +423,8 @@ Singleton {
         watchChanges: true
         printErrors: false
         onFileChanged: reload()
-        onLoaded: root._apply("bildschirme", root._parse(text(), null))
-        onLoadFailed: root._apply("bildschirme", null)
+        onLoaded: root._fileRead("bildschirme", root._parse(text(), null))
+        onLoadFailed: root._fileRead("bildschirme", null)
     }
 
     FileView {
@@ -366,8 +434,8 @@ Singleton {
         watchChanges: true
         printErrors: false
         onFileChanged: reload()
-        onLoaded: root._apply("webapps", root._parse(text(), null))
-        onLoadFailed: root._apply("webapps", null)
+        onLoaded: root._fileRead("webapps", root._parse(text(), null))
+        onLoadFailed: root._fileRead("webapps", null)
     }
 
     FileView {

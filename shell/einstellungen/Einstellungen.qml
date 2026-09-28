@@ -13,7 +13,7 @@ import qs.dienste as Dienste
 // Allgemein, System; rechts die Seite Seite<Name>.qml aus diesem Ordner (Seiten anderer Module per Dateiname).
 // Seite als "name" oder "name/unterauswahl", z. B. "modi/arbeit", "zustand/fokus", "zustand/fokus@arbeit",
 // "modi/neu", "zustand/neu", "allgemein".
-// IPC «einstellungen»: oeffnen(seite), schliessen()
+// IPC «einstellungen»: oeffnen(seite) (nicht während der Einrichtung), schliessen()
 Scope {
     id: root
 
@@ -122,6 +122,10 @@ Scope {
         target: "einstellungen"
 
         function oeffnen(seite: string): void {
+            // Nicht während der Einrichtung: Das Fenster läge unsichtbar hinter ihrer Vollfläche, und die
+            // Tastatur bliebe bei ihr (wie das Befehlsfeld)
+            if (Dienste.Oberflaeche.einrichtungOffen)
+                return;
             Dienste.Aktionen.einstellungen(seite);
         }
 

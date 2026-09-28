@@ -10,6 +10,7 @@ import qs.komponenten
 
 // Modus- und Zustandswahl: kleine Menüs unter den Chips der Leiste (Klick, Oberflaeche.wahlAnker) oder
 // mittig (Super+M / Super+Z über zenos-ipc modus waehlen bzw. zustand waehlen). Tastatur: Pfeile, Enter, Esc.
+// Während der Einrichtung öffnen die Menüs nicht.
 // IPC «modus»: waehlen(), wechseln(id), aktiv() · «zustand»: waehlen(), starten(id), beenden(), aktiv()
 Scope {
     id: root
@@ -21,6 +22,8 @@ Scope {
 
     // Über IPC (Super+M / Super+Z): immer mittig, auch wenn vorher ein Chip geklickt wurde
     function umschalten(art: string): void {
+        if (Oberflaeche.einrichtungOffen)
+            return;
         if (offen === art) {
             schliessen();
             return;
@@ -86,12 +89,16 @@ Scope {
         return w?.ende?.art === "timer" ? w.ende.minuten + " Min." : "";
     }
 
-    // Andere Oberflächen gehen vor
+    // Andere Oberflächen gehen vor. Während der Einrichtung bleibt die Wahl zu (wie das Befehlsfeld): Die
+    // Karte läge über ihr, und «… bearbeiten» bzw. «Neuer Modus» öffneten die Einstellungen unsichtbar
+    // hinter ihrer Vollfläche.
     Connections {
         target: Oberflaeche
 
         function onModusWahlOffenChanged(): void {
-            if (Oberflaeche.modusWahlOffen) {
+            if (Oberflaeche.modusWahlOffen && Oberflaeche.einrichtungOffen) {
+                Oberflaeche.modusWahlOffen = false;
+            } else if (Oberflaeche.modusWahlOffen) {
                 Oberflaeche.zustandWahlOffen = false;
                 root._remember();
             } else if (!Oberflaeche.zustandWahlOffen) {
@@ -99,12 +106,18 @@ Scope {
             }
         }
         function onZustandWahlOffenChanged(): void {
-            if (Oberflaeche.zustandWahlOffen) {
+            if (Oberflaeche.zustandWahlOffen && Oberflaeche.einrichtungOffen) {
+                Oberflaeche.zustandWahlOffen = false;
+            } else if (Oberflaeche.zustandWahlOffen) {
                 Oberflaeche.modusWahlOffen = false;
                 root._remember();
             } else if (!Oberflaeche.modusWahlOffen) {
                 root.zentriert = false;
             }
+        }
+        function onEinrichtungOffenChanged(): void {
+            if (Oberflaeche.einrichtungOffen)
+                root.schliessen();
         }
         function onBefehlsfeldOffenChanged(): void {
             if (Oberflaeche.befehlsfeldOffen)
