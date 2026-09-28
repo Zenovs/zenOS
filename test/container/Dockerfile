@@ -73,9 +73,16 @@ RUN set -e; if id ubuntu >/dev/null 2>&1; then userdel -r ubuntu; fi; \
 # Zuletzt die Docker-eigene /usr/sbin/policy-rc.d («exit 101») weg: Sie verbietet jeden Dienststart durch apt,
 # und pakete_sicherstellen liesse sie als fremde Datei stehen. Ohne sie setzt es wie auf dem Pi die eigene
 # Richtlinie (greetd startet nicht, «dbus reload» bleibt erlaubt). Bis hierher hat sie den Bau geschützt.
+# rtkit (kommt mit install.sh) ohne seine Prozessgrenze: Container desselben Images teilen sich die UID von
+# rtkit, der Kernel zählt die Grenze über alle Container, und ab dem zweiten hängt rtkit (README, «rtkit in
+# Testcontainern»). starten.sh legt dieselbe Datei auch in Containern älterer Images an.
 RUN systemctl mask getty@tty1.service serial-getty@ttyS0.service systemd-udevd.service \
       systemd-networkd-wait-online.service 2>/dev/null || true; \
     systemctl disable greetd.service 2>/dev/null || true; rm -f /etc/systemd/system/display-manager.service; \
+    mkdir -p /etc/systemd/system/rtkit-daemon.service.d; \
+    printf '%s\n' '# Nur im Testcontainer, siehe test/container/README.md (rtkit in Testcontainern)' \
+      '[Service]' 'ExecStart=' 'ExecStart=/usr/libexec/rtkit-daemon --no-limit-resources' \
+      > /etc/systemd/system/rtkit-daemon.service.d/zenos-test.conf; \
     rm -f /usr/sbin/policy-rc.d
 
 STOPSIGNAL SIGRTMIN+3

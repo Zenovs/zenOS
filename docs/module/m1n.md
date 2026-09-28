@@ -35,6 +35,19 @@
   ins Leere. Die Testshell beginnt wie ein erster Start und erreicht nie die echte Sitzung: kein fremder
   Mitteilungsdienst, keine Einstellungen, keine Sperre, kein `labwc --reconfigure` der echten Sitzung.
   Nur PipeWire wird mitbenutzt, falls erreichbar (Lautstärke nur gelesen).
+- **PipeWire ohne `module-rt`** (Runde r4-haenger): Die Testsitzung legt
+  `~/.config/pipewire/client.conf.d/90-zenos-pruefen.conf` mit `module.rt = false` an. Das Modul fragt rtkit
+  synchron (25 s je Wert); scheitert die Verbindung zu PipeWire, wartet Quickshell beim Abbau des Kontexts im
+  Hauptthread darauf. Mit einem hängenden rtkit (Testcontainer desselben Images) antwortete die Testshell
+  bis zu 75 s nicht, der Rundgang brach bei «thema wechseln» ab. `PIPEWIRE_REMOTE` und
+  `PIPEWIRE_CONFIG_*` kommen nicht aus der Umgebung mit. Echte Sitzung: nicht betroffen, siehe
+  `docs/module/r4-haenger.md`.
+- **Keine Signale an die echte Sitzung:** `zenos-thema` schickte SIGHUP an jedes labwc und SIGUSR1 an jede
+  kitty des Benutzers, also auch aus der Testshell an die echte Sitzung (dreimal neu geladen je Lauf).
+  Jetzt nur an das labwc aus `LABWC_PID` und an kitty mit demselben `HOME`.
+- **rtkit in Testcontainern** (`test/container`): Container desselben Images teilen sich die UID von rtkit
+  und damit seine Grenze von 3 Prozessen, ab dem zweiten hängt rtkit. Drop-in mit `--no-limit-resources` aus
+  dem Dockerfile und von `starten.sh` (README, «rtkit in Testcontainern»). Auf dem Pi nicht nötig.
 - **1Password:** Läuft 1Password beim Benutzer, lässt der Rundgang die Sperre aus (sie würde es über
   `zenos-1password-sperren` mitsperren) und meldet das als Hinweis.
 - **Aufräumen:** labwc startet Quickshell in einer eigenen Sitzung. Beendet werden Quickshell (TERM,
@@ -54,6 +67,10 @@
   Freigabe), Syntaxfehler im Greeter, Endlosschleife in einem Dienst (Zeitlimit), Hänger nach dem Start
   mit laufendem Kindprozess (Kindprozess danach weg).
 - Ohne labwc/Quickshell und im nackten `ubuntu:26.04` als root: übersprungen, Exit 0.
+- Runde r4-haenger (Container aus `zenos-test:installiert`, rtkit hängt, kein PipeWire erreichbar): alte
+  Fassung dreimal «IPC «thema wechseln»: keine Antwort nach 15 s», neue dreimal ohne Befund; mit
+  PipeWire der Sitzung ebenso ohne Befund. Während des Tests liest das labwc der echten Sitzung seine
+  Konfiguration vorher dreimal neu, nachher keinmal; die kitty der Sitzung bekommt kein SIGUSR1 mehr.
 
 ## Am Pi prüfen
 

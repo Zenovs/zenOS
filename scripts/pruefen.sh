@@ -49,9 +49,10 @@
 # Teil start: startet jede Einstiegsdatei (shell/shell.qml, dazu jede kleingeschriebene .qml-Datei unter shell/
 #   mit «ShellRoot», z. B. greeter.qml) mit Quickshell in labwc ohne Bildschirm und wertet das Protokoll aus.
 #   Die Testsitzung ist abgeschottet: eigenes HOME, eigene XDG-Ordner und eigener Sitzungsbus ohne Dienste im
-#   Temp-Ordner, ZENOS_CODE zeigt auf dieses Repo. In shell.qml folgt ein Rundgang über IPC (Thema hin und
-#   zurück, Befehlsfeld, Zentrale, Umschalter, jede Einstellungen-Seite, Einrichtung, Hinweis,
-#   Bildschirmfreigabe, zuletzt die Sperre).
+#   Temp-Ordner, ZENOS_CODE zeigt auf dieses Repo, PipeWire-Client ohne Echtzeit über RTKit (module-rt aus,
+#   Begründung bei start_lauf). In shell.qml folgt ein Rundgang über IPC (Thema hin und zurück, Befehlsfeld,
+#   Zentrale, Umschalter, jede Einstellungen-Seite, Einrichtung, Hinweis, Bildschirmfreigabe, zuletzt die
+#   Sperre).
 #   Fehler: kein «Configuration Loaded» im Zeitlimit, Absturz, ERROR-Zeilen, «Type … unavailable», «is not a
 #   type», ReferenceError/TypeError, «Cannot assign», «Binding loop», Warnungen aus Dateien unter shell/,
 #   console.warn/console.error, ein gescheiterter IPC-Aufruf und eine Sperre, die nicht «gesperrt» meldet.
@@ -862,11 +863,21 @@ SH
     bekannt+=('^\s*ERROR quickshell\.service\.pipewire\.loop: Failed to connect pipewire context')
   fi
 
+  # PipeWire-Client der Testshell ohne module-rt. Das Modul fragt RTKit über den System-Bus in einem eigenen
+  # Thread, synchron und mit 25 s Zeitlimit je Wert. Kommt keine Verbindung zu PipeWire zustande, baut
+  # Quickshell den Kontext im Hauptthread wieder ab und wartet dabei auf diesen Thread. Hängt rtkit (in
+  # Testcontainern desselben Images, siehe test/container/README.md), antwortet die Testshell dann bis zu 75 s
+  # auf nichts, auch nicht auf IPC. Echtzeit braucht die Testshell nicht.
+  mkdir -p -- "$o/home/.config/pipewire/client.conf.d"
+  printf '%s\n' '# pruefen.sh, Teil start: kein RTKit in der Testsitzung' \
+    'context.properties = {' '    module.rt = false' '}' > "$o/home/.config/pipewire/client.conf.d/90-zenos-pruefen.conf"
+
   (
     cd -- "$o/home" || exit 1
     # Nichts aus einer laufenden Sitzung übernehmen
     unset WAYLAND_DISPLAY DISPLAY LABWC_PID SWAYSOCK DBUS_SESSION_BUS_ADDRESS QT_QPA_PLATFORMTHEME \
-      QS_CONFIG_PATH QS_CONFIG_NAME QS_MANIFEST XDG_SESSION_ID XDG_SEAT XDG_VTNR no_proxy NO_PROXY
+      QS_CONFIG_PATH QS_CONFIG_NAME QS_MANIFEST XDG_SESSION_ID XDG_SEAT XDG_VTNR no_proxy NO_PROXY \
+      PIPEWIRE_REMOTE PIPEWIRE_CONFIG_DIR PIPEWIRE_CONFIG_NAME PIPEWIRE_CONFIG_PREFIX
     # HTTP(S) ins Leere: Abfragen der Testshell (z. B. GitHub-Releases in der Einrichtung) scheitern sofort
     export http_proxy=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9 HTTP_PROXY=http://127.0.0.1:9 \
       HTTPS_PROXY=http://127.0.0.1:9 ALL_PROXY=http://127.0.0.1:9 all_proxy=http://127.0.0.1:9

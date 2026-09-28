@@ -2,10 +2,10 @@
 # starten.sh <name> – startet einen Testcontainer aus zenos-test:basis (systemd als PID 1) und legt den
 # Arbeitsstand dieses Repos unter /home/tester/zenOS an (Git-Repo, gleicher Branch und Commit, dazu
 # nicht committete und neue Dateien). Läuft der Container schon, wird nur der Arbeitsstand aufgefrischt.
-# Läuft auf dem Mac. Der Name muss mit «zenos-» beginnen (fremde Container bleiben unberührt).
-#
+# rtkit läuft im Container ohne Prozessgrenze (README). Läuft auf dem Mac. Der Name muss mit «zenos-»
+# beginnen (fremde Container bleiben unberührt).
 #   test/container/starten.sh zenos-m1-test
-#   ZENOS_TESTBILD=zenos-test:basis (Standard)
+#   ZENOS_TESTBILD=zenos-test:basis (Standard), z. B. auch zenos-test:installiert
 
 set -euo pipefail
 
@@ -44,6 +44,26 @@ case "$zustand" in
   running | degraded) ;;
   *) echo "starten.sh: systemd ist nach 60 s nicht bereit (Zustand: ${zustand:-unbekannt})" >&2; exit 1 ;;
 esac
+
+# rtkit (installiert von install.sh) begrenzt sich auf 3 Prozesse seiner UID. Der Kernel zählt über alle
+# Container, und Container desselben Images teilen sich diese UID: Ab dem zweiten scheitert pthread_create,
+# rtkit antwortet nie, und jeder PipeWire-Client wartet je Anfrage 25 s. Auf dem Pi gibt es nur einen rtkit.
+# Im Testcontainer deshalb ohne diese Grenze (Drop-in, greift auch, wenn rtkit erst später kommt). Neue
+# Basis-Images bringen dieselbe Datei aus dem Dockerfile mit; hier für Container älterer Images.
+rtkit_dropin=$'# Nur im Testcontainer, siehe test/container/README.md (rtkit in Testcontainern)\n[Service]\nExecStart=\nExecStart=/usr/libexec/rtkit-daemon --no-limit-resources'
+rtkit_datei=/etc/systemd/system/rtkit-daemon.service.d/zenos-test.conf
+if [[ "$(docker exec "$name" cat "$rtkit_datei" 2>/dev/null || true)" != "$rtkit_dropin" ]]; then
+  docker exec "$name" mkdir -p "${rtkit_datei%/*}"
+  printf '%s\n' "$rtkit_dropin" | docker exec -i "$name" tee "$rtkit_datei" > /dev/null
+  docker exec "$name" systemctl daemon-reload
+  # Ein laufender rtkit hängt womöglich schon: beenden, D-Bus startet ihn beim nächsten Aufruf neu
+  if docker exec "$name" systemctl --quiet is-active rtkit-daemon.service; then
+    docker exec "$name" systemctl kill --signal=KILL rtkit-daemon.service || true
+    sleep 1
+    docker exec "$name" systemctl reset-failed rtkit-daemon.service 2> /dev/null || true
+  fi
+  echo "rtkit im Container ohne Prozessgrenze (Drop-in $rtkit_datei)."
+fi
 
 # Ablage für Bilder und Protokolle (/tmp ist im Container ein tmpfs, docker cp sieht es nicht)
 docker exec "$name" install -d -o tester -g tester /srv/bilder /srv/oberflaeche

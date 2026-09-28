@@ -118,6 +118,41 @@ def own_processes(names):
     return pids
 
 
+def session_labwc():
+    """labwc dieser Sitzung, ohne gültige Angabe alle eigenen.
+
+    labwc gibt LABWC_PID an seine Kindprozesse weiter, autostart auch an die Benutzerdienste (die Shell).
+    Ohne sie (z. B. install.sh per SSH) gelten alle eigenen labwc. So lässt eine Testsitzung mit eigenem
+    labwc (scripts/pruefen.sh) das labwc der echten Sitzung nicht neu laden.
+    """
+    pids = own_processes({"labwc"})
+    wanted = os.environ.get("LABWC_PID", "")
+    if wanted.isdigit() and int(wanted) in pids:
+        return [int(wanted)]
+    return pids
+
+
+def same_home_processes(names):
+    """Eigene Prozesse mit einem der Namen und demselben HOME wie dieser Aufruf.
+
+    Nur sie lesen, was hier unter ~/.config geschrieben wird; eine Testsitzung mit eigenem HOME erreicht so
+    keine kitty der echten Sitzung. Ist die Umgebung eines Prozesses nicht lesbar, zählt er mit.
+    """
+    home = os.path.realpath(HOME)
+    pids = []
+    for pid in own_processes(names):
+        try:
+            with open(f"/proc/{pid}/environ", "rb") as f:
+                env = f.read().split(b"\0")
+        except OSError:
+            pids.append(pid)
+            continue
+        value = next((e[5:] for e in env if e.startswith(b"HOME=")), None)
+        if value is None or os.path.realpath(os.fsdecode(value)) == home:
+            pids.append(pid)
+    return pids
+
+
 def send_signal(pids, sig):
     for pid in pids:
         try:
@@ -358,7 +393,7 @@ def apply_kitty(tokens, accent, changes):
             changed = True
     # Hell/Dunkel wechselt kitty selbst; bei neuem Akzent die Konfiguration neu laden lassen
     if changed:
-        send_signal(own_processes({"kitty"}), signal.SIGUSR1)
+        send_signal(same_home_processes({"kitty"}), signal.SIGUSR1)
 
 
 # ---------------------------------------------------------------- labwc
@@ -424,7 +459,7 @@ def apply_labwc(tokens, mode, accent, changes):
     if write_if_changed(os.path.join(LABWC, "themerc-override"), labwc_themerc(tokens, mode, accent)):
         changes.append("labwc themerc-override")
         # wie «labwc --reconfigure», auch ohne LABWC_PID in der Umgebung
-        send_signal(own_processes({"labwc"}), signal.SIGHUP)
+        send_signal(session_labwc(), signal.SIGHUP)
 
 
 # ---------------------------------------------------------------- VS Code
