@@ -194,7 +194,8 @@ Item {
 
         Text {
             width: Math.min(parent.width, 560)
-            text: "Ein Raster teilt den Bildschirm in Bereiche, in die Fenster einrasten. Die Vorlagen Voll, Hälften, 3 Spalten, 4er-Grid und Gross + 2 kommen mit zen benutzer."
+            // Die Vorlagen kopiert 50-raster genau einmal (Merker); zen benutzer holt gelöschte nicht zurück
+            text: "Ein Raster teilt den Bildschirm in Bereiche, in die Fenster einrasten. Die Vorlagen Voll, Hälften, 3 Spalten, 4er-Grid und Gross + 2 kopiert zen\u00a0benutzer nur beim ersten Mal; gelöschte liegen unter " + Dienste.Pfade.code + "/config/vorlagen/raster."
             wrapMode: Text.WordWrap
             lineHeight: 1.4
             color: Theme.gedaempft
