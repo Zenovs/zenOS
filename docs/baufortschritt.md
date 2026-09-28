@@ -18,9 +18,9 @@ Status: `offen` · `in Arbeit` · `fertig` · `offener Punkt`
 | M10 · Terminal | fertig | kitty (Ctrl+C/V, Super-Kürzel), fish mit Statuszeile, «?» offline, Warnung bei gefährlichen Befehlen. Details: `docs/module/m10.md` |
 | M11 · Sicherheit | fertig | unattended-upgrades, Chrome-Richtlinien, gitleaks-Hook + CI, ufw vorbereitet (nicht aktiv). Details: `docs/module/m11.md` |
 | M12 · Erster Start | fertig | Einrichtung nach Entwurf 2, Zustimmung, zen apps (Chrome, VS Code, 1Password, CLI, coremail), Web-Apps. Nubix: kein ARM-Build. Details: `docs/module/m12.md` |
-| M13 · Argon ONE | fertig | zenos-argon (Lüfterkurve, Power-Button), Temperatur in der Leiste. Details: `docs/module/m13.md` |
+| M13 · Argon ONE | fertig | zenos-argon (Lüfterkurve, Power-Button, Abschaltsignal beim Ausschalten), Temperatur in der Leiste. Details: `docs/module/m13.md` |
 | M14 · Image-Workflow | fertig | image.yml + image/bauen.sh; -rc-Tags nur Artefakt. Details: `docs/module/m14.md` |
-| M15 · Abschluss | in Arbeit | Nacharbeit zwischen Modulen, Integrationstest (frische Installation von GitHub, Image-Bau), Reviews |
+| M15 · Abschluss | fertig | Integration (frische Installation von GitHub, `zen update`, voller Image-Bau, drei Abnahme-Touren, drei Reviews mit Gegenprüfung, 36 Befunde behoben), Doku, ANLEITUNG, CHANGELOG, Tag `v0.1.0-rc1` |
 
 ## Wo gebaut wird
 
@@ -29,12 +29,64 @@ Docker-Container mit Ubuntu 26.04 arm64 (gleiche Architektur wie der Pi, mit sys
 siehe `test/container/`. Was nur auf echter Hardware prüfbar ist (Grafik über den Pi-Treiber, greetd auf dem VT,
 I2C/GPIO des Argon ONE, Tastatur), ist pro Modul unter «am Pi prüfen» notiert.
 
+## Stand
+
+Alle Module sind gebaut und im Container getestet (Ubuntu 26.04 arm64 mit systemd, headless labwc, echte
+PAM-/logind-Sitzungen). Die Abnahme auf dem Pi steht aus: `ANLEITUNG.md`, Abschnitte C bis E. Pro Modul steht unter
+«Am Pi prüfen» in `docs/module/<modul>.md`, was nur echte Hardware zeigt.
+
+Gemessen im Container (nicht auf dem Pi):
+- Frische Installation von GitHub auf nacktem Ubuntu Server 26.04: Exit 0, keine Warnung; zweiter Lauf «0 Änderungen».
+  SSH, Netz und Konten unverändert, greetd aktiviert, aber erst nach dem Neustart gestartet.
+- `zen update` von GitHub auf ein installiertes System: 5 Änderungen, zweiter Lauf 0; `zen doctor` 0 Fehler.
+- Image: `install.sh --image` im Ubuntu-Pi-Image, 1481 MiB mit `xz -9` (72 % der 2-GiB-Grenze), ohne
+  SSH-Hostschlüssel, ohne proprietäre Apps, ohne Benutzerdaten.
+- `scripts/pruefen.sh`: shellcheck, JSON-Schemas, Hex- und sh-c-Regel, rund 280 Einheitentests, qmllint, gitleaks,
+  Start-Test der Oberfläche – sauber, auch in der CI auf GitHub.
+
 ## Entscheidungen während des Baus
 
-- **Quickshell** fehlt in den Ubuntu-26.04-Paketquellen → Quellbau v0.3.1 (Commit `1a4716c`), fest eingetragen.
-- **Schriften** liegen im Repo unter `assets/fonts/` (Geist v1.7.2, Instrument Serif `65c0ef2`, OFL), Quellen und Prüfsummen in `assets/fonts/QUELLEN.md`.
+- **Gebaut auf dem Mac statt auf dem Pi**, getestet in Docker (`test/container/`). Deshalb führt Zeno `install.sh` auf
+  dem Pi selbst aus (ANLEITUNG C); die sudo-Regel aus B12 braucht es nur noch für Nacharbeit mit Claude Code auf dem Pi.
+- **Quickshell** fehlt in den Ubuntu-26.04-Paketquellen → Quellbau v0.3.1 (Commit `1a4716c`), fest eingetragen; neu
+  gebaut nur bei anderem Commit oder anderer Qt-Version (private Qt-APIs).
+- **Schriften** liegen im Repo unter `assets/fonts/` (Geist v1.7.2, Instrument Serif `65c0ef2`, OFL), Quellen und
+  Prüfsummen in `assets/fonts/QUELLEN.md`.
 - **Git-Identität** im Repo: GitHub-noreply-Adresse, damit keine persönliche E-Mail in öffentliche Commits gelangt.
+- **Ubuntu 26.04 hat uutils coreutils und sudo-rs:** `install -D` ersetzt Symlinks im Zielpfad durch Ordner, deshalb
+  legt zenOS Elternordner selbst an. Die Testumgebung nutzt sudo-rs wie Ubuntu Server.
+- **Dienste starten bei der Paketinstallation nicht** (temporäre policy-rc.d, nur während des eigenen dpkg); greetd
+  läuft erst nach dem Neustart, SSH bleibt unberührt. `dbus reload` bleibt erlaubt (polkit).
+- **systemd-Benutzereinheiten unter `/etc/systemd/user`**: systemd 259 durchsucht `/etc/xdg/systemd/user` ohne
+  `XDG_CONFIG_DIRS` nicht.
+- **Logik für Modi und Zustände läuft in Quickshell** (C5-Frage), Anbindung nach aussen über kleine Hilfsprogramme.
+- **Notfall-Sperre mit swaylock**, falls die Oberfläche nicht antwortet: Die automatische Sperre darf nie ausfallen.
+- **Mitteilungen ohne Zustand gesammelt zur vollen Stunde** (`gebuendelt-60`, «Ruhe ist der Normalzustand»).
+- **Tastenkürzel:** Super+Links/Rechts für Hälften, Super+Oben/Unten bleiben für kitty (Entwurf 2: «Super+↑↓ zwischen
+  Befehlen»); Super+Enter maximiert.
+- **Freigabe:** xdg-desktop-portal-wlr teilt ganze Bildschirme; Label «Dieser Bildschirm wird geteilt».
+- **Apps aus der Oberfläche in eigenen systemd-Einheiten**, damit sie einen Neustart der Oberfläche überleben.
+- **Ubuntu motd-news und apt-news aus**, VS Code mit `TelemetryLevel` off (Leitplanke «keine Telemetrie»); umkehrbar,
+  siehe `docs/sicherheit.md`.
+- **Argon-Abschaltsignal** als system-shutdown-Hook wie im Original-Skript (nur bei poweroff/halt, nur mit Argon).
+- **Kanal:** Pi und Image folgen `dev`, solange `main` nur den Start-Commit trägt.
+- **Tag `v0.1.0-rc1`** gesetzt, obwohl die Abnahme auf dem Pi aussteht: Die Testliste braucht ihn für
+  `zen rollback`, und der Workflow baut damit das Image nur als Artefakt, ohne Release.
 
 ## Offene Punkte für Zeno
 
-(Claude Code trägt hier ein, was Zeno prüfen oder entscheiden muss.)
+- **Abnahme auf dem Pi** nach `ANLEITUNG.md` (C bis E). Danach `CHANGELOG.md` ergänzen und `v0.1.0` taggen (G).
+- **Temporäre sudo-Regel** `/etc/sudoers.d/zenos-bau` nach der Testphase löschen (G1), falls angelegt.
+- **Safe Browsing Stufe 2 oder 1** in Chrome (Zielkonflikt Sicherheit ↔ «keine Telemetrie», `docs/sicherheit.md`).
+- **Firewall einschalten** mit `zen firewall aktivieren` (per SSH aus dem eigenen Netz, dann von einem zweiten Gerät
+  prüfen).
+- **`main`** auf `v0.1.0` vorspulen, damit `git clone` ohne `git switch dev` funktioniert (ANLEITUNG G7–G10); danach
+  entscheiden, ob Image und neue Installationen `main` folgen.
+- **fish als Login-Shell** (`chsh -s /usr/bin/fish`), damit auch SSH-Sitzungen Eingabezeile, `?` und die Warnung haben.
+- **Nubix** hat bis v4.4.4 keinen arm64-Build; ein arm64-`.deb` in der Release reicht, `zen apps` bietet es dann an.
+- **Widgets** (Zustandswert `widgets`): was sie zeigen sollen, ist offen.
+- **Chrome `AutofillCreditCardEnabled`** ist ab Chrome 156 veraltet; Nachfolger `AutofillSettings` in
+  `docs/sicherheit.md` festhalten und übernehmen.
+- **`esm-cache` von ubuntu-pro-client** fragt bei `apt update` `contracts.canonical.com` ab; abschalten oder lassen.
+- **GitHub:** Issues sind im Repo noch eingeschaltet (ANLEITUNG A6 sah vor, sie auszuschalten), 2FA prüfen.
+- **Festplattenverschlüsselung und Backups** auf dem Pi sind Ziel, in 0.1 nicht umgesetzt.
