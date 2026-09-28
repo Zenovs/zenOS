@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 70-sicherheit: automatische Updates, Chrome-Richtlinie, gitleaks und Hook, Firewall
+# 70-sicherheit: automatische Updates, Chrome- und VS Code-Richtlinie, Ubuntu-Nachrichten, gitleaks und Hook, Firewall
 # shellcheck shell=bash
 #
 # Die sudo-Regel aus dem Bau prüft schon 00-basis. Die Firewall-Regeln sind nur für root lesbar; ohne
@@ -9,6 +9,8 @@ pruefe_sicherheit() {
   abschnitt "Sicherheit"
   _sicherheit_updates
   _sicherheit_chrome
+  _sicherheit_vscode
+  _sicherheit_nachrichten
   _sicherheit_gitleaks
   _sicherheit_firewall
 }
@@ -112,6 +114,71 @@ PY
     ok "Chrome installiert – chrome://policy zeigt die Richtlinien"
   else
     hinweis "Chrome ist noch nicht installiert; die Richtlinie greift, sobald es da ist"
+  fi
+}
+
+# Richtlinie für VS Code: Telemetrie aus. VS Code liest /etc/vscode/policy.json ab 1.106.
+_sicherheit_vscode() {
+  local datei=/etc/vscode/policy.json quelle=/opt/zenos/system/vscode/policy.json
+  local version rechte pfad schwere=warnung
+  version=$(dpkg-query -W -f='${db:Status-Abbrev} ${Version}' code 2>/dev/null)
+  if [[ "$version" == ii* ]]; then version=${version##* }; else version=""; fi
+  # Ohne VS Code schadet eine fehlende Richtlinie noch nicht, mit VS Code geht Telemetrie hinaus.
+  [[ -z "$version" ]] || schwere=fehler
+
+  for pfad in /etc/vscode "$datei"; do
+    [[ -e "$pfad" ]] || continue
+    rechte=$(stat -c '%U %a' -- "$pfad" 2>/dev/null)
+    if [[ "${rechte%% *}" != root ]] || (( (8#${rechte##* } & 8#022) != 0 )); then
+      fehler "$pfad ist nicht nur für root schreibbar ($rechte) – die Richtlinie liesse sich aushebeln (install.sh)"
+    fi
+  done
+  if [[ ! -f "$datei" ]]; then
+    "$schwere" "VS Code-Richtlinie fehlt: $datei – VS Code sendet ab Werk Telemetrie (install.sh ausführen)"
+    return 0
+  fi
+  if ! python3 - "$datei" 2>/dev/null <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as f:
+    daten = json.load(f)
+sys.exit(not (isinstance(daten, dict) and daten.get("TelemetryLevel") == "off"))
+PY
+  then
+    "$schwere" "VS Code-Richtlinie $datei ist ungültig oder schaltet die Telemetrie nicht ab (install.sh)"
+    return 0
+  fi
+  if [[ -r "$quelle" ]] && ! cmp -s "$datei" "$quelle"; then
+    warnung "VS Code-Richtlinie weicht vom Stand in /opt/zenos ab (install.sh stellt ihn wieder her)"
+  elif [[ -z "$version" ]]; then
+    ok "VS Code-Richtlinie vorhanden (Telemetrie aus); greift, sobald VS Code installiert ist"
+  elif dpkg --compare-versions "$version" lt 1.106; then
+    warnung "VS Code ${version%%-*} liest $datei noch nicht (erst ab 1.106) – Telemetrie nicht abgeschaltet (sudo apt upgrade)"
+  else
+    ok "VS Code ${version%%-*}: Telemetrie per Richtlinie aus"
+  fi
+}
+
+# Ubuntu-Nachrichten, die ohne Aktion des Benutzers motd.ubuntu.com abrufen
+_sicherheit_nachrichten() {
+  local datei=/etc/default/motd-news wert
+  if [[ -f "$datei" ]]; then
+    wert=$(sed -n 's/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}ENABLED=//p' "$datei" 2>/dev/null |
+      tail -n 1 | sed 's/[[:space:]]*#.*$//' | tr -d '"'"'"'[:space:]')
+    if [[ "$wert" == 1 ]]; then
+      warnung "motd-news ist eingeschaltet und ruft zweimal täglich motd.ubuntu.com auf (install.sh schaltet es ab)"
+    else
+      ok "motd-news aus"
+    fi
+  fi
+  if command -v pro >/dev/null 2>&1; then
+    wert=$(pro config show apt_news 2>/dev/null | awk '$1 == "apt_news" { print $2 }')
+    case "$wert" in
+      False) ok "apt-news aus (ubuntu-pro-client)" ;;
+      True) warnung "apt-news ist eingeschaltet und ruft bei apt update motd.ubuntu.com auf (install.sh schaltet es ab)" ;;
+      *) hinweis "apt-news: Einstellung nicht lesbar (pro config show apt_news)" ;;
+    esac
   fi
 }
 

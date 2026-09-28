@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-# 70-sicherheit: automatische Sicherheitsupdates, Chrome-Richtlinien, Firewall vorbereiten, gitleaks-Hook
+# 70-sicherheit: Sicherheitsupdates, Chrome- und VS Code-Richtlinien, Ubuntu-Nachrichten aus, Firewall, gitleaks-Hook
 # shellcheck shell=bash
 #
 # - unattended-upgrades: system/apt/20auto-upgrades (inhaltsgleich mit der Vorlage des Pakets, damit ucf bei
 #   Paket-Updates nie nachfragt) und system/apt/52zenos-unattended (Herstellerquellen, keine automatischen
 #   Neustarts, keine Mail).
-# - Chrome-Richtlinien nach /etc/opt/chrome/policies/managed/, auch ohne Chrome: Sie greifen, sobald es
-#   installiert ist. Läuft auch im Image-Modus (die Richtlinie ist nicht proprietär).
+# - Richtlinien für Chrome (/etc/opt/chrome/policies/managed/) und VS Code (/etc/vscode/policy.json, Telemetrie
+#   aus), auch ohne die Apps: Sie greifen, sobald sie installiert sind. Läuft auch im Image-Modus (die
+#   Richtlinien sind nur Konfiguration, keine proprietäre Software).
+# - Ubuntu-Nachrichten: motd-news (ENABLED=0 in /etc/default/motd-news) und apt-news von ubuntu-pro-client
+#   (pro config set apt_news=false) abschalten, je nur, wenn vorhanden. Beide holen ohne Aktion des Benutzers
+#   Inhalte von motd.ubuntu.com, motd-news schickt dabei Version, Kernel, Architektur und cloud_id mit.
 # - ufw: Regeln werden nur vorbereitet, solange die Firewall aus ist. Eingeschaltet wird sie hier nie,
 #   nur mit «zen firewall aktivieren». Ist sie schon an, bleibt alles, wie es ist.
 # - gitleaks-Hook: core.hooksPath=.githooks im Quell-Repo (z. B. ~/zenOS), wenn es dem Benutzer gehört.
@@ -17,6 +21,8 @@ modul_system() {
   _sicherheit_pakete
   _sicherheit_updates
   _sicherheit_chrome
+  _sicherheit_vscode
+  _sicherheit_nachrichten
   _sicherheit_firewall
 }
 
@@ -52,17 +58,79 @@ _sicherheit_updates() {
   fi
 }
 
+# Gültiges JSON mit einem Objekt als Wurzel (so erwarten es Chrome und VS Code)
+_sicherheit_json_objekt() { # DATEI
+  python3 -c 'import json, sys; sys.exit(not isinstance(json.load(open(sys.argv[1], encoding="utf-8")), dict))' \
+    "$1" 2>/dev/null
+}
+
 _sicherheit_chrome() {
   local quelle="$ZENOS_CODE/system/chrome/policies/zenos.json"
   # Chrome verwirft eine ungültige Datei ganz – dann lieber die alte behalten und warnen.
-  if ! python3 -c 'import json, sys; json.load(open(sys.argv[1], encoding="utf-8"))' "$quelle" 2>/dev/null; then
-    log_warnung "$quelle ist kein gültiges JSON, Chrome-Richtlinien nicht aktualisiert"
+  if ! _sicherheit_json_objekt "$quelle"; then
+    log_warnung "$quelle ist kein gültiges JSON-Objekt, Chrome-Richtlinien nicht aktualisiert"
     return 0
   fi
   # Nur root darf die Richtlinien ändern
   ordner_sicherstellen /etc/opt/chrome/policies 0755 root:root
   ordner_sicherstellen /etc/opt/chrome/policies/managed 0755 root:root
   datei_installieren "$quelle" /etc/opt/chrome/policies/managed/zenos.json 0644 root:root
+}
+
+# VS Code liest ab 1.106 unter Linux /etc/vscode/policy.json (streng als JSON; ist die Datei ungültig, gilt
+# keine Richtlinie). TelemetryLevel «off» sperrt telemetry.telemetryLevel, der Benutzer kann es nicht ändern.
+_sicherheit_vscode() {
+  local quelle="$ZENOS_CODE/system/vscode/policy.json"
+  if ! _sicherheit_json_objekt "$quelle"; then
+    log_warnung "$quelle ist kein gültiges JSON-Objekt, VS Code-Richtlinie nicht aktualisiert"
+    return 0
+  fi
+  ordner_sicherstellen /etc/vscode 0755 root:root
+  datei_installieren "$quelle" /etc/vscode/policy.json 0644 root:root
+}
+
+# Wert von ENABLED in /etc/default/motd-news, wie ihn 50-motd-news liest (letzte Zuweisung gilt)
+_sicherheit_motd_wert() { # DATEI
+  sed -n 's/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}ENABLED=//p' "$1" 2>/dev/null |
+    tail -n 1 | sed 's/[[:space:]]*#.*$//' | tr -d '"'"'"'[:space:]'
+}
+
+# Ubuntu-Nachrichten abschalten, jeweils auf dem Weg, den Ubuntu dafür vorsieht (rückgängig machen: siehe
+# docs/sicherheit.md, «Unterbau»).
+_sicherheit_nachrichten() {
+  local datei=/etc/default/motd-news wert ausgabe
+
+  # motd-news: Der Timer ruft zweimal täglich 50-motd-news --force auf; mit ENABLED≠1 endet das Skript sofort.
+  # Die Datei gehört dem Paket motd-news-config (Conffile). Fehlt sie, ist motd-news schon aus – dann nichts
+  # anlegen, sonst fragte dpkg bei einer späteren Installation des Pakets nach.
+  if [[ -f "$datei" ]]; then
+    wert=$(_sicherheit_motd_wert "$datei")
+    if [[ "$wert" != 0 ]]; then
+      if grep -Eq '^[[:space:]]*(export[[:space:]]+)?ENABLED=' "$datei"; then
+        sed -E 's/^[[:space:]]*(export[[:space:]]+)?ENABLED=.*/ENABLED=0/' "$datei" |
+          datei_schreiben "$datei" 0644 root:root
+      else
+        { cat -- "$datei"; printf 'ENABLED=0\n'; } | datei_schreiben "$datei" 0644 root:root
+      fi
+      if [[ "$(_sicherheit_motd_wert "$datei")" == 0 ]]; then
+        log_info "motd-news abgeschaltet (vorher ENABLED=${wert:-leer})"
+      else
+        log_warnung "motd-news liess sich nicht abschalten ($datei)"
+      fi
+    fi
+  fi
+
+  # apt-news: ubuntu-pro-client holt bei apt update höchstens einmal täglich motd.ubuntu.com/aptnews.json.
+  if befehl_vorhanden pro; then
+    wert=$($SUDO pro config show apt_news 2>/dev/null | awk '$1 == "apt_news" { print $2 }')
+    if [[ "$wert" != False ]]; then
+      if ausgabe=$($SUDO pro config set apt_news=false 2>&1); then
+        aenderung "apt-news abgeschaltet (pro config set apt_news=false, vorher ${wert:-unbekannt})"
+      else
+        log_warnung "apt-news liess sich nicht abschalten (${ausgabe##*$'\n'})"
+      fi
+    fi
+  fi
 }
 
 # Wert aus einer ufw-Konfigurationsdatei (ohne Anführungszeichen)
