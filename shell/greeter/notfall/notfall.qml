@@ -7,6 +7,7 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
 import Quickshell.Services.Greetd
+import "pam.js" as Pam
 
 // Notfall-Login. zenos-greeter startet ihn, wenn greeter.qml nicht lädt (z. B. ein Fehler in einem Dienst
 // unter shell/dienste). Absichtlich ohne qs.*-Module: nur Quickshell selbst. Farben kommen aus
@@ -131,13 +132,18 @@ ShellRoot {
             console.warn("Notfall-Login: Anmeldung abgelehnt:", message);
             root._antwortBereit = false;
             root.frage = "";
-            root.meldung = "Benutzername oder Passwort stimmt nicht.";
+            root.meldung = Pam.failureText(message, true);
             root.meldungFehler = true;
             passwort.clear();
             passwort.forceActiveFocus();
         }
 
         function onError(message: string): void {
+            // Ohne laufende Anmeldung: Antwort auf den Abbruch nach einer Ablehnung (siehe greeter/Ablauf.qml)
+            if (Greetd.state === GreetdState.Inactive) {
+                console.info("Notfall-Login: greetd nach dem Abbruch:", message);
+                return;
+            }
             root._antwortBereit = false;
             root.frage = "";
             root.meldung = "Die Anmeldung ist fehlgeschlagen (greetd: " + message + ").";
@@ -214,6 +220,12 @@ ShellRoot {
                     font.pixelSize: 15
                     clip: true
                     readOnly: root.beschaeftigt
+                    // ruhiger Strich statt des blinkenden Standard-Cursors
+                    cursorDelegate: Rectangle {
+                        width: 1
+                        color: root.text
+                        visible: name.cursorVisible
+                    }
                     onAccepted: passwort.forceActiveFocus()
                 }
             }
@@ -249,18 +261,30 @@ ShellRoot {
                     passwordMaskDelay: 0
                     readOnly: root.beschaeftigt
                     focus: true
+                    cursorDelegate: Rectangle {
+                        width: 1
+                        color: root.text
+                        visible: passwort.cursorVisible
+                    }
                     onAccepted: root.absenden()
                 }
             }
 
-            Text {
+            // Feste Höhe: längere Meldungen laufen nach unten weiter, das Formular bleibt stehen
+            Item {
                 width: parent.width
-                height: Math.max(implicitHeight, 20)
-                text: root.meldung
-                color: root.meldungFehler ? root.fehler : root.gedaempft
-                font.family: root.schrift
-                font.pixelSize: 13
-                wrapMode: Text.Wrap
+                height: 20
+
+                Text {
+                    width: parent.width
+                    text: root.meldung
+                    color: root.meldungFehler ? root.fehler : root.gedaempft
+                    font.family: root.schrift
+                    font.pixelSize: 13
+                    wrapMode: Text.Wrap
+                    maximumLineCount: 4
+                    elide: Text.ElideRight
+                }
             }
         }
     }

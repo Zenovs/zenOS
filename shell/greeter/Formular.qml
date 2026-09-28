@@ -173,17 +173,22 @@ Item {
             }
         }
 
-        // Meldung: Fehler in fehler, Hinweise gedämpft; die Zeile bleibt immer gleich hoch
-        Text {
+        // Meldung: Fehler in fehler, Hinweise gedämpft. Die Zeile belegt immer dieselbe Höhe; längere
+        // Meldungen (bis drei Zeilen) laufen nach unten weiter, ohne das Formular zu verschieben.
+        Item {
             width: parent.width
-            height: Math.max(implicitHeight, 20)
-            text: root.ablauf.meldung
-            color: root.ablauf.meldungFehler ? Theme.fehler : Theme.gedaempft
-            font.family: Theme.schriftText
-            font.pixelSize: Theme.groesseLabel
-            wrapMode: Text.Wrap
-            maximumLineCount: 2
-            elide: Text.ElideRight
+            implicitHeight: 20
+
+            Text {
+                width: parent.width
+                text: root.ablauf.meldung
+                color: root.ablauf.meldungFehler ? Theme.fehler : Theme.gedaempft
+                font.family: Theme.schriftText
+                font.pixelSize: Theme.groesseLabel
+                wrapMode: Text.Wrap
+                maximumLineCount: 3
+                elide: Text.ElideRight
+            }
         }
     }
 }

@@ -6,3 +6,8 @@
 
 systemctl --user stop zenos-sitzung.target graphical-session.target
 systemctl --user unset-environment WAYLAND_DISPLAY DISPLAY LABWC_PID XDG_SESSION_ID
+
+# Mit dem Portal ist jede Bildschirmfreigabe zu Ende. Endet es, ohne «zenos-freigabe ende» aufzurufen
+# (SIGTERM, Absturz), bliebe der Marker bis zur nächsten Anmeldung stehen (zen doctor per SSH).
+marker=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/zenos
+rm -f -- "$marker/freigabe" "$marker/freigabe.neu" "$marker/freigabe-wahl"

@@ -3,9 +3,9 @@
 #
 # Setzt die Umgebung, richtet die Benutzerteile ein (install.sh --nur-benutzer --ruhig: still, schnell,
 # idempotent; ein frisch geflashtes Image bekommt so beim ersten Login die Dateien des Benutzers), löscht
-# den Sperr-Marker einer früheren Sitzung und startet labwc. labwc startet über ~/.config/labwc/autostart
-# zenos-sitzung.target mit der Oberfläche. Abmelden: zenos-abmelden (stoppt die Dienste, dann labwc);
-# ~/.config/labwc/shutdown räumt bei jedem Ende von labwc auf.
+# die Marker einer früheren Sitzung (Sperre, Bildschirmfreigabe) und startet labwc. labwc startet über
+# ~/.config/labwc/autostart zenos-sitzung.target mit der Oberfläche. Abmelden: zenos-abmelden (stoppt die
+# Dienste, dann labwc); ~/.config/labwc/shutdown räumt bei jedem Ende von labwc auf.
 # Nichts davon darf die Anmeldung aufhalten: Fehler werden gemeldet (Journal), labwc startet trotzdem.
 
 set -uo pipefail
@@ -50,9 +50,6 @@ else
   meldung "$code/scripts/install.sh fehlt"
 fi
 
-# Wer sich gerade angemeldet hat, ist nicht gesperrt
-rm -f -- "$XDG_RUNTIME_DIR/zenos/gesperrt"
-
 # Reste einer abgebrochenen Sitzung (z. B. labwc abgestürzt) beenden. Fehlerzustand und Startsperren der
 # Sitzungsdienste lösen: Endet labwc ohne zenos-abmelden, verlieren sie die Verbindung und stehen auf «failed».
 if systemctl --user --quiet is-active zenos-sitzung.target 2> /dev/null; then
@@ -60,6 +57,12 @@ if systemctl --user --quiet is-active zenos-sitzung.target 2> /dev/null; then
   systemctl --user stop zenos-sitzung.target graphical-session.target 2> /dev/null || true
 fi
 systemctl --user reset-failed zenos-shell.service zenos-idle.service zenos-kanshi.service 2> /dev/null || true
+
+# Wer sich gerade angemeldet hat, ist nicht gesperrt. Eine Bildschirmfreigabe überlebt die Sitzung nie (das
+# Portal endet mit ihr); ein Freigabe-Marker ist hier also immer übrig geblieben (Abmelden während einer
+# Freigabe, Absturz) und hielte sonst die neue Sitzung in «Sitzung» und die Mitteilungen zurück.
+marker=$XDG_RUNTIME_DIR/zenos
+rm -f -- "$marker/gesperrt" "$marker/freigabe" "$marker/freigabe.neu" "$marker/freigabe-wahl"
 
 # Ausgaben von labwc und den Apps ins Journal (journalctl -t labwc), sonst zu greetd
 if command -v systemd-cat > /dev/null && [[ -S /run/systemd/journal/stdout ]]; then

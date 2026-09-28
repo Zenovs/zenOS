@@ -23,6 +23,8 @@ polkitd
 pipewire
 wireplumber
 pipewire-pulse
+# Echtzeitpriorität für PipeWire (wie Ubuntu Desktop); die Empfehlung fällt durch --no-install-recommends weg
+rtkit
 
 # Portale (Settings über gtk, Bildschirmfreigabe und Bildschirmfoto über wlr)
 xdg-desktop-portal

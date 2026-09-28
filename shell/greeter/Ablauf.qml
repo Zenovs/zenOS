@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Services.Greetd
 import qs.dienste
+import "notfall/pam.js" as Pam
 
 // Anmeldung über greetd: Sitzung anlegen, Fragen von PAM beantworten, zenOS-Sitzung starten.
 // Das Passwort bleibt im Eingabefeld, bis greetd danach fragt (antwortGebraucht); die Oberfläche
@@ -77,18 +78,6 @@ Scope {
         meldungFehler = fehler;
     }
 
-    // PAM-Fehler (Englisch, technisch) in eine verständliche Meldung übersetzen
-    function _fehlertext(text: string): string {
-        const t = (text ?? "").toLowerCase();
-        if (t.includes("maxtries") || t.includes("too many") || t.includes("locked"))
-            return "Zu viele Versuche. Bitte einen Moment warten und noch einmal versuchen.";
-        if (t.includes("expired"))
-            return "Dieses Konto ist abgelaufen.";
-        if (t.includes("perm_denied") || t.includes("permission denied") || t.includes("acct_mgmt"))
-            return "Dieses Konto darf sich hier nicht anmelden.";
-        return _ausListe ? "Das Passwort stimmt nicht. Bitte noch einmal." : "Benutzername oder Passwort stimmt nicht.";
-    }
-
     Connections {
         target: Greetd
 
@@ -113,11 +102,18 @@ Scope {
             // Meldung von PAM (ohne Passwort), hilft bei der Fehlersuche im Journal
             console.warn("Greeter: Anmeldung abgelehnt:", message);
             root._zuruecksetzen();
-            root._melden(root._fehlertext(message), true);
+            root._melden(Pam.failureText(message, !root._ausListe), true);
             root.fehlgeschlagen();
         }
 
         function onError(message: string): void {
+            // Ohne laufende Anmeldung ist das die Antwort auf cancel_session: Quickshell bricht nach jeder
+            // Ablehnung selbst ab (abbrechen() ebenso), und greetd 0.10 meldet dann «unable to send message:
+            // Connection refused», weil sein Anmeldeprozess schon beendet ist. Die Meldung davor bleibt stehen.
+            if (Greetd.state === GreetdState.Inactive) {
+                console.info("Greeter: greetd nach dem Abbruch:", message);
+                return;
+            }
             console.warn("Greeter: greetd meldet einen Fehler:", message);
             root._zuruecksetzen();
             root._melden("Die Anmeldung ist fehlgeschlagen (greetd: " + message + ").", true);
