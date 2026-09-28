@@ -41,8 +41,10 @@ Runner):
 - **Grösse:** `.img.xz` mit `xz -9` 1 553 110 924 Byte (1481 MiB, rund 1,5 GB), also 72 % der Grenze von 2 GiB.
   Entpackt 4882 MiB, im Root-Dateisystem 3,7 GiB belegt.
 - **Dauer:** Download und Prüfung knapp 1 Minute, `install.sh --image` 9 Minuten (davon Quickshell-Bau 8 Minuten
-  mit 2 Jobs), `xz -9` allein 29 Minuten (bei 4 GB RAM nur einfädig). Die Laufzeit auf dem Runner steht noch aus
-  (erster Lauf mit `v0.1.0-rc1`).
+  mit 2 Jobs), `xz -9` allein 29 Minuten (bei 4 GB RAM nur einfädig).
+- **Auf dem Runner** (`ubuntu-24.04-arm`, `v0.1.0-rc1`, 28.09.2026): 15:29 Minuten für den ganzen Job. Davon
+  `install.sh --image` gut 4 Minuten, `xz -T0 -9` 10 Minuten. Ergebnis 1484 MiB (1 556 171 906 Byte als
+  Artefakt), entpackt 4884 MiB.
 - **Platz:** Die Spitze im Arbeitsordner lag bei 7,7 GB (Image plus Quickshell-Bau).
 
 ## Grenzen

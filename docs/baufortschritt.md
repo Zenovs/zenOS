@@ -40,7 +40,8 @@ Gemessen im Container (nicht auf dem Pi):
   SSH, Netz und Konten unverändert, greetd aktiviert, aber erst nach dem Neustart gestartet.
 - `zen update` von GitHub auf ein installiertes System: 5 Änderungen, zweiter Lauf 0; `zen doctor` 0 Fehler.
 - Image: `install.sh --image` im Ubuntu-Pi-Image, 1481 MiB mit `xz -9` (72 % der 2-GiB-Grenze), ohne
-  SSH-Hostschlüssel, ohne proprietäre Apps, ohne Benutzerdaten.
+  SSH-Hostschlüssel, ohne proprietäre Apps, ohne Benutzerdaten. Auf GitHub (Tag `v0.1.0-rc1`) gebaut in 15:29 Minuten,
+  1484 MiB, als Workflow-Artefakt (kein Release).
 - `scripts/pruefen.sh`: shellcheck, JSON-Schemas, Hex- und sh-c-Regel, rund 280 Einheitentests, qmllint, gitleaks,
   Start-Test der Oberfläche – sauber, auch in der CI auf GitHub.
 
