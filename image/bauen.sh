@@ -310,15 +310,61 @@ unmount_all() {
   stop_chroot_processes
   mapfile -t targets < <(findmnt -rn -o TARGET | awk -v p="$ROOT_MNT/" 'index($0, p) == 1' | LC_ALL=C sort -r)
   for target in "${targets[@]}"; do
-    umount -- "$target" 2>/dev/null || umount -l -- "$target" || warn "$target liess sich nicht aushängen"
+    umount_target "$target"
   done
   if mountpoint -q -- "$ROOT_MNT"; then
     if (( $1 && BOOTDIR_CREATED )); then
       rmdir -- "$ROOT_MNT/boot/firmware"
       BOOTDIR_CREATED=0
     fi
-    umount -- "$ROOT_MNT" 2>/dev/null || umount -l -- "$ROOT_MNT" || warn "$ROOT_MNT liess sich nicht aushängen"
+    umount_target "$ROOT_MNT"
   fi
+}
+
+# Erst normal aushängen (mit kurzen Wiederholungen), «umount -l» nur als sichtbarer Rückfall: Ein verzögert
+# ausgehängtes Dateisystem hält das Loop-Gerät weiter, und e2fsck meldet es danach als belegt.
+umount_target() {
+  local target=$1 try
+  for try in 1 2 3; do
+    umount -- "$target" 2>/dev/null && return 0
+    sleep "$try"
+  done
+  warn "$target ist belegt, nur verzögert ausgehängt"
+  if command -v fuser >/dev/null; then fuser -vm -- "$target" 2>&1 | sed 's/^/     /' >&2 || true; fi
+  umount -l -- "$target" || warn "$target liess sich nicht aushängen"
+}
+
+# Andere Mount-Namensräume (z. B. von Diensten des Hosts, die während des Baus starten) behalten eine Kopie
+# der Einhängepunkte unter ROOT_MNT und halten so das Loop-Gerät. Dort gezielt aushängen.
+release_foreign_mounts() {
+  local root_real proc ns pid path
+  local -A seen=()
+  root_real=$(readlink -f -- "$ROOT_MNT")
+  for proc in /proc/[0-9]*; do
+    pid=${proc#/proc/}
+    ns=$(readlink -- "$proc/ns/mnt" 2>/dev/null) || continue
+    [[ -z "${seen[$ns]:-}" ]] || continue
+    seen[$ns]=1
+    grep -q -- " $root_real" "$proc/mountinfo" 2>/dev/null || continue
+    warn "Mount-Namensraum von $(cat -- "$proc/comm" 2>/dev/null || true)[$pid] hält das Image noch"
+    while read -r path; do
+      nsenter --target "$pid" --mount -- umount -l -- "$path" 2>/dev/null || true
+    done < <(awk -v p="$root_real" '$5 == p || index($5, p "/") == 1 { print $5 }' "$proc/mountinfo" | LC_ALL=C sort -r)
+  done
+}
+
+# Wartet, bis niemand mehr GERÄT offen hält (udev/udisks prüfen ein Gerät nach dem Aushängen kurz)
+wait_device_free() {
+  local dev=$1 try
+  release_foreign_mounts
+  for try in 1 2 3 4 5 6 7 8 9 10; do
+    if command -v udevadm >/dev/null; then udevadm settle --timeout=10 2>/dev/null || true; fi
+    if ! findmnt -rn -S "$dev" >/dev/null 2>&1 && ! grep -qs -- "^$dev " /proc/mounts; then
+      return 0
+    fi
+    sleep 2
+  done
+  warn "$dev ist nach dem Aushängen noch eingehängt"
 }
 
 # Namensauflösung im chroot. Ubuntu: /etc/resolv.conf → ../run/systemd/resolve/stub-resolv.conf, und /run ist
@@ -501,13 +547,36 @@ set_partition2() {
 }
 
 fsck_root() { # GERÄT [-n]
-  local rc=0 mode=-p
+  local rc mode=-p try
   if [[ "${2:-}" == -n ]]; then mode=-n; fi
-  e2fsck -f "$mode" -- "$1" > "$TMP_DIR/e2fsck.log" 2>&1 || rc=$?
+  for try in 1 2 3 4 5 6; do
+    rc=0
+    e2fsck -f "$mode" -- "$1" > "$TMP_DIR/e2fsck.log" 2>&1 || rc=$?
+    # Exit 8 mit «in use»: ein anderer Prozess hält das Gerät gerade offen (kein Fehler im Dateisystem)
+    if (( rc != 8 )) || ! grep -q 'in use' -- "$TMP_DIR/e2fsck.log"; then break; fi
+    warn "$1 ist noch belegt, e2fsck wartet (Versuch $try)"
+    release_foreign_mounts
+    if command -v udevadm >/dev/null; then udevadm settle --timeout=10 2>/dev/null || true; fi
+    sleep $(( try * 2 ))
+  done
   if (( rc >= 4 )) || { [[ "$mode" == -n ]] && (( rc != 0 )); }; then
     sed 's/^/     /' -- "$TMP_DIR/e2fsck.log" >&2
+    if grep -q 'in use' -- "$TMP_DIR/e2fsck.log"; then device_diagnose "$1"; fi
     die "e2fsck meldet Fehler im Root-Dateisystem (Exit $rc)"
   fi
+}
+
+# Wer hält GERÄT? Für die Fehlersuche im Log des Workflows
+device_diagnose() {
+  local dev=$1 name
+  name=$(basename -- "$dev")
+  {
+    echo "     Diagnose für $dev:"
+    findmnt -rn -S "$dev" 2>&1 | sed 's/^/       findmnt: /' || true
+    find "/sys/block/$name/holders" -mindepth 1 -maxdepth 1 -printf '       holders: %f\n' 2>&1 || true
+    if command -v fuser >/dev/null; then fuser -v -- "$dev" 2>&1 | sed 's/^/       fuser: /' || true; fi
+    grep -ls -- "$(readlink -f -- "$ROOT_MNT")" /proc/[0-9]*/mountinfo 2>/dev/null | head -5 | sed 's/^/       mountinfo: /' || true
+  } >&2
 }
 
 fs_value() { # GERÄT FELD – Wert aus dumpe2fs -h
@@ -880,6 +949,7 @@ clean_image
 
 step "Aushängen und verkleinern"
 unmount_all 1
+wait_device_free "$LOOP_ROOT"
 shrink_image
 
 step "Packen"

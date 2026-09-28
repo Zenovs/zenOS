@@ -55,7 +55,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends \
-            curl ca-certificates gpgv xz-utils e2fsprogs fdisk util-linux mount git zerofree
+            curl ca-certificates gpgv xz-utils e2fsprogs fdisk util-linux mount git zerofree psmisc
 
       - name: Platz auf dem Runner
         run: df -h / "$RUNNER_TEMP"
