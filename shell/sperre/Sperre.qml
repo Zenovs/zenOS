@@ -17,6 +17,8 @@ import qs.komponenten
 //   dazwischen, hält labwc die Sperre, und die neu gestartete Shell sperrt über den Marker wieder.
 // - Das Passwort wird nur an PAM weitergereicht (Dienst zenos-sperre unter <code>/system/pam) und das
 //   Feld sofort geleert.
+// - Offene Overlays (Befehlsfeld, Zentrale, Modus-/Zustandswahl, Menüs der Leiste) schliessen beim Sperren,
+//   sonst hätte nach dem Entsperren nichts die Tastatur (siehe _overlaysSchliessen).
 // - Während der Sperre ruht das automatische Neuladen der Oberfläche: Quickshell v0.3.1 stürzt ab, wenn es
 //   bei gesetzter Sperre neu lädt (neue Sperrflächen vor dem Abbau der alten). Wurde die Oberfläche in der
 //   Zwischenzeit geändert (z. B. zen update), lädt sie nach dem Entsperren neu.
@@ -40,6 +42,8 @@ Scope {
     property bool _ausweichen: false
     // Die Oberfläche wurde während der Sperre geändert und lädt nach dem Entsperren neu
     property bool _neuLaden: false
+    // sperren() läuft (das Signal sperrenAngefordert kommt dabei hierher zurück)
+    property bool _sperrtGerade: false
     readonly property bool pruefe: pam.active && _geantwortet
     onPruefeChanged: {
         if (!pruefe)
@@ -52,15 +56,40 @@ Scope {
     readonly property int anzahlMitteilungen: Math.max(0, Mitteilungen.anzahlWartend) + Math.max(0, Mitteilungen.anzahlUngelesen)
 
     function sperren(): void {
-        if (lock.locked)
+        if (lock.locked || root._sperrtGerade)
             return;
-        Quickshell.watchFiles = false;
-        // Erst der Marker, dann die Sperre (siehe oben)
-        markerDatei.setText(new Date().toISOString() + "\n");
-        zustand.gesperrt = true;
-        _zuruecksetzen();
-        lock.locked = true;
+        root._sperrtGerade = true;
+        try {
+            Quickshell.watchFiles = false;
+            // Erst der Marker, dann die Sperre (siehe oben)
+            markerDatei.setText(new Date().toISOString() + "\n");
+            zustand.gesperrt = true;
+            _zuruecksetzen();
+            lock.locked = true;
+            // Erst sperren, dann schliessen: Was beim Schliessen schiefgeht, hält die Sperre nicht auf.
+            // Für labwc ist die Reihenfolge gleich, es gibt die Fläche auch während der Sperre frei.
+            _overlaysSchliessen(true);
+        } finally {
+            root._sperrtGerade = false;
+        }
         Quickshell.execDetached([Pfade.bin + "/zenos-1password-sperren"]);
+    }
+
+    // Overlays mit exklusivem Tastaturfokus (Befehlsfeld, Zentrale, Modus- und Zustandswahl, Menüs der
+    // Leiste) schliessen. labwc gibt einer solchen Fläche den Fokus nach dem Entsperren nicht zurück und
+    // fokussiert dann auch kein Fenster: Die Tastatur wirkte tot. Schliesst sie während der Sperre, gibt
+    // labwc sie frei und fokussiert beim Entsperren wieder das letzte Fenster.
+    // melden: auch das Signal sperrenAngefordert senden, auf das die Menüs der Leiste und die übrigen
+    // Oberflächen schliessen – auf jedem Weg (IPC, zen lock, Marker), nicht nur über Oberflaeche.sperren().
+    // Es kommt bei der Sperre selbst wieder an und endet an _sperrtGerade (auch wenn die Sperre nicht
+    // zustande kam, lock.locked also false blieb).
+    function _overlaysSchliessen(melden: bool): void {
+        Oberflaeche.befehlsfeldOffen = false;
+        Oberflaeche.zentraleOffen = false;
+        Oberflaeche.modusWahlOffen = false;
+        Oberflaeche.zustandWahlOffen = false;
+        if (melden)
+            Oberflaeche.sperrenAngefordert();
     }
 
     function entsperrenVersuchen(): void {
@@ -497,6 +526,26 @@ Scope {
 
         function onSperrenAngefordert(): void {
             root.sperren();
+        }
+
+        // Während der Sperre öffnet sich kein Overlay (z. B. per IPC aus einer SSH-Sitzung): Hinter der
+        // Sperre sieht es niemand, nach dem Entsperren hätte es keine Tastatur (siehe _overlaysSchliessen),
+        // und die Zentrale zählte Mitteilungen als angesehen.
+        function onBefehlsfeldOffenChanged(): void {
+            if (lock.locked && Oberflaeche.befehlsfeldOffen)
+                root._overlaysSchliessen(false);
+        }
+        function onZentraleOffenChanged(): void {
+            if (lock.locked && Oberflaeche.zentraleOffen)
+                root._overlaysSchliessen(false);
+        }
+        function onModusWahlOffenChanged(): void {
+            if (lock.locked && Oberflaeche.modusWahlOffen)
+                root._overlaysSchliessen(false);
+        }
+        function onZustandWahlOffenChanged(): void {
+            if (lock.locked && Oberflaeche.zustandWahlOffen)
+                root._overlaysSchliessen(false);
         }
     }
 
