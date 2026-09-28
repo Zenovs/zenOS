@@ -21,6 +21,8 @@ Singleton {
     readonly property bool verfuegbar: _rootExists
     // true, nachdem alles einmal gelesen wurde
     property bool geladen: false
+    // true, wenn die Listen dabei fehlerfrei gelesen wurden (false, solange zenos-konfig scheitert)
+    readonly property bool listenGelesen: _listsRead
 
     property var modi: []
     property var zustaende: []
@@ -62,6 +64,12 @@ Singleton {
         _enqueue("loesche", art, id, null, fertig);
     }
 
+    // Wartet oder läuft für diesen Eintrag noch ein Schreib- oder Löschauftrag? (id "" bei Datei-Arten)
+    function ausstehend(art: string, id: string): bool {
+        const key = art + "/" + (id ?? "");
+        return _running[key] === true || _waiting[key] !== undefined;
+    }
+
     // Liste einer Ordner-Art neu lesen
     function neuLaden(art: string): void {
         if (!verfuegbar || _folderKinds.indexOf(art) < 0)
@@ -73,9 +81,13 @@ Singleton {
         _reading[art] = true;
         _run(["liste", art], "", (ok, text, meldung) => {
             _reading[art] = false;
-            if (ok)
-                _apply(art, _parse(text, []));
-            else if (meldung)
+            if (ok) {
+                const list = _parse(text, null);
+                _apply(art, list ?? []);
+                // Scheiterte das erste Lesen, zählt ein späteres erfolgreiches der Modi
+                if (art === "modi" && Array.isArray(list))
+                    root._listsRead = true;
+            } else if (meldung)
                 console.warn("Konfig:", meldung);
             if (_readAgain[art]) {
                 _readAgain[art] = false;
@@ -89,6 +101,7 @@ Singleton {
     readonly property var _idPattern: /^[a-z0-9]+(-[a-z0-9]+)*$/
 
     property bool _rootExists: false
+    property bool _listsRead: false
     property var _runtimeAtStart: ({})
     property var _reading: ({})
     property var _readAgain: ({})
@@ -246,6 +259,9 @@ Singleton {
                 const d = _parse(text, {});
                 for (const art of ["modi", "zustaende", "raster", "bildschirme", "webapps"])
                     _apply(art, d[art]);
+                // Erst nach dem Übernehmen: wer darauf wartet, sieht schon die gelesene Liste
+                if (Array.isArray(d.modi))
+                    root._listsRead = true;
             } else {
                 console.warn("Konfig:", meldung || "Konfiguration nicht lesbar");
             }

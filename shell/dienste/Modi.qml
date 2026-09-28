@@ -9,16 +9,17 @@ import qs.dienste
 import "../modi/zustandslogik.js" as Logik
 
 // Modi (~/.config/zenos/modi/<id>.json) und der aktive Modus (laufzeit.json, Schlüssel «modus»).
-// Ein Wechsel setzt den Akzent (Erscheinung liest Modi.aktiv), öffnet die Apps des Modus, setzt das
-// Raster des aktuellen Bildschirm-Profils und startet Zustände mit dem Auslöser «moduswechsel».
-// Das Chrome-Profil nimmt zenos-chrome beim Start von Chrome aus dem aktiven Modus.
+// Ein Wechsel setzt den Akzent (Erscheinung liest Modi.aktiv), setzt das Raster des aktuellen
+// Bildschirm-Profils, startet Zustände mit dem Auslöser «moduswechsel» und öffnet die Apps des Modus.
+// Das Chrome-Profil nimmt zenos-chrome beim Start von Chrome aus laufzeit.json; die Apps starten
+// deshalb erst, wenn dort der neue Modus steht.
 Singleton {
     id: root
 
     // Alle Modi (Objekte mit id), nach Name sortiert
     readonly property var liste: _sorted(Konfig.modi)
     // Objekt des aktiven Modus oder null
-    readonly property var aktiv: _find(aktivId) ?? (_startMode && _startMode.id === aktivId ? _startMode : null)
+    readonly property var aktiv: _find(aktivId) ?? (!Konfig.listenGelesen && _startMode && _startMode.id === aktivId ? _startMode : null)
     // ID des aktiven Modus ("" = keiner)
     property string aktivId: _validId(Konfig.laufzeitStart?.modus) ? Konfig.laufzeitStart.modus : ""
 
@@ -38,15 +39,21 @@ Singleton {
             return;
         const alt = aktivId;
         aktivId = neu;
+        const nr = ++_switchCount;
+        // Apps erst nach dem Schreiben öffnen: zenos-chrome liest den Modus aus laufzeit.json. Bei
+        // schnellem Hin und Her öffnet nur der letzte Wechsel. Lehnt zenos-konfig ab, öffnen sie
+        // trotzdem (Akzent und Raster wechseln auch; Chrome nimmt dann wie beim Öffnen von Hand das
+        // Profil, das in der Datei steht).
         Konfig.aendern("laufzeit", "", {
             modus: neu === "" ? null : neu
+        }, () => {
+            if (neu !== "" && nr === root._switchCount)
+                root._openApps(root._find(neu));
         });
         gewechselt(alt, neu);
         if (neu === "")
             return;
-        const modus = _find(neu);
-        _openApps(modus);
-        _applyRaster(modus);
+        _applyRaster(_find(neu));
     }
 
     // Modus speichern (ganze Datei). fertig(ok, meldung) optional.
@@ -80,10 +87,22 @@ Singleton {
         return Raster.aktuellesProfil();
     }
 
+    // Kopie des aktiven Modus aus dem Start (erstes Bild), nur bis die Listen gelesen sind
     property var _startMode: null
+    // Zählt die Wechsel; nur der letzte öffnet Apps
+    property int _switchCount: 0
     // Offene Fenster (für «Beim Wechsel öffnen»). Schon beim Start gebunden: ToplevelManager füllt sich
     // erst nach dem ersten Zugriff, asynchron. Im Greeter (ohne Konfiguration) nicht.
     readonly property var _windows: Konfig.verfuegbar ? ToplevelManager.toplevels : null
+
+    // Ist die Datei des aktiven Modus weg (von Hand gelöscht, auch vor dem Start), gilt kein Modus
+    // mehr, wie beim Löschen in den Einstellungen. Nicht, solange zenos-konfig ihn noch schreibt
+    // (neu angelegt und gleich gewählt) und nicht, wenn die Listen nicht lesbar waren.
+    function _checkActive(): void {
+        if (aktivId === "" || !Konfig.verfuegbar || !Konfig.listenGelesen || _find(aktivId) || Konfig.ausstehend("modi", aktivId))
+            return;
+        wechseln("");
+    }
 
     function _validId(id: var): bool {
         return typeof id === "string" && Logik.gueltigeId(id);
@@ -144,6 +163,23 @@ Singleton {
             return;
         if (typeof Raster.setzen === "function")
             Raster.setzen(rasterId);
+    }
+
+    Connections {
+        target: Konfig
+
+        function onGeladenChanged(): void {
+            root._checkActive();
+        }
+
+        function onListenGelesenChanged(): void {
+            root._checkActive();
+        }
+
+        function onGeaendert(art: string): void {
+            if (art === "modi")
+                root._checkActive();
+        }
     }
 
     // Den aktiven Modus beim Start sofort lesen, damit schon das erste Bild den richtigen Akzent hat

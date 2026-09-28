@@ -283,6 +283,9 @@ test("Texte für die Tabelle «Zustände in diesem Modus»", () => {
   assert.equal(L.beschreibung(fokus, {}, false), "In diesem Modus nicht angeboten");
   // Anpassung gleich der Vorlage zählt nicht als angepasst
   assert.equal(L.beschreibung(fokus, { leiste: "reduziert" }, true), "Von Hand · 50 Min. · wie Vorlage");
+  // «fenster» und «widgets» wirken in 0.1 noch nicht: der Text sagt das
+  assert.equal(L.beschreibung(fokus, { fenster: "normal" }, true), "Fenster normal (später) · sonst wie Vorlage");
+  assert.equal(L.beschreibung(sitzung, { widgets: true }, true), "Widgets an (später) · sonst wie Vorlage");
   assert.equal(L.mitteilungenText("keine"), "Mitteilungen pausiert");
   assert.equal(L.endeText({ art: "ausloeser-endet" }), "endet mit dem Auslöser");
 });

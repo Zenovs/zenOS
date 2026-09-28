@@ -209,9 +209,12 @@ Item {
 
         Text {
             width: Math.min(parent.width, 560)
-            text: "Ein Zustand bestimmt, wie sich zenOS gerade verhält: Mitteilungen, Leiste, Fenster. «Fokus» und «Sitzung» liegen als Vorlagen bereit (zen benutzer)."
+            // Die Vorlagen kopiert die Einrichtung genau einmal (55-zustaende); zen benutzer holt
+            // gelöschte nicht zurück
+            text: "Ein Zustand bestimmt, wie sich zenOS gerade verhält: Mitteilungen, Leiste und «Heute». «Fokus» und «Sitzung» kommen bei der Einrichtung einmal als Vorlagen mit; gelöschte liegen unter " + Dienste.Pfade.code + "/config/vorlagen/zustaende."
             wrapMode: Text.WordWrap
-            lineHeight: 1.4
+            lineHeightMode: Text.FixedHeight
+            lineHeight: Math.round(font.pixelSize * 1.4)
             color: Theme.gedaempft
             font.family: Theme.schriftText
             font.pixelSize: Theme.groesseGross
@@ -422,6 +425,8 @@ Item {
                 }
             }
 
+            // «Fenster» und «Widgets» wirken in 0.1 noch nicht (wie «Kalender»): Der gespeicherte Wert
+            // bleibt sichtbar, lässt sich hier aber nicht ändern.
             Feld {
                 width: mitte.spalte
                 beschriftung: "Fenster"
@@ -429,19 +434,29 @@ Item {
                 hinweisBetont: true
                 akzent: root.akzent
 
-                Segmente {
-                    optionen: [
-                        {
-                            wert: "normal",
-                            text: "Normal"
-                        },
-                        {
-                            wert: "fokus",
-                            text: "Nur das aktive im Vordergrund"
-                        }
-                    ]
-                    wert: root.werte.fenster ?? "normal"
-                    onGewaehlt: wert => root.setzen("fenster", wert)
+                Row {
+                    spacing: 8
+
+                    Segmente {
+                        aktiv: false
+                        optionen: [
+                            {
+                                wert: "normal",
+                                text: "Normal"
+                            },
+                            {
+                                wert: "fokus",
+                                text: "Nur das aktive im Vordergrund"
+                            }
+                        ]
+                        wert: root.werte.fenster ?? "normal"
+                    }
+
+                    Pille {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "später"
+                        variante: "spaeter"
+                    }
                 }
             }
 
@@ -476,11 +491,22 @@ Item {
                     width: parent.width
                     height: 38
 
-                    Schalter {
+                    Row {
                         anchors.verticalCenter: parent.verticalCenter
-                        an: root.werte.widgets !== false
-                        beschriftung: "Widgets"
-                        onUmgeschaltet: an => root.setzen("widgets", an)
+                        spacing: 12
+
+                        Schalter {
+                            anchors.verticalCenter: parent.verticalCenter
+                            enabled: false
+                            an: root.werte.widgets !== false
+                            beschriftung: "Widgets"
+                        }
+
+                        Pille {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "später"
+                            variante: "spaeter"
+                        }
                     }
                 }
             }

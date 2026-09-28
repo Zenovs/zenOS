@@ -71,7 +71,7 @@ Item {
 
             Rectangle {
                 width: parent.width
-                height: versionAusgabe.implicitHeight + 28
+                height: Math.max(1, versionAusgabe.lineCount) * versionAusgabe.lineHeight + 28
                 radius: Theme.radiusFeld
                 color: Qt.alpha(Theme.flaeche2, 0.55)
 
@@ -84,7 +84,9 @@ Item {
                     text: root.versionText !== "" ? root.versionText : "…"
                     textFormat: Text.PlainText
                     wrapMode: Text.WrapAnywhere
-                    lineHeight: 1.5
+                    // Feste Zeilenhöhe wie CSS line-height (proportional vervielfacht Qt die Schrifthöhe)
+                    lineHeightMode: Text.FixedHeight
+                    lineHeight: Math.round(font.pixelSize * 1.5)
                     color: Theme.text
                     font.family: Theme.schriftMono
                     font.pixelSize: Theme.groesseLabel
@@ -147,7 +149,8 @@ Item {
                     width: parent.width
                     text: "zenOS aktualisiert sich nicht von selbst. Im Terminal holt «zen update» den neuen Stand und installiert ihn; «zen rollback <tag>» geht zu einem früheren zurück."
                     wrapMode: Text.WordWrap
-                    lineHeight: 1.4
+                    lineHeightMode: Text.FixedHeight
+                    lineHeight: Math.round(font.pixelSize * 1.4)
                     color: Theme.text
                     font.family: Theme.schriftText
                     font.pixelSize: Theme.groesseText

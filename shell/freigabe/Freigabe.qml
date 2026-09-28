@@ -12,12 +12,17 @@ import qs.dienste as Dienste
 // «Dieser Bildschirm wird geteilt» (Entwurf 2 «Sitzung»). Klickdurchlässig, nimmt nie den Fokus.
 // Geteilt wird immer ein ganzer Bildschirm (xdg-desktop-portal-wlr); ist bekannt, welcher, bekommt
 // nur er den Rahmen, sonst alle.
-// IPC «freigabe»: gestartet(), beendet() (zenos-freigabe über das Portal), status()
+// IPC «freigabe»: gewaehlt(ausgang), gestartet(), beendet() (zenos-freigabe über das Portal), status()
 Scope {
     id: root
 
     IpcHandler {
         target: "freigabe"
+
+        // Aus der Bildschirmwahl (zenos-freigabe waehlen), bevor das Portal den Stream anlegt
+        function gewaehlt(ausgang: string): void {
+            Dienste.Freigabe.gewaehlt(ausgang);
+        }
 
         function gestartet(): void {
             Dienste.Freigabe.gestartet();

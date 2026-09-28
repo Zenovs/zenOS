@@ -203,7 +203,8 @@ Item {
             width: Math.min(parent.width, 560)
             text: "Ein Modus ist ein Kontext wie Arbeit oder privat: Akzentfarbe, Chrome-Profil, Apps beim Wechsel und Raster. Ab Werk gibt es keinen, du legst sie selbst an."
             wrapMode: Text.WordWrap
-            lineHeight: 1.4
+            lineHeightMode: Text.FixedHeight
+            lineHeight: Math.round(font.pixelSize * 1.4)
             color: Theme.gedaempft
             font.family: Theme.schriftText
             font.pixelSize: Theme.groesseGross
@@ -614,7 +615,13 @@ Item {
             Text {
                 visible: Dienste.Zustaende.liste.length === 0
                 topPadding: 8
-                text: "Noch keine Zustände. «Fokus» und «Sitzung» kommen als Vorlagen mit zen benutzer."
+                width: parent.width
+                wrapMode: Text.WordWrap
+                // Die Vorlagen kopiert die Einrichtung genau einmal; zen benutzer holt gelöschte nicht zurück
+                text: "Noch keine Zustände. «Neuer Zustand» in der Navigation legt einen an.\nDie Vorlagen «Fokus» und «Sitzung» liegen unter " + Dienste.Pfade.code + "/config/vorlagen/zustaende."
+                textFormat: Text.PlainText
+                lineHeightMode: Text.FixedHeight
+                lineHeight: Math.round(font.pixelSize * 1.5)
                 color: Theme.gedaempft
                 font.family: Theme.schriftText
                 font.pixelSize: Theme.groesseText

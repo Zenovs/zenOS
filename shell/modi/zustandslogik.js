@@ -481,12 +481,13 @@ function _wertText(schluessel, wert) {
         return mitteilungenText(wert);
     case "leiste":
         return wert === "aus" ? "Leiste aus" : wert === "reduziert" ? "Leiste reduziert" : "Leiste normal";
+    // «fenster» und «widgets» werden gespeichert, wirken in 0.1 aber noch nicht
     case "fenster":
-        return wert === "fokus" ? "Nur das aktive Fenster im Vordergrund" : "Fenster normal";
+        return (wert === "fokus" ? "Fenster: nur das aktive" : "Fenster normal") + " (später)";
     case "heute":
         return wert ? "«Heute» sichtbar" : "«Heute» ausgeblendet";
     case "widgets":
-        return wert ? "Widgets an" : "Widgets aus";
+        return (wert ? "Widgets an" : "Widgets aus") + " (später)";
     case "ausloeser":
         return ausloeserText(wert);
     case "ende":

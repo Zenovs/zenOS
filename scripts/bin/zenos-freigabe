@@ -4,12 +4,22 @@
 #
 #   zenos-freigabe start     exec_before: Freigabe beginnt (Marker setzen, Oberfläche benachrichtigen)
 #   zenos-freigabe ende      exec_after: Freigabe endet
-#   zenos-freigabe waehlen   chooser_cmd: Bildschirm mit slurp wählen, «Monitor: <Ausgang>» ausgeben
+#   zenos-freigabe waehlen   chooser_cmd: Bildschirm mit slurp wählen, Oberfläche benachrichtigen,
+#                            «Monitor: <Ausgang>» ausgeben
 #   zenos-freigabe status    «aktiv N» oder «inaktiv»
 #
-# Marker: $XDG_RUNTIME_DIR/zenos/freigabe, eine Zeile pro laufender Freigabe mit dem geteilten
-# Ausgang (oder «*», wenn er nicht bekannt ist). Die Oberfläche (freigabe/Freigabe.qml) liest ihn beim
-# Start und beobachtet ihn; zusätzlich meldet zenos-ipc freigabe gestartet|beendet sofort.
+# Marker: $XDG_RUNTIME_DIR/zenos/freigabe, eine Zeile je geteiltem Ausgang (oder «*», wenn er nicht
+# bekannt ist). Die Oberfläche (freigabe/Freigabe.qml) liest ihn beim Start und beobachtet ihn;
+# zusätzlich meldet zenos-ipc freigabe gewaehlt|gestartet|beendet sofort.
+#
+# xdg-desktop-portal-wlr 0.8 wartet nicht auf exec_before (Doppel-fork) und legt den Stream gleich
+# danach an; im Container zeigte das erste Bild noch eine Mitteilung mit Inhalt. Auf den Chooser
+# wartet es dagegen. Deshalb meldet schon die Wahl die Freigabe (IPC «gewaehlt»), bevor der Stream
+# beginnt; exec_before setzt danach den Marker. Ohne Wahl (gespeichertes Token, das xdpw nur mit
+# XDPW_PERSIST_MODE ausgibt; zenOS setzt das nicht) bleibt es beim Wettlauf.
+# exec_before läuft nur für die erste von mehreren gleichzeitigen Freigaben, exec_after erst nach
+# der letzten: Eine Wahl während einer laufenden Freigabe trägt ihren Ausgang selbst ein, und «ende»
+# leert den Marker ganz.
 
 set -euo pipefail
 
@@ -39,11 +49,16 @@ gesperrt() {
 
 ausgang_gueltig() { [[ "$1" =~ ^[A-Za-z0-9._-]{1,64}$ ]]; }
 
-# Oberfläche benachrichtigen; blockiert das Portal nie lange und scheitert still, wenn keine Shell läuft
+# Oberfläche benachrichtigen; blockiert das Portal nie lange. Exit 0 nur, wenn die Shell es annahm.
 melden() {
   local ipc=$bin/zenos-ipc
-  [[ -x "$ipc" ]] || return 0
-  timeout 5 "$ipc" freigabe "$1" >/dev/null 2>&1 || true
+  [[ -x "$ipc" ]] || return 1
+  timeout 5 "$ipc" freigabe "$@" >/dev/null 2>&1
+}
+
+marker_schreiben() {
+  printf '%s\n' "$@" > "$marker.neu"
+  mv -f -- "$marker.neu" "$marker"
 }
 
 _start() {
@@ -59,44 +74,43 @@ _start() {
   printf '%s\n' "$ausgang" >> "$marker"
 }
 
+# exec_after kommt erst nach der letzten Freigabe: alles ist zu Ende
 _ende() {
-  [[ -f "$marker" ]] || return 0
-  local -a zeilen=()
-  mapfile -t zeilen < "$marker"
-  if (( ${#zeilen[@]} <= 1 )); then
-    rm -f -- "$marker"
-  else
-    printf '%s\n' "${zeilen[@]:0:${#zeilen[@]}-1}" > "$marker.neu"
-    mv -f -- "$marker.neu" "$marker"
-  fi
+  rm -f -- "$marker" "$marker.neu"
 }
 
-# Falls exec_before vor der Auswahl lief: den letzten unbekannten Ausgang nachtragen
+# Gewählten Ausgang festhalten; «start» übernimmt ihn in den Marker. Steht schon etwas im Marker,
+# läuft eine Freigabe, und xdpw ruft exec_before nicht noch einmal auf: dann gleich eintragen
+# (einen unbekannten Ausgang «*» ersetzen, falls exec_before vor der Wahl lief).
 _wahl_merken() {
   local ausgang=$1 i
-  printf '%s\n' "$ausgang" > "$wahl"
-  [[ -f "$marker" ]] || return 0
   local -a zeilen=()
-  mapfile -t zeilen < "$marker"
-  for (( i = ${#zeilen[@]} - 1; i >= 0; i-- )); do
-    if [[ "${zeilen[i]}" == "*" ]]; then
-      zeilen[i]=$ausgang
-      printf '%s\n' "${zeilen[@]}" > "$marker.neu"
-      mv -f -- "$marker.neu" "$marker"
-      rm -f -- "$wahl"
-      return 0
-    fi
-  done
+  if [[ -s "$marker" ]]; then
+    mapfile -t zeilen < "$marker"
+    for (( i = ${#zeilen[@]} - 1; i >= 0; i-- )); do
+      if [[ "${zeilen[i]}" == "*" ]]; then
+        zeilen[i]=$ausgang
+        marker_schreiben "${zeilen[@]}"
+        return 0
+      fi
+    done
+    for (( i = 0; i < ${#zeilen[@]}; i++ )); do
+      [[ "${zeilen[i]}" == "$ausgang" ]] && return 0
+    done
+    marker_schreiben "${zeilen[@]}" "$ausgang"
+    return 0
+  fi
+  printf '%s\n' "$ausgang" > "$wahl"
 }
 
 befehl_start() {
   gesperrt _start
-  melden gestartet
+  melden gestartet || true
 }
 
 befehl_ende() {
   gesperrt _ende
-  melden beendet
+  melden beendet || true
 }
 
 befehl_waehlen() {
@@ -113,6 +127,10 @@ befehl_waehlen() {
     exit 1
   fi
   gesperrt _wahl_merken "$ausgang"
+  # Vor der Ausgabe melden: xdpw legt den Stream erst an, wenn der Chooser endet. zenos-ipc kehrt
+  # zurück, sobald die Oberfläche die Meldung verarbeitet hat; das Bild ohne Inhalte folgt ein bis
+  # zwei Bildwechsel später, deshalb kurz warten.
+  if melden gewaehlt "$ausgang"; then sleep 0.1; fi
   printf 'Monitor: %s\n' "$ausgang"
 }
 
