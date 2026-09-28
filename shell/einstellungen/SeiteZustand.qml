@@ -48,6 +48,13 @@ Item {
     property string _geladenFuer: ""
     property bool _vorlageDirty: false
     property bool _anpassungDirty: false
+    // Zählen die Änderungen an Vorlage und Anpassung. Ein Rückruf gibt nur frei, wenn seit seinem
+    // Speichern nichts dazukam und noch derselbe Zustand (samt Modus) geladen ist; _gesendet* verhindert,
+    // dass derselbe Stand zweimal geschrieben wird.
+    property int _standVorlage: 0
+    property int _standAnpassung: 0
+    property int _gesendetVorlage: -1
+    property int _gesendetAnpassung: -1
 
     function _kopie(o: var): var {
         return o && typeof o === "object" ? JSON.parse(JSON.stringify(o)) : {};
@@ -76,6 +83,7 @@ Item {
                 v[schluessel] = wert;
             vorlage = v;
             _vorlageDirty = true;
+            _standVorlage++;
         } else {
             const a = _kopie(anpassung);
             if (wert === undefined || JSON.stringify(wert) === JSON.stringify(vorlage[schluessel]))
@@ -84,6 +92,7 @@ Item {
                 a[schluessel] = wert;
             anpassung = a;
             _anpassungDirty = true;
+            _standAnpassung++;
         }
         speicherTimer.restart();
     }
@@ -91,6 +100,7 @@ Item {
     function anpassungZuruecksetzen(): void {
         anpassung = {};
         _anpassungDirty = true;
+        _standAnpassung++;
         speichern();
     }
 
@@ -100,19 +110,27 @@ Item {
 
     function speichern(): void {
         speicherTimer.stop();
-        const [zid, mid] = _geladenFuer.split("@");
+        const geladen = _geladenFuer;
+        const [zid, mid] = geladen.split("@");
         if (!zid)
             return;
-        if (_vorlageDirty) {
+        if (_vorlageDirty && _gesendetVorlage !== _standVorlage) {
             const v = _kopie(vorlage);
             if (typeof v.name !== "string" || v.name.trim() === "")
                 v.name = Dienste.Konfig.eintrag("zustaende", zid)?.name ?? "Zustand";
+            const stand = _standVorlage;
+            _gesendetVorlage = stand;
             Dienste.Zustaende.speichern(zid, v, (ok, meldung) => {
-                root._vorlageDirty = false;
+                // Die Seite kann schon geschlossen sein
+                if (!root)
+                    return;
+                // Kam während des Speicherns eine Änderung dazu, bleibt sie offen: Timer oder «Fertig» speichern sie
+                if (root._geladenFuer === geladen && root._standVorlage === stand)
+                    root._vorlageDirty = false;
                 root.fehlerText = ok ? "" : meldung;
             });
         }
-        if (_anpassungDirty && mid) {
+        if (_anpassungDirty && mid && _gesendetAnpassung !== _standAnpassung) {
             const m = _kopie(Dienste.Konfig.eintrag("modi", mid));
             if (Object.keys(m).length > 0) {
                 const alle = _kopie(m.anpassungen);
@@ -124,8 +142,13 @@ Item {
                     m.anpassungen = alle;
                 else
                     delete m.anpassungen;
+                const stand = _standAnpassung;
+                _gesendetAnpassung = stand;
                 Dienste.Modi.speichern(mid, m, (ok, meldung) => {
-                    root._anpassungDirty = false;
+                    if (!root)
+                        return;
+                    if (root._geladenFuer === geladen && root._standAnpassung === stand)
+                        root._anpassungDirty = false;
                     root.fehlerText = ok ? "" : meldung;
                 });
             } else {

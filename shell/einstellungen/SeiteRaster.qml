@@ -39,6 +39,10 @@ Item {
 
     property string _geladenFuer: ""
     property bool _dirty: false
+    // Zählt die Änderungen. Ein Rückruf gibt den Entwurf nur frei, wenn seit seinem Speichern nichts
+    // dazukam; _gesendet verhindert, dass derselbe Stand zweimal geschrieben wird.
+    property int _stand: 0
+    property int _gesendet: -1
 
     function _kopie(o: var): var {
         return o && typeof o === "object" ? JSON.parse(JSON.stringify(o)) : {};
@@ -68,19 +72,26 @@ Item {
             d[schluessel] = wert;
         entwurf = d;
         _dirty = true;
+        _stand++;
         speicherTimer.restart();
     }
 
     function speichern(): void {
         speicherTimer.stop();
         const id = _geladenFuer;
-        if (!_dirty || id === "")
+        if (!_dirty || id === "" || _gesendet === _stand)
             return;
         const d = _kopie(entwurf);
         if (typeof d.name !== "string" || d.name.trim() === "")
             d.name = gespeichert?.name ?? "Raster";
+        const stand = _stand;
+        _gesendet = stand;
         Dienste.Raster.speichern(id, d, (ok, meldung) => {
-            if (root._geladenFuer === id)
+            // Die Seite kann schon geschlossen sein
+            if (!root)
+                return;
+            // Kam während des Speicherns eine Änderung dazu, bleibt sie offen: Timer oder «Fertig» speichern sie
+            if (root._geladenFuer === id && root._stand === stand)
                 root._dirty = false;
             root.fehlerText = ok ? "" : meldung;
         });

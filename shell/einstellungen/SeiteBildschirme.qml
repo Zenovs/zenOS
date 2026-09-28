@@ -62,6 +62,10 @@ Item {
 
     property int _geladenFuer: -1
     property bool _dirty: false
+    // Zählt die Änderungen. Ein Rückruf gibt den Entwurf nur frei, wenn seit seinem Speichern nichts
+    // dazukam; _gesendet verhindert, dass derselbe Stand zweimal geschrieben wird.
+    property int _stand: 0
+    property int _gesendet: -1
 
     function _kopie(o: var): var {
         return o && typeof o === "object" ? JSON.parse(JSON.stringify(o)) : {};
@@ -90,13 +94,14 @@ Item {
             d[schluessel] = wert;
         entwurf = d;
         _dirty = true;
+        _stand++;
         speicherTimer.restart();
     }
 
     function speichern(): void {
         speicherTimer.stop();
         const index = _geladenFuer;
-        if (!_dirty || index < 0)
+        if (!_dirty || index < 0 || _gesendet === _stand)
             return;
         const d = _kopie(entwurf);
         const name = (d.name ?? "").trim();
@@ -125,8 +130,14 @@ Item {
         // Umbenannt: Auswahl in der Navigation gleich mitnehmen (sonst springt die Seite kurz)
         if (alterName !== name && Dienste.Oberflaeche.einstellungenOffen)
             Dienste.Oberflaeche.einstellungenSeite = "bildschirme/" + name;
+        const stand = _stand;
+        _gesendet = stand;
         Dienste.Raster.bildschirmeSpeichern(daten, (ok, meldung) => {
-            if (root._geladenFuer === index)
+            // Die Seite kann schon geschlossen sein
+            if (!root)
+                return;
+            // Kam während des Speicherns eine Änderung dazu, bleibt sie offen: Timer oder «Fertig» speichern sie
+            if (root._geladenFuer === index && root._stand === stand)
                 root._dirty = false;
             root.fehlerText = ok ? "" : meldung;
         });
