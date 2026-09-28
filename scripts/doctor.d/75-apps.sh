@@ -83,10 +83,38 @@ _apps_agent() {
   else
     hinweis "SSH-Agent von 1Password: Socket vorhanden (nein) – in 1Password unter Einstellungen → Entwickler einschalten"
   fi
-  if [[ -f "$HOME/.config/environment.d/zenos-1password.conf" ]]; then
-    ok "SSH_AUTH_SOCK für die Sitzung eingerichtet (~/.config/environment.d/zenos-1password.conf)"
+  # Massgeblich ist der Wert im Benutzer-Manager: Ihn erben die Oberfläche und die Apps, die sie
+  # startet. Ubuntus ssh-agent.socket setzt ihn sonst auf den eigenen Agent (Drop-in von zen apps).
+  local soll="$HOME/.1password/agent.sock" openssh umgebung wert pid alt
+  if [[ ! -f "$HOME/.config/environment.d/zenos-1password.conf" ||
+    ! -f "$HOME/.config/systemd/user/ssh-agent.socket.d/zenos-1password.conf" ]]; then
+    warnung "SSH_AUTH_SOCK für die Sitzung nicht eingerichtet (zen benutzer richtet es ein)"
+    return 0
+  fi
+  if ! umgebung=$(systemctl --user show-environment 2>/dev/null); then
+    hinweis "SSH_AUTH_SOCK für die Sitzung eingerichtet; Benutzer-Manager nicht erreichbar, wirksamer Wert nicht geprüft"
+    return 0
+  fi
+  wert=$(sed -n 's/^SSH_AUTH_SOCK=//p' <<< "$umgebung" | tail -n 1)
+  openssh=${XDG_RUNTIME_DIR:-/run/user/$UID}/openssh_agent
+  if [[ "$wert" == "$soll" ]]; then
+    ok "SSH_AUTH_SOCK der Sitzung zeigt auf 1Password (~/.1password/agent.sock)"
+  elif [[ "$wert" == "$openssh" ]]; then
+    warnung "SSH_AUTH_SOCK der Sitzung zeigt auf den Agent von OpenSSH statt auf 1Password (ssh-agent.socket von Ubuntu überschreibt ihn) – zen benutzer, dann neu anmelden"
+    return 0
+  elif [[ -z "$wert" ]]; then
+    warnung "SSH_AUTH_SOCK der Sitzung ist nicht gesetzt – zen benutzer, dann neu anmelden"
+    return 0
   else
-    warnung "SSH_AUTH_SOCK nicht eingerichtet (zen benutzer richtet es ein)"
+    warnung "SSH_AUTH_SOCK der Sitzung zeigt auf einen anderen Agent statt auf 1Password (systemctl --user show-environment zeigt ihn)"
+    return 0
+  fi
+  # Die laufende Oberfläche hat ihre Umgebung beim Start bekommen
+  pid=$(systemctl --user show -p MainPID --value zenos-shell.service 2>/dev/null)
+  [[ "$pid" =~ ^[1-9][0-9]*$ && -r "/proc/$pid/environ" ]] || return 0
+  alt=$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | sed -n 's/^SSH_AUTH_SOCK=//p' | tail -n 1)
+  if [[ "$alt" != "$soll" ]]; then
+    hinweis "Die laufende Oberfläche kennt den Agent noch nicht – Apps aus dem Befehlsfeld nutzen ihn ab der nächsten Anmeldung"
   fi
 }
 

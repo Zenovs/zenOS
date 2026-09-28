@@ -58,6 +58,9 @@ NETZ_CACHE=$CACHE/apps.json
 AGENT_SOCKET=$HOME/.1password/agent.sock
 AGENT_ENV=$HOME/.config/environment.d/zenos-1password.conf
 AGENT_FISH=$HOME/.config/fish/conf.d/zenos-1password.fish
+# Ubuntus ssh-agent.socket (openssh-client) setzt SSH_AUTH_SOCK beim Start des Benutzer-Managers mit
+# «systemctl --user set-environment» und überdeckt damit environment.d. Dieses Drop-in nimmt das zurück.
+AGENT_DROPIN=$HOME/.config/systemd/user/ssh-agent.socket.d/zenos-1password.conf
 
 ARCH=$(dpkg --print-architecture 2>/dev/null || true)
 case "$ARCH" in
@@ -421,9 +424,17 @@ _befehl_status() {
       fi
     fi
   done
-  local agent=false konfiguriert=false
+  local agent=false konfiguriert=false wert
   [[ -S "$AGENT_SOCKET" ]] && agent=true
-  [[ -f "$AGENT_ENV" ]] && konfiguriert=true
+  # Massgeblich ist der Wert im Benutzer-Manager (erben die Oberfläche und ihre Apps); ist er nicht
+  # erreichbar, zählen die Dateien
+  if [[ -f "$AGENT_ENV" && -f "$AGENT_DROPIN" ]]; then
+    if wert=$(_agent_wirksam); then
+      [[ "$wert" != "$AGENT_SOCKET" ]] || konfiguriert=true
+    else
+      konfiguriert=true
+    fi
+  fi
   if (( als_json )); then
     # netzFehler: Die Release-Abfrage dieses Aufrufs ist gescheitert (die Oberfläche zeigt einen Hinweis)
     printf '],"agent":{"konfiguriert":%s,"socket":%s},"geprueft":%s,"netzFehler":%s}\n' "$konfiguriert" "$agent" \
@@ -441,6 +452,9 @@ _befehl_status() {
       printf '\nSSH-Agent von 1Password: läuft (%s)\n' "${AGENT_SOCKET/#"$HOME"/"~"}"
     else
       printf '\nSSH-Agent von 1Password: aus. In 1Password unter Einstellungen → Entwickler einschalten.\n'
+    fi
+    if [[ "$konfiguriert" != true ]]; then
+      printf 'SSH_AUTH_SOCK der Sitzung zeigt nicht auf 1Password (zen benutzer richtet es ein, zen doctor nennt den Grund).\n'
     fi
   fi
 }
@@ -482,8 +496,10 @@ _plan() {
       info "Ziel       $OP_ZIEL, danach $OP_ZIEL/after-install.sh (Hersteller:"
       info "           Gruppe onepassword, chrome-sandbox setuid, Starter, /usr/bin/1password;"
       info "           legt /usr/local/share/desktop-directories an, falls es fehlt)"
-      info "Benutzer   ~/.config/environment.d/zenos-1password.conf und"
-      info "           ~/.config/fish/conf.d/zenos-1password.fish (SSH_AUTH_SOCK für den SSH-Agent)"
+      info "Benutzer   ~/.config/environment.d/zenos-1password.conf,"
+      info "           ~/.config/fish/conf.d/zenos-1password.fish (SSH_AUTH_SOCK für den SSH-Agent) und"
+      info "           ~/.config/systemd/user/ssh-agent.socket.d/zenos-1password.conf"
+      info "           (Ubuntus ssh-agent.socket überschreibt SSH_AUTH_SOCK dann nicht mehr)"
       if [[ "$modus" == aktualisieren ]]; then
         info "           Eine laufende App bleibt offen; nach einem Neustart gilt die neue Version"
       fi
@@ -508,20 +524,18 @@ _plan() {
 
 # --- Schritte (laufen als eigener Prozess, damit «set -e» dort sicher greift) --
 
-_sudo() { sudo -p "[sudo] Passwort für %p: " "$@"; }
-
-_root_tmp() { _sudo mktemp -d /var/tmp/zenos-apps.XXXXXX; }
+_root_tmp() { sudo mktemp -d /var/tmp/zenos-apps.XXXXXX; }
 
 # Legt einen Ordner als root an (0755), nur wenn er fehlt. Ein Symlink auf einen Ordner bleibt, wie er
 # ist. Nie «install -D»: uutils coreutils (Ubuntu 26.04) ersetzt dabei einen Symlink im Zielpfad durch
 # einen leeren Ordner.
 _root_ordner() {
-  _sudo test -d "$1" && return 0
-  if _sudo test -e "$1" || _sudo test -L "$1"; then
+  sudo test -d "$1" && return 0
+  if sudo test -e "$1" || sudo test -L "$1"; then
     meldung "$1 ist kein Ordner – nichts geändert"
     return 1
   fi
-  _sudo mkdir -p -m 0755 -- "$1"
+  sudo mkdir -p -m 0755 -- "$1"
 }
 
 # Lädt einen Schlüssel, prüft den Fingerabdruck des Hauptschlüssels und legt ihn als Keyring ab.
@@ -542,9 +556,9 @@ _schluessel() {
     return 1
   fi
   gpg --homedir "$tmp" --batch --yes --dearmor -o "$tmp/keyring.gpg" "$tmp/schluessel.asc"
-  if ! _sudo cmp -s -- "$tmp/keyring.gpg" "$ziel" 2>/dev/null; then
+  if ! sudo cmp -s -- "$tmp/keyring.gpg" "$ziel" 2>/dev/null; then
     _root_ordner "$(dirname -- "$ziel")"
-    _sudo install -m 0644 -o root -g root -- "$tmp/keyring.gpg" "$ziel"
+    sudo install -m 0644 -o root -g root -- "$tmp/keyring.gpg" "$ziel"
     info "Schlüssel $ziel (Fingerabdruck geprüft)"
   fi
   rm -rf -- "$tmp"
@@ -555,9 +569,9 @@ _root_datei() {
   local ziel=$1 tmp
   tmp=$(mktemp "${TMPDIR:-/tmp}/zenos-apps-datei.XXXXXX")
   cat > "$tmp"
-  if ! _sudo cmp -s -- "$tmp" "$ziel" 2>/dev/null; then
+  if ! sudo cmp -s -- "$tmp" "$ziel" 2>/dev/null; then
     _root_ordner "$(dirname -- "$ziel")"
-    _sudo install -m 0644 -o root -g root -- "$tmp" "$ziel"
+    sudo install -m 0644 -o root -g root -- "$tmp" "$ziel"
     info "Datei $ziel"
   fi
   rm -f -- "$tmp"
@@ -593,7 +607,7 @@ EOF
         ;;
       vscode)
         _schluessel "$MICROSOFT_SCHLUESSEL" "$MICROSOFT_FPR" "$KEYRINGS/zenos-microsoft.gpg"
-        printf 'code code/add-microsoft-repo boolean false\n' | _sudo debconf-set-selections
+        printf 'code code/add-microsoft-repo boolean false\n' | sudo debconf-set-selections
         _quelle zenos-vscode "$MICROSOFT_QUELLE" "$KEYRINGS/zenos-microsoft.gpg"
         ;;
       cli)
@@ -603,11 +617,11 @@ EOF
     esac
   done
   info "Paketlisten aktualisieren"
-  _sudo env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 update -q
+  sudo env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 update -q
 }
 
 _apt_installieren() {
-  _sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get -o DPkg::Lock::Timeout=300 \
+  sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get -o DPkg::Lock::Timeout=300 \
     install -y -q --no-install-recommends "$@"
 }
 
@@ -618,13 +632,13 @@ _schritt_apt() {
   case "$app" in
     chrome)
       if [[ -f "$QUELLEN/google-chrome.sources" || -f "$QUELLEN/google-chrome.list" ]]; then
-        _sudo rm -f -- "$QUELLEN/google-chrome.sources" "$QUELLEN/google-chrome.list"
+        sudo rm -f -- "$QUELLEN/google-chrome.sources" "$QUELLEN/google-chrome.list"
         info "Zweite Quelle von Chrome entfernt"
       fi
       ;;
     vscode)
       if [[ -f "$QUELLEN/vscode.sources" || -f "$QUELLEN/vscode.list" ]]; then
-        _sudo rm -f -- "$QUELLEN/vscode.sources" "$QUELLEN/vscode.list"
+        sudo rm -f -- "$QUELLEN/vscode.sources" "$QUELLEN/vscode.list"
         info "Zweite Quelle von VS Code entfernt"
       fi
       ;;
@@ -689,32 +703,32 @@ _schritt_1password() {
   # Als root: geprüftes Archiv übernehmen, Prüfsumme erneut vergleichen, dann entpacken
   root=$(_root_tmp)
   _TMP_ROOT=$root
-  _sudo install -m 0644 -o root -g root -- "$tmp/1password.tar.gz" "$root/1password.tar.gz"
-  if [[ "$(_sudo sha256sum "$root/1password.tar.gz" | cut -d' ' -f1)" != "$pruefsumme" ]]; then
+  sudo install -m 0644 -o root -g root -- "$tmp/1password.tar.gz" "$root/1password.tar.gz"
+  if [[ "$(sudo sha256sum "$root/1password.tar.gz" | cut -d' ' -f1)" != "$pruefsumme" ]]; then
     meldung "Archiv hat sich nach der Prüfung verändert – nichts installiert"
     return 1
   fi
-  _sudo install -d -m 0755 -o root -g root "$root/neu"
-  _sudo tar -xzf "$root/1password.tar.gz" -C "$root/neu" --no-same-owner --no-same-permissions
-  _sudo test -x "$root/neu/$ordner/1password"
-  _sudo chown -R root:root "$root/neu/$ordner"
-  _sudo chmod -R u+rwX,go+rX,go-w "$root/neu/$ordner"
-  if _sudo test -e "$OP_ZIEL"; then
-    _sudo rm -rf -- "$OP_ZIEL.alt"
-    _sudo mv -- "$OP_ZIEL" "$OP_ZIEL.alt"
+  sudo install -d -m 0755 -o root -g root "$root/neu"
+  sudo tar -xzf "$root/1password.tar.gz" -C "$root/neu" --no-same-owner --no-same-permissions
+  sudo test -x "$root/neu/$ordner/1password"
+  sudo chown -R root:root "$root/neu/$ordner"
+  sudo chmod -R u+rwX,go+rX,go-w "$root/neu/$ordner"
+  if sudo test -e "$OP_ZIEL"; then
+    sudo rm -rf -- "$OP_ZIEL.alt"
+    sudo mv -- "$OP_ZIEL" "$OP_ZIEL.alt"
   fi
-  _sudo mv -- "$root/neu/$ordner" "$OP_ZIEL"
+  sudo mv -- "$root/neu/$ordner" "$OP_ZIEL"
   # after-install.sh legt den Starter mit xdg-desktop-menu an. Das bricht ohne einen Ordner
   # desktop-directories ab, den Ubuntu Server ohne Desktop nicht hat.
   if [[ ! -d /usr/share/desktop-directories && ! -d /usr/local/share/desktop-directories ]]; then
     _root_ordner /usr/local/share/desktop-directories
     info "Ordner /usr/local/share/desktop-directories (für den Starter von 1Password)"
   fi
-  if ! _sudo "$OP_ZIEL/after-install.sh"; then
+  if ! sudo "$OP_ZIEL/after-install.sh"; then
     meldung "after-install.sh von 1Password ist fehlgeschlagen – «zen apps installieren 1password» versucht es erneut"
     return 1
   fi
-  _sudo rm -rf -- "$OP_ZIEL.alt"
+  sudo rm -rf -- "$OP_ZIEL.alt"
   printf 'version=%s\nsha256=%s\nstand=%s\n' "$version" "$pruefsumme" "$stand" | _root_datei "$OP_STAND" >/dev/null
   info "1Password $version nach $OP_ZIEL"
 }
@@ -732,9 +746,9 @@ _schritt_github() {
   _laden "$url" "$tmp/$asset"
   root=$(_root_tmp)
   _TMP_ROOT=$root
-  _sudo chmod 0755 "$root"
-  _sudo install -m 0644 -o root -g root -- "$tmp/$asset" "$root/$asset"
-  if [[ "$(_sudo sha256sum "$root/$asset" | cut -d' ' -f1)" != "$summe" ]]; then
+  sudo chmod 0755 "$root"
+  sudo install -m 0644 -o root -g root -- "$tmp/$asset" "$root/$asset"
+  if [[ "$(sudo sha256sum "$root/$asset" | cut -d' ' -f1)" != "$summe" ]]; then
     meldung "SHA-256 von $asset stimmt nicht – nichts installiert"
     return 1
   fi
@@ -758,6 +772,7 @@ _schritt() {
 
 # --- Benutzerteile -----------------------------------------------------------
 
+_GEAENDERT=0
 _benutzer_datei() { # ZIEL MELDEN – Inhalt von stdin, nur bei Abweichung
   local ziel=$1 melden=$2 tmp
   mkdir -p -- "$(dirname -- "$ziel")"
@@ -769,7 +784,44 @@ _benutzer_datei() { # ZIEL MELDEN – Inhalt von stdin, nur bei Abweichung
   fi
   chmod 0644 "$tmp"
   mv -f -- "$tmp" "$ziel"
+  _GEAENDERT=1
   (( melden )) && printf '%s\n' "${ziel/#"$HOME"/"~"}"
+  return 0
+}
+
+# SSH_AUTH_SOCK im Benutzer-Manager (systemd --user), leer wenn ungesetzt. Die Oberfläche und die Apps,
+# die sie startet, erben diesen Wert. Rückgabe 1, wenn der Manager nicht erreichbar ist.
+_agent_wirksam() {
+  local umgebung
+  umgebung=$(systemctl --user show-environment 2>/dev/null) || return 1
+  sed -n 's/^SSH_AUTH_SOCK=//p' <<< "$umgebung" | tail -n 1
+}
+
+# Gleicht einen laufenden Benutzer-Manager an die Dateien an. ssh-agent.socket hat SSH_AUTH_SOCK beim
+# Start des Managers gesetzt, wenn das Drop-in damals fehlte; dieser Wert hat Vorrang vor environment.d
+# und bliebe bis zum Ende des Managers (er überdauert ein Abmelden, solange noch eine SSH-Sitzung offen
+# ist). Ohne laufenden Manager gibt es nichts zu tun. ARG: an|aus MELDEN
+_agent_manager() {
+  local soll=$1 melden=$2 wert openssh
+  wert=$(_agent_wirksam) || return 0
+  openssh=${XDG_RUNTIME_DIR:-/run/user/$EUID}/openssh_agent
+  if [[ "$soll" == an ]]; then
+    (( _GEAENDERT )) || [[ "$wert" == "$openssh" ]] || return 0
+    systemctl --user daemon-reload 2>/dev/null || return 0
+    # Nur den Wert von ssh-agent.socket zurücknehmen, dann gilt environment.d; einen anderen Agent
+    # (von dir gesetzt) lässt zenOS stehen, zen doctor warnt
+    if [[ "$wert" == "$openssh" ]] && systemctl --user unset-environment SSH_AUTH_SOCK 2>/dev/null; then
+      (( melden )) && printf 'SSH_AUTH_SOCK im Benutzer-Manager: %s\n' "${AGENT_SOCKET/#"$HOME"/"~"}"
+    fi
+  else
+    (( _GEAENDERT )) || return 0
+    systemctl --user daemon-reload 2>/dev/null || return 0
+    # Ohne das Drop-in setzt ssh-agent.socket den Wert erst beim nächsten Start des Managers wieder
+    if [[ -z "$(_agent_wirksam)" ]] && systemctl --user -q is-active ssh-agent.socket 2>/dev/null &&
+      systemctl --user set-environment "SSH_AUTH_SOCK=$openssh" 2>/dev/null; then
+      (( melden )) && printf 'SSH_AUTH_SOCK im Benutzer-Manager: Agent von OpenSSH\n'
+    fi
+  fi
   return 0
 }
 
@@ -801,14 +853,26 @@ else if not set -q SSH_AUTH_SOCK; and test -S $HOME/.1password/agent.sock
     set -gx SSH_AUTH_SOCK $HOME/.1password/agent.sock
 end
 EOF
+    _benutzer_datei "$AGENT_DROPIN" "$melden" <<'EOF'
+# zenOS (zen apps): SSH_AUTH_SOCK kommt aus ~/.config/environment.d/zenos-1password.conf (1Password).
+# Ohne diese Zeile setzt ssh-agent.socket den Wert selbst und überdeckt ihn. Der Agent von OpenSSH
+# bleibt unter $XDG_RUNTIME_DIR/openssh_agent erreichbar.
+[Socket]
+ExecStartPost=
+EOF
+    _agent_manager an "$melden"
   else
     local datei
-    for datei in "$AGENT_ENV" "$AGENT_FISH"; do
+    for datei in "$AGENT_ENV" "$AGENT_FISH" "$AGENT_DROPIN"; do
       if [[ -f "$datei" ]] && grep -q '^# zenOS (zen apps)' "$datei"; then
         rm -f -- "$datei"
+        _GEAENDERT=1
         (( melden )) && printf 'entfernt: %s\n' "${datei/#"$HOME"/"~"}"
+        # Den Drop-in-Ordner nur entfernen, wenn er danach leer ist
+        [[ "$datei" != "$AGENT_DROPIN" ]] || rmdir -- "${AGENT_DROPIN%/*}" 2>/dev/null || true
       fi
     done
+    _agent_manager aus "$melden"
   fi
 
   # Web-Apps und Chrome-Starter (über zenos-chrome)
@@ -1009,8 +1073,9 @@ _befehl_installieren() {
     esac
   fi
 
-  # sudo einmal fragen und während des Laufs frisch halten
-  if ! _sudo -v; then
+  # sudo einmal fragen und während des Laufs frisch halten. Ohne eigenen Prompt (-p): sudo-rs
+  # (Ubuntu 26.04) setzt ihn in seinen Rahmen, daraus würde «[sudo: [sudo] Passwort …: ] Password:».
+  if ! sudo -v; then
     meldung "ohne sudo geht es nicht – nichts geändert"
     _warten_fenster
     return 1

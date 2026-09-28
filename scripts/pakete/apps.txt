@@ -1,0 +1,5 @@
+# M12 · Erster Start: Werkzeuge für zen apps (Schlüssel, GPG-Prüfung, Downloads)
+# 20-pakete installiert die Vereinigung aller Listen; 75-apps prüft nur nach.
+ca-certificates
+curl
+gpg

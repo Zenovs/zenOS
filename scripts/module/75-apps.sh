@@ -4,13 +4,21 @@
 #
 # install.sh installiert nie proprietäre Apps, auch nicht im Image. Chrome, VS Code, 1Password und
 # coremail kommen erst mit deiner Zustimmung über «zen apps installieren» (erster Start oder
-# Einstellungen → Apps). Hier nur die freien Werkzeuge dafür (curl, gpg, Zertifikate, Keyring-Ordner)
-# und, ausserhalb des Images, die Benutzerteile: Chrome-Starter über zenos-chrome, Web-App-Starter
-# aus webapps.json und – wenn 1Password installiert ist – SSH_AUTH_SOCK für den SSH-Agent.
+# Einstellungen → Apps). Hier nur die freien Werkzeuge dafür (scripts/pakete/apps.txt: curl, gpg,
+# Zertifikate), der Keyring-Ordner und, ausserhalb des Images, die Benutzerteile: Chrome-Starter über
+# zenos-chrome, Web-App-Starter aus webapps.json und – wenn 1Password installiert ist – SSH_AUTH_SOCK
+# für den SSH-Agent.
 
 modul_system() {
-  local keyrings=/etc/apt/keyrings
-  pakete_sicherstellen ca-certificates curl gpg
+  local keyrings=/etc/apt/keyrings zeile
+  local -a pakete=()
+  # Die Pakete installiert 20-pakete gesammelt; hier nur nachziehen, falls etwas fehlt.
+  while IFS= read -r zeile || [[ -n "$zeile" ]]; do
+    zeile=${zeile%%#*}
+    zeile=${zeile//[[:space:]]/}
+    [[ -n "$zeile" ]] && pakete+=("$zeile")
+  done < "$ZENOS_QUELLE/scripts/pakete/apps.txt"
+  pakete_sicherstellen "${pakete[@]}"
   # Ein Symlink auf einen Ordner bleibt, wie er ist (ordner_sicherstellen nimmt nur echte Ordner)
   if [[ ! -L "$keyrings" ]]; then
     ordner_sicherstellen "$keyrings" 0755 root:root
