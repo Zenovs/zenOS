@@ -91,6 +91,7 @@ modul_benutzer() {  # optional; als Benutzer, ohne sudo, nie im --image-Modus
 | `zen thema [hell\|dunkel\|tageszeit\|wechseln]` | M3 | Erscheinungsbild setzen oder anzeigen |
 | `zen firewall [status\|aktivieren]` | M11 | ufw anzeigen; `aktivieren` erst nach Prüfung der SSH-Regeln und der Eingabe «aktivieren» |
 | `zen apps [installieren\|aktualisieren\|status] [app …]` | M12 | Chrome, VS Code, 1Password, CLI, coremail aus offiziellen Quellen, mit Rückfrage |
+| `zen bootsplash [status\|aktivieren\|deaktivieren]` | Bootsplash | Plymouth-Stand anzeigen; `aktivieren` schaltet nach der Eingabe «aktivieren» ein, `deaktivieren` nimmt es zurück (`docs/module/bootsplash.md`) |
 
 - `zen <befehl>` sourct `zen.d/<befehl>.sh` und ruft `befehl_<befehl>` auf (Bindestriche werden zu
   Unterstrichen). Unbekannter Befehl: Hilfe und Exit 2.

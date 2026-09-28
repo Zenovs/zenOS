@@ -202,6 +202,14 @@ org.freedesktop.RealtimeKit1 MaxRealtimePriority` antwortet sofort mit `i 20`; e
 nach 25 s «Connection timed out». Der Start-Test von `pruefen.sh` hängt davon nicht mehr ab (PipeWire-Client
 ohne `module-rt`).
 
+## Bootsplash ansehen
+
+`system/plymouth/zenos/vorschau.sh` (als root) startet plymouthd mit dem x11-Renderer unter Xvfb und macht
+Bildschirmfotos des Ablaufs, dazu Passwort- und Fragefeld (Einzelheiten in `docs/module/bootsplash.md`). Es braucht
+`plymouth plymouth-label plymouth-x11 xvfb x11-apps xdotool imagemagick`, und die nur in einem Wegwerf-Container:
+`plymouth` stösst bei der Installation `update-initramfs` an. Ein privilegierter Container (wie aus `starten.sh`)
+sieht die Konsole der colima-VM (`/dev/tty1`); `vorschau.sh` startet plymouthd deshalb ohne Konsolen.
+
 ## Image-Modus testen (ohne systemd, wie im chroot)
 
 ```

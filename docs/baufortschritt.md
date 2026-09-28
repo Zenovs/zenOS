@@ -21,6 +21,8 @@ Status: `offen` · `in Arbeit` · `fertig` · `offener Punkt`
 | M13 · Argon ONE | fertig | zenos-argon (Lüfterkurve, Power-Button, Abschaltsignal beim Ausschalten), Temperatur in der Leiste. Details: `docs/module/m13.md` |
 | M14 · Image-Workflow | fertig | image.yml + image/bauen.sh; -rc-Tags nur Artefakt. Details: `docs/module/m14.md` |
 | M15 · Abschluss | fertig | Integration (frische Installation von GitHub, `zen update`, voller Image-Bau, drei Abnahme-Touren, drei Reviews mit Gegenprüfung, 36 Befunde behoben), Doku, ANLEITUNG, CHANGELOG, Tag `v0.1.0-rc1` |
+| Bildmarke «Zwei Steine» | fertig | nach Zenos Spezifikation: Dateien in `assets/zeichen/` (erzeugt von `erzeugen.py`), Pfade in tokens.json, `ZenZeichen` statt `Zeichen` in Leiste, Login, Sperre, Befehlsfeld und Erstem Start, Wasserzeichen und Token `wasserzeichen` entfernt, App-Icon `zenos` (45-thema). Details: `docs/bildmarke.md` |
+| Bootsplash (Plymouth) | fertig, nicht aktiv | Theme `system/plymouth/zenos/` (Gleiten, Überblenden, atmender Spalt, Passwortfeld, 1x/2x), Modul 42-bootsplash legt es ab, `zen bootsplash` schaltet nach Rückfrage ein, `zen doctor` meldet den Stand. Details: `docs/module/bootsplash.md` |
 
 ## Wo gebaut wird
 
@@ -81,6 +83,11 @@ Gemessen im Container (nicht auf dem Pi):
 - **Safe Browsing Stufe 2 oder 1** in Chrome (Zielkonflikt Sicherheit ↔ «keine Telemetrie», `docs/sicherheit.md`).
 - **Firewall einschalten** mit `zen firewall aktivieren` (per SSH aus dem eigenen Netz, dann von einem zweiten Gerät
   prüfen).
+- **Bootsplash einschalten** mit `zen bootsplash aktivieren` (Boot-Kommandozeile, Pakete, initramfs; der Pi startet
+  danach zweimal). Bis dahin zeigt `zen doctor` «Bootsplash vorbereitet, nicht aktiv». Prüfliste in
+  `docs/module/bootsplash.md`.
+- **GitHub-Avatar und Vorschaubild** von Hand hochladen: `assets/zeichen/png/github-avatar-500.png` und
+  `github-social-preview-1280x640.png` (`docs/bildmarke.md`, Abschnitt «GitHub»).
 - **`main`** auf `v0.1.0` vorspulen, damit `git clone` ohne `git switch dev` funktioniert (ANLEITUNG G7–G10); danach
   entscheiden, ob Image und neue Installationen `main` folgen.
 - **fish als Login-Shell** (`chsh -s /usr/bin/fish`), damit auch SSH-Sitzungen Eingabezeile, `?` und die Warnung haben.

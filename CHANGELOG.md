@@ -3,6 +3,29 @@
 Was sich an zenOS ändert, pro Version. Das Format lehnt sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/)
 an; eine Version entspricht einem Tag `v…` im Repo.
 
+## Unveröffentlicht
+
+### Neu
+
+- **Bildmarke «Zwei Steine»:** ein Kiesel, diagonal geteilt; der untere Stein trägt den Akzent des aktiven Modus.
+  Alle Dateien in `assets/zeichen/` (Zeichen einfarbig und farbig, Pixel-Variante für 16 px, Schriftzug, App-Icon,
+  Favicon, GitHub-Avatar und Vorschaubild), erzeugt von `assets/zeichen/erzeugen.py`. Konstruktion und Regeln in
+  `docs/bildmarke.md`, die Pfade in `shell/theme/tokens.json` unter `zeichen`.
+- **`ZenZeichen`** zeichnet die Marke in der Oberfläche: Leiste 18 px, Login 48 px, Sperrbildschirm 16 px, Befehlsfeld
+  ohne Treffer 32 px, Erster Start 44 px, dazu der Notfall-Login. Bei einem Moduswechsel blendet nur der untere Stein
+  über; hell/dunkel wechselt beide Steine im selben Bild.
+- **App-Icon `zenos`** im hicolor-Thema des Benutzers, 48 bis 512 px (Modul `45-thema`).
+- **Bootsplash (Plymouth), vorbereitet, nicht aktiv:** Theme mit dem Zeichen (die Steine gleiten zusammen, der
+  untere blendet zum Akzent, danach atmet der Spalt), Passwortfeld wie in Sperre und Login. Modul `42-bootsplash`
+  legt es ab, schaltet es aber nicht ein. `zen bootsplash` zeigt den Stand, `zen bootsplash aktivieren` schaltet nach
+  Rückfrage ein (Boot-Kommandozeile, initramfs), `zen bootsplash deaktivieren` nimmt es zurück.
+
+### Entfernt
+
+- Die Platzhalter-Marke «Offene Stelle» (`assets/zeichen-platzhalter.svg`, `Zeichen.qml`), die grossen
+  Bogen-Wasserzeichen in Sperre, Login und Erstem Start und das Farb-Token `wasserzeichen`. Der Login zeigt unten nur
+  noch das Zeichen, ohne den Text «zenOS».
+
 ## 0.1.0-rc1 – 2026-09-28
 
 Erster vollständiger Stand von zenOS 0.1, gebaut nach `BAUAUFTRAG.md`. Getestet in Containern mit Ubuntu 26.04

@@ -205,8 +205,8 @@ zen doctor
 ```
 
 Erwartet wird `0 Fehler`. Hinweise sind normal, zum Beispiel «greetd läuft noch nicht», «Firewall vorbereitet, aber
-nicht aktiv» und die noch nicht installierten Apps. Eine Warnung gibt es nur, wenn du die sudo-Regel aus B12
-angelegt hast.
+nicht aktiv», «Bootsplash vorbereitet, nicht aktiv» und die noch nicht installierten Apps. Eine Warnung gibt es nur,
+wenn du die sudo-Regel aus B12 angelegt hast.
 
 ---
 
@@ -229,8 +229,8 @@ Hake ab, was funktioniert. Notiere, was nicht geht, am besten mit Uhrzeit. Die B
 unter «Am Pi prüfen».
 
 **Login und Einrichtung**
-- [ ] Nach dem Neustart erscheint der zenOS-Login: dunkel, grosse Uhrzeit, dein Benutzer vorausgewählt. Niemand wird
-  automatisch angemeldet.
+- [ ] Nach dem Neustart erscheint der zenOS-Login: dunkel, grosse Uhrzeit, dein Benutzer vorausgewählt, unten mittig
+  die Bildmarke (zwei Steine, der untere salbeigrün). Niemand wird automatisch angemeldet.
 - [ ] Ein falsches Passwort zeigt «Das Passwort stimmt nicht. Bitte noch einmal.», das Feld ist danach leer, nichts
   springt. Das richtige Passwort meldet an, auch mit Sonderzeichen deiner Tastatur.
 - [ ] «Neustart» und «Ausschalten» im Login führen erst beim zweiten Klick aus.
@@ -325,7 +325,8 @@ systemctl --user start zenos-shell.service
 - [ ] `Super + M` öffnet die Modus-Wahl, `Super + Z` die Zustand-Wahl. Ein Klick auf den Chip in der Leiste öffnet sie
   direkt darunter.
 - [ ] In den Einstellungen (`Super + Komma`) → «Neuer Modus» einen zweiten Modus mit anderer Akzentfarbe anlegen. Der
-  Wechsel ändert den Akzent in Leiste, Fensterrahmen und kitty.
+  Wechsel ändert den Akzent in Leiste, Fensterrahmen und kitty. Im Zeichen links in der Leiste blendet nur der untere
+  Stein weich zur neuen Farbe über; bei hell/dunkel wechseln beide Steine im selben Moment.
 - [ ] Mit Chrome-Profil im Modus (das Profil vorher in Chrome anlegen) und «Beim Wechsel öffnen: Chrome» öffnet
   Chrome beim Wechsel im Profil des neuen Modus.
 - [ ] Fokus starten: Die Leiste zeigt «Fokus» mit Restzeit, Raster-Knopf und Hell/Dunkel treten zurück, «Heute»
@@ -375,6 +376,8 @@ systemctl --user start zenos-shell.service
   `ssh -T git@github.com` dich über 1Password an (1Password fragt nach der Freigabe; dein SSH-Schlüssel liegt in
   1Password und ist bei GitHub eingetragen).
 - [ ] Nach einem Tag zeigt `zen doctor` den letzten Lauf von unattended-upgrades.
+- [ ] Bootsplash: `zen doctor` zeigt «Bootsplash vorbereitet, nicht aktiv», beim Start erscheint noch keiner. Er bleibt
+  aus, bis du entscheidest (siehe G).
 
 **Flüssigkeit**
 - [ ] Befehlsfeld, Hell/Dunkel, Fensterwechsel (`Alt + Tab`) und Einrasten laufen flüssig (60 fps). Nichts ruckelt,
@@ -541,3 +544,6 @@ git switch dev
 - Kanal des Images: Es folgt heute `dev`. Trägt `main` Releases, kann es auf `main` wechseln (Option `--kanal` von
   `image/bauen.sh` im Workflow).
 - fish als Login-Shell, damit auch SSH-Sitzungen Eingabezeile, `?` und die Warnung haben: `chsh -s /usr/bin/fish`.
+- Bootsplash einschalten: per SSH `zen bootsplash aktivieren`. Es zeigt jeden Schritt vorher (Pakete, Standard-Theme,
+  «quiet splash» in der Boot-Kommandozeile, neues initramfs) und fragt nach. Danach startet der Pi zweimal. Zurück mit
+  `zen bootsplash deaktivieren`. Was du danach prüfst: `docs/module/bootsplash.md`, «Am Pi prüfen».

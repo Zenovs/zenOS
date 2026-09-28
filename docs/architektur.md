@@ -219,6 +219,8 @@ Die Logik läuft in Quickshell selbst, ohne eigenen Hintergrunddienst.
 | Argon-Werte | `/run/zenos/argon.json` (flüchtig, Ordner gehört dem Dienst) | nie |
 | Quickshell | `/usr/local/bin/quickshell`, Stempel `/usr/local/share/zenos/quickshell.version` | nein, Quellbau |
 | Schriften | `/usr/local/share/fonts/zenos/` | ja (`assets/fonts/`) |
+| App-Icon `zenos` | `~/.local/share/icons/hicolor/<n>x<n>/apps/zenos.png` | ja (`assets/zeichen/png/`) |
+| Bootsplash-Theme | `/usr/share/plymouth/themes/zenos/` (eingeschaltet erst mit `zen bootsplash aktivieren`) | ja (`system/plymouth/zenos/`) |
 | Benutzereinheiten | `/etc/systemd/user/` (`zenos-sitzung.target`, `zenos-shell`, `zenos-idle`, `zenos-kanshi`, Drop-in für `xdg-desktop-portal-wlr`) | ja (Kopien) |
 | Systemeinheiten | `/etc/systemd/system/zenos-argon.service`, `/usr/lib/systemd/system-shutdown/zenos-argon` | ja (Kopien) |
 | Login, Portale | `/etc/greetd/config.toml`, `/etc/xdg/xdg-desktop-portal/labwc-portals.conf`, `/etc/xdg/xdg-desktop-portal-wlr/config` | ja (Kopien) |
@@ -253,7 +255,8 @@ Systemteile, dann alle Benutzerteile.
 | `25-quickshell` | Quickshell bauen, nur wenn der Stempel fehlt oder abweicht |
 | `30-schriften` | Geist, Geist Mono, Instrument Serif |
 | `40-sitzung` | greetd mit Greeter, Benutzereinheiten, Portale |
-| `45-thema` | Erscheinungsbild auf GTK, Qt, kitty, labwc und VS Code |
+| `42-bootsplash` | Bootsplash-Theme ablegen, nicht einschalten |
+| `45-thema` | Erscheinungsbild auf GTK, Qt, kitty, labwc und VS Code, App-Icon `zenos` |
 | `50-raster` | Raster, Tastenkürzel, Bildschirm-Profile |
 | `55-zustaende` | Freigabe-Portal, Vorlagen der Zustände |
 | `60-terminal` | kitty, fish, tldr-Seiten |
