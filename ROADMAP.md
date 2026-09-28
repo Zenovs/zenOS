@@ -4,7 +4,7 @@ Jeder Checkpoint endet mit einem Tag und einer Abnahme durch Zeno auf echter Har
 
 **Version 0.1:** C1 bis C8 werden gemeinsam in einem Durchgang gebaut, nach `BAUAUFTRAG.md`. Den Workflow für C9 baut Claude Code mit; das erste Image entsteht aber erst nach Zenos Abnahme mit dem Tag `v0.1.0`.
 
-**Stand 0.1 (Release-Kandidat `v0.1.0-rc1`):** C1 bis C8 und der Workflow für C9 sind gebaut und im Container getestet, die Abnahme auf dem Pi steht aus. Abweichungen sind unten mit «0.1:» markiert. Was genau umgesetzt ist, steht in `docs/funktionen.md`.
+**Stand 0.1 (Release-Kandidat `v0.1.0-rc2`):** C1 bis C8 und der Workflow für C9 sind gebaut und im Container getestet, die Abnahme auf dem Pi steht aus. Abweichungen sind unten mit «0.1:» markiert. Was genau umgesetzt ist, steht in `docs/funktionen.md`.
 
 ## C0 · Grundlagen
 

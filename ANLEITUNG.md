@@ -19,7 +19,7 @@ Fehler durchlief.
 
 Der Bau lief nicht auf dem Pi, sondern auf dem Mac: Claude Code hat dort gebaut und in Docker-Containern mit Ubuntu
 26.04 arm64 getestet, also mit derselben Architektur wie der Pi. Das Repo liegt auf GitHub: `main` enthält den
-Start-Commit, `dev` zenOS 0.1 mit dem Tag `v0.1.0-rc1`. Die früheren Schritte A1 bis A14 fallen weg.
+Start-Commit, `dev` zenOS 0.1 mit dem Tag `v0.1.0-rc2`. Die früheren Schritte A1 bis A14 fallen weg.
 
 ---
 
@@ -383,7 +383,7 @@ systemctl --user start zenos-shell.service
   wie «Firewall vorbereitet, aber nicht aktiv».
 - [ ] `zen update` meldet «Schon aktuell» oder alt → neu und endet mit `installiert · N Änderungen`. Die Oberfläche ist
   danach vollständig da.
-- [ ] `zen rollback v0.1.0-rc1` geht auf den Tag zurück, `zen version` zeigt ihn. `zen update` bringt dich wieder auf
+- [ ] `zen rollback v0.1.0-rc2` geht auf den Tag zurück, `zen version` zeigt ihn. `zen update` bringt dich wieder auf
   `dev`.
 - [ ] Die Temperatur steht in der Leiste, der Lüfter im System-Menü (Argon ONE). Unter Last (in kitty viermal
   `yes > /dev/null &`, danach `pkill yes`) wird der Lüfter hörbar schneller und später wieder leiser.
@@ -451,7 +451,7 @@ systemctl --user restart zenos-shell.service
 Nach einem Update geht etwas nicht mehr: zurück zum letzten guten Stand.
 
 ```
-zen rollback v0.1.0-rc1
+zen rollback v0.1.0-rc2
 ```
 
 Die Textkonsole erreichst du immer mit `Ctrl + Alt + F2`, zurück zum zenOS-Login mit `Ctrl + Alt + F7`. Solange SSH
@@ -509,8 +509,8 @@ mehr:
 sudo rm /etc/sudoers.d/zenos-bau
 ```
 
-**G2.** Final taggen, auf dem Mac. Der Tag startet auf GitHub den Bau des Images. Lass vorher in `CHANGELOG.md` den
-Abschnitt «Unveröffentlicht» (alles seit `v0.1.0-rc1`) zu «0.1.0» mit Datum machen. In den Ordner wechseln:
+**G2.** Final taggen, auf dem Mac. Der Tag startet auf GitHub den Bau des Images. Lass vorher in `CHANGELOG.md` einen
+Abschnitt «0.1.0» mit Datum ergänzen (was sich seit `v0.1.0-rc2` geändert hat). In den Ordner wechseln:
 
 ```
 cd ~/Documents/github/zenOS

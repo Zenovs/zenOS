@@ -3,7 +3,7 @@
 Was sich an zenOS ändert, pro Version. Das Format lehnt sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/)
 an; eine Version entspricht einem Tag `v…` im Repo.
 
-## Unveröffentlicht
+## 0.1.0-rc2 – 2026-09-28
 
 Alles seit `v0.1.0-rc1`: die neue Bildmarke, ein vorbereiteter Bootsplash und die Behebungen aus der Abnahme in einer
 VM mit Ubuntu 26.04 arm64 und Chrome 154.

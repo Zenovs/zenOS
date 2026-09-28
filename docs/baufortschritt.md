@@ -44,8 +44,16 @@ Gemessen im Container (nicht auf dem Pi):
 - Image: `install.sh --image` im Ubuntu-Pi-Image, 1481 MiB mit `xz -9` (72 % der 2-GiB-Grenze), ohne
   SSH-Hostschlüssel, ohne proprietäre Apps, ohne Benutzerdaten. Auf GitHub (Tag `v0.1.0-rc1`) gebaut in 15:29 Minuten,
   1484 MiB, als Workflow-Artefakt (kein Release).
-- `scripts/pruefen.sh`: shellcheck, JSON-Schemas, Hex- und sh-c-Regel, rund 280 Einheitentests, qmllint, gitleaks,
+- `scripts/pruefen.sh`: shellcheck, JSON-Schemas, Hex- und sh-c-Regel, rund 300 Einheitentests, qmllint, gitleaks,
   Start-Test der Oberfläche – sauber, auch in der CI auf GitHub.
+
+Abnahme in einer echten VM (lima/Apple Virtualization, Ubuntu 26.04 arm64, virtio-gpu mit Mesa, statt des Pi):
+- Installation genau nach ANLEITUNG B–D, Neustart, echter greetd-Login auf VT 7, Einrichtung, echte Installation von
+  Chrome 154, VS Code, 1Password, 1Password-CLI und coremail, drei Touren durch die Testliste E.
+- 21 bestätigte Befunde, darunter einer hoch (Leitplanke beim Teilen in Chrome kurz aus), alle behoben und in der VM
+  nachgeprüft: `zen update` von GitHub (92 Änderungen, zweiter Lauf 0), Freigabe in 1663 empfangenen Bildern aus
+  10 Chrome-Sitzungen ohne Mitteilungsinhalt, neue Bildmarke an allen Stellen mit echter Grafik.
+- Tag `v0.1.0-rc2` mit Bildmarke und Behebungen; `v0.1.0-rc1` bleibt der Stand des Bauauftrags.
 
 ## Entscheidungen während des Baus
 
@@ -73,11 +81,20 @@ Gemessen im Container (nicht auf dem Pi):
   siehe `docs/sicherheit.md`.
 - **Argon-Abschaltsignal** als system-shutdown-Hook wie im Original-Skript (nur bei poweroff/halt, nur mit Argon).
 - **Kanal:** Pi und Image folgen `dev`, solange `main` nur den Start-Commit trägt.
-- **Tag `v0.1.0-rc1`** gesetzt, obwohl die Abnahme auf dem Pi aussteht: Die Testliste braucht ihn für
-  `zen rollback`, und der Workflow baut damit das Image nur als Artefakt, ohne Release.
+- **Tags `v0.1.0-rc1` und `v0.1.0-rc2`** gesetzt, obwohl die Abnahme auf dem Pi aussteht: Die Testliste braucht
+  einen Tag für `zen rollback`, und der Workflow baut damit das Image nur als Artefakt, ohne Release. rc2 enthält die
+  neue Bildmarke und die Behebungen aus der VM-Abnahme.
+- **Neue Bildmarke «Zwei Steine»** nach Zenos Spezifikation (`docs/bildmarke.md`); die Bogen-Wasserzeichen der
+  alten Marke sind entfallen. Bootsplash gebaut, aber nicht eingeschaltet (Boot-Kommandozeile = Rückfrage).
 
 ## Offene Punkte für Zeno
 
+- **Bildmarke:** App-Icon mit zwei flacheren Kachelecken in der Referenz (Absicht?), Farbe der Mono-Zeile im
+  Vorschaubild (`#8C887F` ist kein Token), Einrichtung 44 px zeigt mit dem Qt-CurveRenderer an den Übergängen Bogen →
+  Gerade einzelne harte Pixel (48 px wären glatt), Bootsplash einschalten (`zen bootsplash aktivieren`), Avatar und
+  Vorschaubild auf GitHub hochladen.
+- **coremail** (eigenes Repo): legt beim ersten Start einen zweiten Starter an; die nötige Änderung steht in
+  `docs/module/m12.md`. zenOS entfernt ihn bis dahin.
 - **Abnahme auf dem Pi** nach `ANLEITUNG.md` (C bis E). Danach `CHANGELOG.md` ergänzen und `v0.1.0` taggen (G).
 - **Temporäre sudo-Regel** `/etc/sudoers.d/zenos-bau` nach der Testphase löschen (G1), falls angelegt.
 - **Safe Browsing Stufe 2 oder 1** in Chrome (Zielkonflikt Sicherheit ↔ «keine Telemetrie», `docs/sicherheit.md`).
