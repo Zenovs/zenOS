@@ -284,8 +284,10 @@ def session_env():
 
 def apply_gtk(mode, changes):
     env = session_env()
+    # Hell ausdrücklich als «prefer-light» (Portal 2). Bei «default» (Portal 0, keine Vorliebe) übernahm ein
+    # laufendes Chrome den Wechsel von dunkel auf hell nicht, und Qt meldet dann nur «unbekannt».
     target = {
-        "color-scheme": "prefer-dark" if mode == "dunkel" else "default",
+        "color-scheme": "prefer-dark" if mode == "dunkel" else "prefer-light",
         "gtk-theme": "Adwaita-dark" if mode == "dunkel" else "Adwaita",
     }
     for key, value in target.items():
@@ -385,7 +387,7 @@ def apply_kitty(tokens, accent, changes):
     changed = False
     dark = kitty_conf(tokens, "dunkel", accent)
     light = kitty_conf(tokens, "hell", accent)
-    # «default» meldet das Portal als «keine Vorliebe»: dann gilt hell.
+    # Hell setzt «prefer-light». «keine Vorliebe» (etwa color-scheme «default» von Hand) gilt ebenfalls als hell.
     for name, content in (("dark-theme.auto.conf", dark), ("light-theme.auto.conf", light),
                          ("no-preference-theme.auto.conf", light)):
         if write_if_changed(os.path.join(KITTY, name), content):
