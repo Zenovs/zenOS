@@ -5,20 +5,68 @@ an; eine Version entspricht einem Tag `v…` im Repo.
 
 ## Unveröffentlicht
 
+Alles seit `v0.1.0-rc1`: die neue Bildmarke, ein vorbereiteter Bootsplash und die Behebungen aus der Abnahme in einer
+VM mit Ubuntu 26.04 arm64 und Chrome 154.
+
 ### Neu
 
 - **Bildmarke «Zwei Steine»:** ein Kiesel, diagonal geteilt; der untere Stein trägt den Akzent des aktiven Modus.
-  Alle Dateien in `assets/zeichen/` (Zeichen einfarbig und farbig, Pixel-Variante für 16 px, Schriftzug, App-Icon,
-  Favicon, GitHub-Avatar und Vorschaubild), erzeugt von `assets/zeichen/erzeugen.py`. Konstruktion und Regeln in
-  `docs/bildmarke.md`, die Pfade in `shell/theme/tokens.json` unter `zeichen`.
-- **`ZenZeichen`** zeichnet die Marke in der Oberfläche: Leiste 18 px, Login 48 px, Sperrbildschirm 16 px, Befehlsfeld
-  ohne Treffer 32 px, Erster Start 44 px, dazu der Notfall-Login. Bei einem Moduswechsel blendet nur der untere Stein
-  über; hell/dunkel wechselt beide Steine im selben Bild.
-- **App-Icon `zenos`** im hicolor-Thema des Benutzers, 48 bis 512 px (Modul `45-thema`).
-- **Bootsplash (Plymouth), vorbereitet, nicht aktiv:** Theme mit dem Zeichen (die Steine gleiten zusammen, der
-  untere blendet zum Akzent, danach atmet der Spalt), Passwortfeld wie in Sperre und Login. Modul `42-bootsplash`
-  legt es ab, schaltet es aber nicht ein. `zen bootsplash` zeigt den Stand, `zen bootsplash aktivieren` schaltet nach
-  Rückfrage ein (Boot-Kommandozeile, initramfs), `zen bootsplash deaktivieren` nimmt es zurück.
+  Alle Varianten (einfarbig, farbig, Pixel-Variante für 16 px, Schriftzug, App-Icon, Favicon, GitHub-Avatar,
+  Vorschaubild) liegen in `assets/zeichen/`, erzeugt von `erzeugen.py`. Regeln in `docs/bildmarke.md`.
+- **`ZenZeichen`** zeigt die Marke in Leiste, Login, Sperrbildschirm, Befehlsfeld (ohne Treffer), Erstem Start und
+  Notfall-Login. Bei einem Moduswechsel blendet nur der untere Stein über, hell/dunkel wechselt beide im selben Bild.
+  Dazu das App-Icon `zenos` im hicolor-Thema des Benutzers.
+- **Bootsplash (Plymouth), vorbereitet, nicht aktiv:** Die Steine gleiten zusammen, der untere blendet zum Akzent,
+  danach atmet der Spalt; das Passwortfeld sieht aus wie in Sperre und Login. `zen bootsplash` zeigt den Stand,
+  `zen bootsplash aktivieren` schaltet nach Rückfrage ein, `zen bootsplash deaktivieren` nimmt es zurück.
+
+### Behoben
+
+- **Bildschirmfreigabe mit Chrome (Leitplanke):** Beim Klick auf «Teilen» schliesst Chrome die Freigabe seiner
+  Vorschau und öffnet sofort eine zweite, ohne Bildschirmwahl. Dazwischen war die Leitplanke 0,6 bis 1,8 s aus, und
+  Mitteilungsinhalte konnten ins geteilte Bild gelangen. Jetzt endet eine Freigabe erst nach einem Nachlauf (3 s in
+  `zenos-freigabe`, dann 2 s in der Oberfläche), und nur für Freigaben, die vor dem Ende begannen; die Reihenfolge
+  entscheidet der Aufrufzeitpunkt. «Sitzung» endet so rund 5 s nach dem Ende der Freigabe, erst dann kommt
+  Zurückgehaltenes.
+- **Portal beendet:** Die Freigabe wird auch nach `systemctl --user kill` am Portal zurückgesetzt (zusätzlich
+  `ExecStartPre` im Drop-in). Vorher blieben Rahmen, Sitzung und Zurückhalten stehen.
+- **«Beim Wechsel öffnen: Chrome»** öffnet Chrome im Profil des neuen Modus auch dann, wenn Chrome schon offen ist
+  (ein neues Fenster; keins, wenn in diesem Profil schon eines offen ist).
+- **Hell/Dunkel:** Hell setzt `color-scheme` jetzt auf `prefer-light` statt `default`. Ein laufendes Chrome wechselt
+  so auch von dunkel zurück auf hell (vorher blieb es dunkel). Bestehende Installationen stellen beim nächsten
+  Wechsel oder Sitzungsstart selbst um.
+- **Mitteilungen:** Dringende Karten lagen über dem System-Menü und fingen dessen Klicks ab. Solange ein Menü der
+  Leiste offen ist, treten die Karten auf diesem Bildschirm zurück und kommen danach wieder.
+- **Einstellungen:** Eine Änderung während eines laufenden Speicherns (etwa zwei schnelle Klicks auf Farben) ging
+  bei Modi, Zuständen, Rastern und Bildschirmen still verloren. Jetzt wird sie danach gespeichert.
+- **Erster Start:** Befehlsfeld, Modus- und Zustand-Wahl und Einstellungen öffneten unsichtbar hinter der
+  Einrichtung; jetzt bleiben sie zu, bis sie fertig ist. In der Zustimmung liegt der Fokus auf «Installieren», Enter
+  genügt. Das Terminal dazu ist höher (bis 64 Zeilen, nie über den Bildschirmrand), und passt die Übersicht nicht,
+  zeigt ein Hinweis vor der Frage, wie man zurückblättert (vorher waren die Angaben zu Chrome schon hinausgescrollt).
+- **Apps:** Den zweiten, kaputten Starter, den coremail beim ersten Start anlegt, entfernt zenOS (das Befehlsfeld
+  zeigte coremail doppelt, der zweite Eintrag startete nichts). Chrome wird Standardbrowser, sofern du nichts anderes
+  gewählt hast. Das Befehlsfeld bietet «Apps installieren» nur noch an, wenn die gesuchte App fehlt, sonst «Apps
+  verwalten». Fehlt das Programm eines Starters (auch hinter `env NAME=WERT …`), erscheint «Programm nicht gefunden»
+  statt still nichts.
+- **`zen doctor`** erkennt die temporäre sudo-Regel auch, wenn cloud-init `/etc/sudoers.d` auf 0750 gesetzt hat, und
+  meldet den echten letzten Lauf von unattended-upgrades (vorher «✓», auch ohne einen Lauf). Neu warnt es, wenn der
+  Login in diesem Boot im Notfall-Modus lief (mit Grund) oder coremail wieder einen kaputten Starter angelegt hat,
+  und zeigt, ob Chrome Standardbrowser ist.
+- **Installer:** Bricht apt an einem Download ab, steht darunter, dass ein neuer Lauf genügt.
+- **Login:** Die Ausgaben des Greeters stehen im Journal (`journalctl -b -t zenos-greeter`), der Grund eines
+  Notfall-Logins geht nicht mehr verloren.
+- **Terminal:** `?` wählt das Beispiel passend zu den Optionen: `? tar -xzf` zeigt Entpacken statt `tar cf`.
+- **Doku:** volle Pfade für `zenos-ipc` und `zenos-thema` (nicht im `PATH`), sicheres DNS in Chrome (von den
+  Richtlinien abgeschaltet) und coremail noch ohne `mailto:` beschrieben.
+
+### Bekannte Grenzen
+
+- Beginnt eine Freigabe ohne Bildschirmwahl und ohne eine andere Freigabe in den Sekunden davor (gespeicherte
+  Freigabe einer anderen App), können die ersten Bilder weiter Inhalte zeigen. Mit Chrome kam das nicht vor: Dort
+  beginnt jede Freigabe mit der Wahl.
+- Symbole neu installierter Apps erscheinen im Befehlsfeld erst nach dem nächsten Anmelden.
+- Chrome zeichnet seinen eigenen Rahmen, ohne zenOS-Titelzeile und Akzentrand; eingerastet ragt sein Schatten in
+  die Lücke. Umstellbar in Chrome, die Entscheidung steht in `ANLEITUNG.md` unter G.
 
 ### Entfernt
 

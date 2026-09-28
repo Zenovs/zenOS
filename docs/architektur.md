@@ -29,7 +29,8 @@ Entscheidungen jedes Bausteins stehen in `docs/module/m1.md` bis `docs/module/m1
    Greeter ist immer dunkel, meldet über `Quickshell.Services.Greetd` an und startet `zenos-sitzung`. Lädt die
    Oberfläche nicht (Fehler in einem Dienst), erscheint ein schlichter Notfall-Login ohne `qs.*`-Module
    (`shell/greeter/notfall/`). greetd 0.10 kann kein Passwort ändern (kein `pam_chauthtok`); ein abgelaufenes
-   Passwort wird an der Textkonsole geändert, der Login nennt den Weg.
+   Passwort wird an der Textkonsole geändert, der Login nennt den Weg. Die Ausgaben des Greeters (labwc, Quickshell)
+   stehen im Journal: `journalctl -b -t zenos-greeter` (Systemjournal, lesbar mit der Gruppe `adm` oder sudo).
 2. **`zenos-sitzung`** setzt die Umgebung und die Tastaturbelegung aus `/etc/default/keyboard`, ruft
    `install.sh --nur-benutzer --ruhig` (Benutzerteile, höchstens 2 Minuten), beendet Reste einer abgestürzten
    Sitzung, löscht die Marker in `$XDG_RUNTIME_DIR/zenos` und startet labwc.
@@ -108,7 +109,7 @@ selbst endet in v0.3.1 auch bei Fehlern mit 0; `zenos-ipc` wertet die Ausgabe au
 
 | Ziel | Funktionen |
 |---|---|
-| `befehlsfeld` | `umschalten`, `oeffnen`, `schliessen`, `werkzeuge` |
+| `befehlsfeld` | `umschalten`, `oeffnen`, `schliessen`, `werkzeuge`, `status` (`offen`/`zu`) |
 | `sperre` | `sperren`, `status` (`gesperrt`/`offen`) |
 | `thema` | `wechseln`, `setzen(hell\|dunkel\|tageszeit)`, `status` |
 | `modus` | `waehlen`, `wechseln(id)`, `aktiv` |
@@ -147,8 +148,16 @@ Die Tastenkürzel von labwc rufen dieselben Ziele auf (Liste in `docs/module/m9.
 - `xdg-desktop-portal-wlr` mit `/etc/xdg/xdg-desktop-portal-wlr/config`: Die Bildschirmwahl
   (`zenos-freigabe waehlen`, mit slurp) meldet die Freigabe per IPC, bevor das Portal den Stream anlegt, damit schon
   das erste Bild keine Inhalte zeigt. `exec_before`/`exec_after` rufen `zenos-freigabe start|ende` (Marker
-  `$XDG_RUNTIME_DIR/zenos/freigabe`, IPC). Endet das Portal (auch durch einen Absturz), setzt das Drop-in
-  `xdg-desktop-portal-wlr.service.d/zenos.conf` die Freigabe zurück.
+  `$XDG_RUNTIME_DIR/zenos/freigabe`, IPC).
+- **Nachlauf:** Chrome schliesst beim Klick auf «Teilen» die Freigabe seiner Vorschau und öffnet sofort eine zweite,
+  ohne Bildschirmwahl. Das Portal ruft dazwischen `ende` und `start` auf, ohne auf sie zu warten. `zenos-freigabe
+  ende` löscht den Marker deshalb erst nach 3 s und nur für Freigaben, die vor ihm begannen. Was vorher kam,
+  entscheidet der Aufrufzeitpunkt (Startzeit des Prozesses, den das Portal gestartet hat), nicht die Reihenfolge, in
+  der die Aufrufe die Sperrdatei bekommen. Die Oberfläche (`Freigabe`) hält «aktiv» danach noch 2 s. So ist die Leitplanke zwischen zwei
+  Freigaben nie aus, und «Sitzung» endet rund 5 s nach dem Ende der Freigabe; erst dann kommt Zurückgehaltenes.
+- Endet das Portal ohne `exec_after` (Absturz, `kill`), setzt das Drop-in
+  `xdg-desktop-portal-wlr.service.d/zenos.conf` die Freigabe zurück: nach jedem Ende (`ExecStopPost`) und vor jedem
+  Start (`ExecStartPre`), denn nach `systemctl --user kill` beendet systemd 259 auch `ExecStopPost` sofort.
 - Qt-Apps folgen dem Erscheinungsbild über `QT_QPA_PLATFORMTHEME=xdgdesktopportal`. Die Oberfläche selbst nutzt
   weder Plattform-Theme noch Portal-Dienste von Qt (Pragmas in `shell.qml`); ihr Start hängt nicht am Portal.
 
@@ -235,7 +244,7 @@ Die Logik läuft in Quickshell selbst, ohne eigenen Hintergrunddienst.
 | Laufzeitzustand | `~/.local/state/zenos/laufzeit.json` (`modus`, `zustand`, `raster`, `profil`) | nie |
 | Weiterer Zustand | `~/.local/state/zenos/` (`thema.json`: zuletzt übertragener Akzent; Merker für die Vorlagen) | nie |
 | Nutzungsstatistik | `~/.local/share/zenos/befehlsfeld.json` (nur Desktop-IDs und Zähler) | nie |
-| Flüchtige Marker | `$XDG_RUNTIME_DIR/zenos/` (`gesperrt`, `freigabe`, `freigabe.neu`, `freigabe-wahl`, Sperrdateien) | nie |
+| Flüchtige Marker | `$XDG_RUNTIME_DIR/zenos/` (`gesperrt`, `freigabe`, `freigabe.neu`, `freigabe-wahl`, `freigabe-eintraege`, `freigabe-ende`, Sperrdateien) | nie |
 | Bildschirmfotos | `~/Bilder/Screenshots/` | nie |
 | Geheimnisse | 1Password | nie |
 

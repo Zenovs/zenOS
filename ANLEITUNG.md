@@ -239,11 +239,18 @@ unter «Am Pi prüfen».
 - [ ] «Neustart» und «Ausschalten» im Login führen erst beim zweiten Klick aus.
 - [ ] Die Einrichtung fragt nach Name, Ort (optional), Erscheinungsbild und erstem Modus. Nach «Einrichten» ist der
   Modus aktiv: Seine Akzentfarbe steht in der Leiste und in «Heute».
-- [ ] Danach listet sie Chrome, VS Code, 1Password, 1Password-CLI und coremail mit Herkunft; Nubix steht mit «noch
-  kein ARM-Build» da. «Installieren» öffnet ein Terminal, zeigt Quellen, Schlüssel und Dateien, fragt einmal nach und
-  dann nach dem sudo-Passwort. «Später» führt zu Einstellungen → Apps.
-- [ ] Chrome, VS Code, 1Password und coremail starten danach aus dem Befehlsfeld. `op --version` zeigt die
-  1Password-CLI.
+- [ ] Solange die Einrichtung offen ist, bewirken `Super + Leertaste`, `Super + M`, `Super + Z` und `Super + Komma`
+  nichts, die Tastatur bleibt im Formular. Bekannte Ausnahme: `Ctrl + Alt + T` öffnet kitty unsichtbar dahinter.
+- [ ] Danach listet die Einrichtung Chrome, VS Code, 1Password, 1Password-CLI und coremail mit Herkunft; Nubix steht
+  mit «noch kein ARM-Build» da. Der Fokusrahmen liegt auf «Installieren», Enter genügt. Es öffnet ein Terminal, zeigt
+  Quellen, Schlüssel und Dateien, fragt einmal nach und dann nach dem sudo-Passwort. Passt die Übersicht nicht ins
+  Fenster, steht vor der Frage ein Hinweis; mit dem Mausrad oder `Ctrl + Shift + Bild↑` siehst du den Anfang.
+  «Später» (oder `Esc`) führt zu Einstellungen → Apps.
+- [ ] Chrome, VS Code, 1Password und coremail starten danach aus dem Befehlsfeld. coremail steht dort genau einmal,
+  auch nach seinem ersten Start. Die Symbole von VS Code, 1Password und coremail erscheinen erst nach dem nächsten
+  Anmelden, bis dahin steht der Anfangsbuchstabe da. `op --version` zeigt die 1Password-CLI.
+- [ ] Chrome zeigt in einem neuen Profil keine Leiste «Google Chrome isn't your default browser», und Links aus
+  anderen Apps öffnen in Chrome.
 - [ ] Abmelden (System-Menü → Abmelden) führt zurück zum Login. Nach dem nächsten Anmelden erscheint die Einrichtung
   nicht mehr.
 
@@ -253,7 +260,7 @@ unter «Am Pi prüfen».
 - [ ] «Heute» zeigt Wochentag, Tageszahl, einen Gruss mit deinem Namen und unten die Tastenkappen für Super +
   Leertaste, Super + M und Super + Z.
 - [ ] Der Hell/Dunkel-Schalter wechselt ohne Flackern: Leiste, «Heute», Fensterrahmen, kitty, Chrome und VS Code (nach
-  seinem ersten Start).
+  seinem ersten Start). Ein laufendes Chrome wechselt in beide Richtungen, auch von dunkel zurück auf hell.
 - [ ] Das System-Menü zeigt Netz, Lautstärke mit Regler, 1Password, Temperatur und Lüfter, dazu Sperren,
   Einstellungen, Abmelden, Neustart und Ausschalten. Abmelden, Neustart und Ausschalten fragen einmal nach.
 
@@ -265,11 +272,15 @@ unter «Am Pi prüfen».
   `~/Bilder/Screenshots`. Dasselbe mit `Print` und `Super + Shift + S`.
 - [ ] Die Pipette (`Super + Shift + C`) kopiert per Klick einen Farbwert wie `#A7B89F`.
 - [ ] Aktionen wie «Hell/Dunkel», «Sperren» und «Einstellungen» funktionieren auch von hier.
+- [ ] Sind die Apps installiert, zeigt die Suche «chrome» Chrome ohne die Zeile «Apps installieren». «apps» zeigt
+  «Apps verwalten», Enter öffnet Einstellungen → Apps.
 
 **Mitteilungen**
 - [ ] Ohne Zustand wartet `notify-send "Test" "Hallo"`: Die Leiste zeigt «1 · HH:00» mit der nächsten vollen Stunde,
   dann erscheint oben rechts eine ruhige Sammelkarte.
 - [ ] `notify-send -u critical "Test" "Dringend"` erscheint sofort als Karte.
+- [ ] Mit dieser Karte oben rechts das System-Menü öffnen: Die Karte tritt zurück, das Menü lässt sich ganz bedienen.
+  Nach dem Schliessen des Menüs ist die Karte wieder da.
 - [ ] Ein Klick auf die Glocke öffnet die Zentrale: «Jetzt zustellen» holt Wartendes, Einträge lassen sich verwerfen.
 - [ ] Im Zustand Fokus warten normale Mitteilungen («1 warten»), dringende kommen sofort. Endet Fokus, kommt alles
   Wartende.
@@ -331,13 +342,19 @@ systemctl --user start zenos-shell.service
   Wechsel ändert den Akzent in Leiste, Fensterrahmen und kitty. Im Zeichen links in der Leiste blendet nur der untere
   Stein weich zur neuen Farbe über; bei hell/dunkel wechseln beide Steine im selben Moment.
 - [ ] Mit Chrome-Profil im Modus (das Profil vorher in Chrome anlegen) und «Beim Wechsel öffnen: Chrome» öffnet
-  Chrome beim Wechsel im Profil des neuen Modus.
+  Chrome beim Wechsel im Profil des neuen Modus, auch wenn Chrome schon offen ist (dann ein neues Fenster in diesem
+  Profil; ist dort schon eines offen, keins).
 - [ ] Fokus starten: Die Leiste zeigt «Fokus» mit Restzeit, Raster-Knopf und Hell/Dunkel treten zurück, «Heute»
   blendet seinen Inhalt aus.
-- [ ] Sitzung: In Chrome den Bildschirm teilen, etwa auf einer Testseite für Bildschirmfreigabe oder in einem
-  Videocall. Zuerst den Bildschirm anklicken, den du teilen willst. Die Sitzung startet von selbst: Rahmen und «Dieser
-  Bildschirm wird geteilt», in der Leiste «N zurückgehalten», im geteilten Bild keine Inhalte von Mitteilungen. Mit
-  dem Ende der Freigabe endet die Sitzung, und Zurückgehaltenes wird zugestellt.
+- [ ] Sitzung: Zuerst eine dringende Mitteilung anzeigen lassen, sie bleibt oben rechts stehen:
+  `notify-send -u critical Test Geheim`. Dann in Chrome den Bildschirm teilen, etwa auf einer Testseite für
+  Bildschirmfreigabe oder in einem Videocall: den Bildschirm anklicken, den du teilen willst, dann in Chromes Dialog
+  mit Vorschau «Teilen» («Share»). Die Sitzung startet von selbst: Rahmen und «Dieser Bildschirm wird geteilt», in der
+  Leiste «Sitzung», auf der Karte nur «Inhalt verborgen, Bildschirm wird geteilt». Beim Klick auf «Teilen» endet
+  «Sitzung» nicht kurz, und die ersten Bilder beim Empfänger (Vorschau der Testseite, zweites Gerät) zeigen keinen
+  Inhalt der Mitteilung. Weitere Mitteilungen zeigt die Leiste als «N zurückgehalten».
+- [ ] Danach «Freigabe beenden» («Stop sharing») und sofort neu teilen: wieder ohne Unterbrechung. Rund 5 s nach dem
+  Ende der Freigabe endet die Sitzung, und Zurückgehaltenes wird zugestellt. Diese kurze Nachlaufzeit ist Absicht.
 
 **Raster**
 - [ ] `Super + 1` bis `Super + 4` setzen das aktive Fenster in die Viertel (4er-Grid, der Standard).
@@ -347,7 +364,8 @@ systemctl --user start zenos-shell.service
 - [ ] Mit der Maus: Fenster an der Titelzeile ziehen und Super halten, die Bereiche erscheinen, Loslassen rastet ein.
 - [ ] Mit zweitem Bildschirm: `Super + Shift + Links` bzw. `Rechts` schiebt das Fenster hinüber; Leiste und «Heute»
   sind auf beiden.
-- [ ] Fensterrahmen: Titelzeile in Geist Mono, oben runde Ecken (unten eckig, das ist eine Grenze von labwc).
+- [ ] Fensterrahmen: Titelzeile in Geist Mono, oben runde Ecken (unten eckig, das ist eine Grenze von labwc). Das gilt
+  für Fenster mit zenOS-Rahmen wie kitty; Chrome zeichnet seinen eigenen (siehe «Offene Entscheidungen» in G).
 
 **Terminal**
 - [ ] `Ctrl + Alt + T` öffnet kitty mit fish und der zenOS-Eingabezeile.
@@ -411,6 +429,14 @@ und wieder anmelden:
 
 ```
 sudo timedatectl set-timezone <Zone>
+```
+
+Statt des zenOS-Logins erscheint ein schlichter Login mit «Der Login konnte nicht vollständig geladen werden»:
+Anmelden geht trotzdem. Danach meldet `zen doctor` «Login lief im Notfall-Modus …». Alle Zeilen des Logins zeigt per
+SSH dieser Befehl (zeigt er nichts, mit `sudo` davor):
+
+```
+journalctl -b -t zenos-greeter
 ```
 
 Der Login meldet «Das Passwort muss zuerst geändert werden»: mit `Ctrl + Alt + F2` zur Textkonsole, dort anmelden, ein
@@ -483,8 +509,8 @@ mehr:
 sudo rm /etc/sudoers.d/zenos-bau
 ```
 
-**G2.** Final taggen, auf dem Mac. Der Tag startet auf GitHub den Bau des Images. Lass vorher in `CHANGELOG.md` einen
-Eintrag «0.1.0» ergänzen (was sich seit `v0.1.0-rc1` geändert hat). In den Ordner wechseln:
+**G2.** Final taggen, auf dem Mac. Der Tag startet auf GitHub den Bau des Images. Lass vorher in `CHANGELOG.md` den
+Abschnitt «Unveröffentlicht» (alles seit `v0.1.0-rc1`) zu «0.1.0» mit Datum machen. In den Ordner wechseln:
 
 ```
 cd ~/Documents/github/zenOS
@@ -552,6 +578,9 @@ git switch dev
 - Safe Browsing in Chrome: Stufe 2 (erweitert, heute gesetzt) oder Stufe 1, siehe `docs/sicherheit.md`.
 - Sicheres DNS in Chrome: heute aus, weil Chrome es mit Richtlinien von selbst abschaltet. Eine Richtlinie könnte es
   festlegen, der Schalter bliebe gesperrt, siehe `docs/sicherheit.md`.
+- Rahmen von Chrome: Chrome zeichnet heute seinen eigenen, ohne zenOS-Titelzeile und Akzentrand, und eingerastet ragt
+  sein Schatten in die Lücke. Den zenOS-Rahmen bekommt es in Chrome unter «Darstellung» mit Titelleiste und Rahmen
+  des Systems (pro Chrome-Profil). Ob zenOS das vorgibt, siehe `docs/module/m9.md`, «Apps mit eigenem Rahmen».
 - Kanal des Images: Es folgt heute `dev`. Trägt `main` Releases, kann es auf `main` wechseln (Option `--kanal` von
   `image/bauen.sh` im Workflow).
 - fish als Login-Shell, damit auch SSH-Sitzungen Eingabezeile, `?` und die Warnung haben: `chsh -s /usr/bin/fish`.

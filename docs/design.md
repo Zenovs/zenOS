@@ -183,7 +183,9 @@ Während einer Freigabe und bei `heute: false` blendet der Inhalt aus (200 ms).
 ### Mitteilungen
 
 - Karten oben rechts unter der Leiste: 380 px, `flaeche`, Rahmen `linie2`, Radius 12, Zeiten in Geist Mono, ohne
-  Schatten. Die Sammelkarte verschwindet nach 10 s, dringende Karten bleiben bis zum Schliessen.
+  Schatten. Die Sammelkarte verschwindet nach 10 s, dringende Karten bleiben bis zum Schliessen. Solange auf ihrem
+  Bildschirm ein Menü der Leiste offen ist, treten die Karten zurück und kommen danach wieder (120 ms, nur
+  Deckkraft); die 10 s der Sammelkarte beginnen dann von vorn.
 - Zentrale als Panel rechts (400 px). Kein Ton, kein Blinken; neue Karten kommen unten dazu, damit nichts verrutscht.
 
 ### Fenster
@@ -191,6 +193,9 @@ Während einer Freigabe und bei `heute: false` blendet der Inhalt aus (200 ms).
 - Radius 12 an den oberen Ecken (labwc rundet nur die Titelzeile, unten eckig), Titelzeile 34 px, Titel in Geist Mono.
 - Das aktive Fenster hat einen 1-px-Rand im Modus-Akzent.
 - Eingerastete Fenster behalten die runden oberen Ecken; zwischen den Fenstern und zur Leiste liegen 8 px.
+- Titelzeile, Akzentrand und Radius gelten für Fenster mit labwc-Rahmen. Apps mit eigenem Rahmen (Chrome,
+  GTK4/libadwaita) behalten ihren; eingerastet ragt ihr eigener Schatten in die 8-px-Lücke (`docs/module/m9.md`,
+  «Apps mit eigenem Rahmen»).
 
 ### Einstellungen
 
@@ -202,6 +207,8 @@ markiert und nicht bedienbar.
 
 - Der geteilte Bildschirm bekommt einen 2-px-Rahmen in `sitzung` (Radius 12) und oben mittig das Label «Dieser Bildschirm wird geteilt» (Pille 24 px, Hintergrund `sitzung`, Text `grund`, Geist Mono 12, Monitor-Symbol).
 - Mitteilungen werden zurückgehalten und nur als Zahl gezeigt.
+- Nach dem Ende der Freigabe bleiben Rahmen und Label rund 5 s auf dem zuletzt geteilten Bildschirm (Nachlauf, siehe
+  `docs/architektur.md`). Beginnt in der Zeit eine neue Freigabe, geht es ohne Unterbrechung weiter; nichts blinkt.
 
 ### Sperrbildschirm und Login
 

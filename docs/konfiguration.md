@@ -50,15 +50,16 @@ und setzen die festen Werte aus dem Code.
 | `chromeProfil` | Text | Anzeigename des Chrome-Profils; `zenos-chrome` startet Chrome damit |
 | `mailKonten` | Liste | Konten, die coremail in diesem Modus zeigen soll. Freie Merkliste; coremail liest sie in 0.1 noch nicht |
 | `heute` | Objekt | `kalender`, `aufgaben`, `wetter`: was die «Heute»-Ansicht zeigt – später |
-| `oeffnen` | Liste | Apps (Desktop-ID ohne `.desktop`), die beim Wechsel öffnen, sofern sie noch kein Fenster haben |
+| `oeffnen` | Liste | Apps (Desktop-ID ohne `.desktop`), die beim Wechsel öffnen, sofern sie noch kein Fenster haben. Ausnahme Chrome, wenn der Modus ein `chromeProfil` hat: Chrome öffnet, solange kein Fenster in diesem Profil offen ist |
 | `raster` | Objekt | Bildschirm-Profil (Name aus `bildschirme.json`) → Raster-ID; `Standard` gilt für alle Profile ohne eigenen Eintrag |
 | `zustaende` | Liste | Zustände, die dieser Modus anbietet; ohne Liste alle, eine leere Liste heisst keiner |
 | `anpassungen` | Objekt | Zustand-ID → Werte, die für diesen Modus abweichen (Schlüssel wie im Zustand, ohne `name`) |
 
 Ein Moduswechsel setzt den Akzent, schreibt den Modus in `laufzeit.json` (danach öffnen die Apps, Chrome also schon
-im neuen Profil), setzt das Raster und startet Zustände mit dem Auslöser `moduswechsel`. Das Raster kommt aus dem
-Eintrag des aktuellen Bildschirm-Profils, sonst aus `Standard`, sonst (ohne Profile) aus dem einzigen Eintrag.
-Beim Anschliessen eines Bildschirms geht das Raster des aktiven Modus für dieses Profil dem des Profils vor.
+im neuen Profil, auch wenn Chrome in einem anderen Profil schon läuft), setzt das Raster und startet Zustände mit dem
+Auslöser `moduswechsel`. Das Raster kommt aus dem Eintrag des aktuellen Bildschirm-Profils, sonst aus `Standard`,
+sonst (ohne Profile) aus dem einzigen Eintrag. Beim Anschliessen eines Bildschirms geht das Raster des aktiven Modus
+für dieses Profil dem des Profils vor.
 
 ## Zustand: `zustaende/<id>.json`
 
@@ -87,8 +88,9 @@ Vorlage kommt nicht wieder.
   Sie überschreiben nie einen von Hand gestarteten Zustand oder eine laufende Sitzung. Ein Uhrzeit-Auslöser wirkt in
   der Minute, in der die Uhr die Zeit erreicht, und wird nicht nachgeholt.
 - **Ende:** `manuell` endet nur von Hand, `timer` nach Ablauf (auch nach einem Neustart, die Endzeit steht in
-  `laufzeit.json`), `ausloeser-endet` mit dem Auslöser: bei der Freigabe mit ihrem Ende, beim Moduswechsel mit dem
-  Verlassen des Modus. Mit einer Uhrzeit wirkt `ausloeser-endet` wie `manuell`.
+  `laufzeit.json`), `ausloeser-endet` mit dem Auslöser: bei der Freigabe rund 5 s nach ihrem Ende (Nachlauf, siehe
+  `docs/architektur.md`, bis dahin bleiben die Inhalte verborgen), beim Moduswechsel mit dem Verlassen des Modus. Mit
+  einer Uhrzeit wirkt `ausloeser-endet` wie `manuell`.
 - **Rückkehr nach einer Sitzung:** Endet eine automatisch gestartete Sitzung (auch von Hand beendet), kommt der
   vorher aktive Zustand zurück, wenn sein Timer noch läuft oder sein Ende `manuell` ist. Einer mit
   `ausloeser-endet` kommt nicht zurück.
