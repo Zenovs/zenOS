@@ -443,6 +443,17 @@ _zenos_policy_altlast_entfernen() {
   _ZENOS_POLICY_ORDNER=""
 }
 
+# Abbruch nach einem gescheiterten apt-get. Meist war das Netz oder der Paketserver kurz weg («Failed to
+# fetch», apt wiederholt Downloads schon selbst); ein neuer Lauf setzt fort, Erledigtes bleibt. Kein Pfad
+# in der Meldung: install.sh läuft auch über zen update. Auf stderr, damit sie auch mit --ruhig erscheint.
+_zenos_apt_abbruch() {
+  log_fehler "$1"
+  printf '     %s\n' "Meist war nur das Netz oder der Paketserver kurz weg. Endet die Installation damit, einfach" \
+    "denselben Befehl noch einmal starten (install.sh oder zen update): Erledigtes bleibt, und «apt update»" \
+    "oder «--fix-missing» braucht es nicht." >&2
+  exit 1
+}
+
 pakete_sicherstellen() {
   _zenos_nur_system pakete_sicherstellen
   local paket rc=0
@@ -456,7 +467,7 @@ pakete_sicherstellen() {
 
   if [[ "$_ZENOS_APT_AKTUELL" != 1 ]]; then
     log_info "Paketlisten aktualisieren"
-    apt_ausfuehren update -qq || abbruch "apt-get update ist fehlgeschlagen"
+    apt_ausfuehren update -qq || _zenos_apt_abbruch "apt-get update ist fehlgeschlagen"
     _ZENOS_APT_AKTUELL=1
   fi
   log_info "Pakete installieren: ${fehlend[*]}"
@@ -465,7 +476,7 @@ pakete_sicherstellen() {
     -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
     "${fehlend[@]}" || rc=$?
   _zenos_policy_aus
-  (( rc == 0 )) || abbruch "apt-get install ist fehlgeschlagen (Exit $rc): ${fehlend[*]}"
+  (( rc == 0 )) || _zenos_apt_abbruch "apt-get install ist fehlgeschlagen (Exit $rc): ${fehlend[*]}"
 
   for paket in "${fehlend[@]}"; do
     paket_installiert "$paket" || unklar+=("$paket")

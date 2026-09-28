@@ -266,6 +266,34 @@ if test -d $cache_home/tealdeer/tldr-pages/pages.en; and man -w rsync >/dev/null
 else
     skip '? rsync -avz' 'tldr-Seiten oder man-Seite von rsync fehlen'
 end
+# tldr schreibt tar-Optionen ohne Strich (tar xvf). Das Beispiel muss zur Betriebsart passen: entpacken
+# (x), erstellen (c) oder auflisten (t), nie «tar cf» bei «-xzf».
+if test -d $cache_home/tealdeer/tldr-pages/pages.en; and man -w tar >/dev/null 2>&1
+    for case in '-xzf|*Beispiel: tar x*|*Beispiel: tar [ct]*' '-xvf|*Beispiel: tar xvf*|*Beispiel: tar [ct]*' \
+            '-czf|*Beispiel: tar czf*|*Beispiel: tar [xt]*' '-tvf|*Beispiel: tar tvf*|*Beispiel: tar [cx]*' \
+            '-x|*Beispiel: tar x*|*Beispiel: tar [ct]*'
+        set -l parts (string split '|' -- $case)
+        set -l card (env HOME=$real_home fish -c "set -g fish_function_path $root/system/fish/functions \$fish_function_path; _zenos_explain tar $parts[1]" | plain)
+        if string match -q -- $parts[2] $card; and not string match -q -- $parts[3] $card
+            check_true "? tar $parts[1]"
+        else
+            check_false "? tar $parts[1]: erwartet $parts[2]" (string join \n -- $card)
+        end
+    end
+else
+    skip '? tar -xzf' 'tldr-Seiten oder man-Seite von tar fehlen'
+end
+# Passt kein Beispiel (ps: «ps aux» ohne -e und -f), zeigt die Karte bis zu drei, keins als «Beispiel:»
+if test -d $cache_home/tealdeer/tldr-pages/pages.en; and man -w ps >/dev/null 2>&1
+    set -l card (env HOME=$real_home fish -c "set -g fish_function_path $root/system/fish/functions \$fish_function_path; _zenos_explain ps -ef" | plain)
+    if not string match -q -- '*Beispiel:*' $card; and string match -q -- '*  ps aux*' $card
+        check_true '? ps -ef ohne passendes Beispiel'
+    else
+        check_false '? ps -ef ohne passendes Beispiel' (string join \n -- $card)
+    end
+else
+    skip '? ps -ef' 'tldr-Seiten oder man-Seite von ps fehlen'
+end
 set -l help (_zenos_explain | plain)
 if string match -q '*Ctrl+C*' -- $help; and string match -q '*lokal · offline*' -- $help
     check_true '? ohne Argument'

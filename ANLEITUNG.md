@@ -186,6 +186,9 @@ tmux new -s zenos
   nicht.
 - Erscheint «Warte auf einen anderen Paketvorgang …», laufen gerade die automatischen Updates von Ubuntu. Die
   Installation wartet und macht danach weiter.
+- Bricht sie mit «apt-get install ist fehlgeschlagen» oder «Failed to fetch» ab, war meist das Netz oder der
+  Paketserver kurz weg. Dann `./scripts/install.sh` einfach noch einmal starten, Erledigtes bleibt. Den Rat von apt
+  («apt update», «--fix-missing») braucht es nicht.
 - Die SSH-Verbindung bleibt bestehen. Der Bildschirm am Pi bleibt bis zum Neustart bei der Textkonsole.
 - Am Ende steht `zenOS … installiert · N Änderungen`. Das Protokoll liegt unter `/var/log/zenos/install.log`.
 
@@ -375,7 +378,9 @@ systemctl --user start zenos-shell.service
 - [ ] 1Password-SSH-Agent: in 1Password → Einstellungen → Entwickler einschalten, ab- und wieder anmelden. Dann meldet
   `ssh -T git@github.com` dich über 1Password an (1Password fragt nach der Freigabe; dein SSH-Schlüssel liegt in
   1Password und ist bei GitHub eingetragen).
-- [ ] Nach einem Tag zeigt `zen doctor` den letzten Lauf von unattended-upgrades.
+- [ ] Direkt nach der Installation meldet `zen doctor` «unattended-upgrades ist noch nie gelaufen». Am Tag danach
+  (der Lauf ist gegen 6 Uhr, war der Pi da aus, kurz nach dem Start) steht dort «Letzter erfolgreicher Lauf von
+  unattended-upgrades: …».
 - [ ] Bootsplash: `zen doctor` zeigt «Bootsplash vorbereitet, nicht aktiv», beim Start erscheint noch keiner. Er bleibt
   aus, bis du entscheidest (siehe G).
 
@@ -390,6 +395,9 @@ systemctl --user start zenos-shell.service
 **Häufige Fälle**
 
 Der Pi zeigt nach dem Flashen nichts an, nur die LEDs leuchten: meist ist der Bootloader zu alt (siehe «Vorab» in B).
+
+`install.sh` oder `zen update` bricht mit «apt-get install ist fehlgeschlagen» oder «Failed to fetch» ab: Das Netz
+oder der Paketserver war kurz weg. Denselben Befehl noch einmal starten, Erledigtes bleibt.
 
 Das Passwort wird im zenOS-Login abgelehnt, per SSH geht es: Die Tastaturbelegung stimmt nicht. Per SSH neu wählen,
 danach neu starten:
@@ -468,7 +476,8 @@ die Fehler, committe und pushe auf dev.» Danach wiederholst du D und die Punkte
 
 ## G · Abschluss
 
-**G1.** Die temporäre sudo-Regel löschen, falls du B12 gemacht hast. Danach meldet `zen doctor` dazu nichts mehr:
+**G1.** Die temporäre sudo-Regel löschen, falls du B12 gemacht hast. Danach zeigt `zen doctor` dazu keine Warnung
+mehr:
 
 ```
 sudo rm /etc/sudoers.d/zenos-bau
@@ -541,6 +550,8 @@ git switch dev
 - Firewall einschalten: per SSH aus dem eigenen Netz `zen firewall aktivieren`, danach von einem zweiten Gerät neu
   per SSH verbinden. Zurück mit `sudo ufw disable`.
 - Safe Browsing in Chrome: Stufe 2 (erweitert, heute gesetzt) oder Stufe 1, siehe `docs/sicherheit.md`.
+- Sicheres DNS in Chrome: heute aus, weil Chrome es mit Richtlinien von selbst abschaltet. Eine Richtlinie könnte es
+  festlegen, der Schalter bliebe gesperrt, siehe `docs/sicherheit.md`.
 - Kanal des Images: Es folgt heute `dev`. Trägt `main` Releases, kann es auf `main` wechseln (Option `--kanal` von
   `image/bauen.sh` im Workflow).
 - fish als Login-Shell, damit auch SSH-Sitzungen Eingabezeile, `?` und die Warnung haben: `chsh -s /usr/bin/fish`.

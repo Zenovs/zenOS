@@ -20,7 +20,7 @@ _sicherheit_apt_wert() {
 }
 
 _sicherheit_updates() {
-  local datei wert zeit ergebnis anzahl
+  local datei wert anzahl
   if ! paket_installiert unattended-upgrades; then
     fehler "unattended-upgrades fehlt – keine automatischen Sicherheitsupdates (install.sh ausführen)"
     return 0
@@ -54,15 +54,7 @@ _sicherheit_updates() {
   if [[ "$(systemctl is-enabled apt-daily-upgrade.timer 2>/dev/null)" != enabled ]]; then
     fehler "apt-daily-upgrade.timer ist nicht aktiviert – unattended-upgrades läuft nie (install.sh)"
   else
-    zeit=$(systemctl show -p LastTriggerUSec --value --timestamp=unix apt-daily-upgrade.timer 2>/dev/null)
-    ergebnis=$(systemctl show -p Result --value apt-daily-upgrade.service 2>/dev/null)
-    if [[ ! "$zeit" =~ ^@[1-9][0-9]*$ ]]; then
-      hinweis "unattended-upgrades ist noch nie gelaufen (läuft täglich über apt-daily-upgrade.timer)"
-    elif [[ "$ergebnis" != success ]]; then
-      warnung "Letzter Lauf von unattended-upgrades ist gescheitert (${ergebnis:-unbekannt}; journalctl -u apt-daily-upgrade)"
-    else
-      ok "Letzter Lauf von unattended-upgrades: $(date -d "$zeit" '+%d.%m.%Y %H:%M' 2>/dev/null || printf '%s' "$zeit")"
-    fi
+    _sicherheit_letzter_lauf
   fi
 
   if [[ -e /run/reboot-required ]]; then
@@ -70,6 +62,50 @@ _sicherheit_updates() {
     if [[ -r /run/reboot-required.pkgs ]]; then anzahl=$(sort -u /run/reboot-required.pkgs | grep -c .); fi
     hinweis "Nach Updates steht ein Neustart an${anzahl:+ (Pakete: $anzahl)} – automatische Neustarts sind aus"
   fi
+}
+
+# Letzter erfolgreicher Lauf: apt.systemd.daily berührt /var/lib/apt/periodic/upgrade-stamp nur, wenn
+# unattended-upgrade im täglichen Lauf mit Erfolg endet (für alle lesbar). Die Zeit des Timers taugt nicht:
+# systemd legt seinen Stempel schon beim ersten Start des Timers an. Result des Dienstes zählt nur, wenn er
+# in diesem Boot lief, sonst ist es der Grundwert «success»; einen Fehler von unattended-upgrade gibt
+# apt.systemd.daily ohnehin nicht weiter.
+_sicherheit_letzter_lauf() {
+  local stempel=/var/lib/apt/periodic/upgrade-stamp zeit start zustand ergebnis alter datum gelaufen=0
+  zeit=$(stat -c %Y -- "$stempel" 2>/dev/null) || zeit=""
+  start=$(systemctl show -p ExecMainStartTimestamp --value --timestamp=unix apt-daily-upgrade.service 2>/dev/null)
+  zustand=$(systemctl show -p ActiveState --value apt-daily-upgrade.service 2>/dev/null)
+  ergebnis=$(systemctl show -p Result --value apt-daily-upgrade.service 2>/dev/null)
+  [[ ! "$start" =~ ^@[1-9][0-9]*$ ]] || gelaufen=1
+
+  if [[ "$zustand" == activating || "$zustand" == active ]]; then
+    hinweis "unattended-upgrades läuft gerade (apt-daily-upgrade)"
+  elif (( gelaufen )) && [[ "$ergebnis" != success ]]; then
+    warnung "Letzter Lauf von unattended-upgrades ist gescheitert (${ergebnis:-unbekannt}; journalctl -u apt-daily-upgrade)"
+  elif [[ ! "$zeit" =~ ^[1-9][0-9]*$ ]]; then
+    if (( gelaufen )); then
+      warnung "unattended-upgrades lief, aber ohne Erfolg (journalctl -u apt-daily-upgrade, /var/log/unattended-upgrades/)"
+    else
+      hinweis "unattended-upgrades ist noch nie gelaufen (täglich gegen 6 Uhr, war der Pi aus: kurz nach dem Start)"
+    fi
+  else
+    alter=$(( ($(date +%s) - zeit) / 86400 ))
+    datum=$(date -d "@$zeit" '+%d.%m.%Y %H:%M' 2>/dev/null)
+    if (( alter < 3 )); then
+      ok "Letzter erfolgreicher Lauf von unattended-upgrades: $datum"
+    elif (( ! gelaufen && $(_sicherheit_seit_start) < 7200 )); then
+      # War der Pi einige Tage aus, holt der Timer (Persistent=true) den Lauf kurz nach dem Start nach
+      hinweis "Letzter erfolgreicher Lauf von unattended-upgrades am $datum; der nächste folgt kurz nach dem Start"
+    else
+      warnung "Seit $alter Tagen kein erfolgreicher Lauf von unattended-upgrades (journalctl -u apt-daily-upgrade, /var/log/unattended-upgrades/)"
+    fi
+  fi
+}
+
+# Sekunden seit dem Start des Systems
+_sicherheit_seit_start() {
+  local sekunden=0
+  read -r sekunden _ 2>/dev/null < /proc/uptime || sekunden=0
+  printf '%s\n' "${sekunden%%.*}"
 }
 
 _sicherheit_chrome() {

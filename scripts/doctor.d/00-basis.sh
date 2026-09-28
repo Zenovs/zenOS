@@ -51,11 +51,22 @@ _basis_system() {
 
   _basis_zeitzone
   _basis_tastatur
+  _basis_sudo_regel
+}
 
-  if [[ ! -x /etc/sudoers.d ]]; then
-    hinweis "sudo-Regeln nicht prüfbar (/etc/sudoers.d nicht lesbar)"
-  elif [[ -e /etc/sudoers.d/zenos-bau ]]; then
-    warnung "Temporäre sudo-Regel aus dem Bau noch aktiv. Nach der Testphase löschen: sudo rm /etc/sudoers.d/zenos-bau"
+# /etc/sudoers.d ist ab Werk durchsuchbar (0755). cloud-init setzt 0750, sobald es selbst eine sudo-Regel
+# schreibt (Image ohne Imager-Einstellungen, Imager bis 2.0.10, «passwordlessSudo»). Dann über sudo -n,
+# wie die Firewall-Prüfung. Scheitert sudo -n, gilt die Regel aus dem Bau (NOPASSWD für diesen Benutzer)
+# jedenfalls nicht.
+_basis_sudo_regel() {
+  local regel=/etc/sudoers.d/zenos-bau bau=0
+  if [[ -x /etc/sudoers.d ]]; then
+    [[ ! -e "$regel" ]] || bau=1
+  elif sudo -n test -e "$regel" 2>/dev/null; then
+    bau=1
+  fi
+  if (( bau )); then
+    warnung "Temporäre sudo-Regel aus dem Bau noch aktiv. Nach der Testphase löschen: sudo rm $regel"
   else
     ok "Keine temporäre sudo-Regel aus dem Bau"
   fi

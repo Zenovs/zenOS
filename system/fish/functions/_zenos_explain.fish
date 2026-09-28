@@ -166,26 +166,67 @@ function _zenos_explain --description 'Erklärt einen Befehl als Karte, lokal un
         end
     end
 
-    # Beispiele: mit Optionen das passendste, sonst bis zu drei
+    # Beispiele: mit Optionen das passendste, sonst (auch wenn keins passt) bis zu drei.
+    # Wertung: jede genutzte Option zählt einmal, wenn das Beispiel sie enthält, auch als Buchstabe in
+    # einem Bündel (-la, -zvhP). Ein Bündel ohne Strich direkt nach dem Befehl (tar xvf, ps aux) zählt
+    # ebenso, fremde Buchstaben darin zählen dagegen. Beginnt das Beispiel mit derselben Option wie der
+    # Aufruf (bei tar die Betriebsart c, x oder t), gibt das einen Punkt dazu. Ohne Treffer oder mit
+    # mindestens so vielen fremden wie passenden Buchstaben passt keins (sonst: «? tar -xzf» → «tar cf»).
     set -l footer 'lokal · offline'
     if set -q example_codes[1]
         set -a lines ''
+        set -l best 0
         if set -q option_names[1]
-            set -l best 1
-            set -l best_score -1
+            set -l letters
+            for option in $option_names
+                string match -qr '^-[A-Za-z]$' -- $option; and set -a letters $option
+            end
+            set -l lead
+            string match -qr '^-[A-Za-z]$' -- $option_names[1]; and set lead $option_names[1]
+            set -l best_score 0
             for i in (seq (count $example_codes))
-                set -l score 0
                 set -l code_words (string split ' ' -- $example_codes[$i])
-                for option in $option_names $clusters
-                    contains -- $option $code_words; and set score (math $score + 1)
+                set -l matched
+                set -l foreign 0
+                set -l first
+                for j in (seq 2 (count $code_words))
+                    set -l word $code_words[$j]
+                    set -l units
+                    if string match -qr '^--[A-Za-z0-9]' -- $word
+                        set word (string replace -r '=.*$' '' -- $word)
+                        contains -- $word $option_names $clusters; and set units $word
+                    else if string match -qr '^-[A-Za-z]+$' -- $word
+                        set -q first[1]; or set first (string sub --length 2 -- $word)
+                        contains -- $word $option_names $clusters; and set units $word
+                        for letter in (string split '' -- (string sub --start 2 -- $word))
+                            contains -- -$letter $letters; and set -a units -$letter
+                        end
+                    else if test $j -eq 2; and not string match -q '* *' -- $name
+                        and string match -qr '^[A-Za-z]{2,}$' -- $word
+                        set first -(string sub --length 1 -- $word)
+                        for letter in (string split '' -- $word)
+                            if contains -- -$letter $letters
+                                set -a units -$letter
+                            else
+                                set foreign (math $foreign + 1)
+                            end
+                        end
+                    end
+                    for unit in $units
+                        contains -- $unit $matched; or set -a matched $unit
+                    end
                 end
-                if test $score -gt $best_score
+                set -l hits (count $matched)
+                set -l score (math $hits - $foreign)
+                test -n "$lead"; and test "$first" = "$lead"; and set score (math $score + 1)
+                if test $hits -gt 0; and test $score -gt $best_score
                     set best $i
                     set best_score $score
                 end
             end
-            set -l wrapped (_zenos_wrap $inner "Beispiel: $example_codes[$best]")
-            for rest in $wrapped
+        end
+        if test $best -gt 0
+            for rest in (_zenos_wrap $inner "Beispiel: $example_codes[$best]")
                 set -a lines $dim$rest$reset
             end
         else

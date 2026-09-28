@@ -70,6 +70,11 @@ Update-Dienst des Chrome Web Store (September 2026).
 Dazu kommen fünf Abschaltungen von Telemetrie: `MetricsReportingEnabled`, `UrlKeyedAnonymizedDataCollectionEnabled`,
 `DomainReliabilityAllowed`, `FeedbackSurveysEnabled` und `SafeBrowsingSurveysEnabled`, alle `false`.
 
+Mit Maschinenrichtlinien schaltet Chrome «Sicheres DNS verwenden» (DNS-over-HTTPS) von selbst ab, der Schalter in den
+Einstellungen ist gesperrt. Eine Richtlinie `DnsOverHttpsMode` würde es festlegen (`automatic` oder `secure`, für
+`secure` mit einem Server in `DnsOverHttpsTemplates`), der Schalter bliebe aber ebenfalls gesperrt. Offene
+Entscheidung für Zeno; bis dahin gilt die Vorgabe von Chrome (aus).
+
 **Offene Entscheidung (Zeno): Safe Browsing Stufe 2 oder 1.** Stufe 2 (erweitert, wie oben) schickt Adressen in
 Echtzeit sowie Proben von Seiten und Downloads an Google. Sie schliesst die erweiterte Berichterstattung ein, die
 sich dann per Richtlinie nicht abschalten lässt. Das steht im Zielkonflikt mit der Leitplanke «keine Telemetrie»,

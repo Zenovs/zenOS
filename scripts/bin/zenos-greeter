@@ -7,7 +7,8 @@
 # labwc läuft mit -S: Endet Quickshell (nach der Anmeldung), endet labwc, und greetd startet die Sitzung
 # (zenos-sitzung). Stürzt etwas ab, startet greetd den Greeter neu. Lädt greeter.qml gar nicht, übernimmt
 # shell/greeter/notfall/notfall.qml (ohne qs.*-Module). Kein Autologin.
-# Caches und Zustände landen im Laufzeitordner, nicht im Home von _greetd.
+# Caches und Zustände landen im Laufzeitordner, nicht im Home von _greetd. Ausgaben im Journal:
+# journalctl -b -t zenos-greeter.
 
 set -euo pipefail
 
@@ -84,4 +85,10 @@ tastatur() {
 }
 tastatur
 
+# Ausgaben von labwc, Quickshell und dieser Datei ins Journal (journalctl -t zenos-greeter). greetd hängt
+# stdout und stderr sonst ans VT, im Grafikmodus unsichtbar; das Protokoll von Quickshell im Laufzeitordner
+# verschwindet mit der Anmeldung. So bleibt der Grund für einen Notfall-Login lesbar (zen doctor).
+if command -v systemd-cat >/dev/null && [[ -S /run/systemd/journal/stdout ]]; then
+  exec systemd-cat --identifier=zenos-greeter -- labwc -C "$code/system/greeter/labwc" -S "$selbst --oberflaeche"
+fi
 exec labwc -C "$code/system/greeter/labwc" -S "$selbst --oberflaeche"
