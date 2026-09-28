@@ -13,8 +13,8 @@ erzeugt; auf dem Pi läuft sie nur während einer Anmeldung (Login oder SSH).
 
 | Datei | Läuft auf | Zweck |
 |---|---|---|
-| `Dockerfile` | Mac | Basis-Image `zenos-test:basis`: Ubuntu 26.04, systemd, sudo-rs (wie Ubuntu Server 26.04), ohne die Docker-eigene `policy-rc.d`, Man-Seiten (auch Deutsch), alle Laufzeitpakete, Prüfwerkzeuge (shellcheck, gitleaks, qmllint, nodejs), Testwerkzeuge (expect, tmux, wtype, foot), Quickshell v0.3.1 vorgebaut |
-| `starten.sh <name>` | Mac | Container starten (oder auffrischen) und den Arbeitsstand nach `/home/tester/zenOS` bringen |
+| `Dockerfile` | Mac | Basis-Image `zenos-test:basis`: Ubuntu 26.04, systemd, sudo-rs (wie Ubuntu Server 26.04), ohne die Docker-eigene `policy-rc.d`, Man-Seiten (auch Deutsch), alle Laufzeitpakete, Prüfwerkzeuge (shellcheck, gitleaks, qmllint, nodejs), Testwerkzeuge (expect, tmux, wtype, foot), Quickshell v0.3.1 vorgebaut, rtkit ohne Prozessgrenze |
+| `starten.sh <name>` | Mac | Container starten (oder auffrischen), rtkit einrichten und den Arbeitsstand nach `/home/tester/zenOS` bringen |
 | `arbeitsstand.sh` | Container | überträgt den Stand von `/repo` nach `~/zenOS` (von `starten.sh` aufgerufen) |
 | `oberflaeche.sh` | Container | labwc + Quickshell ohne Bildschirm (direkt oder als Sitzung wie auf dem Pi), Bildschirmfotos, IPC, hell/dunkel, Tastatureingaben |
 | `holen.sh <container> <ordner>` | Mac | Bildschirmfotos aus dem Container holen |
@@ -57,7 +57,9 @@ test/container/starten.sh zenos-m1-test
 Der Name muss mit `zenos-` beginnen. Das Repo ist unter `/repo` nur lesbar eingehängt; `~/zenOS` ist ein
 eigener Git-Checkout mit gleichem Branch und Commit, dazu alle nicht committeten und neuen Dateien, so wie
 auf dem Pi nach `git clone`. Nochmals `starten.sh` mit demselben Namen frischt `~/zenOS` auf (Änderungen,
-die nur im Container gemacht wurden, gehen dabei verloren).
+die nur im Container gemacht wurden, gehen dabei verloren). Ein anderes Image, etwa ein schon installiertes
+System: `ZENOS_TESTBILD=zenos-test:installiert test/container/starten.sh zenos-m1-test`. `starten.sh` richtet
+dabei auch rtkit für den Container ein (siehe «rtkit in Testcontainern»).
 
 Als `tester` arbeiten (Passwort `tester`, sudo über `/etc/sudoers.d/zenos-bau` wie beim Bau auf dem Pi):
 
@@ -92,9 +94,9 @@ Bekannte harmlose Meldungen stehen mit Begründung in `START_BEKANNT` (pruefen.s
 beim Laden, bricht der Test ihn nach 90 s ab und räumt die Testsitzung samt Kindprozessen weg.
 
 Die Testsitzung ist abgeschottet (eigenes HOME, eigene XDG-Ordner und eigener Sitzungsbus im Temp-Ordner,
-HTTP(S) ins Leere) und beginnt wie ein erster Start. Sie läuft unabhängig von `oberflaeche.sh` und darf
-auch in einer echten Sitzung auf dem Pi laufen. Ohne labwc oder Quickshell (z. B. in CI) wird der Teil
-übersprungen.
+HTTP(S) ins Leere, PipeWire-Client ohne `module-rt`, also ohne Anfragen an rtkit) und beginnt wie ein
+erster Start. Sie läuft unabhängig von `oberflaeche.sh` und darf auch in einer echten Sitzung auf dem Pi
+laufen. Ohne labwc oder Quickshell (z. B. in CI) wird der Teil übersprungen.
 
 Wichtig: `/tmp` ist im Container ein tmpfs. `docker cp` nach `/tmp` landet unsichtbar darunter; für
 Dateien, die hinein oder heraus sollen, `/srv/<modul>/` verwenden. Bind-Mounts aus `/private/tmp` des Macs
@@ -156,7 +158,8 @@ test/container/oberflaeche.sh stopp                    # stoppt das Target, labw
   `QT_QUICK_BACKEND=software` für die systemd-Benutzerdienste (kein GPU im Container) und ruft dann das echte
   `~/.config/labwc/autostart` (`system/labwc/autostart`), das `zenos-sitzung.target` startet.
 - Die Oberfläche läuft als `zenos-shell.service` aus `~/.config/quickshell` → `/opt/zenos/shell`, nicht aus
-  `~/zenOS`. Änderungen erst mit `./scripts/install.sh` übernehmen (QML lädt Quickshell dann selbst neu).
+  `~/zenOS`. Änderungen erst mit `./scripts/install.sh` übernehmen (install.sh startet die Oberfläche danach neu;
+  gesperrt lädt sie nach dem Entsperren neu).
 - `ipc`, `thema`, `bild` und `status` finden die Oberfläche auch nach einem Neustart durch systemd
   (`kill` der Quickshell: `Restart=always`, neue PID aus `systemctl --user show -p MainPID`).
 - Wie `zenos-sitzung` löscht der Start den Marker `$XDG_RUNTIME_DIR/zenos/gesperrt`.
@@ -168,6 +171,36 @@ test/container/holen.sh zenos-m1-test ~/Desktop/zenos-bilder
 ```
 
 Jede Oberfläche in hell und dunkel prüfen und mit Entwurf 2 vergleichen.
+
+## rtkit in Testcontainern
+
+`install.sh` installiert rtkit (PipeWire bekommt darüber Echtzeitpriorität). rtkit begrenzt sich auf 3
+Prozesse seiner UID (`RLIMIT_NPROC`). Der Kernel zählt diese Grenze über alle Container der colima-VM, und
+Container desselben Images teilen sich die UID von rtkit. Läuft rtkit schon in einem anderen Container,
+scheitert im nächsten `pthread_create` (Journal: «pthread_create failed: Resource temporarily unavailable»),
+und rtkit nimmt Anfragen an, ohne sie je zu beantworten. Jeder PipeWire-Client wartet dann je Wert 25 s
+(«RTKit error: org.freedesktop.DBus.Error.NoReply»). Kommt dabei keine Verbindung zu PipeWire zustande,
+wartet Quickshell im Hauptthread und antwortet bis zu 75 s auf nichts, auch nicht auf IPC. So scheiterte
+der Start-Test in Containern aus `zenos-test:installiert` am ersten IPC-Aufruf («thema wechseln»). Auf dem
+Pi gibt es nur einen rtkit, dort tritt das nicht auf.
+
+Im Testcontainer läuft rtkit deshalb ohne diese Grenze: Drop-in
+`/etc/systemd/system/rtkit-daemon.service.d/zenos-test.conf` mit `--no-limit-resources`. Neue Basis-Images
+bringen ihn aus dem Dockerfile mit; `starten.sh` legt ihn in jedem Container an (auch aus älteren Images)
+und beendet einen schon hängenden rtkit. Für einen Container, der mit `docker run` entstand:
+
+```
+docker exec <container> mkdir -p /etc/systemd/system/rtkit-daemon.service.d
+printf '[Service]\nExecStart=\nExecStart=/usr/libexec/rtkit-daemon --no-limit-resources\n' |
+  docker exec -i <container> tee /etc/systemd/system/rtkit-daemon.service.d/zenos-test.conf
+docker exec <container> systemctl daemon-reload
+docker exec <container> systemctl kill --signal=KILL rtkit-daemon.service   # nur, wenn er schon läuft
+```
+
+Prüfen: `busctl --system get-property org.freedesktop.RealtimeKit1 /org/freedesktop/RealtimeKit1
+org.freedesktop.RealtimeKit1 MaxRealtimePriority` antwortet sofort mit `i 20`; ein hängender rtkit meldet
+nach 25 s «Connection timed out». Der Start-Test von `pruefen.sh` hängt davon nicht mehr ab (PipeWire-Client
+ohne `module-rt`).
 
 ## Image-Modus testen (ohne systemd, wie im chroot)
 

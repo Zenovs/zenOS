@@ -5,8 +5,8 @@
 # Läuft install.sh aus einem anderen Checkout (z. B. ~/zenOS), bekommt /opt/zenos genau dessen Stand:
 # Commit und Branch (per git fetch), Tags, origin (GitHub-URL der Quelle, ohne Zugangsdaten, SSH als
 # HTTPS, weil root keinen SSH-Schlüssel hat), dazu nicht committete und neue, nicht ignorierte Dateien.
-# In der Quelle gelöschte Dateien verschwinden auch in /opt/zenos. Läuft install.sh aus /opt/zenos
-# selbst (zen update), wird nichts synchronisiert.
+# In der Quelle gelöschte Dateien verschwinden auch in /opt/zenos. Jede Datei wird atomar ersetzt (siehe
+# _code_arbeitsstand). Läuft install.sh aus /opt/zenos selbst (zen update), wird nichts synchronisiert.
 
 modul_system() {
   local quelle ziel
@@ -41,6 +41,7 @@ _code_url() {
 _code_synchronisieren() {
   _CODE_QUELLE=$1
   _CODE_ZIEL=$2
+  _CODE_INDEX_NEU=0
   local commit zweig ist ist_zweig
 
   _code_git_quelle rev-parse --git-dir >/dev/null 2>&1 ||
@@ -58,7 +59,9 @@ _code_synchronisieren() {
     abbruch "$_CODE_ZIEL existiert, ist aber kein Git-Checkout. Bitte prüfen und von Hand wegräumen."
   fi
 
-  # Commit und Branch
+  # Commit und Branch. Nur Verweis und Index werden umgestellt, nicht die Dateien: git checkout schreibt sie
+  # nicht atomar (löschen, anlegen, schreiben), die laufende Oberfläche sähe halbe Dateien. Die Dateien
+  # bringt _code_arbeitsstand auf den Stand der Quelle, auch die, die sich nur durch den Commit ändern.
   ist=$(_code_git_lesen rev-parse --verify --quiet 'HEAD^{commit}' 2>/dev/null) || ist=""
   ist_zweig=""
   if [[ -n "$ist" ]]; then ist_zweig=$(_code_git_lesen symbolic-ref --quiet --short HEAD 2>/dev/null) || ist_zweig=""; fi
@@ -69,16 +72,22 @@ _code_synchronisieren() {
         abbruch "Commit $commit liess sich nicht aus $_CODE_QUELLE holen"
     fi
     if [[ -n "$zweig" ]]; then
-      _code_git_root checkout --quiet --force -B "$zweig" "$commit"
+      _code_git_lesen check-ref-format --branch "$zweig" >/dev/null || abbruch "Ungültiger Branch in der Quelle: $zweig"
+      _code_git_root update-ref "refs/heads/$zweig" "$commit"
+      _code_git_root symbolic-ref HEAD "refs/heads/$zweig"
     else
-      _code_git_root checkout --quiet --force --detach "$commit"
+      _code_git_root update-ref --no-deref HEAD "$commit"
     fi
+    _code_git_root read-tree "$commit"
+    _CODE_INDEX_NEU=1
     aenderung "$_CODE_ZIEL auf ${commit:0:7} (${zweig:-losgelöst})"
   fi
 
   _code_tags
   _code_origin
   _code_arbeitsstand
+  # Index nach read-tree oder übernommenen Dateien auffrischen (sonst gelten alle Dateien als geändert)
+  if (( _CODE_INDEX_NEU )); then _code_git_root update-index -q --refresh >/dev/null 2>&1 || true; fi
 }
 
 # Tags der Quelle, die in /opt/zenos fehlen oder abweichen, übernehmen (nichts löschen)
@@ -119,9 +128,17 @@ _code_gleich() {
   cmp -s -- "$a" "$b"
 }
 
-# Nicht committete, neue und gelöschte Dateien übernehmen
+# Dateien auf den Stand der Quelle bringen: geänderte (durch den Commit oder nicht committet), neue und
+# gelöschte. Jede Datei wird atomar ersetzt: tar packt sie als Benutzer aus der Quelle und entpackt sie als
+# root nach .git/zenos-uebernahme (dasselbe Dateisystem, von Quickshell nicht beobachtet), dann setzt ein
+# einziger Durchgang sie per rename an ihren Platz, erst neue, dann geänderte, zuletzt werden gelöschte
+# entfernt. Die laufende Oberfläche lädt bei jeder geänderten QML-Datei neu; so sieht sie nie eine halbe
+# oder fehlende Datei (vorher: «Trenner is not a type»). Einen Mix aus alten und neuen Dateien schliesst
+# das nicht ganz aus, dafür startet install.sh sie am Ende neu.
+# Übernommene Dateien bekommen die Zeit der Übernahme (tar --touch): Die Sperre erkennt daran nach dem
+# Entsperren, dass sich die Oberfläche geändert hat, install.sh am Ende ebenso.
 _code_arbeitsstand() {
-  local tmp="$ZENOS_TMP/code" pfad ordner
+  local tmp="$ZENOS_TMP/code" pfad
   local -a kopieren=() entfernen=()
   local -A in_quelle=()
   mkdir -p -- "$tmp"
@@ -140,29 +157,110 @@ _code_arbeitsstand() {
 
   (( ${#kopieren[@]} + ${#entfernen[@]} > 0 )) || return 0
 
-  if (( ${#entfernen[@]} > 0 )); then
-    for pfad in "${entfernen[@]}"; do
-      $SUDO rm -f -- "$_CODE_ZIEL/$pfad"
-      ordner=$(dirname -- "$pfad")
-      if [[ "$ordner" != . ]]; then
-        (cd -- "$_CODE_ZIEL" && $SUDO rmdir -p --ignore-fail-on-non-empty -- "$ordner" 2>/dev/null) || true
-      fi
-      aenderung "$_CODE_ZIEL/$pfad entfernt (fehlt in der Quelle)"
-    done
-  fi
-
+  local zwischen="$_CODE_ZIEL/.git/zenos-uebernahme"
+  # Rest eines abgebrochenen Laufs
+  $SUDO rm -rf -- "$zwischen"
+  : > "$tmp/kopieren"
+  : > "$tmp/entfernen"
   if (( ${#kopieren[@]} > 0 )); then
-    printf '%s\0' "${kopieren[@]}" > "$tmp/liste"
+    printf '%s\0' "${kopieren[@]}" > "$tmp/kopieren"
+    $SUDO install -d -m 0700 -o root -g root -- "$zwischen"
     # Besitz root, Rechte 0644 bzw. 0755, unabhängig von der umask der Quelle
     tar -c -f - -C "$_CODE_QUELLE" --owner=0 --group=0 --numeric-owner --mode='u+rw,go-w,a+rX' \
-      --null --no-recursion --files-from="$tmp/liste" |
-      $SUDO tar -x -f - -C "$_CODE_ZIEL" --no-same-owner
-    for pfad in "${kopieren[@]}"; do
-      aenderung "$_CODE_ZIEL/$pfad (aus dem Arbeitsstand)"
-    done
+      --null --no-recursion --files-from="$tmp/kopieren" |
+      $SUDO tar -x -f - -C "$zwischen" --no-same-owner --touch
   fi
+  if (( ${#entfernen[@]} > 0 )); then printf '%s\0' "${entfernen[@]}" > "$tmp/entfernen"; fi
 
-  _code_git_root update-index -q --refresh >/dev/null 2>&1 || true
+  if ! $SUDO python3 - "$zwischen" "$_CODE_ZIEL" "$tmp/kopieren" "$tmp/entfernen" <<'PY'; then
+import os
+import stat
+import sys
+
+zwischen, ziel, kopieren, entfernen = sys.argv[1:5]
+
+
+def liste(datei):
+    with open(datei, "rb") as f:
+        return [os.fsdecode(p) for p in f.read().split(b"\0") if p]
+
+
+def pruefen(pfad):
+    teile = pfad.split("/")
+    if pfad.startswith("/") or any(t in ("", ".", "..") for t in teile) or teile[0] == ".git":
+        sys.exit(f"unerwarteter Pfad: {pfad!r}")
+    # Kein Verweis unterwegs: sonst landete die Datei ausserhalb des Ziels
+    ort = ziel
+    for teil in teile[:-1]:
+        ort = os.path.join(ort, teil)
+        if os.path.islink(ort):
+            sys.exit(f"{ort} ist ein Verweis, erwartet war ein Ordner")
+    return os.path.join(ziel, pfad)
+
+
+def ordner_anlegen(ordner):
+    if os.path.isdir(ordner):
+        return
+    ordner_anlegen(os.path.dirname(ordner))
+    os.mkdir(ordner, 0o755)
+    os.chmod(ordner, 0o755)
+
+
+def einsetzen(pfad):
+    quelle, dort = os.path.join(zwischen, pfad), pruefen(pfad)
+    ordner_anlegen(os.path.dirname(dort))
+    if os.path.isdir(dort) and not os.path.islink(dort):
+        try:
+            os.rmdir(dort)  # nur ein leerer Ordner weicht einer Datei
+        except OSError:
+            sys.exit(f"{dort} ist ein Ordner, erwartet war eine Datei")
+    os.replace(quelle, dort)
+
+
+def uebernehmen():
+    neu, alt = [], []
+    for pfad in liste(kopieren):
+        (alt if os.path.lexists(pruefen(pfad)) else neu).append(pfad)
+    for pfad in liste(entfernen):
+        pruefen(pfad)
+    for pfad in neu + alt:
+        einsetzen(pfad)
+    for pfad in liste(entfernen):
+        dort = pruefen(pfad)
+        if os.path.lexists(dort) and not stat.S_ISDIR(os.lstat(dort).st_mode):
+            os.unlink(dort)
+        # Leere Ordner der gelöschten Datei ebenfalls
+        ordner = os.path.dirname(dort)
+        while ordner != ziel:
+            try:
+                os.rmdir(ordner)
+            except OSError:
+                break
+            ordner = os.path.dirname(ordner)
+
+
+try:
+    uebernehmen()
+except OSError as e:
+    sys.exit(f"{e.filename or ziel}: {e.strerror}")
+PY
+    $SUDO rm -rf -- "$zwischen"
+    abbruch "Arbeitsstand liess sich nicht nach $_CODE_ZIEL übernehmen"
+  fi
+  $SUDO rm -rf -- "$zwischen"
+
+  # Einzeln melden, bei vielen (erste Installation, neuer Commit) zusammengefasst
+  if (( ${#entfernen[@]} > 40 )); then
+    aenderung "${#entfernen[@]} Dateien in $_CODE_ZIEL entfernt (fehlen in der Quelle)"
+  else
+    for pfad in "${entfernen[@]}"; do aenderung "$_CODE_ZIEL/$pfad entfernt (fehlt in der Quelle)"; done
+  fi
+  if (( ${#kopieren[@]} > 40 )); then
+    aenderung "${#kopieren[@]} Dateien aus der Quelle nach $_CODE_ZIEL übernommen"
+  else
+    for pfad in "${kopieren[@]}"; do aenderung "$_CODE_ZIEL/$pfad (aus der Quelle)"; done
+  fi
+  _CODE_INDEX_NEU=1
 }
 
 # /opt/zenos gehört root:root, Ordner 0755

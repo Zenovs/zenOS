@@ -30,6 +30,12 @@ BIN=$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")" && pwd -P)
 SELBST="$BIN/zenos-apps"
 ALLE=(chrome vscode 1password cli coremail nubix)
 
+# Hilfsfunktionen von install.sh, hier für apt: apt_ausfuehren wartet, solange ein anderer Paketvorgang
+# läuft (apt-daily und unattended-upgrades gleich nach dem ersten Start), statt an dessen Sperre zu scheitern
+SUDO=sudo
+# shellcheck source=../lib/gemeinsam.sh
+source "$BIN/../lib/gemeinsam.sh"
+
 # Offizielle Quellen. Fingerabdrücke der Hauptschlüssel, geprüft am 27.09.2026 gegen die Schlüssel der
 # Hersteller und deren Doku (1Password: support.1password.com/install-linux, «3FEF…EA22»).
 GOOGLE_SCHLUESSEL=https://dl.google.com/linux/linux_signing_key.pub
@@ -617,12 +623,11 @@ EOF
     esac
   done
   info "Paketlisten aktualisieren"
-  sudo env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 update -q
+  apt_ausfuehren update -q
 }
 
 _apt_installieren() {
-  sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get -o DPkg::Lock::Timeout=300 \
-    install -y -q --no-install-recommends "$@"
+  apt_ausfuehren install -y -q --no-install-recommends "$@"
 }
 
 _schritt_apt() {
@@ -1075,14 +1080,18 @@ _befehl_installieren() {
 
   # sudo einmal fragen und während des Laufs frisch halten. Ohne eigenen Prompt (-p): sudo-rs
   # (Ubuntu 26.04) setzt ihn in seinen Rahmen, daraus würde «[sudo: [sudo] Passwort …: ] Password:».
-  if ! sudo -v; then
-    meldung "ohne sudo geht es nicht – nichts geändert"
-    _warten_fenster
-    return 1
+  # Ist sudo ohne Passwort erlaubt (-k: eine zwischengespeicherte Anmeldung zählt nicht), gibt es nichts
+  # zu fragen; sudo-rs verlangt für -v sonst trotzdem das Passwort.
+  if ! sudo -n -k true 2>/dev/null; then
+    if ! sudo -v; then
+      meldung "ohne sudo geht es nicht – nichts geändert"
+      _warten_fenster
+      return 1
+    fi
+    # Ohne die Sperre (fd 9): Sie gehört nur diesem Lauf, nicht den Hilfsprozessen
+    ( exec 9>&-; while kill -0 "$$" 2>/dev/null; do sleep 50; sudo -n -v 2>/dev/null || exit 0; done ) &
+    SUDO_HALTER=$!
   fi
-  # Ohne die Sperre (fd 9): Sie gehört nur diesem Lauf, nicht den Hilfsprozessen
-  ( exec 9>&-; while kill -0 "$$" 2>/dev/null; do sleep 50; sudo -n -v 2>/dev/null || exit 0; done ) &
-  SUDO_HALTER=$!
 
   local -a ok=() fehlgeschlagen=()
   local quellen_ok=1

@@ -22,6 +22,9 @@ case "$#:${1:-}" in
   1:--oberflaeche)
     # Lädt greeter.qml nicht (z. B. Fehler in einem Dienst), endet Quickshell sofort mit 255. Dann der
     # Notfall-Login ohne qs.*-Module, sonst startet greetd den Greeter endlos neu und der Bildschirm bleibt leer.
+    # Kein Live-Neuladen: zen update oder install.sh bei angezeigtem Login liesse den Greeter sonst halb
+    # geladen zurück. Den neuen Stand bekommt er beim nächsten Start durch greetd.
+    export QS_DISABLE_FILE_WATCHER=1
     start=$SECONDS
     rc=0
     quickshell --no-color -p "$code/shell/greeter.qml" || rc=$?

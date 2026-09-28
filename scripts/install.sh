@@ -134,12 +134,24 @@ trap 'exit 143' TERM
 
 # --- Sperre: nie zwei Läufe gleichzeitig -----------------------------------
 
+# Zum Schreiben öffnet install.sh nur die eigene Sperrdatei. Eine fremde (angelegt von root oder einem
+# anderen Benutzer) lehnt der Kern in /run/lock (sticky, für alle beschreibbar) wegen fs.protected_regular
+# ab, auch für root und auch, wenn ihre Rechte das Schreiben erlauben. flock geht auch lesend.
 _sperren() {
   local sperre=/run/lock/zenos-install.lock
-  if [[ -e "$sperre" ]]; then
-    if [[ -w "$sperre" ]]; then exec 9>>"$sperre"; else exec 9<"$sperre"; fi
+  if [[ -e "$sperre" || -L "$sperre" ]]; then
+    if [[ -O "$sperre" && ! -L "$sperre" ]] && { exec 9>>"$sperre"; } 2>/dev/null; then
+      :
+    elif ! { exec 9<"$sperre"; } 2>/dev/null; then
+      echo "install.sh: Sperrdatei $sperre nicht lesbar, weiter ohne Sperre" >&2
+      return 0
+    fi
   elif [[ -d /run/lock && -w /run/lock ]]; then
-    exec 9>>"$sperre"
+    # Hat ein anderer Lauf sie gerade angelegt, gehört sie ihm: dann lesend
+    if ! { exec 9>>"$sperre"; } 2>/dev/null && ! { exec 9<"$sperre"; } 2>/dev/null; then
+      echo "install.sh: Sperrdatei $sperre nicht nutzbar, weiter ohne Sperre" >&2
+      return 0
+    fi
   else
     return 0
   fi
@@ -180,6 +192,12 @@ _log_vorbereiten() {
   if (( ! _NUR_BENUTZER )); then
     if getent group adm >/dev/null; then gruppe=adm; fi
     besitzer=${ZENOS_BENUTZER:-root}
+    # Ohne Zielbenutzer (als root, Image) bleibt eine vorhandene Datei beim Benutzer: sonst schreibt
+    # --nur-benutzer beim nächsten Anmelden nicht mehr hinein
+    if [[ -z "$ZENOS_BENUTZER" && -f "$datei" ]]; then
+      besitzer=$(stat -c '%U' -- "$datei")
+      getent passwd "$besitzer" >/dev/null || besitzer=root
+    fi
     if [[ ! -d "$ordner" ]]; then
       $SUDO install -d -m 0755 -o root -g root "$ordner"
       vorab+=("Ordner $ordner")
@@ -275,6 +293,65 @@ _module_ausfuehren() {
   done
 }
 
+# --- Oberfläche --------------------------------------------------------------
+
+# Quickshell lädt die Oberfläche bei jeder geänderten QML-Datei sofort neu, ohne auf weitere Änderungen zu
+# warten, und sieht Änderungen während des Ladens nicht mehr. Ändern sich viele Dateien nacheinander
+# (10-code, git in zen update), kann so ein Mix aus alten und neuen Dateien geladen bleiben (Leiste,
+# Befehlsfeld oder Mitteilungen fehlen bis zum nächsten Neustart). Deshalb am Ende eines normalen Laufs:
+# Ist eine Datei der Oberfläche oder Quickshell selbst neuer als der laufende Prozess, startet install.sh
+# zenos-shell.service einmal neu. Wartende Mitteilungen gehen dabei verloren (wie bei einem Absturz).
+# Gesperrt nie: Während der Sperre ruht das Neuladen, und die Sperre lädt nach dem Entsperren selbst neu
+# (sperre/Sperre.qml). Ein Neustart wäre auch dann sicher (die neue Shell sperrt über den Marker wieder).
+_oberflaeche_auffrischen() {
+  local laufzeit=${XDG_RUNTIME_DIR:-/run/user/$EUID} ordner=$ZENOS_HOME/.config/quickshell
+  local ipc=$ZENOS_CODE/scripts/bin/zenos-ipc start geaendert status ende qs
+  [[ "$ZENOS_SYSTEMD" == 1 && -S "$laufzeit/bus" && -e "$ordner/shell.qml" ]] || return 0
+  XDG_RUNTIME_DIR=$laufzeit systemctl --user --quiet is-active zenos-shell.service 2>/dev/null || return 0
+  start=$(XDG_RUNTIME_DIR=$laufzeit systemctl --user show --property=ExecMainStartTimestamp --timestamp=unix \
+    --value zenos-shell.service 2>/dev/null) || return 0
+  [[ "$start" =~ ^@[0-9]+$ ]] || return 0
+
+  # Sekundengenau: Was in derselben Sekunde wie der Start geschrieben wurde, zählt als neuer
+  geaendert=$(find -L "$ordner/" -type f \( -name '*.qml' -o -name '*.js' -o -name '*.mjs' -o -name qmldir \) \
+    -newermt "$start" -print -quit 2>/dev/null) || geaendert=""
+  qs=$(readlink -f -- /usr/local/bin/quickshell 2>/dev/null) || qs=""
+  if [[ -z "$geaendert" && -n "$qs" ]]; then
+    geaendert=$(find "$qs" -maxdepth 0 -newermt "$start" -print 2>/dev/null) || geaendert=""
+  fi
+  [[ -n "$geaendert" ]] || return 0
+
+  if [[ -e "$laufzeit/zenos/gesperrt" ]]; then
+    log_info "Oberfläche geändert; sie lädt nach dem Entsperren neu."
+    return 0
+  fi
+  status=$(XDG_RUNTIME_DIR=$laufzeit timeout 5 "$ipc" sperre status 2>/dev/null) || status=""
+  if [[ "${status//[[:space:]]/}" == gesperrt ]]; then
+    log_info "Oberfläche geändert; sie lädt nach dem Entsperren neu."
+    return 0
+  fi
+  # Läuft install.sh selbst in der Oberfläche (ihrer cgroup), endete es mit ihr
+  if grep -q '/zenos-shell\.service$' /proc/self/cgroup 2>/dev/null; then
+    log_info "Oberfläche geändert. Neu starten: systemctl --user restart zenos-shell.service"
+    return 0
+  fi
+
+  log_info "Oberfläche geändert, während sie lief: starte sie neu …"
+  if ! XDG_RUNTIME_DIR=$laufzeit timeout 30 systemctl --user try-restart zenos-shell.service 2>/dev/null; then
+    log_warnung "Oberfläche liess sich nicht neu starten (systemctl --user restart zenos-shell.service)"
+    return 0
+  fi
+  ende=$((SECONDS + 30))
+  until XDG_RUNTIME_DIR=$laufzeit timeout 5 "$ipc" sperre status >/dev/null 2>&1; do
+    if (( SECONDS >= ende )); then
+      log_warnung "Oberfläche antwortet nach dem Neustart nicht (journalctl --user -u zenos-shell.service)"
+      return 0
+    fi
+    sleep 1
+  done
+  log_info "Oberfläche neu gestartet."
+}
+
 # --- Ablauf ----------------------------------------------------------------
 
 _sperren
@@ -301,6 +378,7 @@ elif [[ -z "$ZENOS_BENUTZER" ]]; then
 else
   _module_ausfuehren benutzer
   _zenos_benutzer_systemd_neu_laden
+  if [[ "$_MODUS" == normal ]]; then _oberflaeche_auffrischen; fi
 fi
 
 if git -c safe.directory="$ZENOS_CODE" -C "$ZENOS_CODE" rev-parse --git-dir >/dev/null 2>&1; then
