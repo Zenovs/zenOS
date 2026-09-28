@@ -1,4 +1,9 @@
-# zenOS
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/zeichen/zenos-schriftzug-dunkel.svg">
+    <img src="assets/zeichen/zenos-schriftzug-hell.svg" alt="zenOS" height="56">
+  </picture>
+</h1>
 
 Ein ruhiges, persönliches Desktop-System für den Raspberry Pi 5. Basiert auf Ubuntu.
 

@@ -4,7 +4,7 @@
   "description": "Einzige Quelle für Farben, Schrift, Radien, Abstände, Bewegung und Masse. Siehe docs/design.md.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "farben", "schrift", "radius", "abstand", "bewegung", "leiste", "fenster", "befehlsfeld"],
+  "required": ["version", "farben", "schrift", "radius", "abstand", "bewegung", "leiste", "fenster", "befehlsfeld", "zeichen"],
   "properties": {
     "version": { "const": 1 },
     "farben": {
@@ -116,6 +116,20 @@
         "breite": { "$ref": "#/$defs/px" },
         "abstandOben": { "$ref": "#/$defs/px0" }
       }
+    },
+    "zeichen": {
+      "description": "Bildmarke «Zwei Steine» (docs/bildmarke.md), erzeugt von assets/zeichen/erzeugen.py",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pixelUnter", "normal", "pixel"],
+      "properties": {
+        "pixelUnter": {
+          "description": "Unter dieser Grösse in px gilt die Pixel-Variante",
+          "$ref": "#/$defs/px"
+        },
+        "normal": { "$ref": "#/$defs/zeichenVariante" },
+        "pixel": { "$ref": "#/$defs/zeichenVariante" }
+      }
     }
   },
   "$defs": {
@@ -139,7 +153,7 @@
       "additionalProperties": false,
       "required": [
         "grund", "flaeche", "flaeche2", "fenster", "linie", "text", "text2", "gedaempft", "abdunkeln",
-        "linie2", "trennlinie", "eingabeRand", "tasteRand", "abgesetzt", "wasserzeichen", "schatten"
+        "linie2", "trennlinie", "eingabeRand", "tasteRand", "abgesetzt", "schatten"
       ],
       "properties": {
         "grund": { "$ref": "#/$defs/farbe" },
@@ -156,9 +170,24 @@
         "eingabeRand": { "$ref": "#/$defs/farbe" },
         "tasteRand": { "$ref": "#/$defs/farbe" },
         "abgesetzt": { "$ref": "#/$defs/farbe" },
-        "wasserzeichen": { "$ref": "#/$defs/farbe" },
         "schatten": { "$ref": "#/$defs/farbe" }
       }
+    },
+    "zeichenVariante": {
+      "description": "Pfade der zwei Steine in der ViewBox 0 0 raster raster",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["raster", "oben", "unten"],
+      "properties": {
+        "raster": { "$ref": "#/$defs/px" },
+        "oben": { "$ref": "#/$defs/svgPfad" },
+        "unten": { "$ref": "#/$defs/svgPfad" }
+      }
+    },
+    "svgPfad": {
+      "description": "geschlossener SVG-Pfad mit absoluten Befehlen (M, H, V, A, Z)",
+      "type": "string",
+      "pattern": "^M[0-9.]+ [0-9.]+([AHV][0-9. ]+)+Z$"
     },
     "px": { "type": "integer", "minimum": 1 },
     "px0": { "type": "integer", "minimum": 0 }
