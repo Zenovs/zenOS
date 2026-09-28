@@ -14,7 +14,7 @@
 # bekannt ist). Die Oberfläche (dienste/Freigabe.qml) liest ihn beim Start und beobachtet ihn;
 # zusätzlich meldet zenos-ipc freigabe gewaehlt|gestartet|beendet sofort. Intern stehen die Einträge
 # mit ihrem Aufrufzeitpunkt in freigabe-eintraege; sie gelten nur, solange der Marker besteht
-# (zenos-sitzung löscht bei der Anmeldung nur ihn).
+# (zenos-sitzung und labwc/shutdown löschen sie zusammen mit dem Marker).
 #
 # Nachlauf: Chrome schliesst beim Klick auf «Teilen» die Sitzung der Vorschau und öffnet sofort eine
 # zweite, ohne Bildschirmwahl (in der VM bei jeder Freigabe; wie Chrome das ohne XDPW_PERSIST_MODE

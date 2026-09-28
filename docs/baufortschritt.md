@@ -8,7 +8,7 @@ Status: `offen` · `in Arbeit` · `fertig` · `offener Punkt`
 |---|---|---|
 | M1 · Installer und zen-Werkzeug | fertig | install.sh (idempotent, Module, Log), gemeinsam.sh, zen (update, rollback, doctor, version, benutzer, hilfe), pruefen.sh, Testumgebung `test/container/`. Details: `docs/module/m1.md` |
 | M2 · Basis und Sitzung | fertig | Pakete, Quickshell v0.3.1 aus dem Quellcode (Neubau nur bei anderem Commit/Qt), Schriften, greetd mit Quickshell-Greeter (kein Autologin), Sitzung als systemd-Target. Details: `docs/module/m2.md` |
-| M3 · Design-Tokens und Theme | fertig | Theme-Singleton aus tokens.json (neue Tokens: linie2, trennlinie, eingabeRand, tasteRand, abgesetzt, wasserzeichen, schatten), Dienste, Komponenten, shell.qml mit isoliert geladenen Oberflächen, zenos-thema (GTK, Qt über Portal, kitty, labwc, VS Code). Details: `docs/module/m3.md` |
+| M3 · Design-Tokens und Theme | fertig | Theme-Singleton aus tokens.json (neue Tokens: linie2, trennlinie, eingabeRand, tasteRand, abgesetzt, schatten), Dienste, Komponenten, shell.qml mit isoliert geladenen Oberflächen, zenos-thema (GTK, Qt über Portal, kitty, labwc, VS Code). Details: `docs/module/m3.md` |
 | M4 · Leiste | fertig | Leiste nach Entwurf 2, System-Menü, Hintergrund «Heute». Details: `docs/module/m4.md` |
 | M5 · Befehlsfeld | fertig | Apps, Web-Apps, Rechnen (eigener Parser), Dateien, Modi/Zustände, Aktionen; Bildschirmfoto und Pipette. Details: `docs/module/m5.md` |
 | M6 · Mitteilungen | fertig | NotificationServer, Bündelung nach Zustand, Zentrale, Leitplanke bei Freigabe. Details: `docs/module/m6.md` |
