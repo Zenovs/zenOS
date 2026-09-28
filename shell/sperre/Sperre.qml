@@ -18,7 +18,8 @@ import qs.komponenten
 // - Das Passwort wird nur an PAM weitergereicht (Dienst zenos-sperre unter <code>/system/pam) und das
 //   Feld sofort geleert.
 // - Offene Overlays (Befehlsfeld, Zentrale, Modus-/Zustandswahl, Menüs der Leiste) schliessen beim Sperren,
-//   sonst hätte nach dem Entsperren nichts die Tastatur (siehe _overlaysSchliessen).
+//   sonst hätte nach dem Entsperren nichts die Tastatur (siehe _overlaysSchliessen). Die Einrichtung bleibt
+//   offen und gibt die Tastatur während der Sperre ab (Oberflaeche.gesperrt, gesetzt nur hier).
 // - Während der Sperre ruht das automatische Neuladen der Oberfläche: Quickshell v0.3.1 stürzt ab, wenn es
 //   bei gesetzter Sperre neu lädt (neue Sperrflächen vor dem Abbau der alten). Wurde die Oberfläche in der
 //   Zwischenzeit geändert (z. B. zen update), lädt sie nach dem Entsperren neu.
@@ -66,6 +67,9 @@ Scope {
             zustand.gesperrt = true;
             _zuruecksetzen();
             lock.locked = true;
+            // Ohne ext-session-lock bleibt locked false
+            if (lock.locked)
+                Oberflaeche.gesperrt = true;
             // Erst sperren, dann schliessen: Was beim Schliessen schiefgeht, hält die Sperre nicht auf.
             // Für labwc ist die Reihenfolge gleich, es gibt die Fläche auch während der Sperre frei.
             _overlaysSchliessen(true);
@@ -132,6 +136,7 @@ Scope {
     function _entsperren(): void {
         zustand.gesperrt = false;
         lock.locked = false;
+        Oberflaeche.gesperrt = false;
         _zuruecksetzen();
         _aufraeumen();
     }
@@ -176,9 +181,12 @@ Scope {
         id: lock
 
         onLockStateChanged: {
+            if (locked)
+                return;
+            Oberflaeche.gesperrt = false;
             // Beendet labwc die Sperre von sich aus (z. B. weil schon ein anderes Programm sperrt),
             // bleibt kein alter Marker liegen.
-            if (!locked && zustand.gesperrt) {
+            if (zustand.gesperrt) {
                 console.warn("Sperre: labwc hat die Sperre nicht übernommen oder beendet");
                 zustand.gesperrt = false;
                 root._zuruecksetzen();

@@ -17,7 +17,7 @@ Singleton {
     }
 
     function terminal(): void {
-        _launch(["kitty"]);
+        _launchApp(["kitty"], "", "kitty");
     }
 
     // eintrag: DesktopEntry (aus DesktopEntries) oder dessen ID ("org.example.App")
@@ -30,7 +30,13 @@ Singleton {
         // Exec schreibt ein «%» als «%%». Quickshell v0.3.1 lässt «%%» in Anführungszeichen stehen, GLib nicht
         // (z. B. "--app=https://…%%25…" einer Web-App). Eine gültige Adresse enthält nie «%%».
         const command = Array.from(entry.command).map(a => String(a).replace(/%%/g, "%"));
-        _launch(entry.runInTerminal ? ["kitty", "--"].concat(command) : command, entry.workingDirectory);
+        _launchApp(entry.runInTerminal ? ["kitty", "--"].concat(command) : command, entry.workingDirectory, entry.id);
+    }
+
+    // Ein Programm wie eine App starten (eigene Einheit, siehe _launchApp), z. B. ein Terminal mit einem
+    // Befehl. befehl: Argumentliste; name: steht im Namen der Einheit (z. B. "zen-apps")
+    function programmStarten(befehl: var, name: var): void {
+        _launchApp(befehl, "", name);
     }
 
     // pfad: absoluter Pfad oder URL. Über zenos-oeffnen (gio open); findet sich keine App oder
@@ -90,12 +96,14 @@ Singleton {
         }
     }
 
+    // Auch die Werkzeuge in eigener Einheit: wl-copy hält danach die Zwischenablage und endet sonst mit
+    // einem Neustart der Oberfläche
     function bildschirmfoto(argumente: var): void {
-        _launch([Pfade.bin + "/zenos-bildschirmfoto"].concat(Array.isArray(argumente) ? argumente : []));
+        _launchApp([Pfade.bin + "/zenos-bildschirmfoto"].concat(Array.isArray(argumente) ? argumente : []), "", "bildschirmfoto");
     }
 
     function pipette(): void {
-        _launch([Pfade.bin + "/zenos-pipette"]);
+        _launchApp([Pfade.bin + "/zenos-pipette"], "", "pipette");
     }
 
     // Über zenos-abmelden: stoppt erst die Sitzungsdienste, dann labwc (sonst enden sie als «failed»).
@@ -156,10 +164,72 @@ Singleton {
         }
     }
 
+    // Direkt starten, ohne eigene Einheit: für Befehle, die gleich enden (systemctl, labwc --exit, pkill)
     function _launch(command: var, dir: var): void {
         Quickshell.execDetached({
             command: command,
             workingDirectory: typeof dir === "string" && dir.length > 0 ? dir : Pfade.home
         });
+    }
+
+    // Apps in eigener Einheit starten (app-zenos-<name>-<zeit>.scope in app.slice), über
+    // zenos-oeffnen --programm: Was die Oberfläche direkt startet, liegt in der cgroup von
+    // zenos-shell.service und endet mit jedem Neustart des Dienstes (Absturz, install.sh).
+    // zenos-oeffnen kehrt gleich nach dem Start zurück und leitet die Ausgaben der App ins Leere. Der
+    // Process hält die App also nicht (Quickshell beendet laufende Process-Objekte beim Neuladen), und sie
+    // hängt an keiner Pipe, die niemand mehr liest. Ohne erreichbare Benutzerinstanz oder wenn systemd-run
+    // scheitert, startet zenos-oeffnen sie ohne Einheit; lässt es sich selbst nicht starten, startet sie hier
+    // direkt.
+    // name: Desktop-ID oder Programmname (zenos-oeffnen ersetzt, was im Einheitennamen nicht erlaubt ist)
+    function _launchApp(command: var, dir: var, name: var): void {
+        if (!Array.isArray(command) || command.length === 0) {
+            console.warn("Aktionen: nichts zu starten");
+            return;
+        }
+        starterVorlage.createObject(root, {
+            befehl: command.map(a => String(a)),
+            name: typeof name === "string" && name.length > 0 ? name : String(command[0]).replace(/^.*\//, ""),
+            verzeichnis: typeof dir === "string" && dir.length > 0 ? dir : Pfade.home
+        });
+    }
+
+    function _startGescheitert(code: int, meldung: string): void {
+        console.warn("Aktionen: zenos-oeffnen --programm endete mit", code, meldung.trim());
+        Oberflaeche.hinweis(code === 127 ? "Programm nicht gefunden" : "Starten hat nicht geklappt", "warnung");
+    }
+
+    Component {
+        id: starterVorlage
+
+        Process {
+            id: starter
+
+            property var befehl: []
+            property string name
+            property string verzeichnis
+            property bool gestartet: false
+
+            command: [Pfade.bin + "/zenos-oeffnen", "--programm", starter.name, "--"].concat(starter.befehl)
+            workingDirectory: starter.verzeichnis
+            running: true
+            stderr: StdioCollector {
+                id: starterFehler
+            }
+
+            onStarted: starter.gestartet = true
+            onExited: (code, status) => {
+                if (code !== 0 || status !== 0)
+                    root._startGescheitert(status !== 0 ? -1 : code, starterFehler.text);
+            }
+            onRunningChanged: {
+                if (starter.running)
+                    return;
+                if (!starter.gestartet) {
+                    console.warn("Aktionen: zenos-oeffnen liess sich nicht starten, starte ohne eigene Einheit");
+                    root._launch(starter.befehl, starter.verzeichnis);
+                }
+                starter.destroy();
+            }
+        }
     }
 }

@@ -21,6 +21,12 @@ Scope {
 
     // umschalten: ein zweiter Klick auf denselben Knopf schliesst das Menü wieder
     function menueOeffnen(name: string, bildschirm: string, x: real, umschalten: bool): void {
+        // Während der Sperre bleiben die Menüs zu (auch per IPC, z. B. aus einer SSH-Sitzung): Ihre Fläche
+        // nimmt die Tastatur exklusiv, nach dem Entsperren hätte dann nichts die Tastatur.
+        if (Oberflaeche.gesperrt) {
+            menueSchliessen();
+            return;
+        }
         if (umschalten && menue === name && menueBildschirm === bildschirm) {
             menueSchliessen();
             return;
@@ -179,6 +185,10 @@ Scope {
         }
         function onSperrenAngefordert(): void {
             root.menueSchliessen();
+        }
+        function onGesperrtChanged(): void {
+            if (Oberflaeche.gesperrt)
+                root.menueSchliessen();
         }
     }
 

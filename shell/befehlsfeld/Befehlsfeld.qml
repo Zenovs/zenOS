@@ -197,7 +197,8 @@ Scope {
             break;
         case "rechnen":
             // «--»: ein negatives Ergebnis ist keine Option für wl-copy
-            Quickshell.execDetached(["wl-copy", "--", e.wert]);
+            // Eigene Einheit: wl-copy hält die Zwischenablage auch über einen Neustart der Oberfläche
+            Aktionen.programmStarten(["wl-copy", "--", e.wert], "wl-copy");
             schliessen();
             Oberflaeche.hinweis(e.wert + " kopiert");
             break;

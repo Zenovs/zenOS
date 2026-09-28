@@ -1,7 +1,6 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
-import Quickshell
 import Quickshell.Io
 import qs.dienste
 
@@ -64,10 +63,8 @@ Item {
         const liste = (Array.isArray(ids) ? ids : []).filter(id => /^[a-z0-9]+$/.test(id));
         if (liste.length === 0 || ["installieren", "aktualisieren"].indexOf(befehl) < 0)
             return false;
-        Quickshell.execDetached({
-            command: ["kitty", "--title", befehl === "installieren" ? "zenOS · Apps installieren" : "zenOS · Apps aktualisieren", "-o", "remember_window_size=no", "-o", "initial_window_width=110c", "-o", "initial_window_height=36c", "--", Pfade.code + "/scripts/zen", "apps", befehl, "--fenster"].concat(liste),
-            workingDirectory: Pfade.home
-        });
+        // Eigene systemd-Einheit: ein Neustart der Oberfläche darf apt und dpkg nicht mitten im Lauf beenden
+        Aktionen.programmStarten(["kitty", "--title", befehl === "installieren" ? "zenOS · Apps installieren" : "zenOS · Apps aktualisieren", "-o", "remember_window_size=no", "-o", "initial_window_width=110c", "-o", "initial_window_height=36c", "--directory", Pfade.home, "--", Pfade.code + "/scripts/zen", "apps", befehl, "--fenster"].concat(liste), "zen-apps");
         return true;
     }
 

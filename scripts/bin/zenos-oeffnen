@@ -1,29 +1,77 @@
 #!/usr/bin/env bash
-# zenos-oeffnen – öffnet eine Datei, einen Ordner oder eine Adresse mit der zuständigen App und meldet
-# über den Exit-Code, ob das geklappt hat. Das Befehlsfeld ruft es über Aktionen.dateiOeffnen auf und
-# zeigt bei einem Fehler einen Hinweis.
+# zenos-oeffnen – öffnet eine Datei, einen Ordner oder eine Adresse mit der zuständigen App oder startet ein
+# Programm, beides in einer eigenen Einheit, und meldet über den Exit-Code, ob das geklappt hat. Die
+# Oberfläche ruft es über Aktionen auf (dateiOeffnen, appStarten, terminal …) und zeigt bei einem Fehler
+# einen Hinweis.
 #
 #   zenos-oeffnen [--] PFAD|URL
+#   zenos-oeffnen --programm NAME -- BEFEHL [ARGUMENT …]
 #
 # Öffnet mit «gio open», nicht mit xdg-open: xdg-open wartet unter labwc (generischer Modus), bis die App
 # beendet ist, und startet Apps mit Terminal=true (z. B. vim.desktop auf Ubuntu Server) ohne Terminal,
 # meldet dabei aber Erfolg. gio startet die App (Terminal-Apps in x-terminal-emulator, also kitty), kehrt
-# gleich zurück und endet mit einem Fehler, wenn keine App zuständig ist. Die App bekommt eine eigene
-# Sitzung (setsid) und, wenn die systemd-Benutzerinstanz erreichbar ist, eine eigene Einheit
-# (app-zenos-oeffnen-….scope): Sie läuft weiter, wenn dieses Programm endet oder zenos-shell.service
-# neu startet.
+# gleich zurück und endet mit einem Fehler, wenn keine App zuständig ist. Einen Ordner ohne zuständige App
+# öffnet es in kitty (zenOS bringt keinen Dateimanager mit).
 #
-# Exit 0 geöffnet · 1 Öffnen fehlgeschlagen · 2 nicht gefunden · 3 keine App für die Datei oder Adresse ·
-# 4 keine App für den Ordner · 64 falscher Aufruf
+# --programm startet BEFEHL und kehrt gleich zurück; NAME (z. B. die Desktop-ID) steht im Namen der Einheit.
+#
+# Die App bekommt eine eigene Sitzung (setsid) und, wenn die systemd-Benutzerinstanz erreichbar ist, eine
+# eigene Einheit (app-zenos-<name>-<zeit>.scope in app.slice): Sie läuft weiter, wenn dieses Programm endet
+# oder zenos-shell.service neu startet. Ihre Ein- und Ausgaben gehen ins Leere.
+#
+# Exit 0 geöffnet bzw. gestartet · 1 fehlgeschlagen · 2 nicht gefunden · 3 keine App für die Datei oder
+# Adresse · 4 keine App für den Ordner (und kein kitty) · 64 falscher Aufruf · 127 Programm nicht gefunden
 
 set -uo pipefail
 
 meldung() { printf 'zenos-oeffnen: %s\n' "$*" >&2; }
 
+aufruf() {
+  meldung "Aufruf: zenos-oeffnen [--] PFAD|URL · zenos-oeffnen --programm NAME -- BEFEHL [ARGUMENT …]"
+  exit 64
+}
+
+# Name der Einheit: app-zenos-<name>-<zeit>. Nur [A-Za-z0-9_-] (erlaubt in jedem Einheitennamen), alles
+# andere wird zu «_».
+einheit() {
+  local name=${1//[^A-Za-z0-9_-]/_}
+  name=${name:0:64}
+  printf 'app-zenos-%s-%s' "${name:-app}" "${EPOCHREALTIME//[.,]/}"
+}
+
+# Führt BEFEHL in einer eigenen Einheit aus, sonst ohne: in_einheit NAME BESCHREIBUNG BEFEHL [ARGUMENT …]
+# Die Beschreibung erscheint im Journal statt der Befehlszeile (keine Datei- und Adressnamen).
+# Exit-Code: der von BEFEHL. systemd-run selbst endet bei Fehlern mit 1 (keine Einheit möglich); dann
+# läuft BEFEHL ohne eigene Einheit. BEFEHL darf deshalb nicht mit 1 scheitern: gio endet bei Fehlern mit 2,
+# setsid --fork mit 0.
+in_einheit() {
+  local name=$1 beschreibung=$2 code=0
+  shift 2
+  if [[ -n "${XDG_RUNTIME_DIR:-}" && -S "$XDG_RUNTIME_DIR/systemd/private" ]] && command -v systemd-run > /dev/null; then
+    systemd-run --user --scope --quiet --collect --slice=app.slice --unit="$(einheit "$name")" \
+      --description="$beschreibung" -- "$@" < /dev/null > /dev/null 2>&1 || code=$?
+    if (( code != 1 )); then
+      return "$code"
+    fi
+    meldung "keine eigene Einheit möglich (systemd-run), starte ohne"
+    code=0
+  fi
+  "$@" < /dev/null > /dev/null 2>&1 || code=$?
+  return "$code"
+}
+
+programm=""
 case "${1:-}" in
   -h | --hilfe | --help)
-    sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,/^$/p' "$0" | sed -n 's/^# \{0,1\}//p'
     exit 0
+    ;;
+  --programm)
+    if (( $# < 4 )) || [[ "$3" != -- || -z "$4" ]]; then
+      aufruf
+    fi
+    programm=$2
+    shift 3
     ;;
   --) shift ;;
   -*)
@@ -31,9 +79,22 @@ case "${1:-}" in
     exit 64
     ;;
 esac
+
+# Programm starten: setsid --fork kehrt gleich zurück, das Programm läuft in der Einheit weiter
+if [[ -n "$programm" ]]; then
+  if ! command -v -- "$1" > /dev/null; then
+    meldung "Programm nicht gefunden: $1"
+    exit 127
+  fi
+  if ! in_einheit "$programm" "Gestartet von zenOS: $programm" setsid --fork -- "$@"; then
+    meldung "$1 liess sich nicht starten"
+    exit 1
+  fi
+  exit 0
+fi
+
 if (( $# != 1 )) || [[ -z "$1" ]]; then
-  meldung "Aufruf: zenos-oeffnen [--] PFAD|URL"
-  exit 64
+  aufruf
 fi
 ziel=$1
 
@@ -60,26 +121,8 @@ if [[ -z "$schema" ]]; then
   [[ "$ziel" == /* ]] || ziel="$PWD/$ziel"
 fi
 
-# Die App erbt die Ausgaben von gio; wie bei den übrigen Starts der Oberfläche gehen sie ins Leere.
-# --wait: falls setsid dafür einen eigenen Prozess braucht, kommt der Exit-Code von gio trotzdem zurück.
-# Argumente: was vor «gio open» steht (systemd-run …)
-oeffnen() {
-  setsid --wait "$@" gio open "$ziel" < /dev/null > /dev/null 2>&1
-}
-
-code=0
-if [[ -n "${XDG_RUNTIME_DIR:-}" && -S "$XDG_RUNTIME_DIR/systemd/private" ]] && command -v systemd-run > /dev/null; then
-  oeffnen systemd-run --user --scope --quiet --collect --slice=app.slice \
-    --unit="app-zenos-oeffnen-${EPOCHREALTIME//[.,]/}" --description="Geöffnet mit zenos-oeffnen" -- || code=$?
-  # 1: systemd-run konnte keine Einheit anlegen (gio endet bei Fehlern mit 2); dann ohne eigene Einheit
-  if (( code == 1 )); then
-    code=0
-    oeffnen || code=$?
-  fi
-else
-  oeffnen || code=$?
-fi
-if (( code == 0 )); then
+# --wait: falls setsid dafür einen eigenen Prozess braucht, kommt der Exit-Code von gio trotzdem zurück
+if in_einheit oeffnen "Geöffnet mit zenos-oeffnen" setsid --wait gio open "$ziel"; then
   exit 0
 fi
 
@@ -100,10 +143,16 @@ if [[ -z "$typ" ]]; then
 fi
 app=$(standard_app "$typ")
 if [[ -z "$app" ]]; then
-  meldung "keine App für $typ"
   if [[ -z "$schema" && -d "$ziel" ]]; then
+    # Ohne Dateimanager: im Terminal, in diesem Ordner
+    if command -v kitty > /dev/null &&
+      in_einheit kitty "Geöffnet mit zenos-oeffnen" setsid --fork -- kitty --directory "$ziel"; then
+      exit 0
+    fi
+    meldung "keine App für $typ"
     exit 4
   fi
+  meldung "keine App für $typ"
   exit 3
 fi
 meldung "$app liess sich nicht starten ($typ)"

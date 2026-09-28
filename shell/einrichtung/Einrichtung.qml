@@ -85,7 +85,9 @@ Scope {
         color: Theme.durchsichtig
 
         WlrLayershell.layer: WlrLayer.Overlay
-        WlrLayershell.keyboardFocus: root.offen ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+        // Während der Sperre None: labwc gibt einer exklusiven Fläche den Fokus nach dem Entsperren nicht
+        // zurück, beim Wechsel zurück auf Exclusive fokussiert es sie neu.
+        WlrLayershell.keyboardFocus: root.offen && !Oberflaeche.gesperrt ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
         WlrLayershell.namespace: "zenos-einrichtung"
 
         Rectangle {
