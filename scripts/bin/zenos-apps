@@ -120,13 +120,17 @@ _hersteller() {
   esac
 }
 
+# _herkunft <app> [verfuegbar]: Nicht verfügbar nur «Release». In der Einrichtung steht rechts dann der
+# Grund (z. B. «noch kein ARM-Build»), und die Herkunft wurde sonst abgeschnitten.
 _herkunft() {
   case "$1" in
     chrome) echo "Paketquelle dl.google.com" ;;
     vscode) echo "Paketquelle packages.microsoft.com" ;;
     1password) echo "Archiv mit Signaturprüfung · SSH-Agent" ;;
     cli) echo "Paketquelle downloads.1password.com" ;;
-    coremail | nubix) echo "Release mit Prüfsumme" ;;
+    coremail | nubix)
+      if [[ "${2:-true}" == true ]]; then echo "Release mit Prüfsumme"; else echo "Release"; fi
+      ;;
   esac
 }
 
@@ -418,7 +422,7 @@ _befehl_status() {
       erste=0
       printf '{"id":%s,"name":%s,"hersteller":%s,"herkunft":%s,"groesseMb":%s,"installiert":%s,"version":%s,"verfuegbar":%s,"hinweis":%s,"neueste":%s}' \
         "$(_json_text "$app")" "$(_json_text "$(_name "$app")")" "$(_json_text "$(_hersteller "$app")")" \
-        "$(_json_text "$(_herkunft "$app")")" "$mb" "$installiert" "$(_json_text "$version")" "$verfuegbar" \
+        "$(_json_text "$(_herkunft "$app" "$verfuegbar")")" "$mb" "$installiert" "$(_json_text "$version")" "$verfuegbar" \
         "$(_json_text "$GRUND")" "$(_json_text "$(_cache "$app" version)")"
     else
       if [[ "$installiert" == true ]]; then

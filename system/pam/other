@@ -1,0 +1,9 @@
+# Standarddienst «other» für den PAM-Ordner von zenOS (/opt/zenos/system/pam, PamContext.configDirectory).
+# libpam liest neben dem angefragten Dienst immer auch «other» aus demselben Ordner und meldet sonst bei
+# jedem Entsperrversuch «PAM _pam_init_handlers: no default config other».
+# Für zenos-sperre greift diese Datei nie: Er legt auth und account selbst fest, und Quickshell ruft nur
+# «auth» auf. Sie gilt nur, wo ein Dienst in diesem Ordner nichts eigenes festlegt, und weist dann alles ab.
+auth     required  pam_deny.so
+account  required  pam_deny.so
+password required  pam_deny.so
+session  required  pam_deny.so

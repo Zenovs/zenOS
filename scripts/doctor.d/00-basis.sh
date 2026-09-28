@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 00-basis: System, Code-Checkout, Kanal, zen, Log, Speicher, Oberflächen-Link, sudo-Regel
+# 00-basis: System, Zeitzone, Tastatur, Code-Checkout, Kanal, zen, Log, Speicher, Oberflächen-Link, sudo-Regel
 # shellcheck shell=bash
 
 pruefe_basis() {
@@ -49,12 +49,51 @@ _basis_system() {
     hinweis "Freier Speicher nicht ermittelbar"
   fi
 
+  _basis_zeitzone
+  _basis_tastatur
+
   if [[ ! -x /etc/sudoers.d ]]; then
     hinweis "sudo-Regeln nicht prüfbar (/etc/sudoers.d nicht lesbar)"
   elif [[ -e /etc/sudoers.d/zenos-bau ]]; then
     warnung "Temporäre sudo-Regel aus dem Bau noch aktiv. Nach der Testphase löschen: sudo rm /etc/sudoers.d/zenos-bau"
   else
     ok "Keine temporäre sudo-Regel aus dem Bau"
+  fi
+}
+
+# Zeitzone: UTC ist meist nur nicht gesetzt (Image ohne Imager-Einstellungen). Nur ein Hinweis.
+_basis_zeitzone() {
+  local zone="" ziel
+  zone=$(timeout 5 timedatectl show --property=Timezone --value 2>/dev/null) || zone=""
+  if [[ -z "$zone" ]] && ziel=$(readlink /etc/localtime 2>/dev/null); then
+    zone=${ziel#*zoneinfo/}
+    [[ "$zone" != "$ziel" ]] || zone=""
+  fi
+  if [[ -z "$zone" ]]; then
+    hinweis "Zeitzone nicht ermittelbar (timedatectl)"
+  elif [[ ! "$zone" =~ ^[A-Za-z0-9._+/-]+$ ]]; then
+    hinweis "Zeitzone nicht lesbar (timedatectl)"
+  elif [[ "$zone" == UTC || "$zone" == Etc/UTC ]]; then
+    hinweis "Zeitzone $zone – falls nicht gewollt: sudo timedatectl set-timezone <Zone>"
+  else
+    ok "Zeitzone $zone"
+  fi
+}
+
+# Tastaturbelegung des Systems (gilt für Login und Sitzung), wie zenos-sitzung sie liest
+_basis_tastatur() {
+  local datei=/etc/default/keyboard layout=""
+  if [[ -r "$datei" ]]; then
+    layout=$(sed -n "s/^XKBLAYOUT=[\"']\{0,1\}\([^\"']*\)[\"']\{0,1\}[[:space:]]*\$/\1/p" "$datei" | tail -n 1)
+  fi
+  if [[ ! -r "$datei" ]]; then
+    hinweis "Tastaturbelegung nicht gesetzt: $datei fehlt (sudo dpkg-reconfigure keyboard-configuration)"
+  elif [[ -z "$layout" ]]; then
+    hinweis "Tastaturbelegung nicht gesetzt: kein XKBLAYOUT in $datei (sudo dpkg-reconfigure keyboard-configuration)"
+  elif [[ ! "$layout" =~ ^[A-Za-z0-9_,:()+-]+$ ]]; then
+    hinweis "Tastaturbelegung in $datei nicht lesbar"
+  else
+    ok "Tastaturbelegung $layout"
   fi
 }
 

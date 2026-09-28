@@ -22,7 +22,8 @@ import qs.komponenten
 //   offen und gibt die Tastatur während der Sperre ab (Oberflaeche.gesperrt, gesetzt nur hier).
 // - Während der Sperre ruht das automatische Neuladen der Oberfläche: Quickshell v0.3.1 stürzt ab, wenn es
 //   bei gesetzter Sperre neu lädt (neue Sperrflächen vor dem Abbau der alten). Wurde die Oberfläche in der
-//   Zwischenzeit geändert (z. B. zen update), lädt sie nach dem Entsperren neu.
+//   Zwischenzeit geändert (z. B. zen update), lädt sie nach dem Entsperren neu und hält den Zeitpunkt in
+//   $XDG_RUNTIME_DIR/zenos/oberflaeche-geladen fest (install.sh startet sie dann nicht nochmals neu).
 // - Leitplanke (Code): Der Sperrbildschirm zeigt nie Inhalte, nur die Anzahl der Mitteilungen – keine
 //   Vorschau, keine App-Namen.
 Scope {
@@ -43,6 +44,8 @@ Scope {
     property bool _ausweichen: false
     // Die Oberfläche wurde während der Sperre geändert und lädt nach dem Entsperren neu
     property bool _neuLaden: false
+    // Beginn der Suche nach geänderten Dateien (Unix-Sekunden): Was vorher geändert wurde, lädt das Neuladen
+    property real _suchBeginn: 0
     // sperren() läuft (das Signal sperrenAngefordert kommt dabei hierher zurück)
     property bool _sperrtGerade: false
     readonly property bool pruefe: pam.active && _geantwortet
@@ -145,8 +148,10 @@ Scope {
     // löschen und erst danach neu laden – sonst sperrt die neu geladene Oberfläche gleich wieder.
     function _aufraeumen(): void {
         root._neuLaden = false;
-        if (!aenderungenSuchen.running)
+        if (!aenderungenSuchen.running) {
+            root._suchBeginn = Math.floor(Date.now() / 1000);
             aenderungenSuchen.running = true;
+        }
     }
 
     function _zuruecksetzen(): void {
@@ -170,8 +175,15 @@ Scope {
         id: zustand
 
         property bool gesperrt: false
+        // Neuladen durch die Sperre: Beginn der Suche davor (Unix-Sekunden, 0 = keins). Die neue Generation
+        // schreibt ihn nach oberflaeche-geladen, erst wenn das Neuladen gelungen ist.
+        property real geladenAb: 0
 
         onReloaded: {
+            if (geladenAb > 0) {
+                geladenDatei.setText(geladenAb.toFixed(0) + "\n");
+                geladenAb = 0;
+            }
             if (gesperrt)
                 root.sperren();
         }
@@ -432,6 +444,18 @@ Scope {
         onLoaded: root.sperren()
     }
 
+    // Stand der geladenen Oberfläche nach einem Neuladen durch die Sperre (für install.sh, nur Schreiben)
+    FileView {
+        id: geladenDatei
+
+        path: Pfade.laufzeit + "/oberflaeche-geladen"
+        preload: false
+        blockWrites: true
+        printErrors: false
+
+        onSaveFailed: error => console.warn("Sperre: oberflaeche-geladen nicht geschrieben:", FileViewError.toString(error))
+    }
+
     PamContext {
         id: pam
 
@@ -511,7 +535,11 @@ Scope {
             Quickshell.watchFiles = true;
             if (root._neuLaden) {
                 console.info("Sperre: Oberfläche während der Sperre geändert, lade neu");
+                zustand.geladenAb = root._suchBeginn;
                 Quickshell.reload(false);
+                // Gelungen, hat die neue Generation den Wert schon übernommen. Sonst läuft diese mit dem alten
+                // Stand weiter, und es gilt der bisherige Zeitpunkt.
+                zustand.geladenAb = 0;
             }
         }
     }

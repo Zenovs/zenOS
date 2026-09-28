@@ -299,22 +299,34 @@ _module_ausfuehren() {
 # warten, und sieht Änderungen während des Ladens nicht mehr. Ändern sich viele Dateien nacheinander
 # (10-code, git in zen update), kann so ein Mix aus alten und neuen Dateien geladen bleiben (Leiste,
 # Befehlsfeld oder Mitteilungen fehlen bis zum nächsten Neustart). Deshalb am Ende eines normalen Laufs:
-# Ist eine Datei der Oberfläche oder Quickshell selbst neuer als der laufende Prozess, startet install.sh
-# zenos-shell.service einmal neu. Wartende Mitteilungen gehen dabei verloren (wie bei einem Absturz).
+# Ist eine Datei der Oberfläche neuer als der geladene Stand oder Quickshell selbst neuer als der laufende
+# Prozess, startet install.sh zenos-shell.service einmal neu. Wartende Mitteilungen gehen dabei verloren (wie bei einem Absturz).
 # Gesperrt nie: Während der Sperre ruht das Neuladen, und die Sperre lädt nach dem Entsperren selbst neu
 # (sperre/Sperre.qml). Ein Neustart wäre auch dann sicher (die neue Shell sperrt über den Marker wieder).
 _oberflaeche_auffrischen() {
   local laufzeit=${XDG_RUNTIME_DIR:-/run/user/$EUID} ordner=$ZENOS_HOME/.config/quickshell
-  local ipc=$ZENOS_CODE/scripts/bin/zenos-ipc start geaendert status ende qs
+  local ipc=$ZENOS_CODE/scripts/bin/zenos-ipc start bezug geladen="" geaendert status ende qs
   [[ "$ZENOS_SYSTEMD" == 1 && -S "$laufzeit/bus" && -e "$ordner/shell.qml" ]] || return 0
   XDG_RUNTIME_DIR=$laufzeit systemctl --user --quiet is-active zenos-shell.service 2>/dev/null || return 0
   start=$(XDG_RUNTIME_DIR=$laufzeit systemctl --user show --property=ExecMainStartTimestamp --timestamp=unix \
     --value zenos-shell.service 2>/dev/null) || return 0
   [[ "$start" =~ ^@[0-9]+$ ]] || return 0
 
+  # Hat die Sperre die Oberfläche nach dem Entsperren im selben Prozess neu geladen (M7), steht in
+  # oberflaeche-geladen der Zeitpunkt davor (Unix-Sekunden). Es gilt der neuere von beiden, der geladene
+  # aber nur, wenn er vor diesem Lauf liegt: Ein Neuladen während der Übernahme sah womöglich nur einen Teil.
+  bezug=$start
+  if [[ -f "$laufzeit/zenos/oberflaeche-geladen" ]]; then
+    read -r geladen < "$laufzeit/zenos/oberflaeche-geladen" || true
+  fi
+  if [[ "$geladen" =~ ^[0-9]{1,12}$ ]] && (( geladen > ${start#@} && geladen < _LAUF_BEGINN )); then
+    bezug=@$geladen
+  fi
+
   # Sekundengenau: Was in derselben Sekunde wie der Start geschrieben wurde, zählt als neuer
   geaendert=$(find -L "$ordner/" -type f \( -name '*.qml' -o -name '*.js' -o -name '*.mjs' -o -name qmldir \) \
-    -newermt "$start" -print -quit 2>/dev/null) || geaendert=""
+    -newermt "$bezug" -print -quit 2>/dev/null) || geaendert=""
+  # Quickshell selbst lädt nur ein Neustart neu
   qs=$(readlink -f -- /usr/local/bin/quickshell 2>/dev/null) || qs=""
   if [[ -z "$geaendert" && -n "$qs" ]]; then
     geaendert=$(find "$qs" -maxdepth 0 -newermt "$start" -print 2>/dev/null) || geaendert=""
@@ -355,6 +367,8 @@ _oberflaeche_auffrischen() {
 # --- Ablauf ----------------------------------------------------------------
 
 _sperren
+# Beginn dieses Laufs (nach der Sperre), für _oberflaeche_auffrischen
+printf -v _LAUF_BEGINN '%(%s)T' -1
 _sudo_vorbereiten
 ZENOS_TMP=$(mktemp -d "${TMPDIR:-/tmp}/zenos-install.XXXXXX")
 export ZENOS_TMP
