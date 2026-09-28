@@ -1,0 +1,7 @@
+# Bootsplash (Plymouth) – bewusst ohne Pakete
+# 20-pakete installiert jede Liste hier, zen doctor verlangt jedes Paket. plymouth und plymouth-label stehen deshalb
+# nicht drin: Der postinst von plymouth stösst update-initramfs an (dracut), und auf dem Pi schreibt flash-kernel
+# danach neue Startdateien nach /boot/firmware/new/ (der nächste Start läuft zweimal). Das ist Bootloader-Gebiet und
+# nur nach Rückfrage erlaubt. Ubuntu Server 26.04 für den Pi bringt plymouth mit (Image-Manifest), plymouth-label
+# nicht; ohne Label-Plugin stürzt das Modul script ab. Beides installiert «zen bootsplash aktivieren» nach
+# Bestätigung. 42-bootsplash legt nur die Theme-Dateien ab.

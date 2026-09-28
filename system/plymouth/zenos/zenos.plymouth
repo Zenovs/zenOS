@@ -1,0 +1,9 @@
+[Plymouth Theme]
+Name=zenOS
+Description=Bootsplash von zenOS: die Bildmarke Zwei Steine auf dunklem Grund
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/zenos/bilder
+ScriptFile=/usr/share/plymouth/themes/zenos/zenos.script
+Font=Geist 15

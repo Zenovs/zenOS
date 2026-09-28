@@ -1,0 +1,456 @@
+# zenos.script – Bootsplash von zenOS (Plymouth, Modul script) nach docs/bildmarke.md «Bootsplash».
+# Die zwei Steine gleiten aus leichtem Abstand zusammen, der untere blendet zur Akzentfarbe über, danach atmet
+# der Spalt, solange der Start läuft. Darunter eine dünne Fortschrittslinie; fragt der Start nach einem Passwort,
+# steht an ihrer Stelle das Passwortfeld. Die Bilder erzeugt erzeugen.py (bilder/1x, bilder/2x); Unterpixel-Lagen
+# sind fertige Bilder, die Sprites stehen immer auf ganzen Pixeln. Einzelheiten: docs/module/bootsplash.md.
+
+# --- Anfang der erzeugten Werte (erzeugen.py) ---
+# Quellen: shell/theme/tokens.json, assets/zeichen/geometrie.json, docs/bildmarke.md. Nicht von Hand ändern.
+farbe.grund.r = 0.07451; farbe.grund.g = 0.07451; farbe.grund.b = 0.07059;
+farbe.text.r = 0.92549; farbe.text.g = 0.91765; farbe.text.b = 0.89412;
+farbe.gedaempft.r = 0.63529; farbe.gedaempft.g = 0.61961; farbe.gedaempft.b = 0.58431;
+schrift.name = "Geist";
+schrift.beschriftung = 13;
+schrift.feld = 15;
+ablauf.gleiten = 0.3;
+ablauf.blenden = 0.2;
+ablauf.kurz = 0.12;
+ablauf.atemzug = 3.2;
+spalt.basis = 6;
+spalt.zugabe = 8;
+spalt.atem = 1;
+phasen = 8;
+stufen = 10;
+mass.zeichen = 64;
+mass.einheit = 1;
+mass.abstand = 48;
+mass.hinweis_abstand = 12;
+mass.linie_breite = 96;
+mass.linie_hoehe = 2;
+mass.feld_breite = 320;
+mass.feld_hoehe = 44;
+mass.feld_innen = 14;
+mass.beschriftung_abstand = 10;
+# --- Ende der erzeugten Werte ---
+
+Window.SetBackgroundTopColor(farbe.grund.r, farbe.grund.g, farbe.grund.b);
+Window.SetBackgroundBottomColor(farbe.grund.r, farbe.grund.g, farbe.grund.b);
+
+bild_takt = 1 / 50;             # Plymouth ruft die Auffrischung 50-mal pro Sekunde auf
+zeit = 0;                       # Sekunden seit dem ersten Bild
+uhr = 0;                        # Zeit aus dem Fortschritt von Plymouth (echte Sekunden)
+uhr_da = 0;
+uhr_basis = 0;
+uhr_basis_da = 0;
+faktor = 0;                     # 1 oder 2, 0 = noch keine Bilder geladen
+modus = "normal";               # normal, passwort, frage
+eingabe.anzahl = 0;
+eingabe.text = "";
+eingabe.frage = "";
+fortschritt.ziel = 0;
+fortschritt.wert = 0;
+fortschritt.breite = -1;
+linie.deckkraft = 0;
+formular.deckkraft = 0;
+formular.beschriftung_art = "";
+formular.text_inhalt = "";
+meldung.da = 0;
+meldung.text = "";
+meldung.inhalt = "";
+schrift_da = 0;                 # Plymouth kann Text setzen (Label-Plugin im initramfs)
+
+bild.pixel_text = Image("pixel-text.png");
+bild.pixel_gedaempft = Image("pixel-gedaempft.png");
+bild.pixel_linie = Image("pixel-linie.png");
+
+stein.oben = Sprite();
+stein.unten = Sprite();
+linie.spur = Sprite();
+linie.fuell = Sprite();
+formular.beschriftung = Sprite();
+formular.feld = Sprite();
+formular.strich = Sprite();
+formular.text = Sprite();
+formular.hinweis = Sprite();
+meldung.sprite = Sprite();
+
+fun aus_kubisch (x)
+{
+  local.r = 1 - x;
+  return 1 - r * r * r;
+}
+
+# Text setzt Plymouth nur mit Label-Plugin (plymouth-label), sonst liefert Image.Text ein leeres Bild. Fragen und
+# Meldungen brauchen es; «Passwort» und der Hinweis sind fertige Bilder in Geist.
+probe = Image.Text("x", 1, 1, 1);
+if (probe && probe.GetWidth() > 0)
+  schrift_da = 1;
+
+# --- Bilder ------------------------------------------------------------------
+
+fun faktor_bestimmen ()
+{
+  local.b = Window.GetWidth();
+  local.h = Window.GetHeight();
+  if (h > b)
+    {
+      local.t = b;
+      b = h;
+      h = t;
+    }
+  if (b >= 2880 && h >= 1620)
+    return 2;
+  return 1;
+}
+
+fun bilder_laden (f)
+{
+  local.o = f + "x/";
+  for (local.i = 0; i < phasen; i++)
+    {
+      global.bild.oben[i] = Image(o + "oben-" + i + ".png");
+      global.bild.unten_text[i] = Image(o + "unten-text-" + i + ".png");
+      global.bild.unten_akzent[i] = Image(o + "unten-akzent-" + i + ".png");
+    }
+  for (local.i = 1; i < stufen; i++)
+    global.bild.unten_blende[i] = Image(o + "unten-blende-" + i + ".png");
+  global.bild.feld = Image(o + "feld.png");
+  global.bild.punkt = Image(o + "punkt.png");
+  global.bild.beschriftung = Image(o + "beschriftung.png");
+  global.bild.hinweis = Image(o + "hinweis.png");
+
+  global.faktor = f;
+  global.stein.code_oben = -1;
+  global.stein.code_unten = -1;
+  global.fortschritt.breite = -1;
+  linie.spur.SetImage(bild.pixel_linie.Scale(Math.Int(mass.linie_breite * f), Math.Int(mass.linie_hoehe * f)));
+  formular.beschriftung.SetImage(bild.beschriftung);
+  global.formular.beschriftung_art = "passwort";
+  formular.feld.SetImage(bild.feld);
+  formular.strich.SetImage(bild.pixel_text.Scale(f, bild.punkt.GetHeight()));
+  formular.hinweis.SetImage(bild.hinweis);
+  for (local.i = 0; formular.punkt[i]; i++)
+    formular.punkt[i].SetImage(bild.punkt);
+}
+
+# --- Zeit --------------------------------------------------------------------
+
+# Gezählt wird in Bildern. Kommen die Bilder langsamer als 50 pro Sekunde, holt die Zeit zur echten Uhr auf,
+# damit Gleiten und Atmen ihr Tempo behalten.
+fun zeit_fortschreiben ()
+{
+  global.zeit += bild_takt;
+  if (uhr_da)
+    {
+      if (!uhr_basis_da)
+        {
+          global.uhr_basis = uhr - zeit;
+          global.uhr_basis_da = 1;
+        }
+      local.soll = uhr - uhr_basis;
+      if (soll > zeit)
+        global.zeit += (soll - zeit) / 2;
+    }
+}
+
+# --- Zeichen -----------------------------------------------------------------
+
+# Verschiebung in Pixeln → ganze Pixel für den Sprite und Unterpixel-Lage für das Bild
+fun stein_lage (versatz)
+{
+  local.r.ganz = Math.Int(versatz);
+  r.lage = Math.Int((versatz - r.ganz) * phasen + 0.5);
+  if (r.lage >= phasen)
+    {
+      r.ganz = r.ganz + 1;
+      r.lage = 0;
+    }
+  return r;
+}
+
+fun zeichen_setzen (x0, y0)
+{
+  local.weite = spalt.basis;
+  local.deckkraft = 1;
+  local.stufe = stufen;
+  if (zeit < ablauf.gleiten)
+    {
+      local.e = aus_kubisch(zeit / ablauf.gleiten);
+      weite = spalt.basis + spalt.zugabe * (1 - e);
+      deckkraft = e;
+      stufe = 0;
+    }
+  else if (zeit < ablauf.gleiten + ablauf.blenden)
+    {
+      stufe = Math.Int(aus_kubisch((zeit - ablauf.gleiten) / ablauf.blenden) * stufen + 0.5);
+    }
+  else
+    {
+      weite = spalt.basis + spalt.atem * Math.Sin(2 * Math.Pi * (zeit - ablauf.gleiten - ablauf.blenden) / ablauf.atemzug);
+    }
+
+  # Jeder Stein rückt um den halben Zuwachs senkrecht zum Schnitt nach aussen, also diagonal
+  local.versatz = (weite - spalt.basis) / 2 / Math.Sqrt(2) * mass.einheit * faktor;
+  local.oben = stein_lage(-versatz);
+  local.unten = stein_lage(versatz);
+
+  if (oben.lage != stein.code_oben)
+    {
+      stein.oben.SetImage(bild.oben[oben.lage]);
+      global.stein.code_oben = oben.lage;
+    }
+
+  local.code = stufe * 100 + unten.lage;
+  if (code != stein.code_unten)
+    {
+      if (stufe <= 0)
+        stein.unten.SetImage(bild.unten_text[unten.lage]);
+      else if (stufe >= stufen)
+        stein.unten.SetImage(bild.unten_akzent[unten.lage]);
+      else
+        stein.unten.SetImage(bild.unten_blende[stufe]);
+      global.stein.code_unten = code;
+    }
+
+  stein.oben.SetPosition(x0 + oben.ganz, y0 + oben.ganz, 10);
+  stein.unten.SetPosition(x0 + unten.ganz, y0 + unten.ganz, 10);
+  stein.oben.SetOpacity(deckkraft);
+  stein.unten.SetOpacity(deckkraft);
+}
+
+# --- Fortschrittslinie -------------------------------------------------------
+
+fun annaehern (wert, ziel)
+{
+  local.schritt = bild_takt / ablauf.kurz;
+  if (wert < ziel)
+    return Math.Min(ziel, wert + schritt);
+  return Math.Max(ziel, wert - schritt);
+}
+
+fun linie_setzen (x0, y0)
+{
+  local.art = Plymouth.GetMode();
+  local.ziel = 0;
+  if (modus == "normal" && art != "shutdown" && art != "reboot")
+    ziel = 1;
+  global.linie.deckkraft = annaehern(linie.deckkraft, ziel);
+
+  global.fortschritt.wert += (fortschritt.ziel - fortschritt.wert) / 10;
+  local.b = Math.Int(mass.linie_breite * faktor);
+  local.h = Math.Int(mass.linie_hoehe * faktor);
+  local.w = Math.Int(fortschritt.wert * b + 0.5);
+  if (w != fortschritt.breite)
+    {
+      if (w > 0)
+        linie.fuell.SetImage(bild.pixel_gedaempft.Scale(w, h));
+      global.fortschritt.breite = w;
+    }
+
+  local.x = Math.Int(x0 - b / 2);
+  linie.spur.SetPosition(x, y0, 5);
+  linie.fuell.SetPosition(x, y0, 6);
+  linie.spur.SetOpacity(linie.deckkraft);
+  if (w > 0)
+    linie.fuell.SetOpacity(linie.deckkraft);
+  else
+    linie.fuell.SetOpacity(0);
+}
+
+fun fortschritt_melden (dauer, anteil)
+{
+  global.uhr = dauer;
+  global.uhr_da = 1;
+  if (anteil > fortschritt.ziel)
+    global.fortschritt.ziel = Math.Min(anteil, 1);
+}
+
+fun aktualisierung_melden (prozent)
+{
+  global.fortschritt.ziel = Math.Clamp(prozent / 100, 0, 1);
+}
+
+# --- Passwort ----------------------------------------------------------------
+
+fun formular_setzen (x0, y0)
+{
+  local.ziel = 0;
+  if (modus != "normal")
+    ziel = 1;
+  global.formular.deckkraft = annaehern(formular.deckkraft, ziel);
+  local.d = formular.deckkraft;
+
+  local.fb = bild.feld.GetWidth();
+  local.fh = bild.feld.GetHeight();
+  local.x = Math.Int(x0 - fb / 2);
+  local.feld_y = y0 + bild.beschriftung.GetHeight() + Math.Int(mass.beschriftung_abstand * faktor);
+
+  # Über dem Feld «Passwort»; bei einer Frage ihr Text, wenn Plymouth Text setzen kann
+  local.art = "passwort";
+  if (modus == "frage" && schrift_da && eingabe.frage != "")
+    art = "frage " + faktor + " " + eingabe.frage;
+  if (art != formular.beschriftung_art)
+    {
+      if (art == "passwort")
+        formular.beschriftung.SetImage(bild.beschriftung);
+      else
+        formular.beschriftung.SetImage(Image.Text(eingabe.frage, farbe.gedaempft.r, farbe.gedaempft.g, farbe.gedaempft.b, 1,
+                                                  schrift.name + " " + schrift.beschriftung * faktor + "px"));
+      global.formular.beschriftung_art = art;
+    }
+  local.bh = formular.beschriftung.GetImage().GetHeight();
+  formular.beschriftung.SetPosition(x, feld_y - Math.Int(mass.beschriftung_abstand * faktor) - bh, 20);
+  formular.feld.SetPosition(x, feld_y, 20);
+  formular.beschriftung.SetOpacity(d);
+  formular.feld.SetOpacity(d);
+
+  local.innen = Math.Int(mass.feld_innen * faktor);
+  local.schritt = bild.punkt.GetWidth();
+  local.zeile_y = feld_y + Math.Int((fh - bild.punkt.GetHeight()) / 2);
+  local.platz = Math.Int((fb - 2 * innen) / schritt) - 1;
+  local.ende = x + innen;
+
+  # Frage mit sichtbarer Antwort: als Text, wenn Plymouth Text setzen kann, sonst wie ein Passwort als Punkte
+  local.n = 0;
+  if (modus == "frage" && schrift_da)
+    {
+      if (formular.text_inhalt != faktor + " " + eingabe.text)
+        {
+          formular.text.SetImage(Image.Text(eingabe.text, farbe.text.r, farbe.text.g, farbe.text.b, 1,
+                                            schrift.name + " " + schrift.feld * faktor + "px"));
+          global.formular.text_inhalt = faktor + " " + eingabe.text;
+        }
+      formular.text.SetPosition(ende, zeile_y, 21);
+      formular.text.SetOpacity(d);
+      ende = ende + Math.Min(formular.text.GetImage().GetWidth(), fb - 2 * innen);
+    }
+  else
+    {
+      formular.text.SetOpacity(0);
+      n = Math.Min(eingabe.anzahl, platz);
+    }
+
+  for (local.i = 0; i < n || formular.punkt[i]; i++)
+    {
+      if (!formular.punkt[i])
+        {
+          global.formular.punkt[i] = Sprite(bild.punkt);
+        }
+      formular.punkt[i].SetPosition(ende + i * schritt, zeile_y, 21);
+      if (i < n)
+        formular.punkt[i].SetOpacity(d);
+      else
+        formular.punkt[i].SetOpacity(0);
+    }
+  ende = ende + n * schritt;
+
+  # Textcursor wie in Eingabe.qml: ein stehender Strich, 1 px, in text
+  formular.strich.SetPosition(ende, zeile_y, 21);
+  formular.strich.SetOpacity(d);
+
+  formular.hinweis.SetPosition(x, feld_y + fh + Math.Int(mass.hinweis_abstand * faktor), 20);
+  if (Plymouth.GetCapslockState())
+    formular.hinweis.SetOpacity(d);
+  else
+    formular.hinweis.SetOpacity(0);
+}
+
+fun passwort_zeigen (frage, anzahl)
+{
+  global.modus = "passwort";
+  global.eingabe.anzahl = anzahl;
+}
+
+fun frage_zeigen (frage, text)
+{
+  global.modus = "frage";
+  global.eingabe.frage = frage;
+  global.eingabe.text = text;
+  global.eingabe.anzahl = String(text).Length();
+}
+
+fun eingabe_zeigen (frage, text, geheim)
+{
+  if (geheim)
+    passwort_zeigen(frage, String(text).Length());
+  else
+    frage_zeigen(frage, text);
+}
+
+fun normal_zeigen ()
+{
+  global.modus = "normal";
+  global.eingabe.anzahl = 0;
+  global.eingabe.text = "";
+  global.eingabe.frage = "";
+}
+
+# --- Meldungen ---------------------------------------------------------------
+
+# Nur mit Label-Plugin; ohne bleibt es ruhig
+fun meldung_zeigen (text)
+{
+  global.meldung.text = text;
+  global.meldung.da = 1;
+}
+
+fun meldung_weg (text)
+{
+  global.meldung.da = 0;
+}
+
+fun meldung_setzen (x0, y0)
+{
+  if (!meldung.da || !schrift_da)
+    {
+      meldung.sprite.SetOpacity(0);
+      return;
+    }
+  if (meldung.inhalt != faktor + " " + meldung.text)
+    {
+      meldung.sprite.SetImage(Image.Text(meldung.text, farbe.gedaempft.r, farbe.gedaempft.g, farbe.gedaempft.b, 1,
+                                         schrift.name + " " + schrift.beschriftung * faktor + "px"));
+      global.meldung.inhalt = faktor + " " + meldung.text;
+    }
+  local.b = meldung.sprite.GetImage();
+  meldung.sprite.SetPosition(Math.Int(x0 - b.GetWidth() / 2), y0, 30);
+  meldung.sprite.SetOpacity(1);
+}
+
+# --- Auffrischen -------------------------------------------------------------
+
+fun auffrischen ()
+{
+  if (Window.GetWidth() <= 0 || Window.GetHeight() <= 0)
+    return;
+  zeit_fortschreiben();
+  local.f = faktor_bestimmen();
+  if (f != faktor)
+    bilder_laden(f);
+
+  local.mx = Window.GetX() + Window.GetWidth() / 2;
+  local.my = Window.GetY() + Window.GetHeight() / 2;
+  local.seite = mass.zeichen * faktor;
+  local.zx = Math.Int(mx - seite / 2);
+  local.zy = Math.Int(my - seite / 2);
+  local.darunter = zy + seite + Math.Int(mass.abstand * faktor);
+
+  zeichen_setzen(zx, zy);
+  linie_setzen(mx, darunter);
+  formular_setzen(mx, darunter);
+
+  local.meldung_y = darunter + Math.Int((mass.linie_hoehe + mass.abstand / 2) * faktor);
+  if (modus != "normal")
+    meldung_y = darunter + bild.beschriftung.GetHeight() + bild.feld.GetHeight() + Math.Int((mass.beschriftung_abstand + mass.abstand) * faktor);
+  meldung_setzen(mx, meldung_y);
+}
+
+Plymouth.SetRefreshFunction(auffrischen);
+Plymouth.SetBootProgressFunction(fortschritt_melden);
+Plymouth.SetSystemUpdateFunction(aktualisierung_melden);
+Plymouth.SetDisplayNormalFunction(normal_zeigen);
+Plymouth.SetDisplayPasswordFunction(passwort_zeigen);
+Plymouth.SetDisplayQuestionFunction(frage_zeigen);
+Plymouth.SetDisplayPromptFunction(eingabe_zeigen);
+Plymouth.SetDisplayMessageFunction(meldung_zeigen);
+Plymouth.SetHideMessageFunction(meldung_weg);
