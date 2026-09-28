@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# zenos-oeffnen – öffnet eine Datei, einen Ordner oder eine Adresse mit der zuständigen App und meldet
+# über den Exit-Code, ob das geklappt hat. Das Befehlsfeld ruft es über Aktionen.dateiOeffnen auf und
+# zeigt bei einem Fehler einen Hinweis.
+#
+#   zenos-oeffnen [--] PFAD|URL
+#
+# Öffnet mit «gio open», nicht mit xdg-open: xdg-open wartet unter labwc (generischer Modus), bis die App
+# beendet ist, und startet Apps mit Terminal=true (z. B. vim.desktop auf Ubuntu Server) ohne Terminal,
+# meldet dabei aber Erfolg. gio startet die App (Terminal-Apps in x-terminal-emulator, also kitty), kehrt
+# gleich zurück und endet mit einem Fehler, wenn keine App zuständig ist. Die App bekommt eine eigene
+# Sitzung (setsid) und, wenn die systemd-Benutzerinstanz erreichbar ist, eine eigene Einheit
+# (app-zenos-oeffnen-….scope): Sie läuft weiter, wenn dieses Programm endet oder zenos-shell.service
+# neu startet.
+#
+# Exit 0 geöffnet · 1 Öffnen fehlgeschlagen · 2 nicht gefunden · 3 keine App für die Datei oder Adresse ·
+# 4 keine App für den Ordner · 64 falscher Aufruf
+
+set -uo pipefail
+
+meldung() { printf 'zenos-oeffnen: %s\n' "$*" >&2; }
+
+case "${1:-}" in
+  -h | --hilfe | --help)
+    sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
+    exit 0
+    ;;
+  --) shift ;;
+  -*)
+    meldung "unbekannte Option «$1»"
+    exit 64
+    ;;
+esac
+if (( $# != 1 )) || [[ -z "$1" ]]; then
+  meldung "Aufruf: zenos-oeffnen [--] PFAD|URL"
+  exit 64
+fi
+ziel=$1
+
+command -v gio > /dev/null || { meldung "gio fehlt (Paket libglib2.0-bin)"; exit 1; }
+
+# Standard-App für einen MIME-Typ (Desktop-ID), leer wenn keine. Englische Ausgabe, damit sie sich
+# auswerten lässt; die App selbst startet mit der Sprache der Sitzung.
+standard_app() {
+  LC_ALL=C gio mime "$1" 2> /dev/null | sed -n 's/^Default application for .*: //p' | head -n 1
+}
+
+# Adresse (https:, mailto:, file: …), sofern es keinen gleichnamigen Pfad gibt
+schema=""
+if [[ ! -e "$ziel" && "$ziel" =~ ^([A-Za-z][A-Za-z0-9+.-]*): ]]; then
+  schema=${BASH_REMATCH[1],,}
+fi
+
+if [[ -z "$schema" ]]; then
+  if [[ ! -e "$ziel" ]]; then
+    meldung "nicht gefunden: $ziel"
+    exit 2
+  fi
+  # gio kennt kein «--»: ein absoluter Pfad beginnt nie mit «-»
+  [[ "$ziel" == /* ]] || ziel="$PWD/$ziel"
+fi
+
+# Die App erbt die Ausgaben von gio; wie bei den übrigen Starts der Oberfläche gehen sie ins Leere.
+# --wait: falls setsid dafür einen eigenen Prozess braucht, kommt der Exit-Code von gio trotzdem zurück.
+# Argumente: was vor «gio open» steht (systemd-run …)
+oeffnen() {
+  setsid --wait "$@" gio open "$ziel" < /dev/null > /dev/null 2>&1
+}
+
+code=0
+if [[ -n "${XDG_RUNTIME_DIR:-}" && -S "$XDG_RUNTIME_DIR/systemd/private" ]] && command -v systemd-run > /dev/null; then
+  oeffnen systemd-run --user --scope --quiet --collect --slice=app.slice \
+    --unit="app-zenos-oeffnen-${EPOCHREALTIME//[.,]/}" --description="Geöffnet mit zenos-oeffnen" -- || code=$?
+  # 1: systemd-run konnte keine Einheit anlegen (gio endet bei Fehlern mit 2); dann ohne eigene Einheit
+  if (( code == 1 )); then
+    code=0
+    oeffnen || code=$?
+  fi
+else
+  oeffnen || code=$?
+fi
+if (( code == 0 )); then
+  exit 0
+fi
+
+# Warum nicht? Keine zuständige App (der häufige Fall) oder der Start der App ging schief.
+if [[ -n "$schema" ]]; then
+  if [[ "$schema" == file ]]; then
+    meldung "lässt sich nicht öffnen: $ziel"
+    exit 1
+  fi
+  typ="x-scheme-handler/$schema"
+else
+  typ=$(LC_ALL=C gio info --attributes=standard::content-type "$ziel" 2> /dev/null |
+    sed -n 's/^ *standard::content-type: //p' | head -n 1)
+fi
+if [[ -z "$typ" ]]; then
+  meldung "Typ unbekannt, lässt sich nicht öffnen: $ziel"
+  exit 1
+fi
+app=$(standard_app "$typ")
+if [[ -z "$app" ]]; then
+  meldung "keine App für $typ"
+  if [[ -z "$schema" && -d "$ziel" ]]; then
+    exit 4
+  fi
+  exit 3
+fi
+meldung "$app liess sich nicht starten ($typ)"
+exit 1

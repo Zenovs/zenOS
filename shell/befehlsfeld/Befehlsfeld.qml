@@ -844,6 +844,12 @@ Scope {
                             selectByMouse: true
                             inputMethodHints: Qt.ImhNoPredictiveText
                             Accessible.name: "Befehlsfeld"
+                            // Ruhiger Cursor: steht still statt zu blinken (Manifest: nichts blinkt)
+                            cursorDelegate: Rectangle {
+                                width: 1
+                                color: Theme.text
+                                visible: eingabe.cursorVisible
+                            }
 
                             Keys.onPressed: event => root._taste(event)
                         }

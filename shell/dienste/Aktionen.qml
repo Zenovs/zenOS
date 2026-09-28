@@ -1,4 +1,5 @@
 pragma Singleton
+pragma ComponentBehavior: Bound
 
 import QtQuick
 import Quickshell
@@ -32,12 +33,61 @@ Singleton {
         _launch(entry.runInTerminal ? ["kitty", "--"].concat(command) : command, entry.workingDirectory);
     }
 
-    // pfad: absoluter Pfad oder URL
+    // pfad: absoluter Pfad oder URL. Über zenos-oeffnen (gio open); findet sich keine App oder
+    // scheitert das Öffnen, erscheint ein Hinweis statt nichts.
     function dateiOeffnen(pfad: string): void {
         if (!pfad)
             return;
-        // Ein führendes «-» wäre für xdg-open eine Option
-        _launch(["xdg-open", pfad.startsWith("-") ? "./" + pfad : pfad]);
+        // Ein Prozess pro Aufruf: zenos-oeffnen endet gleich nach dem Start der App, ein zweites
+        // Öffnen kurz danach geht so nicht verloren
+        oeffnenVorlage.createObject(root, {
+            ziel: pfad
+        });
+    }
+
+    function _oeffnenGescheitert(ziel: string, code: int, meldung: string): void {
+        console.warn("Aktionen: zenos-oeffnen endete mit", code, meldung.trim());
+        let text = "Öffnen hat nicht geklappt";
+        if (code === 2)
+            text = "Datei oder Ordner nicht gefunden";
+        else if (code === 3)
+            text = /^[A-Za-z][A-Za-z0-9+.-]*:/.test(ziel) ? "Keine App für diese Adresse" : "Keine App für diese Datei";
+        else if (code === 4)
+            text = "Keine App für Ordner";
+        Oberflaeche.hinweis(text, "warnung");
+    }
+
+    Component {
+        id: oeffnenVorlage
+
+        Process {
+            id: oeffnen
+
+            property string ziel
+            property bool gestartet: false
+
+            // «--»: ein Pfad, der mit «-» beginnt, ist keine Option
+            command: [Pfade.bin + "/zenos-oeffnen", "--", oeffnen.ziel]
+            workingDirectory: Pfade.home
+            running: true
+            stderr: StdioCollector {
+                id: oeffnenFehler
+            }
+
+            onStarted: oeffnen.gestartet = true
+            onExited: (code, status) => {
+                if (code !== 0 || status !== 0)
+                    root._oeffnenGescheitert(oeffnen.ziel, status !== 0 ? -1 : code, oeffnenFehler.text);
+            }
+            // Nach exited (oder ohne, wenn es sich nicht starten liess) kommt «läuft nicht mehr»
+            onRunningChanged: {
+                if (oeffnen.running)
+                    return;
+                if (!oeffnen.gestartet)
+                    root._oeffnenGescheitert(oeffnen.ziel, -1, "zenos-oeffnen liess sich nicht starten");
+                oeffnen.destroy();
+            }
+        }
     }
 
     function bildschirmfoto(argumente: var): void {

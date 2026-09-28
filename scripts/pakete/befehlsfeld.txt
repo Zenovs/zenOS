@@ -7,6 +7,9 @@ grim
 wl-clipboard
 # Farben der Auswahl aus den Design-Tokens (zenos-bildschirmfoto)
 jq
-# Dateisuche (find) und Öffnen von Dateien (xdg-open)
+# Dateisuche (find)
 findutils
-xdg-utils
+# Öffnen von Dateien und Ordnern (zenos-oeffnen): gio open und die Zuordnung Dateityp → App.
+# gio liest die Zuordnungen aus mimeinfo.cache, das update-desktop-database schreibt.
+libglib2.0-bin
+desktop-file-utils
