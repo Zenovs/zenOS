@@ -96,6 +96,10 @@ die Rechte sind minimal (`contents: read` beim Bau, `contents: write` nur im Rel
   `SHA256SUMS` und Grösse unter 2 GiB prüfen, Zusammenfassung im Lauf. Image, `SHA256SUMS` und
   Versionshinweise gehen als Artefakt `zenos-<version>-pi5-arm64` mit (Release-Tags 3 Tage, `-rc` 14 Tage),
   das Install-Log als eigenes Artefakt, auch wenn der Bau scheitert.
+- **Annotationen:** `bauen.sh` läuft mit `sudo --preserve-env=GITHUB_ACTIONS`. sudo setzt die Umgebung zurück
+  (`env_reset`), ohne diese eine Variable stünden Warnungen und Fehler von `bauen.sh` nur im Log und nicht als
+  `::warning::`/`::error::` im Lauf. Weitere Variablen reicht der Workflow nicht durch, der chroot bekommt
+  ohnehin eine leere Umgebung.
 - **Tags mit `-rc`** (z. B. `v0.1.0-rc1`): nur das Artefakt, kein Release.
 - **Andere Tags**: Job «Release» (`ubuntu-24.04`) prüft das Artefakt erneut und erstellt mit
   `gh release create --verify-tag` das Release mit `zenos-<version>-pi5-arm64.img.xz` und `SHA256SUMS`. Tags mit
@@ -122,7 +126,15 @@ Die Grundlage (Ubuntu-Datei und SHA-256) steht in den Versionshinweisen und in `
 
 ## Erster Start eines Images
 
-- cloud-init aus dem Ubuntu-Image legt den Benutzer an (ohne Einstellungen `ubuntu`/`ubuntu` mit
-  Passwortwechsel, sonst die Angaben aus dem Raspberry Pi Imager), erzeugt neue SSH-Hostschlüssel und
-  vergrössert Partition und Dateisystem. systemd erzeugt eine neue `machine-id`.
+- cloud-init aus dem Ubuntu-Image legt den Benutzer an, erzeugt neue SSH-Hostschlüssel und vergrössert
+  Partition und Dateisystem. systemd erzeugt eine neue `machine-id`.
+- **Mit Einstellungen im Raspberry Pi Imager** (Benutzer, Passwort, optional SSH-Schlüssel) geht die erste
+  Anmeldung direkt im zenOS-Login. Das ist der empfohlene Weg.
+- **Ohne Einstellungen** (balenaEtcher, oder der Imager bietet keine an) legt cloud-init `ubuntu`/`ubuntu` mit
+  abgelaufenem Passwort an. Im zenOS-Login lässt sich das Passwort nicht ändern: greetd 0.10 ruft kein
+  `pam_chauthtok` auf und lehnt ab (`pam_acct_mgmt: NEW_AUTHTOK_REQD`). Der Wechsel geht an der Textkonsole
+  (`Ctrl + Alt + F2`, mit `ubuntu`/`ubuntu` anmelden, neues Passwort setzen, `exit`, zurück mit
+  `Ctrl + Alt + F7`) oder per SSH. greetd läuft auf VT 7, die Textkonsolen auf den anderen. Die
+  Versionshinweise jedes Releases beschreiben das. Die erzwungene Passwortänderung bleibt bewusst, sonst
+  bliebe das Standardpasswort bestehen.
 - Die Benutzerteile von zenOS kommen beim ersten Login (`zenos-sitzung` ruft `install.sh --nur-benutzer`).

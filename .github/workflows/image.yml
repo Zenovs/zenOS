@@ -66,8 +66,9 @@ jobs:
           VERSION: ${{ steps.tag.outputs.version }}
           ORIGIN: ${{ github.server_url }}/${{ github.repository }}
         run: |
-          sudo image/bauen.sh --ref "refs/tags/$TAG" --version "$VERSION" --origin "$ORIGIN" \
-            --arbeit "$RUNNER_TEMP/image" --ausgabe "$RUNNER_TEMP/ausgabe"
+          # sudo setzt die Umgebung zurück: ohne GITHUB_ACTIONS gibt bauen.sh keine ::warning::/::error:: aus
+          sudo --preserve-env=GITHUB_ACTIONS image/bauen.sh --ref "refs/tags/$TAG" --version "$VERSION" \
+            --origin "$ORIGIN" --arbeit "$RUNNER_TEMP/image" --ausgabe "$RUNNER_TEMP/ausgabe"
 
       - name: Ergebnis prüfen
         env:
@@ -100,7 +101,9 @@ jobs:
           zenOS $VERSION für den Raspberry Pi 5 (arm64), basiert auf Ubuntu 26.04 LTS Server.
 
           - Prüfen: \`sha256sum -c SHA256SUMS\`
-          - Schreiben: mit dem Raspberry Pi Imager («Eigenes Image») oder balenaEtcher auf SD-Karte, USB-Stick oder NVMe.
+          - Schreiben: am besten mit dem Raspberry Pi Imager («Eigenes Image»), dort unter «Einstellungen» Benutzer und Passwort setzen (optional SSH mit deinem öffentlichen Schlüssel). balenaEtcher geht auch, dann ohne Einstellungen. Ziel: SD-Karte, USB-Stick oder NVMe.
+          - Erste Anmeldung: Beim ersten Start ein bis zwei Minuten warten, bis cloud-init den Benutzer angelegt hat. Mit Einstellungen aus dem Imager meldest du dich direkt im zenOS-Login an.
+          - Ohne Einstellungen heisst der Benutzer \`ubuntu\` mit Passwort \`ubuntu\`, und das Passwort muss zuerst geändert werden. Das geht nicht im zenOS-Login: Mit \`Ctrl + Alt + F2\` zur Textkonsole wechseln, dort mit \`ubuntu\` / \`ubuntu\` anmelden, ein neues Passwort setzen und mit \`exit\` abmelden. Mit \`Ctrl + Alt + F7\` zurück zum zenOS-Login und dort mit dem neuen Passwort anmelden.
           - Chrome, VS Code und 1Password sind nicht enthalten. Die Einrichtung beim ersten Start installiert sie auf Wunsch aus den offiziellen Quellen der Hersteller.
           - Grundlage: \`$ubuntu_datei\` (SHA-256 \`$ubuntu_sha\`), Signatur von SHA256SUMS mit dem Ubuntu-CD-Schlüssel geprüft.
           EOF
