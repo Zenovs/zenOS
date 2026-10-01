@@ -8,6 +8,8 @@ an; eine Version entspricht einem Tag `v…` im Repo.
 ### Geändert
 
 - **Natürliches Scrollen** wie auf dem Mac, für Touchpad und Maus (labwc, `rc.xml`).
+- **Fenstergrösse leichter ziehen:** Ränder wirken mindestens 16 px breit (vorher 8), Ecken greifen auf 40 px
+  entlang jeder Kante (vorher 17).
 
 ## 0.1.0-rc2 – 2026-09-28
 

@@ -23,6 +23,16 @@
     <raiseOnFocus>no</raiseOnFocus>
   </focus>
 
+  <!--
+    Grössere Griffzonen zum Ziehen der Fenstergrösse: Ränder wirken mindestens 16 px breit (unsichtbar über das
+    Fenster hinaus, labwc-Vorgabe 8), Ecken auf 40 px entlang jeder Kante (Vorgabe: halbe Titelzeile, 17 px).
+    Gilt für Fenster mit Rahmen von labwc; Apps mit eigenem Rahmen bestimmen ihre Ränder selbst.
+  -->
+  <resize>
+    <minimumArea>16</minimumArea>
+    <cornerRange>40</cornerRange>
+  </resize>
+
   <!-- Natürliches Scrollen wie auf dem Mac: Der Inhalt folgt den Fingern bzw. dem Rad, für Touchpad und Maus -->
   <libinput>
     <device category="default">
