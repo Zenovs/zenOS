@@ -23,6 +23,13 @@
     <raiseOnFocus>no</raiseOnFocus>
   </focus>
 
+  <!-- Natürliches Scrollen wie auf dem Mac: Der Inhalt folgt den Fingern bzw. dem Rad, für Touchpad und Maus -->
+  <libinput>
+    <device category="default">
+      <naturalScroll>yes</naturalScroll>
+    </device>
+  </libinput>
+
   <!-- Titelzeile 34 px (mit themerc-override), Radius oben, nur der Schliessen-Knopf -->
   <theme>
     <cornerRadius>@@RADIUS@@</cornerRadius>
