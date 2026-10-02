@@ -297,7 +297,7 @@ Die Logik läuft in Quickshell selbst, ohne eigenen Hintergrunddienst.
 | Weiterer Zustand | `~/.local/state/zenos/` (`thema.json`: zuletzt übertragener Akzent; Merker für die Vorlagen) | nie |
 | Nutzungsstatistik | `~/.local/share/zenos/befehlsfeld.json` (nur Desktop-IDs und Zähler) | nie |
 | Flüchtige Marker | `$XDG_RUNTIME_DIR/zenos/` (`gesperrt`, `freigabe`, `freigabe.neu`, `freigabe-wahl`, `freigabe-eintraege`, `freigabe-ende`, Sperrdateien) | nie |
-| Bildschirmfotos | `~/Bilder/Screenshots/` | nie |
+| Bildschirmfotos | `~/Ablage/Screenshots/` | nie |
 | Ablage | `~/Ablage` (beim Anlegen 0700), dorthin zeigen Schreibtisch, Downloads, Dokumente, Bilder, Musik, Videos | nie |
 | Benutzerordner | `~/.config/user-dirs.dirs`, `~/.config/user-dirs.conf` (zenOS schreibt sie nur, solange die erste Zeile die Marke von `48-ablage` trägt) | nein, erzeugt |
 | Thunar-Aktionen | `~/.config/Thunar/uca.xml` aus `system/thunar/uca.xml` («Terminal hier öffnen» mit kitty; nur mit der Marke von `48-ablage` in der ersten Zeile) | nein, erzeugt |

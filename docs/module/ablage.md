@@ -95,7 +95,9 @@ fehlender Symbole.
 - **Papierkorb ohne gvfs:** Entf verschiebt auch ohne gvfs in den Papierkorb (GLib, `~/.local/share/Trash`; im
   Container geprüft). Nur die Ansicht des Papierkorbs in Thunar fehlt. gvfs brächte 33 Pakete mit, darunter
   udisks2 als Systemdienst; deshalb vorerst nicht (offen).
-- **Bildschirmfotos** bleiben in `~/Bilder/Screenshots` (`zenos-bildschirmfoto`, Vorgabe aus dem Bauauftrag).
+- **Bildschirmfotos** liegen in `~/Ablage/Screenshots` (Wunsch von Zeno, 02.10.2026; der Bauauftrag sah
+  `~/Bilder/Screenshots` vor). `_ablage_screenshots` legt den Unterordner an und entfernt den alten Ort nur, wenn er
+  leer ist; liegen dort Bilder, bleibt er mit einem Hinweis im Protokoll.
 
 ## Im Container geprüft
 

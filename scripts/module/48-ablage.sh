@@ -30,6 +30,7 @@ modul_system() {
 modul_benutzer() {
   local uca=$ZENOS_CODE/system/thunar/uca.xml
   _ablage_ordner
+  _ablage_screenshots
   _ablage_eigene_datei "$ZENOS_HOME/.config/user-dirs.dirs" "$(_ablage_marke)" < <(_ablage_user_dirs)
   _ablage_eigene_datei "$ZENOS_HOME/.config/user-dirs.conf" "$(_ablage_marke)" <<EOF
 $(_ablage_marke)
@@ -65,6 +66,25 @@ _ablage_ordner() {
   # -m setzt den Modus unabhängig von der umask
   mkdir -m 0700 -- "$ablage"
   aenderung "Ordner $ablage"
+}
+
+# Bildschirmfotos (zenos-bildschirmfoto) liegen in ~/Ablage/Screenshots. Der Unterordner entsteht gleich hier,
+# damit er in der Ablage sichtbar ist. Der frühere Ort ~/Bilder/Screenshots verschwindet nur, wenn er leer ist
+# (ebenso ein danach leeres ~/Bilder); liegen dort noch Bilder, bleiben sie, und das Protokoll sagt, wie man sie holt.
+_ablage_screenshots() {
+  local ablage=$ZENOS_HOME/Ablage alt=$ZENOS_HOME/Bilder/Screenshots
+  [[ -d "$ablage" ]] || return 0
+  if [[ ! -e "$ablage/Screenshots" && ! -L "$ablage/Screenshots" ]]; then
+    mkdir -- "$ablage/Screenshots"
+    aenderung "Ordner $ablage/Screenshots"
+  fi
+  [[ -d "$alt" && ! -L "$alt" ]] || return 0
+  if rmdir -- "$alt" 2> /dev/null; then
+    aenderung "leeren Ordner $alt entfernt (Bildschirmfotos liegen jetzt in $ablage/Screenshots)"
+    if rmdir -- "$ZENOS_HOME/Bilder" 2> /dev/null; then aenderung "leeren Ordner $ZENOS_HOME/Bilder entfernt"; fi
+  else
+    log_info "Hinweis: In $alt liegen noch Bildschirmfotos. Holen mit: mv ~/Bilder/Screenshots/* ~/Ablage/Screenshots/"
+  fi
 }
 
 # Inhalt von ~/.config/user-dirs.dirs. Apps lesen die Datei selbst (GLib, Qt, Chrome, Firefox), ein Paket braucht

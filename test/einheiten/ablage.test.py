@@ -110,13 +110,14 @@ class AblageTest(unittest.TestCase):
 
     def test_frisches_home(self):
         aenderungen, warnungen, _ = self.benutzerteil()
-        self.assertEqual((aenderungen, warnungen), (4, 0))
+        # Ablage, Ablage/Screenshots, user-dirs.dirs, user-dirs.conf, uca.xml
+        self.assertEqual((aenderungen, warnungen), (5, 0))
         modus = os.stat(self.pfad("Ablage")).st_mode
         self.assertTrue(stat.S_ISDIR(modus))
         self.assertEqual(stat.S_IMODE(modus), 0o700)
         # Keine Ubuntu-Struktur: nur die Ablage und .config
         self.assertEqual(sorted(os.listdir(self.home)), [".config", "Ablage"])
-        self.assertEqual(os.listdir(self.pfad("Ablage")), [])
+        self.assertEqual(os.listdir(self.pfad("Ablage")), ["Screenshots"])
 
     def test_zweiter_lauf_aendert_nichts(self):
         self.benutzerteil()
@@ -128,9 +129,9 @@ class AblageTest(unittest.TestCase):
         with open(self.pfad("Ablage", "Rechnung.pdf"), "w", encoding="utf-8") as f:
             f.write("Inhalt")
         aenderungen, warnungen, _ = self.benutzerteil()
-        self.assertEqual((aenderungen, warnungen), (3, 0))
+        self.assertEqual((aenderungen, warnungen), (4, 0))
         self.assertEqual(stat.S_IMODE(os.stat(self.pfad("Ablage")).st_mode), 0o755)
-        self.assertEqual(sorted(os.listdir(self.pfad("Ablage"))), ["Projekt", "Rechnung.pdf"])
+        self.assertEqual(sorted(os.listdir(self.pfad("Ablage"))), ["Projekt", "Rechnung.pdf", "Screenshots"])
         with open(self.pfad("Ablage", "Rechnung.pdf"), encoding="utf-8") as f:
             self.assertEqual(f.read(), "Inhalt")
 
@@ -139,7 +140,7 @@ class AblageTest(unittest.TestCase):
         os.makedirs(ziel)
         os.symlink(ziel, self.pfad("Ablage"))
         aenderungen, warnungen, _ = self.benutzerteil()
-        self.assertEqual((aenderungen, warnungen), (3, 0))
+        self.assertEqual((aenderungen, warnungen), (4, 0))
         self.assertTrue(os.path.islink(self.pfad("Ablage")))
         self.assertEqual(os.readlink(self.pfad("Ablage")), ziel)
         self.assertIn("ok: Ablage: ~/Ablage ist ein Verweis auf einen Ordner", self.doctor())
@@ -177,8 +178,8 @@ class AblageTest(unittest.TestCase):
         with open(self.pfad(".config", "user-dirs.dirs"), "w", encoding="utf-8") as f:
             f.write(eigen)
         aenderungen, warnungen, ausgabe = self.benutzerteil()
-        # Ablage, user-dirs.conf und uca.xml, nicht user-dirs.dirs
-        self.assertEqual((aenderungen, warnungen), (3, 0))
+        # Ablage, Ablage/Screenshots, user-dirs.conf und uca.xml, nicht user-dirs.dirs
+        self.assertEqual((aenderungen, warnungen), (4, 0))
         self.assertIn("user-dirs.dirs stammt nicht von zenOS und bleibt unverändert", ausgabe)
         with open(self.pfad(".config", "user-dirs.dirs"), encoding="utf-8") as f:
             self.assertEqual(f.read(), eigen)
@@ -188,9 +189,27 @@ class AblageTest(unittest.TestCase):
         os.makedirs(self.pfad(".config"))
         with open(self.pfad(".config", "user-dirs.conf"), "w", encoding="utf-8") as f:
             f.write("enabled=True\n")
-        self.assertEqual(self.benutzerteil()[:2], (3, 0))
+        self.assertEqual(self.benutzerteil()[:2], (4, 0))
         with open(self.pfad(".config", "user-dirs.conf"), encoding="utf-8") as f:
             self.assertEqual(f.read(), "enabled=True\n")
+
+    def test_leerer_alter_screenshot_ordner_verschwindet(self):
+        os.makedirs(self.pfad("Bilder", "Screenshots"))
+        aenderungen, warnungen, _ = self.benutzerteil()
+        # wie frisch, dazu Bilder/Screenshots und Bilder entfernt
+        self.assertEqual((aenderungen, warnungen), (7, 0))
+        self.assertFalse(os.path.exists(self.pfad("Bilder")))
+        self.assertTrue(os.path.isdir(self.pfad("Ablage", "Screenshots")))
+        self.assertEqual(self.benutzerteil()[:2], (0, 0))
+
+    def test_alter_screenshot_ordner_mit_bildern_bleibt(self):
+        os.makedirs(self.pfad("Bilder", "Screenshots"))
+        with open(self.pfad("Bilder", "Screenshots", "alt.png"), "wb") as f:
+            f.write(b"png")
+        aenderungen, warnungen, ausgabe = self.benutzerteil()
+        self.assertEqual((aenderungen, warnungen), (5, 0))
+        self.assertTrue(os.path.isfile(self.pfad("Bilder", "Screenshots", "alt.png")))
+        self.assertIn("mv ~/Bilder/Screenshots/* ~/Ablage/Screenshots/", ausgabe)
 
     def test_alte_fassung_von_zenos_wird_erneuert(self):
         os.makedirs(self.pfad(".config"))
@@ -251,7 +270,8 @@ class AblageTest(unittest.TestCase):
         with open(self.uca(), "w", encoding="utf-8") as f:
             f.write(eigen)
         aenderungen, warnungen, ausgabe = self.benutzerteil()
-        self.assertEqual((aenderungen, warnungen), (3, 0))
+        # Ablage, Ablage/Screenshots, user-dirs.dirs, user-dirs.conf, nicht uca.xml
+        self.assertEqual((aenderungen, warnungen), (4, 0))
         self.assertNotIn("uca.xml", ausgabe)
         with open(self.uca(), encoding="utf-8") as f:
             self.assertEqual(f.read(), eigen)

@@ -320,7 +320,7 @@ unter «Am Pi prüfen».
 - [ ] `1440 / 16` zeigt `90`, Enter kopiert den Wert («90 kopiert»).
 - [ ] Apps starten, Dateien im Home-Ordner finden und öffnen.
 - [ ] Mit `Tab` zu den Werkzeugen: Das Bildschirmfoto eines Bereichs landet in der Zwischenablage und in
-  `~/Bilder/Screenshots`. Dasselbe mit `Print` und `Super + Shift + S`.
+  `~/Ablage/Screenshots`. Dasselbe mit `Print` und `Super + Shift + S`.
 - [ ] Die Pipette (`Super + Shift + C`) kopiert per Klick einen Farbwert wie `#A7B89F`.
 - [ ] Aktionen wie «Hell/Dunkel», «Sperren» und «Einstellungen» funktionieren auch von hier.
 - [ ] Sind die Apps installiert, zeigt die Suche «chrome» Chrome ohne die Zeile «Apps installieren». «apps» zeigt

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # zenos-bildschirmfoto – Bildschirmfoto eines Bereichs: Bereich wählen (slurp), aufnehmen (grim),
-# als PNG nach ~/Bilder/Screenshots/ speichern und zugleich in die Zwischenablage kopieren (wl-copy).
+# als PNG nach ~/Ablage/Screenshots/ speichern und zugleich in die Zwischenablage kopieren (wl-copy).
 #
 #   zenos-bildschirmfoto          Bereich mit der Maus wählen
 #   zenos-bildschirmfoto --ganz   ganzer Bildschirm (alle Ausgänge)
@@ -89,7 +89,7 @@ elif (( ! ganz )); then
   [[ -n "$bereich" ]] || exit 0
 fi
 
-ziel="$HOME/Bilder/Screenshots"
+ziel="$HOME/Ablage/Screenshots"
 mkdir -p -- "$ziel"
 stempel=$(date +%Y-%m-%d_%H-%M-%S)
 datei="$ziel/Bildschirmfoto_$stempel.png"

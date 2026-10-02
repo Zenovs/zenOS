@@ -230,7 +230,8 @@ Damit Browser und Apps dort speichern, zeigen die XDG-Benutzerordner in `~/.conf
 - «Terminal hier öffnen» (Rechtsklick in Thunar) startet kitty im Ordner: `~/.config/Thunar/uca.xml` aus
   `system/thunar/uca.xml`, gleiche Regel mit der Marke in der ersten Zeile. Legst du in Thunar eigene Aktionen an,
   schreibt Thunar die Datei ohne Marke neu, und zenOS lässt sie in Ruhe.
-- Bildschirmfotos landen weiter in `~/Bilder/Screenshots` (`zenos-bildschirmfoto`), nicht in der Ablage.
+- Bildschirmfotos landen im Unterordner `~/Ablage/Screenshots` (`zenos-bildschirmfoto`); `install.sh` legt ihn an.
+  Ein leerer früherer Ordner `~/Bilder/Screenshots` (bis 0.1) verschwindet, einer mit Bildern bleibt mit einem Hinweis.
 
 ## Systemweit
 

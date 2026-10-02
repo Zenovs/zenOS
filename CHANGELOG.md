@@ -38,7 +38,9 @@ an; eine Version entspricht einem Tag `v…` im Repo.
 - **Ablage:** `~/Ablage` ist der eine Ordner für deine Dateien, ohne vorgegebene Struktur. Ein Knopf mit
   Ordner-Symbol rechts neben dem Raster («4er») und die Aktion «Ablage» im Befehlsfeld öffnen ihn im Dateimanager.
   Downloads, Dokumente, Bilder, Musik und Videos landen dort (`~/.config/user-dirs.dirs`); Ordner wie Downloads oder
-  Dokumente legt zenOS nicht an. Bildschirmfotos bleiben in `~/Bilder/Screenshots`.
+  Dokumente legt zenOS nicht an.
+- **Bildschirmfotos in `~/Ablage/Screenshots`** (vorher `~/Bilder/Screenshots`). Ein leerer alter Ordner
+  verschwindet, einer mit Bildern bleibt, und `install.sh` sagt, wie man sie holt.
 - **Dateimanager Thunar** (von Ubuntu, im Image): öffnet Ordner aus dem Befehlsfeld und die Ablage, folgt hell und
   dunkel, ohne Indexer im Hintergrund. Vorher öffneten Ordner in kitty. «Terminal hier öffnen» im Rechtsklick
   startet kitty im Ordner. `zen doctor` prüft Ablage und Dateimanager.
