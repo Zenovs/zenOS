@@ -22,7 +22,11 @@ Scope {
             const loginShell = f[6].trim();
             if (loginShell.length === 0 || /(^|\/)(nologin|false)$/.test(loginShell))
                 continue;
-            const gecos = f[4].split(",")[0].trim();
+            let gecos = f[4].split(",")[0].trim();
+            // cloud-init gibt dem ersten Benutzer eines Ubuntu-Images den Anzeigenamen «Ubuntu» (default_user),
+            // auch wenn der Raspberry Pi Imager einen eigenen Login setzt. Das ist kein Name: dann den Login zeigen.
+            if (gecos.toLowerCase() === "ubuntu" && f[0] !== "ubuntu")
+                gecos = "";
             result.push({
                 name: f[0],
                 anzeige: gecos.length > 0 ? gecos : f[0]
