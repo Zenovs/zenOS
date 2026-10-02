@@ -9,10 +9,11 @@ was davon erst «Danach» kommt oder noch ohne Wirkung ist.
 
 | Funktion | Kurz | 0.1 |
 |---|---|---|
-| Leiste | Modus, Zustand, Raster links · Zeit und nächster Termin in der Mitte · Dev-Server, Mitteilungen, System rechts | ✓ (Termin und Dev-Server «Danach») |
+| Leiste | Modus, Zustand, Raster und Ablage links · Zeit und nächster Termin in der Mitte · Dev-Server, Mitteilungen, System rechts | ✓ (Termin und Dev-Server «Danach»; Ablage nach 0.1, unveröffentlicht) |
 | Befehlsfeld | `Super + Leertaste`: Apps, Web-Apps, rechnen, Dateien, Modi, Zustände, Werkzeuge · Klick auf das Zeichen: alle installierten Apps als Raster | ✓ (Werkzeuge: Screenshot und Pipette; Projekte «Danach»; App-Übersicht nach 0.1, unveröffentlicht) |
 | Hell und dunkel | ein Schalter, systemweit; optional nach Tageszeit | ✓ |
 | Touchpad und Maus | natürliches Scrollen; Scroll-Tempo in Einstellungen → Allgemein (Langsam, Normal, Schnell, Sehr schnell), wirkt sofort | ✓ (nach 0.1, unveröffentlicht) |
+| Ablage | ein Ordner `~/Ablage` ohne vorgegebene Struktur; Downloads, Dokumente und Bilder landen dort; der Knopf rechts neben dem Raster und die Aktion «Ablage» im Befehlsfeld öffnen ihn im Dateimanager | ✓ (nach 0.1, unveröffentlicht) |
 | Modi | selbst angelegt; bestimmen Akzent, Chrome-Profil, Mail-Konten, «Heute»-Inhalte, Apps, Raster | ✓ (Mail-Konten und «Heute»-Inhalte noch ohne Wirkung) |
 | Zustände | selbst angelegt; Vorlagen Fokus und Sitzung; pro Modus anpassbar | ✓ (`fenster: fokus`, Widgets und Auslöser «Kalender» noch ohne Wirkung) |
 | Sitzung | startet bei Bildschirmfreigabe; hält Mitteilungen zurück, blendet Privates aus | ✓ |
@@ -31,6 +32,7 @@ was davon erst «Danach» kommt oder noch ohne Wirkung ist.
 |---|---|---|
 | Chrome | Standardbrowser, abgesichert über Richtlinien | ✓ (nach Zustimmung) |
 | Firefox | zweiter Browser | noch nicht installiert |
+| Thunar | Dateimanager (von Ubuntu, im Image), öffnet Ordner und die Ablage | ✓ (nach 0.1, unveröffentlicht) |
 | coremail | Standard-Mailprogramm | ✓ (nach Zustimmung, arm64-Release; noch nicht Standard für `mailto:`, weil sich coremail dafür noch nicht anmeldet – zenOS trägt es ein, sobald es das tut) |
 | VS Code | Editor | ✓ (nach Zustimmung, Telemetrie per Richtlinie aus) |
 | 1Password | Passwörter, SSH-Agent, API-Schlüssel | ✓ (nach Zustimmung, mit CLI `op`) |

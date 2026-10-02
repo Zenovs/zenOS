@@ -1,0 +1,6 @@
+# Ablage und Dateimanager (48-ablage)
+# 20-pakete installiert die Vereinigung aller Listen; 48-ablage prüft nur nach.
+
+# Dateimanager für Ordner und die Ablage (Knopf in der Leiste, Aktion «Ablage»): Thunar, GTK3, folgt hell/dunkel
+# über gtk-theme (zenos-thema), ohne Indexer, deutsch übersetzt. Vergleich und Gründe: docs/module/ablage.md.
+thunar

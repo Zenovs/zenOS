@@ -187,8 +187,11 @@ Formularfehler erscheinen nicht als Hinweis, sondern ruhig unter dem Formular.
 ### Leiste (40 px)
 
 - **Links, «wo bin ich»:** Zeichen (18 px, unterer Stein im Modus-Akzent), Modus-Chip, Zustand-Chip (nur wenn aktiv,
-  mit Restzeit), Raster (Kurzname). Das Zeichen ist ein Knopf wie die übrigen der Leiste (Zeigen färbt leicht ein):
-  Ein Klick öffnet die App-Übersicht des Befehlsfelds, ein zweiter schliesst sie.
+  mit Restzeit), Raster (Kurzname), direkt daneben die Ablage. Das Zeichen ist ein Knopf wie die übrigen der Leiste
+  (Zeigen färbt leicht ein): Ein Klick öffnet die App-Übersicht des Befehlsfelds, ein zweiter schliesst sie.
+- **Ablage:** Knopf mit dem Symbol `ordner` (15 px, `text`), 32 px breit wie Hell/Dunkel, 6 px rechts vom Raster.
+  Ein Klick öffnet `~/Ablage` im Dateimanager (Thunar). Er erscheint und verschwindet mit dem Raster (Leiste
+  `reduziert` und `aus` ohne ihn).
 - **Mitte:** Datum und Uhrzeit in Geist Mono. Der nächste Termin kommt «Danach».
 - **Rechts:** Mitteilungen mit nächster Zustellung («3 · 10:00», «2 warten»), Hell/Dunkel (Mond im Hellen, Sonne im
   Dunkeln), System-Knopf auf `abgesetzt` (Netz, Ton, 1Password, Temperatur, mit Akku zuletzt der Akku). Die
@@ -199,8 +202,8 @@ Formularfehler erscheinen nicht als Hinweis, sondern ruhig unter dem Formular.
   Strichen, beim Laden ein Blitz; daneben die Prozent in Geist Mono 12 («87 %»), beides in `text`. Bei höchstens
   10 % im Akkubetrieb stehen Symbol und Zahl in `warnung`, ruhig und ohne Blinken. Ohne sicheren Messwert nur das
   leere Symbol in `gedaempft`.
-- **Zustand und Leiste:** Ein Zustand kann die Leiste zurücknehmen (Schlüssel `leiste`). `reduziert` blendet Raster
-  und Hell/Dunkel aus, `aus` lässt nur Zustand und Uhrzeit stehen. Der Platz bleibt in beiden Fällen reserviert,
+- **Zustand und Leiste:** Ein Zustand kann die Leiste zurücknehmen (Schlüssel `leiste`). `reduziert` blendet Raster,
+  Ablage und Hell/Dunkel aus, `aus` lässt nur Zustand und Uhrzeit stehen. Der Platz bleibt in beiden Fällen reserviert,
   damit Fenster nicht springen. Einzelheiten in `docs/module/m4.md`.
 
 ### «Heute»

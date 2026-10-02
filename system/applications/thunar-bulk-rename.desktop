@@ -1,0 +1,7 @@
+# zenOS: blendet «Bulk Rename» (Thunar) im Befehlsfeld und in der App-Übersicht aus. Umbenennen mehrerer Dateien
+# bleibt in Thunar (Rechtsklick → Umbenennen). Installiert nach /usr/local/share/applications/ (48-ablage);
+# Hidden=true heisst «gelöscht» und überdeckt /usr/share/applications/thunar-bulk-rename.desktop.
+[Desktop Entry]
+Type=Application
+Name=Bulk Rename
+Hidden=true

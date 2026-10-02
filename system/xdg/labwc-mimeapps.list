@@ -1,0 +1,6 @@
+# zenOS: Standard-Apps der labwc-Sitzung (XDG_CURRENT_DESKTOP=labwc:wlroots).
+# Installiert nach /etc/xdg/labwc-mimeapps.list (48-ablage). Gilt nur in der zenOS-Sitzung, nicht in einer anderen
+# (etwa GNOME). Deine Wahl in ~/.config/mimeapps.list geht immer vor.
+# Ordner öffnet Thunar, auch wenn später eine andere App sie annimmt (VS Code meldet inode/directory an).
+[Default Applications]
+inode/directory=thunar.desktop

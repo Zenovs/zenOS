@@ -138,6 +138,16 @@ test/container/oberflaeche.sh stopp
   pro Sitzung vorab ein harmloses `Shift_L`.
 - Im Software-Backend fehlen `MultiEffect` und `RectangularShadow` (brauchen RHI). Schatten dort nicht
   beurteilen. `Shape` mit `preferredRendererType: Shape.CurveRenderer` rendert sauber.
+- GTK3-Apps mit Symbolen (Thunar, GTK-Dateiauswahl) brechen im Container ab: gdk-pixbuf 2.44 lädt jedes Bild über
+  glycin in einer bwrap-Sandbox, und bwrap kann im Container kein Loopback im eigenen Netz-Namespace einrichten
+  («RTM_NEWADDR: Operation not permitted»). Auf dem Pi ist die Sandbox vorgesehen (AppArmor-Profile für glycin im
+  Paket apparmor); dort am Gerät prüfen.
+  Prüfbar bleibt, dass sie gestartet werden (Journal: `app-zenos-oeffnen-….scope`, Befehlszeile der App).
+  Thunar liest vor dem Abbruch noch `~/.config/Thunar/uca.xml` (fehlt einer Aktion die `unique-id`, schreibt es die
+  Datei neu); so lässt sich prüfen, ob es die Datei annimmt. Thunar dabei nicht aus `~/zenOS` starten: Der Abbruch
+  legt `core.*` im Arbeitsordner ab, und `install.sh` kopiert sie sonst nach `/opt/zenos`.
+- Mausklicks: `wlrctl pointer move -3000 -3000`, dann `wlrctl pointer move X Y` und `wlrctl pointer click left`
+  (Paket wlrctl, im Basis-Image nicht enthalten).
 
 ## Sitzung wie auf dem Pi
 

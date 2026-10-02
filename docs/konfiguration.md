@@ -15,9 +15,13 @@ Eine Datei unter `modi/`, `zustaende/` oder `raster/` mit ungültigem Inhalt feh
 | `~/.config/zenos/bildschirme.json` | Bildschirm-Profile | Einstellungen → Bildschirme; Vorlage, falls sie fehlt |
 | `~/.config/zenos/webapps.json` | Web-Apps | Einstellungen → Web-Apps (`zenos-webapp`) |
 | `~/.local/state/zenos/laufzeit.json` | was gerade gilt | die Oberfläche und `zenos-labwc`, nie von Hand |
+| `~/Ablage` | der eine Ordner für eigene Dateien | Installer, wenn er fehlt (0700); danach nur du |
+| `~/.config/user-dirs.dirs`, `~/.config/user-dirs.conf` | Benutzerordner (Downloads, Dokumente …) → `~/Ablage` | Installer, solange die erste Zeile die zenOS-Marke trägt |
+| `~/.config/Thunar/uca.xml` | Thunar-Aktion «Terminal hier öffnen» (kitty) | Installer, solange die erste Zeile die zenOS-Marke trägt; danach Thunar (eigene Aktionen) |
 | `/etc/xdg/zenos/kanal` | Kanal für `zen update` | Installer beim ersten Mal |
 | `/etc/xdg/zenos/argon.json` | Lüfterkurve (optional) | von Hand mit sudo |
 | `/etc/xdg/zenos/argon-akkuprofil` | Freigabe: zenos-argon darf Argons Akkuprofil in den Messchip schreiben (Argon ONE UP) | `zen akku freigeben`, entfernt mit `zen akku sperren` |
+| `/etc/xdg/labwc-mimeapps.list` | Standard-Apps der zenOS-Sitzung (Ordner: Thunar) | Installer |
 
 Die ID ist der Dateiname ohne `.json` (Kleinbuchstaben, Ziffern, Bindestriche). Geschrieben wird mit `zenos-konfig`
 (`scripts/bin/`): Es prüft gegen das Schema und darüber hinaus (Akzent aus den Tokens, Raster im Bildschirm,
@@ -68,7 +72,7 @@ für dieses Profil dem des Profils vor.
 |---|---|
 | `name` | Text (Pflicht) |
 | `mitteilungen` | `alle` · `gebuendelt-<minuten>` (1–1440) · `nur-dringend` · `keine` |
-| `leiste` | `normal` · `reduziert` (ohne Raster und Hell/Dunkel) · `aus` (nur Zustand und Uhrzeit); der Platz bleibt reserviert |
+| `leiste` | `normal` · `reduziert` (ohne Raster, Ablage und Hell/Dunkel) · `aus` (nur Zustand und Uhrzeit); der Platz bleibt reserviert |
 | `fenster` | `normal` · `fokus` (alles ausser dem aktiven Fenster tritt zurück) – noch ohne Wirkung, später |
 | `heute` | `true` · `false` (blendet den Inhalt von «Heute» aus) |
 | `widgets` | `true` · `false` – noch ohne Wirkung, später |
@@ -198,6 +202,35 @@ obersten Schlüssel zusammen), damit sich Oberfläche und `zenos-labwc` nicht ge
 | `zustand` | `{ id, seit, ende, endeArt, ausloeser, vorher }` oder `null`; `vorher` ist der Zustand, der nach einer Sitzung zurückkommt | Oberfläche (`Zustaende`) |
 | `raster` | ID des aktiven Rasters | `zenos-labwc` |
 | `profil` | Name des aktiven Bildschirm-Profils | `zenos-labwc` (über kanshi) |
+
+## Ablage und Benutzerordner
+
+`~/Ablage` ist der eine Ordner für eigene Dateien, ohne vorgegebene Struktur und ohne Unterordner ab Werk. Der
+Installer (`48-ablage`) legt ihn an, wenn er fehlt (0700, nur für dich lesbar), und lässt ihn danach in Ruhe: Er
+löscht und verschiebt ihn nie und setzt die Rechte nicht zurück. Ein Verweis auf einen anderen Ordner (etwa einen
+Sync-Ordner) ist erlaubt. Öffnen: Knopf rechts neben dem Raster in der Leiste oder «Ablage» im Befehlsfeld.
+
+Damit Browser und Apps dort speichern, zeigen die XDG-Benutzerordner in `~/.config/user-dirs.dirs` darauf:
+
+| Eintrag | Ziel |
+|---|---|
+| `XDG_DESKTOP_DIR`, `XDG_DOWNLOAD_DIR`, `XDG_DOCUMENTS_DIR`, `XDG_PICTURES_DIR`, `XDG_MUSIC_DIR`, `XDG_VIDEOS_DIR` | `"$HOME/Ablage"` |
+| `XDG_TEMPLATES_DIR`, `XDG_PUBLICSHARE_DIR` | `"$HOME/"` (bei xdg-user-dirs «abgeschaltet») |
+
+- Vorlagen und Öffentlich zeigen bewusst nicht auf die Ablage: Thunar liest den Vorlagen-Ordner bei «Dokument
+  erstellen» rekursiv ein und böte jede Datei der Ablage als Vorlage an, und «Öffentlich» ist der Ordner, den
+  Freigabe-Dienste ins Netz stellen.
+- `~/.config/user-dirs.conf` mit `enabled=False`: Kommt das Paket xdg-user-dirs einmal mit einer anderen App dazu,
+  setzt `xdg-user-dirs-update` bei der Anmeldung nichts zurück und legt keine Ordner (Desktop, Downloads …) an.
+- Beide Dateien schreibt zenOS nur, solange ihre erste Zeile `# zenOS: Benutzerordner zeigen auf ~/Ablage …` lautet.
+  Eigene Fassung: diese Zeile entfernen, dann bleibt die Datei, wie sie ist (im Log steht ein Hinweis). Ein Verweis
+  (Dotfiles) gilt ebenfalls als eigene Fassung.
+- Ordner öffnet Thunar: `/etc/xdg/labwc-mimeapps.list` gilt nur in der zenOS-Sitzung. Eine eigene Wahl
+  (`gio mime inode/directory <app>.desktop` oder «Öffnen mit» in Thunar) landet in `~/.config/mimeapps.list` und geht vor.
+- «Terminal hier öffnen» (Rechtsklick in Thunar) startet kitty im Ordner: `~/.config/Thunar/uca.xml` aus
+  `system/thunar/uca.xml`, gleiche Regel mit der Marke in der ersten Zeile. Legst du in Thunar eigene Aktionen an,
+  schreibt Thunar die Datei ohne Marke neu, und zenOS lässt sie in Ruhe.
+- Bildschirmfotos landen weiter in `~/Bilder/Screenshots` (`zenos-bildschirmfoto`), nicht in der Ablage.
 
 ## Systemweit
 

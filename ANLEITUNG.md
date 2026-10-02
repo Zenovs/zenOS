@@ -273,6 +273,8 @@ unter «Am Pi prüfen».
 **Leiste, «Heute» und Erscheinungsbild**
 - [ ] Die Leiste zeigt links Zeichen, Modus und Raster («4er»), in der Mitte Datum und Uhrzeit in deiner Ortszeit,
   rechts Glocke, Hell/Dunkel und den System-Knopf mit Temperatur. Sie sieht aus wie Entwurf 2.
+- [ ] Der Ordner rechts neben «4er» öffnet `~/Ablage` in Thunar (mit Symbolen, eine Titelzeile, hell und dunkel);
+  ein Download aus Chrome landet dort, Rechtsklick → «Terminal hier öffnen» startet kitty.
 - [ ] «Heute» zeigt Wochentag, Tageszahl, einen Gruss mit deinem Namen und unten die Tastenkappen für Super +
   Leertaste, Super + M und Super + Z.
 - [ ] Der Hell/Dunkel-Schalter wechselt ohne Flackern: Leiste, «Heute», Fensterrahmen, kitty, Chrome und VS Code (nach

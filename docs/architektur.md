@@ -2,7 +2,8 @@
 
 zenOS ist eine Sitzung auf Ubuntu Server: ein Fenstermanager (labwc), eine selbst gebaute Oberfläche (Quickshell)
 und ein Installer, der beides einrichtet. Diese Seite beschreibt den Stand von Version 0.1. Einzelheiten und
-Entscheidungen jedes Bausteins stehen in `docs/module/m1.md` bis `docs/module/m14.md`.
+Entscheidungen jedes Bausteins stehen in `docs/module/m1.md` bis `docs/module/m14.md`, dazu `bootsplash.md` und
+`ablage.md`.
 
 ## Schichten
 
@@ -10,6 +11,7 @@ Entscheidungen jedes Bausteins stehen in `docs/module/m1.md` bis `docs/module/m1
 ┌───────────────────────────────────────────────────────────────┐
 │ Apps: Chrome, VS Code, 1Password, coremail, kitty + fish,     │
 │ Web-Apps (proprietäre Apps nur nach Zustimmung, nie im Image) │
+│ Dateimanager Thunar (von Ubuntu)                              │
 ├───────────────────────────────────────────────────────────────┤
 │ zenOS-Oberfläche: Quickshell v0.3.1 (QML, Qt 6.10)            │
 │ Leiste · «Heute» · Befehlsfeld · Mitteilungen · Sperre        │
@@ -81,16 +83,19 @@ erscheint erst nach dem Neustart, und eine SSH-Verbindung bleibt während der In
   (`app-zenos-<name>-<zeit>.scope` in `app.slice`). Ein Neustart von `zenos-shell.service` beendet sie nicht.
 - **WLAN** (`leiste/WlanQuelle.qml`, kein Dienst unter `dienste/`): spricht NetworkManager über
   `Quickshell.Networking` (D-Bus) und entsteht erst, wenn NetworkManager läuft (siehe «Netz» unten).
+- **Ordner und Ablage:** Ordner öffnet Thunar, der Dateimanager von Ubuntu (Standard für `inode/directory` in
+  `/etc/xdg/labwc-mimeapps.list`, nur in der zenOS-Sitzung). Der Knopf rechts neben dem Raster und die Aktion
+  «Ablage» öffnen `~/Ablage`, den einen Ordner für eigene Dateien (`docs/module/ablage.md`).
 
 **Dienste** (`qs.dienste`, Singletons ohne Oberfläche):
 
 | Dienst | Aufgabe |
 |---|---|
-| `Pfade` | Orte: `~/.config/zenos`, `~/.local/state/zenos`, `$XDG_RUNTIME_DIR/zenos`, `/opt/zenos`, `scripts/bin` |
+| `Pfade` | Orte: `~/.config/zenos`, `~/.local/state/zenos`, `~/Ablage`, `$XDG_RUNTIME_DIR/zenos`, `/opt/zenos`, `scripts/bin` |
 | `Einstellungen` | `einstellungen.json` lesen und schreiben (behält fremde Schlüssel, sichert eine ungültige Datei) |
 | `Erscheinung` | hell, dunkel oder nach Tageszeit, Akzent; überträgt beides mit `zenos-thema` nach aussen |
 | `Oberflaeche` | Zustand der Oberfläche (was offen ist, `gesperrt`), Hinweise, Sperr-Anforderung |
-| `Aktionen` | Prozessstarts mit Argumentlisten: Apps, Terminal, Dateien, Werkzeuge, Abmelden, Neustart, Ausschalten |
+| `Aktionen` | Prozessstarts mit Argumentlisten: Apps, Terminal, Dateien, Ablage, Werkzeuge, Abmelden, Neustart, Ausschalten |
 | `System` | Temperatur, Netz, Ton (PipeWire), 1Password |
 | `Geraet` | Akku und Lüfter aus `/run/zenos/geraet.json` (`zenos-argon`), Mitteilung bei niedrigem Akku |
 | `Mitteilungen` | Mitteilungsdienst (`NotificationServer`), Bündelung, Zentrale |
@@ -139,7 +144,7 @@ Die Tastenkürzel von labwc rufen dieselben Ziele auf (Liste in `docs/module/m9.
 | `zenos-labwc`, `zenos-kanshi` | `rc.xml` und kanshi-Konfiguration erzeugen |
 | `zenos-freigabe` | Bildschirmfreigabe erkennen (vom Portal aufgerufen) |
 | `zenos-idle`, `zenos-1password-sperren` | automatische Sperre, 1Password mitsperren |
-| `zenos-oeffnen` | Datei, Ordner oder Programm in eigener Einheit öffnen |
+| `zenos-oeffnen` | Datei, Ordner oder Programm in eigener Einheit öffnen (Ordner in Thunar, ohne Dateimanager in kitty) |
 | `zenos-bildschirmfoto`, `zenos-pipette` | Werkzeuge des Befehlsfelds |
 | `zenos-chrome`, `zenos-webapp` | Chrome im Profil des Modus, Web-Apps |
 | `zenos-apps` | proprietäre Apps installieren (`zen apps`) |
@@ -258,6 +263,7 @@ Die Logik läuft in Quickshell selbst, ohne eigenen Hintergrunddienst.
 | Netz nach dem Umstieg | `/etc/netplan/90-zenos-netzwerk.yaml`, WLAN-Profile `/etc/netplan/90-NM-<uuid>.yaml` (0600 root, Passwörter wie bisher in netplan) | nie |
 | Netz: Sicherung, Land, Treiber | `/var/lib/zenos/netplan-vorher/<zeit>/` (0700), `/etc/xdg/zenos/wlan-land`, `/etc/modprobe.d/zenos-brcmfmac.conf`, `/etc/cloud/cloud.cfg.d/99-zenos-netzwerk.cfg` | nie (Vorlagen: `system/modprobe/`, `system/cloud/`) |
 | Login, Portale | `/etc/greetd/config.toml`, `/etc/xdg/xdg-desktop-portal/labwc-portals.conf`, `/etc/xdg/xdg-desktop-portal-wlr/config` | ja (Kopien) |
+| Standard-Apps, ausgeblendete Starter | `/etc/xdg/labwc-mimeapps.list` (Ordner: Thunar), `/usr/local/share/applications/thunar-{bulk-rename,settings}.desktop` (`Hidden=true`) | ja (Kopien) |
 | Richtlinien | `/etc/opt/chrome/policies/managed/zenos.json`, `/etc/vscode/policy.json`, `/etc/apt/apt.conf.d/52zenos-unattended` | ja (Kopien) |
 | Install-Log | `/var/log/zenos/install.log`, Rückfall `~/.local/state/zenos/install.log` | nie |
 | Einstellungen | `~/.config/zenos/einstellungen.json` | nie |
@@ -271,6 +277,9 @@ Die Logik läuft in Quickshell selbst, ohne eigenen Hintergrunddienst.
 | Nutzungsstatistik | `~/.local/share/zenos/befehlsfeld.json` (nur Desktop-IDs und Zähler) | nie |
 | Flüchtige Marker | `$XDG_RUNTIME_DIR/zenos/` (`gesperrt`, `freigabe`, `freigabe.neu`, `freigabe-wahl`, `freigabe-eintraege`, `freigabe-ende`, Sperrdateien) | nie |
 | Bildschirmfotos | `~/Bilder/Screenshots/` | nie |
+| Ablage | `~/Ablage` (beim Anlegen 0700), dorthin zeigen Schreibtisch, Downloads, Dokumente, Bilder, Musik, Videos | nie |
+| Benutzerordner | `~/.config/user-dirs.dirs`, `~/.config/user-dirs.conf` (zenOS schreibt sie nur, solange die erste Zeile die Marke von `48-ablage` trägt) | nein, erzeugt |
+| Thunar-Aktionen | `~/.config/Thunar/uca.xml` aus `system/thunar/uca.xml` («Terminal hier öffnen» mit kitty; nur mit der Marke von `48-ablage` in der ersten Zeile) | nein, erzeugt |
 | Geheimnisse | 1Password | nie |
 
 Die Schlüssel der persönlichen Dateien stehen in `docs/konfiguration.md`.
@@ -292,6 +301,7 @@ Systemteile, dann alle Benutzerteile.
 | `40-sitzung` | greetd mit Greeter, Benutzereinheiten, Portale |
 | `42-bootsplash` | Bootsplash-Theme ablegen, nicht einschalten |
 | `45-thema` | Erscheinungsbild auf GTK, Qt, kitty, labwc und VS Code, App-Icon `zenos` |
+| `48-ablage` | Thunar als Standard für Ordner, `~/Ablage`, Benutzerordner (`user-dirs.dirs`), «Terminal hier öffnen» in Thunar |
 | `50-raster` | Raster, Tastenkürzel, Bildschirm-Profile |
 | `55-zustaende` | Freigabe-Portal, Vorlagen der Zustände |
 | `60-terminal` | kitty, fish, tldr-Seiten |

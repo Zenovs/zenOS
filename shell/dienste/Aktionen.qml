@@ -51,11 +51,19 @@ Singleton {
         });
     }
 
+    // ~/Ablage im Dateimanager (Knopf in der Leiste, Aktion «Ablage» im Befehlsfeld). Während der Sperre und
+    // der Einrichtung öffnet sich nichts (wie beim Befehlsfeld).
+    function ablageOeffnen(): void {
+        if (Oberflaeche.gesperrt || Oberflaeche.einrichtungOffen || !Pfade.home)
+            return;
+        dateiOeffnen(Pfade.ablage);
+    }
+
     function _oeffnenGescheitert(ziel: string, code: int, meldung: string): void {
         console.warn("Aktionen: zenos-oeffnen endete mit", code, meldung.trim());
         let text = "Öffnen hat nicht geklappt";
         if (code === 2)
-            text = "Datei oder Ordner nicht gefunden";
+            text = ziel === Pfade.ablage ? "Ablage nicht gefunden" : "Datei oder Ordner nicht gefunden";
         else if (code === 3)
             text = /^[A-Za-z][A-Za-z0-9+.-]*:/.test(ziel) ? "Keine App für diese Adresse" : "Keine App für diese Datei";
         else if (code === 4)

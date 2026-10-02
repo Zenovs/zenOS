@@ -10,8 +10,8 @@
 # Öffnet mit «gio open», nicht mit xdg-open: xdg-open wartet unter labwc (generischer Modus), bis die App
 # beendet ist, und startet Apps mit Terminal=true (z. B. vim.desktop auf Ubuntu Server) ohne Terminal,
 # meldet dabei aber Erfolg. gio startet die App (Terminal-Apps in x-terminal-emulator, also kitty), kehrt
-# gleich zurück und endet mit einem Fehler, wenn keine App zuständig ist. Einen Ordner ohne zuständige App
-# öffnet es in kitty (zenOS bringt keinen Dateimanager mit).
+# gleich zurück und endet mit einem Fehler, wenn keine App zuständig ist. Ordner öffnet der Dateimanager
+# (Thunar, Standard über /etc/xdg/labwc-mimeapps.list); fehlt eine zuständige App, öffnet es den Ordner in kitty.
 #
 # --programm startet BEFEHL und kehrt gleich zurück; NAME (z. B. die Desktop-ID) steht im Namen der Einheit.
 # Vorher prüft es, ob es das Programm gibt, bei «env NAME=WERT … PROGRAMM» (häufig in Startern) das Programm
@@ -177,7 +177,7 @@ fi
 app=$(standard_app "$typ")
 if [[ -z "$app" ]]; then
   if [[ -z "$schema" && -d "$ziel" ]]; then
-    # Ohne Dateimanager: im Terminal, in diesem Ordner
+    # Ohne Dateimanager (etwa Thunar entfernt): im Terminal, in diesem Ordner
     if command -v kitty > /dev/null &&
       in_einheit kitty "Geöffnet mit zenos-oeffnen" setsid --fork -- kitty --directory "$ziel"; then
       exit 0

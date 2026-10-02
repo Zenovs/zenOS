@@ -1,0 +1,7 @@
+# zenOS: blendet «Thunar Preferences» im Befehlsfeld und in der App-Übersicht aus. Die Einstellungen bleiben in
+# Thunar (Bearbeiten → Einstellungen). Installiert nach /usr/local/share/applications/ (48-ablage);
+# Hidden=true heisst «gelöscht» und überdeckt /usr/share/applications/thunar-settings.desktop.
+[Desktop Entry]
+Type=Application
+Name=Thunar Preferences
+Hidden=true

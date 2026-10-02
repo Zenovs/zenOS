@@ -19,6 +19,9 @@ Verweis angelegt; was generiert wird, erzeugen die Programme unter `scripts/bin/
 | `systemd/system-shutdown/zenos-argon` | `/usr/lib/systemd/system-shutdown/` | Abschaltsignal an die Argon-Platine beim Ausschalten |
 | `portal/labwc-portals.conf` | `/etc/xdg/xdg-desktop-portal/` | Portale: `gtk`, Bildschirm über `wlr` |
 | `portal/xdpw.conf` | `/etc/xdg/xdg-desktop-portal-wlr/config` | Bildschirmwahl und Erkennung der Freigabe |
+| `xdg/labwc-mimeapps.list` | `/etc/xdg/labwc-mimeapps.list` | Standard-Apps der labwc-Sitzung: Ordner öffnet Thunar (`48-ablage`) |
+| `thunar/uca.xml` | `~/.config/Thunar/uca.xml` (Kopie, nur mit der zenOS-Marke in der ersten Zeile) | Thunar: «Terminal hier öffnen» mit kitty (`48-ablage`) |
+| `applications/thunar-bulk-rename.desktop`, `applications/thunar-settings.desktop` | `/usr/local/share/applications/` | Hilfsstarter von Thunar ausblenden (`Hidden=true`, `48-ablage`) |
 | `pam/zenos-sperre` | direkt aus `/opt/zenos` (`configDirectory`) | PAM-Dienst des Sperrbildschirms |
 | `kitty/kitty.conf` | `~/.config/kitty/kitty.conf` (Verweis) | Terminal, schlaues Ctrl+C, Super-Kürzel |
 | `fish/zenos.fish`, `fish/functions/` | `~/.config/fish/conf.d/zenos.fish` (Verweis) | Shell: Eingabezeile, Statuszeile, `?`, Warnung vor gefährlichen Befehlen |

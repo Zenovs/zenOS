@@ -1,0 +1,21 @@
+<!-- zenOS: Thunar-Aktion «Terminal hier öffnen» mit kitty (scripts/module/48-ablage.sh) -->
+<!--
+  Vorlage für ~/.config/Thunar/uca.xml (Benutzerteil von 48-ablage), nur wenn die Datei fehlt oder diese erste Zeile
+  trägt. Sie ersetzt die Beispiel-Aktion aus /etc/xdg/Thunar/uca.xml: Deren Befehl «exo-open … TerminalEmulator»
+  braucht xfce4-mime-helper aus xfce4-settings, das zenOS nicht mitbringt, und zeigte nur einen Fehler.
+  Thunar setzt für %f den Ordner ein, in Anführungszeichen (g_shell_quote), wie bei der Beispiel-Aktion.
+  Eigene Aktionen legst du in Thunar an (Bearbeiten, Benutzerdefinierte Aktionen). Thunar schreibt die Datei dann
+  selbst neu, ohne die erste Zeile, und zenOS lässt sie danach unverändert.
+-->
+<actions>
+  <action>
+    <icon>utilities-terminal</icon>
+    <name>Terminal hier öffnen</name>
+    <unique-id>zenos-terminal-hier</unique-id>
+    <command>kitty --directory %f</command>
+    <description>Öffnet kitty in diesem Ordner</description>
+    <patterns>*</patterns>
+    <range/>
+    <directories/>
+  </action>
+</actions>

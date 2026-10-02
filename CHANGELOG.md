@@ -35,6 +35,13 @@ an; eine Version entspricht einem Tag `v…` im Repo.
 - **Scroll-Tempo einstellbar:** Einstellungen → Allgemein → «Scroll-Tempo für Touchpad und Maus» mit «Langsam»,
   «Normal», «Schnell» und «Sehr schnell» (Faktor 0.5, 1, 1.5, 2 für labwc). Die Wahl gilt sofort, ohne Abmelden.
   Gespeichert als `scrollTempo` in `einstellungen.json` (von Hand 0.25 bis 3); ohne Eintrag bleibt alles wie bisher.
+- **Ablage:** `~/Ablage` ist der eine Ordner für deine Dateien, ohne vorgegebene Struktur. Ein Knopf mit
+  Ordner-Symbol rechts neben dem Raster («4er») und die Aktion «Ablage» im Befehlsfeld öffnen ihn im Dateimanager.
+  Downloads, Dokumente, Bilder, Musik und Videos landen dort (`~/.config/user-dirs.dirs`); Ordner wie Downloads oder
+  Dokumente legt zenOS nicht an. Bildschirmfotos bleiben in `~/Bilder/Screenshots`.
+- **Dateimanager Thunar** (von Ubuntu, im Image): öffnet Ordner aus dem Befehlsfeld und die Ablage, folgt hell und
+  dunkel, ohne Indexer im Hintergrund. Vorher öffneten Ordner in kitty. «Terminal hier öffnen» im Rechtsklick
+  startet kitty im Ordner. `zen doctor` prüft Ablage und Dateimanager.
 
 ### Geändert
 

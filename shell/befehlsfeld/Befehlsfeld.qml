@@ -75,6 +75,13 @@ Scope {
             woerter: "erscheinungsbild hell dunkel thema theme light dark"
         },
         {
+            // ~/Ablage im Dateimanager, wie der Knopf in der Leiste
+            id: "ablage",
+            titel: "Ablage",
+            symbol: "ordner",
+            woerter: "ablage dateien ordner dokumente downloads explorer finder dateimanager thunar"
+        },
+        {
             id: "sperren",
             titel: "Sperren",
             symbol: "schloss",
@@ -263,6 +270,9 @@ Scope {
             break;
         case "erscheinung":
             Erscheinung.umschalten();
+            break;
+        case "ablage":
+            Aktionen.ablageOeffnen();
             break;
         case "sperren":
             Aktionen.sperren();

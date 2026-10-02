@@ -9,7 +9,7 @@ import "zeit.js" as Zeit
 import "wlan.js" as Wlan
 
 // Inhalt der Leiste nach Entwurf 2 (Innenabstand 0 10 px):
-// links «wo bin ich» (Zeichen, Modus, Zustand, Raster), in der Mitte Datum und Uhrzeit,
+// links «wo bin ich» (Zeichen, Modus, Zustand, Raster) und die Ablage, in der Mitte Datum und Uhrzeit,
 // rechts Mitteilungen, Hell/Dunkel und System.
 Item {
     id: root
@@ -81,7 +81,7 @@ Item {
         Oberflaeche.zentraleOffen = true;
     }
 
-    // Leiste laut wirksamem Zustand: "normal" | "reduziert" (ohne Raster und Hell/Dunkel) |
+    // Leiste laut wirksamem Zustand: "normal" | "reduziert" (ohne Raster, Ablage und Hell/Dunkel) |
     // "aus" (nur Zustand und Uhrzeit; der Platz bleibt reserviert, damit nichts springt)
     readonly property string stufe: {
         const s = Zustaende.wirksam?.leiste;
@@ -216,8 +216,8 @@ Item {
 
     // Breite vom linken Rand bis kurz vor die Uhrzeit
     readonly property real _leftBudget: (width - uhrzeit.implicitWidth) / 2 - Theme.a4 - 10
-    // alles ausser den beiden Namen: Zeichen, Innenabstände, Punkt, Pfeil, Zusatz, Raster, Abstände
-    readonly property real _leftFixed: (stufe !== "aus" ? 30 + 6 + 10 + 7 + 8 + 8 + 12 + 8 : 0) + (zustandChip.visible ? 6 + 10 + (_sharing ? 7 + 8 : 0) + (_stateExtra !== "" ? 8 + extraMetrics.advanceWidth : 0) + 10 : 0) + (rasterChip.visible ? 6 + rasterChip.implicitWidth : 0)
+    // alles ausser den beiden Namen: Zeichen, Innenabstände, Punkt, Pfeil, Zusatz, Raster, Ablage, Abstände
+    readonly property real _leftFixed: (stufe !== "aus" ? 30 + 6 + 10 + 7 + 8 + 8 + 12 + 8 : 0) + (zustandChip.visible ? 6 + 10 + (_sharing ? 7 + 8 : 0) + (_stateExtra !== "" ? 8 + extraMetrics.advanceWidth : 0) + 10 : 0) + (rasterChip.visible ? 6 + rasterChip.implicitWidth : 0) + (ablageKnopf.visible ? 6 + ablageKnopf.width : 0)
     readonly property real _namesBudget: Math.max(80, _leftBudget - _leftFixed)
     // Modus höchstens 180 px, Zustand höchstens 160 px; wird es eng, teilen sie sich den Platz
     readonly property real _modeMax: zustandChip.visible ? Math.min(180, Math.max(_namesBudget - Math.min(stateWidth.advanceWidth, 160), _namesBudget / 2)) : Math.min(240, _namesBudget)
@@ -335,6 +335,23 @@ Item {
             mono: true
             Accessible.name: root._raster ? "Raster: " + (root._raster.name ?? root._raster.id) : "Raster wählen"
             onClicked: root.menueGewuenscht("raster", root.menueX("raster"))
+        }
+
+        // Ablage (~/Ablage) im Dateimanager öffnen; sichtbar wie das Raster
+        LeistenKnopf {
+            id: ablageKnopf
+
+            visible: root.stufe === "normal"
+            width: 32
+            beschreibung: "Ablage öffnen"
+            onClicked: Aktionen.ablageOeffnen()
+
+            Symbol {
+                anchors.verticalCenter: parent.verticalCenter
+                name: "ordner"
+                groesse: 15
+                farbe: Theme.text
+            }
         }
     }
 
