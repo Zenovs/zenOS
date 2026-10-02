@@ -266,6 +266,12 @@ Eigenes Fenster mit labwc-Titelzeile. Navigation 260 px (Modi, Zustände, Raster
 Apps, Allgemein, System), Titel in Instrument Serif, Felder zweispaltig. Was erst später wirkt, ist mit «später»
 markiert und nicht bedienbar.
 
+- Wenige feste Möglichkeiten zeigen Segmente (Fläche `flaeche2`, das gewählte Segment hebt sich mit `flaeche` ab),
+  Zahlen eine Stufenwahl mit − und +. Beide gehen mit Tab und Pfeiltasten.
+- «Allgemein» → «Scroll-Tempo für Touchpad und Maus»: vier Segmente «Langsam», «Normal», «Schnell», «Sehr schnell»,
+  ohne Zahlen. Die Wahl wirkt nach dem Speichern sofort (unter einer Sekunde), ohne Abmelden. Ein Wert, den es nur von
+  Hand gibt, steht gedämpft daneben («Eigener Wert: 0,75-fach»), dann ist kein Segment gewählt.
+
 ### Sitzung
 
 - Der geteilte Bildschirm bekommt einen 2-px-Rahmen in `sitzung` (Radius 12) und oben mittig das Label «Dieser Bildschirm wird geteilt» (Pille 24 px, Hintergrund `sitzung`, Text `grund`, Geist Mono 12, Monitor-Symbol).

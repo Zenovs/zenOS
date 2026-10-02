@@ -14,7 +14,9 @@ import qs.dienste
 // beim Anschliessen eines Bildschirms das Profil, ruft es
 // zenos-labwc --profil auf; die Änderung an laufzeit.json kommt hier über den Dateibeobachter an.
 // Ändert sich das aktive Raster oder bildschirme.json (Einstellungen oder von Hand), werden labwc bzw.
-// kanshi neu eingerichtet. Im Greeter (ohne ~/.config/zenos) wird nichts gestartet.
+// kanshi neu eingerichtet. Dieser Dienst ist die eine Stelle der Oberfläche, die zenos-labwc aufruft: auch,
+// wenn sich das Scroll-Tempo in einstellungen.json ändert (Einstellungen.scrollTempoWirksam, erst nach dem
+// Speichern). Im Greeter (ohne ~/.config/zenos) wird nichts gestartet.
 // IPC «raster»: setzen(id), aktiv(): string
 Singleton {
     id: root
@@ -165,6 +167,7 @@ Singleton {
     property bool _started: false
     property string _appliedRaster: ""
     property string _appliedScreens: ""
+    property real _appliedScroll: 1.0
 
     function _sorted(list: var): var {
         const rank = id => {
@@ -258,28 +261,33 @@ Singleton {
         });
     }
 
-    // Änderungen an Rastern und Bildschirm-Profilen weitergeben (erst nach dem ersten Laden)
+    // Änderungen an Rastern, Scroll-Tempo und Bildschirm-Profilen weitergeben (erst nach dem ersten Laden)
     function _check(): void {
         if (!Konfig.verfuegbar || !Konfig.geladen)
             return;
         const raster = JSON.stringify(aktiv);
         const screens = JSON.stringify(Konfig.bildschirme);
+        const scroll = Einstellungen.scrollTempoWirksam;
         if (!_started) {
             _started = true;
             _appliedRaster = raster;
             _appliedScreens = screens;
+            _appliedScroll = scroll;
         }
         // Aktives Raster gelöscht: Standard (oder das erste) übernehmen
         if (liste.length > 0 && !aktiv && !_labwcBusy) {
             setzen(liste.some(r => r.id === standardId) ? standardId : liste[0].id);
             return;
         }
-        if (raster !== _appliedRaster && aktiv) {
+        const rasterNeu = raster !== _appliedRaster && !!aktiv;
+        if (rasterNeu || scroll !== _appliedScroll) {
             // Läuft zenos-labwc gerade, später noch einmal prüfen
             if (_labwcBusy) {
                 pruefTimer.restart();
             } else {
-                _appliedRaster = raster;
+                if (rasterNeu)
+                    _appliedRaster = raster;
+                _appliedScroll = scroll;
                 _labwc([], null);
             }
         }
@@ -309,6 +317,15 @@ Singleton {
 
         function onGeladenChanged(): void {
             pruefTimer.restart();
+        }
+    }
+
+    // Scroll-Tempo gespeichert oder von Hand geändert: gleich weitergeben (die Seite speichert schon verzögert)
+    Connections {
+        target: Einstellungen
+
+        function onScrollTempoWirksamChanged(): void {
+            root._check();
         }
     }
 

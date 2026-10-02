@@ -32,6 +32,9 @@ an; eine Version entspricht einem Tag `v…` im Repo.
   es nicht kann; Mischnetze verbinden über WPA2. `zen netzwerk zurueck` geht ohne Netz zurück, `zen netzwerk
   status` zeigt den Stand, `zen doctor` hat einen Abschnitt «Netz». Ein neues Image stellt beim ersten Start
   selbst um.
+- **Scroll-Tempo einstellbar:** Einstellungen → Allgemein → «Scroll-Tempo für Touchpad und Maus» mit «Langsam»,
+  «Normal», «Schnell» und «Sehr schnell» (Faktor 0.5, 1, 1.5, 2 für labwc). Die Wahl gilt sofort, ohne Abmelden.
+  Gespeichert als `scrollTempo` in `einstellungen.json` (von Hand 0.25 bis 3); ohne Eintrag bleibt alles wie bisher.
 
 ### Geändert
 

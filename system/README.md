@@ -5,7 +5,7 @@ Verweis angelegt; was generiert wird, erzeugen die Programme unter `scripts/bin/
 
 | Pfad | Ziel | Zweck |
 |---|---|---|
-| `labwc/rc.xml.in` | Vorlage für `~/.config/labwc/rc.xml` (`zenos-labwc`) | Fenstermanager: Regionen, Tastenkürzel, Titelzeile |
+| `labwc/rc.xml.in` | Vorlage für `~/.config/labwc/rc.xml` (`zenos-labwc`) | Fenstermanager: Regionen, Tastenkürzel, Titelzeile, Scrollen |
 | `labwc/{autostart,environment,shutdown,menu.xml}` | `~/.config/labwc/` (Verweise) | Start und Ende der Sitzung, Umgebung, Rechtsklick-Menüs |
 | `greeter/labwc/` | direkt aus `/opt/zenos` (`labwc -C`) | labwc des Logins, ohne Vorgabe-Tasten und mit leerem Menü |
 | `greetd/config.toml` | `/etc/greetd/config.toml` | Login auf VT 7, kein Autologin |

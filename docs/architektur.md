@@ -54,7 +54,8 @@ erscheint erst nach dem Neustart, und eine SSH-Verbindung bleibt während der In
 ### Fenstermanager
 
 - **labwc 0.9** verwaltet die Fenster. `zenos-labwc` erzeugt `~/.config/labwc/rc.xml` aus `system/labwc/rc.xml.in`,
-  dem aktiven Raster und den Tokens (Regionen `r1 … rN`, Tastenkürzel, Titelzeile, Lücke) und lädt labwc neu.
+  dem aktiven Raster, den Tokens (Regionen `r1 … rN`, Tastenkürzel, Titelzeile, Lücke) und dem Scroll-Tempo aus
+  `einstellungen.json` und lädt labwc neu.
   Fenster rasten per Tastenkürzel oder beim Ziehen in die Regionen ein (`SnapToRegion`). Automatisches Kacheln gibt
   es bewusst nicht. Farben der Rahmen und Menüs kommen aus `~/.config/labwc/themerc-override` (`zenos-thema`).
 - **kanshi** wählt beim An- und Abstecken ein Bildschirm-Profil und ruft `zenos-labwc --profil-hex …` auf.
@@ -98,7 +99,7 @@ erscheint erst nach dem Neustart, und eine SSH-Verbindung bleibt während der In
 | `Zustaende` | aktiver Zustand, Auslöser, Timer, Rückkehr, wirksamer Zustand |
 | `Freigabe` | Bildschirmfreigabe (Marker und IPC) |
 | `Leitplanken` | feste Regeln, siehe unten |
-| `Raster` | aktives Raster, Bildschirm-Profile, Aufruf von `zenos-labwc` und `zenos-kanshi` |
+| `Raster` | aktives Raster, Bildschirm-Profile, Aufruf von `zenos-labwc` (auch nach geändertem Scroll-Tempo) und `zenos-kanshi` |
 
 Dienste importieren nie `qs.theme`. Im Greeter (Benutzer `_greetd`, ohne `~/.config/zenos`) schreiben und starten
 sie nichts.

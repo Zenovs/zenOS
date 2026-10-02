@@ -8,7 +8,8 @@ import qs.dienste as Dienste
 import "../modi/zustandslogik.js" as Logik
 
 // Seite «Allgemein»: Name, Ort, Erscheinungsbild (hell, dunkel, nach Tageszeit mit Zeiten),
-// automatische Sperre (1–15 Minuten, nicht abschaltbar) und Mitteilungen ohne Zustand.
+// automatische Sperre (1–15 Minuten, nicht abschaltbar), Mitteilungen ohne Zustand und Scroll-Tempo
+// für Touchpad und Maus (wirkt nach dem Speichern sofort, siehe Dienst Raster).
 // Gespeichert wird in ~/.config/zenos/einstellungen.json (Einstellungen-Dienst).
 Item {
     id: root
@@ -17,6 +18,29 @@ Item {
 
     readonly property string standardArt: Logik.gebuendeltMinuten(Dienste.Einstellungen.mitteilungenStandard) > 0 ? "gebuendelt" : Dienste.Einstellungen.mitteilungenStandard
     readonly property int standardMinuten: Math.max(5, Logik.gebuendeltMinuten(Dienste.Einstellungen.mitteilungenStandard) > 0 ? Logik.gebuendeltMinuten(Dienste.Einstellungen.mitteilungenStandard) : 60)
+
+    // Stufen des Scroll-Tempos (Faktor für labwc, docs/module/m9.md): halb, wie bisher, anderthalb, doppelt
+    readonly property var scrollStufen: [
+        {
+            wert: "0.5",
+            text: "Langsam"
+        },
+        {
+            wert: "1",
+            text: "Normal"
+        },
+        {
+            wert: "1.5",
+            text: "Schnell"
+        },
+        {
+            wert: "2",
+            text: "Sehr schnell"
+        }
+    ]
+    // Gewähltes Tempo als Text wie in scrollStufen ("1", "1.5"); ungültig in der Datei: Normal
+    readonly property string scrollWert: String(Dienste.Einstellungen.scrollTempoPruefen(Dienste.Einstellungen.scrollTempo))
+    readonly property bool scrollEigen: !scrollStufen.some(s => s.wert === scrollWert)
 
     function _speichernBald(): void {
         speicherTimer.restart();
@@ -244,6 +268,40 @@ Item {
                     schritt: 5
                     einheit: "Min."
                     onGeaendert: wert => root.setzen("mitteilungenStandard", "gebuendelt-" + wert)
+                }
+            }
+        }
+
+        Feld {
+            width: parent.width
+            beschriftung: "Scroll-Tempo für Touchpad und Maus"
+
+            Row {
+                spacing: 16
+
+                Segmente {
+                    id: scrollSegmente
+
+                    optionen: root.scrollStufen
+                    onGewaehlt: wert => root.setzen("scrollTempo", Number(wert))
+                }
+
+                // Segmente setzt «wert» bei einer Wahl selbst und löst damit eine einfache Bindung; das
+                // Binding-Element folgt dem Wert trotzdem weiter (z. B. nach einer Änderung von Hand)
+                Binding {
+                    target: scrollSegmente
+                    property: "wert"
+                    value: root.scrollWert
+                }
+
+                // Wert von Hand zwischen den Stufen (einstellungen.json): zeigen, keine Stufe ist gewählt
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: root.scrollEigen
+                    text: "Eigener Wert: " + root.scrollWert.replace(".", ",") + "-fach"
+                    color: Theme.gedaempft
+                    font.family: Theme.schriftText
+                    font.pixelSize: Theme.groesseLabel
                 }
             }
         }

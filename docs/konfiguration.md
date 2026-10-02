@@ -8,7 +8,7 @@ Eine Datei unter `modi/`, `zustaende/` oder `raster/` mit ungültigem Inhalt feh
 
 | Datei | Inhalt | Wer schreibt |
 |---|---|---|
-| `~/.config/zenos/einstellungen.json` | Name, Ort, Erscheinungsbild, Sperrzeit, Mitteilungen ohne Zustand | Einrichtung, Einstellungen → Allgemein, Hell/Dunkel |
+| `~/.config/zenos/einstellungen.json` | Name, Ort, Erscheinungsbild, Sperrzeit, Mitteilungen ohne Zustand, Scroll-Tempo | Einrichtung, Einstellungen → Allgemein, Hell/Dunkel |
 | `~/.config/zenos/modi/<id>.json` | ein Modus | Einstellungen → Modi, Einrichtung (erster Modus) |
 | `~/.config/zenos/zustaende/<id>.json` | ein Zustand | Einstellungen → Zustände; Vorlagen beim ersten Mal |
 | `~/.config/zenos/raster/<id>.json` | ein Raster | Einstellungen → Raster; Vorlagen beim ersten Mal |
@@ -154,8 +154,26 @@ Bereiche in Prozent der nutzbaren Bildschirmfläche (ohne Leiste).
 | `tagAb`, `nachtAb` | `HH:MM` | `07:00`, `19:00` | Wechsel bei `tageszeit` |
 | `sperreNachMinuten` | 1–15 | 5 | Automatische Sperre; Werte ausserhalb begrenzt der Code, abschalten geht nicht |
 | `mitteilungenStandard` | wie `mitteilungen` im Zustand | `gebuendelt-60` | Bündelung ohne aktiven Zustand |
+| `scrollTempo` | Zahl 0.25–3 | `1` | Scroll-Tempo für Touchpad und Mausrad (Faktor, siehe unten) |
 
 Weitere Schlüssel sind erlaubt und bleiben beim Speichern erhalten.
+
+### Scroll-Tempo
+
+`scrollTempo` ist der Faktor, mit dem labwc jede Scroll-Bewegung multipliziert, den Weg auf dem Touchpad wie die
+Rasten des Mausrads (`<scrollFactor>` in `~/.config/labwc/rc.xml`). `1` ist die Vorgabe von labwc und das Verhalten
+ohne Eintrag, `0.5` scrollt halb so weit, `2` doppelt so weit. Die Einstellungen (→ Allgemein) bieten «Langsam» (0.5),
+«Normal» (1), «Schnell» (1.5) und «Sehr schnell» (2); von Hand geht jeder Wert von 0.25 bis 3 (die Seite zeigt ihn
+dann als «Eigener Wert»). Begründung der Stufen und Grenzen: `docs/module/m9.md`.
+
+- `zenos-labwc` liest den Wert bei jedem Lauf und schreibt ihn auf zwei Nachkommastellen gerundet in `rc.xml`.
+  Fehlt er oder ist er ungültig (keine Zahl, ausserhalb 0.25–3), gilt `1`, mit einer Warnung auf stderr. Ist
+  `einstellungen.json` selbst ungültig, bleibt das Tempo der bisherigen `rc.xml` (wie die übrigen Werte).
+- Wer schreibt, was auslöst: Die Seite «Allgemein» speichert `einstellungen.json` (wie die anderen Werte nach
+  500 ms). Sobald der neue Wert in der Datei steht (gespeichert oder von Hand geändert), ruft der Dienst `Raster`
+  `zenos-labwc` auf, der einzige Weg der Oberfläche zu `rc.xml`. `zenos-labwc` schreibt nur bei einer Änderung und
+  lädt labwc dann neu: Das neue Tempo gilt sofort, ohne Abmelden. Ausserhalb der Sitzung übernehmen es `install.sh`
+  und der nächste Lauf von kanshi (beim Anmelden).
 
 ## Web-Apps: `webapps.json`
 

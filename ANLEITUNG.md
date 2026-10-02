@@ -411,6 +411,9 @@ systemctl --user start zenos-shell.service
   sind auf beiden.
 - [ ] Fensterrahmen: Titelzeile in Geist Mono, oben runde Ecken (unten eckig, das ist eine Grenze von labwc). Das gilt
   für Fenster mit zenOS-Rahmen wie kitty; Chrome zeichnet seinen eigenen (siehe «Offene Entscheidungen» in G).
+- [ ] Scrollen: Der Inhalt folgt den Fingern (natürlich). Einstellungen → Allgemein → «Scroll-Tempo»: «Langsam» bzw.
+  «Sehr schnell» scrollt in Chrome und kitty sofort halb bzw. doppelt so weit, mit Touchpad und Mausrad, ohne
+  Abmelden. Zum Schluss die Stufe wählen, die sich richtig anfühlt.
 
 **Terminal**
 - [ ] `Ctrl + Alt + T` öffnet kitty mit fish und der zenOS-Eingabezeile.

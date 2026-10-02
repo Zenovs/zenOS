@@ -7,7 +7,7 @@ Aufruf:
   zenos-labwc --pruefen                                  Exit 0, wenn rc.xml aktuell ist, sonst 1
   zenos-labwc --befehle                                  Programme der Tastenkürzel und des Menüs prüfen
                                                          (Exit 0 alle vorhanden, 1 wenn eines fehlt)
-  zenos-labwc --status                                   aktives Raster und Profil als JSON
+  zenos-labwc --status                                   aktives Raster, Profil und Scroll-Tempo als JSON
 
 Das aktive Raster kommt aus --raster, sonst aus --profil (Bildschirm-Profil in bildschirme.json;
 der aktive Modus kann pro Profil ein eigenes Raster festlegen), sonst aus laufzeit.json («raster»),
@@ -18,6 +18,10 @@ Hex-Kodierung (UTF-8); so ruft kanshi zenos-labwc auf, weil kanshi «exec» übe
 Namen dort nie auftauchen dürfen.
 Raster liegen unter ~/.config/zenos/raster/<id>.json, fehlende Vorlagen kommen
 aus config/vorlagen/raster/. Werte für Schrift, Radius und Lücke stammen aus shell/theme/tokens.json.
+Das Scroll-Tempo für Touchpad und Mausrad (labwc <scrollFactor>) kommt aus «scrollTempo» in
+~/.config/zenos/einstellungen.json: 0.25 bis 3, auf zwei Nachkommastellen gerundet. Fehlt der Schlüssel
+oder ist er ungültig, gilt 1.0 (labwc-Vorgabe); ist die Datei selbst ungültig, bleibt das Tempo der
+bisherigen rc.xml (wie die Oberfläche: bisherige Werte bleiben).
 
 rc.xml wird nur bei einer Änderung geschrieben; läuft labwc, lädt es die Konfiguration dann neu
 (wie «labwc --reconfigure»). Eine fremde rc.xml wird einmal nach rc.xml.vor-zenos gesichert.
@@ -29,6 +33,7 @@ Exit: 0 in Ordnung · 1 Raster oder Profil ungültig bzw. nicht gefunden · 2 Au
 
 import fcntl
 import json
+import math
 import os
 import re
 import shlex
@@ -55,6 +60,7 @@ STATE = os.path.join(HOME, ".local", "state", "zenos")
 RUNTIME_STATE = os.path.join(STATE, "laufzeit.json")
 LABWC = os.path.join(HOME, ".config", "labwc")
 RC_XML = os.path.join(LABWC, "rc.xml")
+SETTINGS = os.path.join(CONFIG, "einstellungen.json")
 
 DEFAULT_RASTER = "4er-grid"
 MARKER = "Erzeugt von zenos-labwc"
@@ -62,6 +68,12 @@ ID_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 SAFE_PATH = re.compile(r"^/[A-Za-z0-9/_.+-]*$")
 PLACEHOLDER = re.compile(r"@@[A-Z_]+@@")
 MAX_KEYS = 4
+# Scroll-Tempo («scrollTempo» in einstellungen.json): Grenzen wie config/schema/einstellungen.schema.json und
+# shell/dienste/Einstellungen.qml (der Einheitentest gleicht sie ab). Unter 0.25 braucht ein Rad ohne
+# Feinauflösung mehr als vier Rasten pro Schritt, über 3 springt eine Raste um rund neun Zeilen.
+SCROLL_DEFAULT = 1.0
+SCROLL_MIN = 0.25
+SCROLL_MAX = 3.0
 # Programme, die labwc nie direkt starten darf (Befehle immer als Argumentliste, nie über eine Shell)
 SHELLS = {"sh", "bash", "dash", "zsh", "fish", "ksh", "mksh", "busybox"}
 
@@ -306,6 +318,85 @@ def persist(changes):
         raise Fehler(f"laufzeit.json nicht aktualisiert, rc.xml bleibt: {grund}", 2)
 
 
+# ---------------------------------------------------------------- Scroll-Tempo
+
+def valid_scroll(value):
+    """Gültiges Scroll-Tempo (gerundet) oder None. Nur Zahlen von SCROLL_MIN bis SCROLL_MAX, kein bool."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        value = float(value)
+    except OverflowError:
+        return None
+    if not math.isfinite(value) or not SCROLL_MIN <= value <= SCROLL_MAX:
+        return None
+    # Wie Math.round(wert * 100) / 100 in Einstellungen.qml (gleiche Fliesskomma-Schritte, gleiches Ergebnis)
+    return math.floor(value * 100 + 0.5) / 100
+
+
+def scroll_text(value):
+    """1.0, 0.5, 0.75: höchstens zwei Nachkommastellen, immer mit Punkt (unabhängig vom Gebietsschema)."""
+    text = f"{value:.2f}".rstrip("0")
+    return text + "0" if text.endswith(".") else text
+
+
+def previous_scroll():
+    """Scroll-Tempo der bisherigen rc.xml, wenn sie von zenOS stammt und es gültig ist, sonst None."""
+    try:
+        with open(RC_XML, encoding="utf-8") as f:
+            text = f.read()
+    except (OSError, UnicodeDecodeError):
+        return None
+    if MARKER not in text[:2048]:
+        return None
+    try:
+        root = ET.fromstring(text.encode("utf-8"))
+    except ET.ParseError:
+        return None
+    try:
+        return valid_scroll(float((root.findtext("libinput/device/scrollFactor") or "").strip()))
+    except ValueError:
+        return None
+
+
+def _no_constant(name):
+    raise ValueError(f"{name} ist kein JSON")
+
+
+def read_settings():
+    """einstellungen.json gelesen wie von der Oberfläche (JSON.parse kennt kein NaN und kein Infinity);
+    {} wenn sie fehlt, Fehler wenn sie nicht lesbar oder kein JSON ist."""
+    try:
+        with open(SETTINGS, encoding="utf-8") as f:
+            return json.load(f, parse_constant=_no_constant)
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as e:
+        raise Fehler(f"{shown(SETTINGS)} ist nicht lesbar oder kein JSON ({type(e).__name__})") from None
+
+
+def scroll_tempo():
+    """Scroll-Tempo für rc.xml aus einstellungen.json (siehe Kopf dieser Datei)."""
+    try:
+        data = read_settings()
+    except Fehler as e:
+        data = e
+    if not isinstance(data, dict):
+        keep = previous_scroll()
+        keep = SCROLL_DEFAULT if keep is None else keep
+        grund = data if isinstance(data, Fehler) else f"{shown(SETTINGS)} ist kein JSON-Objekt"
+        warn(f"{grund}; Scroll-Tempo bleibt {scroll_text(keep)}")
+        return keep
+    if "scrollTempo" not in data:
+        return SCROLL_DEFAULT
+    value = valid_scroll(data["scrollTempo"])
+    if value is None:
+        warn(f"einstellungen.json: scrollTempo ist ungültig (Zahl von {SCROLL_MIN:g} bis {SCROLL_MAX:g}), "
+             f"es gilt {scroll_text(SCROLL_DEFAULT)}")
+        return SCROLL_DEFAULT
+    return value
+
+
 # ---------------------------------------------------------------- rc.xml
 
 def tokens():
@@ -322,7 +413,7 @@ def xml_text(value):
     return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
 
-def render(raster_id, raster):
+def render(raster_id, raster, scroll=SCROLL_DEFAULT):
     try:
         with open(TEMPLATE, encoding="utf-8") as f:
             template = f.read()
@@ -349,13 +440,14 @@ def render(raster_id, raster):
     blocks = {"@@REGIONEN@@": regions, "@@RASTER_TASTEN@@": keys}
     values = {
         "@@KOPF@@": f"{MARKER} aus system/labwc/rc.xml.in, Raster {raster_id}. Nicht von Hand ändern: "
-                    "zenos-labwc schreibt die Datei beim nächsten Rasterwechsel neu.",
+                    "zenos-labwc schreibt die Datei beim nächsten Wechsel von Raster oder Scroll-Tempo neu.",
         "@@ABSTAND@@": str(int(gap)),
         "@@RADIUS@@": str(int(radius.get("fenster", 12))),
         "@@SCHRIFT_TITEL@@": xml_text(font.get("mono", "Geist Mono")),
         "@@GROESSE_TITEL@@": str(pt(sizes.get("klein", 12))),
         "@@SCHRIFT_TEXT@@": xml_text(font.get("text", "Geist")),
         "@@GROESSE_TEXT@@": str(pt(sizes.get("label", 13))),
+        "@@SCROLL_TEMPO@@": scroll_text(valid_scroll(scroll) or SCROLL_DEFAULT),
         "@@BIN@@": BIN,
         "@@ZEN@@": os.path.join(CODE, "scripts", "zen"),
     }
@@ -508,7 +600,7 @@ def generate(args):
         rid = DEFAULT_RASTER
         changes = dict(changes, raster=DEFAULT_RASTER) if changes else {}
         raster = load_raster(rid)
-    return rid, changes, render(rid, raster), state
+    return rid, changes, render(rid, raster, scroll_tempo()), state
 
 
 def parse_args(argv):
@@ -560,7 +652,7 @@ def main(argv):
             state = runtime_state()
             rid, _ = choose({"raster": None, "profil": None}, state)
             profile = state.get("profil") if isinstance(state.get("profil"), str) else None
-            print(json.dumps({"raster": rid, "profil": profile}, ensure_ascii=False))
+            print(json.dumps({"raster": rid, "profil": profile, "scrollTempo": scroll_tempo()}, ensure_ascii=False))
             return 0
         if args["modus"] == "ausgeben":
             sys.stdout.write(generate(args)[2])

@@ -12,6 +12,7 @@ was davon erst «Danach» kommt oder noch ohne Wirkung ist.
 | Leiste | Modus, Zustand, Raster links · Zeit und nächster Termin in der Mitte · Dev-Server, Mitteilungen, System rechts | ✓ (Termin und Dev-Server «Danach») |
 | Befehlsfeld | `Super + Leertaste`: Apps, Web-Apps, rechnen, Dateien, Modi, Zustände, Werkzeuge · Klick auf das Zeichen: alle installierten Apps als Raster | ✓ (Werkzeuge: Screenshot und Pipette; Projekte «Danach»; App-Übersicht nach 0.1, unveröffentlicht) |
 | Hell und dunkel | ein Schalter, systemweit; optional nach Tageszeit | ✓ |
+| Touchpad und Maus | natürliches Scrollen; Scroll-Tempo in Einstellungen → Allgemein (Langsam, Normal, Schnell, Sehr schnell), wirkt sofort | ✓ (nach 0.1, unveröffentlicht) |
 | Modi | selbst angelegt; bestimmen Akzent, Chrome-Profil, Mail-Konten, «Heute»-Inhalte, Apps, Raster | ✓ (Mail-Konten und «Heute»-Inhalte noch ohne Wirkung) |
 | Zustände | selbst angelegt; Vorlagen Fokus und Sitzung; pro Modus anpassbar | ✓ (`fenster: fokus`, Widgets und Auslöser «Kalender» noch ohne Wirkung) |
 | Sitzung | startet bei Bildschirmfreigabe; hält Mitteilungen zurück, blendet Privates aus | ✓ |

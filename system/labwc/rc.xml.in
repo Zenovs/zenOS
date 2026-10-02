@@ -33,10 +33,15 @@
     <cornerRange>40</cornerRange>
   </resize>
 
-  <!-- Natürliches Scrollen wie auf dem Mac: Der Inhalt folgt den Fingern bzw. dem Rad, für Touchpad und Maus -->
+  <!--
+    Natürliches Scrollen wie auf dem Mac: Der Inhalt folgt den Fingern bzw. dem Rad, für Touchpad und Maus.
+    Scroll-Tempo aus einstellungen.json («scrollTempo», Einstellungen → Allgemein, Standard 1.0): labwc
+    multipliziert damit jede Scroll-Bewegung, den Weg auf dem Touchpad wie die Rasten des Mausrads.
+  -->
   <libinput>
     <device category="default">
       <naturalScroll>yes</naturalScroll>
+      <scrollFactor>@@SCROLL_TEMPO@@</scrollFactor>
     </device>
   </libinput>
 
