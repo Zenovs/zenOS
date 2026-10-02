@@ -13,7 +13,7 @@ Modul (`import qs.<ordner>`).
 | `komponenten/` | gemeinsame Bausteine (Symbol, Chip, Knopf, Eingabe, Toast …), `Hinweise.qml` (IPC `hinweis`) |
 | `leiste/` | Leiste, System- und Raster-Menü |
 | `heute/` | Hintergrund «Heute» |
-| `befehlsfeld/` | Befehlsfeld; `rechner.mjs` und `suche.mjs` testet auch node |
+| `befehlsfeld/` | Befehlsfeld mit App-Übersicht (`AppRaster`, `Kachel`); `rechner.mjs` und `suche.mjs` testet auch node |
 | `mitteilungen/` | Karten und Zentrale |
 | `sperre/` | Sperrbildschirm (ext-session-lock, PAM) |
 | `freigabe/` | Rahmen und Label bei Bildschirmfreigabe |

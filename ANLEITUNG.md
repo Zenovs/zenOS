@@ -266,6 +266,9 @@ unter «Am Pi prüfen».
 
 **Befehlsfeld**
 - [ ] `Super + Leertaste` öffnet es, `Esc` oder nochmals `Super + Leertaste` schliesst es.
+- [ ] Ein Klick auf das Zeichen oben links öffnet es mit allen installierten Apps als Raster: Die Karte gleitet ruhig
+  vom Zeichen her auf, ohne Ruckeln. Pfeiltasten wählen (mit Fokusrahmen), Enter oder ein Klick startet, Tippen
+  sucht; ein zweiter Klick auf das Zeichen schliesst. Auch in hell und dunkel prüfen.
 - [ ] `1440 / 16` zeigt `90`, Enter kopiert den Wert («90 kopiert»).
 - [ ] Apps starten, Dateien im Home-Ordner finden und öffnen.
 - [ ] Mit `Tab` zu den Werkzeugen: Das Bildschirmfoto eines Bereichs landet in der Zwischenablage und in

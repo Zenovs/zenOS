@@ -77,6 +77,10 @@ Alle drei stehen unter der SIL Open Font License und dürfen ins Image (`assets/
 - **Abstände:** 4 · 8 · 12 · 16 · 24 · 32 · 48 px. Fenster im Raster mit 8 px Lücke.
 - **Masse:** Leiste 40 px, Titelzeile 34 px, aktiver Fensterrand 1 px, Befehlsfeld 720 px breit und 104 px von oben.
 - **Bewegung:** 120 ms für Kleines, 200 ms maximal, `OutCubic`. Eingeblendet wird meist nur die Deckkraft.
+  Für das Aufgleiten (App-Übersicht) gibt es zwei Tokens: `bewegung.massstab` (0.96, Startmassstab einer Fläche, endet
+  bei 1) und `bewegung.versatz` (6 px, um die Einträge beim Einblenden nach oben rücken). Animiert werden nur
+  Deckkraft, Massstab und Lage, nie über eine Ebene oder einen Effekt. Gestaffeltes Einblenden ist als Ganzes in
+  200 ms fertig. Eine Einstellung «weniger Bewegung» gibt es nicht.
 - **Kein Blur.** Überlagerungen dunkeln den Hintergrund nur ab. Schatten gibt es nur am Befehlsfeld und nur mit GPU;
   Menüs, Karten und Hinweise haben einen Rahmen statt eines Schattens.
 - **Ruhe:** Nichts blinkt. Textcursor sind ein stehender Strich (1 px, `text`), auch in Sperre und Login.
@@ -91,8 +95,8 @@ Dateien und Regeln stehen in [`docs/bildmarke.md`](bildmarke.md).
   Modus), `einfarbig` setzt beide Steine auf `obenFarbe`.
 - Nur ein neuer Akzent blendet den unteren Stein in 200 ms über. Hell/dunkel schaltet beide Steine im selben Bild um;
   die einfarbige Marke bewegt sich nie.
-- Leiste 18 px · Login 48 px (unterer Stein `salbei`) · Sperrbildschirm 16 px und Befehlsfeld ohne Treffer 32 px,
-  beide einfarbig `gedaempft` · Erster Start 44 px.
+- Leiste 18 px · Login 48 px (unterer Stein `salbei`) · Sperrbildschirm 16 px und Befehlsfeld ohne Treffer bzw. ohne
+  Apps 32 px, beide einfarbig `gedaempft` · Erster Start 44 px.
 - Kein Wasserzeichen: Die Marke steht nie gross im Hintergrund.
 - App-Icon `zenos` (hicolor 48–512 px) legt Modul `45-thema` unter `~/.local/share/icons` ab.
 
@@ -155,7 +159,8 @@ Formularfehler erscheinen nicht als Hinweis, sondern ruhig unter dem Formular.
 ### Leiste (40 px)
 
 - **Links, «wo bin ich»:** Zeichen (18 px, unterer Stein im Modus-Akzent), Modus-Chip, Zustand-Chip (nur wenn aktiv,
-  mit Restzeit), Raster (Kurzname).
+  mit Restzeit), Raster (Kurzname). Das Zeichen ist ein Knopf wie die übrigen der Leiste (Zeigen färbt leicht ein):
+  Ein Klick öffnet die App-Übersicht des Befehlsfelds, ein zweiter schliesst sie.
 - **Mitte:** Datum und Uhrzeit in Geist Mono. Der nächste Termin kommt «Danach».
 - **Rechts:** Mitteilungen mit nächster Zustellung («3 · 10:00», «2 warten»), Hell/Dunkel (Mond im Hellen, Sonne im
   Dunkeln), System-Knopf auf `abgesetzt` (Netz, Ton, 1Password, Temperatur). Die Dev-Server-Übersicht kommt «Danach».
@@ -179,6 +184,24 @@ Während einer Freigabe und bei `heute: false` blendet der Inhalt aus (200 ms).
 - Findet eine Suche nichts: Zeichen 32 px einfarbig `gedaempft`, darunter «Keine Treffer».
 - `Esc` schliesst, `Tab` springt zu den Werkzeugen. Fusszeile: «↑↓ wählen · ↵ ausführen · Tab Werkzeuge · Esc
   schliessen».
+
+**App-Übersicht** (Klick auf das Zeichen der Leiste): eine Ansicht des Befehlsfelds, kein eigenes Fenster.
+
+- Bei leerem Feld statt der Liste ein Raster aus Kacheln unter dem Abschnittstitel «Apps»: alle installierten Apps
+  inklusive Web-Apps, alphabetisch. Kacheln mindestens 112 px breit (Spaltenzahl folgt der Breite, im Befehlsfeld
+  6) und 104 px hoch, Fläche 3 px innerhalb der Zelle, Radius 10. Symbol 40 px, darunter der Name in Geist 13 px
+  (`text`), höchstens zwei Zeilen; passt ein Wort nicht in eine Zeile, einzeilig gekürzt. Ohne Symbol der
+  Anfangsbuchstabe auf `flaeche2`, Radius 10.
+- Auswahl wie in der Liste mit `flaeche2` hinterlegt; per Tastatur gewählt zusätzlich der Fokusrahmen. Die Werkzeuge
+  fehlen hier. Fusszeile «←↑↓→ wählen · ↵ starten · Tippen sucht · Esc schliessen».
+- Die Karte wächst mit dem Raster bis zur Höchsthöhe des Befehlsfelds, danach scrollt das Raster.
+- Ohne Apps: Zeichen 32 px einfarbig `gedaempft`, «Noch keine Apps installiert» und der Knopf «Apps installieren»
+  (sekundär, mit Fokusrahmen, Enter genügt).
+- **Aufgleiten:** Über das Zeichen geöffnet blendet die Karte in 120 ms ein und wächst in 200 ms von
+  `bewegung.massstab` auf 1, mit dem Zeichen als Ursprung (dadurch rückt sie ein paar Pixel vom Zeichen her in ihre
+  Lage). Die Kacheln blenden diagonal von oben links ein, je Diagonale 10 ms später ((200 − 120) / 8, höchstens 8
+  Stufen), jede in 120 ms mit `bewegung.versatz` px nach oben. Alles ist nach 200 ms fertig. Aus der Suche heraus
+  geöffnet blenden nur die Kacheln ein; geschlossen wird wie immer nur über die Deckkraft.
 
 ### Mitteilungen
 

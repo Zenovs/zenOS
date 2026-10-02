@@ -5,6 +5,14 @@ an; eine Version entspricht einem Tag `v…` im Repo.
 
 ## Unveröffentlicht
 
+### Neu
+
+- **App-Übersicht:** Ein Klick auf das Zeichen oben links öffnet das Befehlsfeld mit allen installierten Apps
+  (Web-Apps eingeschlossen) als Raster aus Kacheln, alphabetisch. Die Karte gleitet vom Zeichen her auf, die
+  Kacheln blenden diagonal ein, alles in 200 ms. Pfeiltasten wählen, Enter oder ein Klick startet, Tippen sucht wie
+  gewohnt; ein zweiter Klick auf das Zeichen schliesst. Ohne Apps steht dort «Apps installieren». Neu per IPC:
+  `zenos-ipc befehlsfeld apps` und `befehlsfeld ansicht`.
+
 ### Geändert
 
 - **Natürliches Scrollen** wie auf dem Mac, für Touchpad und Maus (labwc, `rc.xml`).

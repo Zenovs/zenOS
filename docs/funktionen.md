@@ -10,7 +10,7 @@ was davon erst «Danach» kommt oder noch ohne Wirkung ist.
 | Funktion | Kurz | 0.1 |
 |---|---|---|
 | Leiste | Modus, Zustand, Raster links · Zeit und nächster Termin in der Mitte · Dev-Server, Mitteilungen, System rechts | ✓ (Termin und Dev-Server «Danach») |
-| Befehlsfeld | `Super + Leertaste`: Apps, Web-Apps, rechnen, Dateien, Modi, Zustände, Werkzeuge | ✓ (Werkzeuge: Screenshot und Pipette; Projekte «Danach») |
+| Befehlsfeld | `Super + Leertaste`: Apps, Web-Apps, rechnen, Dateien, Modi, Zustände, Werkzeuge · Klick auf das Zeichen: alle installierten Apps als Raster | ✓ (Werkzeuge: Screenshot und Pipette; Projekte «Danach»; App-Übersicht nach 0.1, unveröffentlicht) |
 | Hell und dunkel | ein Schalter, systemweit; optional nach Tageszeit | ✓ |
 | Modi | selbst angelegt; bestimmen Akzent, Chrome-Profil, Mail-Konten, «Heute»-Inhalte, Apps, Raster | ✓ (Mail-Konten und «Heute»-Inhalte noch ohne Wirkung) |
 | Zustände | selbst angelegt; Vorlagen Fokus und Sitzung; pro Modus anpassbar | ✓ (`fenster: fokus`, Widgets und Auslöser «Kalender» noch ohne Wirkung) |

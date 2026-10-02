@@ -109,7 +109,7 @@ selbst endet in v0.3.1 auch bei Fehlern mit 0; `zenos-ipc` wertet die Ausgabe au
 
 | Ziel | Funktionen |
 |---|---|
-| `befehlsfeld` | `umschalten`, `oeffnen`, `schliessen`, `werkzeuge`, `status` (`offen`/`zu`) |
+| `befehlsfeld` | `umschalten`, `oeffnen`, `schliessen`, `werkzeuge`, `apps` (App-Übersicht), `status` (`offen`/`zu`), `ansicht` (`apps`/`suche`) |
 | `sperre` | `sperren`, `status` (`gesperrt`/`offen`) |
 | `thema` | `wechseln`, `setzen(hell\|dunkel\|tageszeit)`, `status` |
 | `modus` | `waehlen`, `wechseln(id)`, `aktiv` |
