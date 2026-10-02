@@ -7,8 +7,9 @@ import qs.komponenten
 import qs.einstellungen.teile
 import qs.dienste as Dienste
 
-// Seite «System»: Ausgabe von «zen version», Kurzprüfung mit «zen doctor --kurz» auf Knopfdruck
-// und Hinweise auf zen update und zen doctor. Nichts läuft automatisch.
+// Seite «System»: Schalter «Firewall» (Dienst Firewall: Einschalten ohne, Ausschalten nur mit Passwort über
+// polkit), Ausgabe von «zen version», Kurzprüfung mit «zen doctor --kurz» auf Knopfdruck und Hinweise auf
+// zen update und zen doctor. Nichts läuft automatisch.
 Item {
     id: root
 
@@ -18,6 +19,36 @@ Item {
     property string versionText: ""
     property string pruefText: ""
     property bool pruefFehler: false
+
+    // Während eines Wechsels zeigt der Schalter das Ziel; bricht die Passwortabfrage ab, springt er zurück
+    function _firewallAn(): bool {
+        return Dienste.Firewall.laeuft ? Dienste.Firewall.ziel : Dienste.Firewall.aktiv;
+    }
+
+    readonly property string _firewallStatus: {
+        const f = Dienste.Firewall;
+        if (!f.bekannt)
+            return "ufw fehlt";
+        if (f.laeuft)
+            return f.ziel ? "Wird eingeschaltet …" : "Wartet auf dein Passwort …";
+        return f.aktiv ? "An" : "Aus";
+    }
+
+    readonly property string _firewallText: {
+        const f = Dienste.Firewall;
+        if (!f.bekannt)
+            return "ufw ist nicht installiert. install.sh richtet die Firewall ein.";
+        if (f.aktiv)
+            return "Eingehende Verbindungen sind gesperrt. Erlaubt bleibt nur SSH aus lokalen Netzen, höchstens fünf neue Verbindungen in 30 Sekunden. Ausschalten verlangt jedes Mal dein Passwort.";
+        if (f.bewusstAus) {
+            const seit = f.seit !== "" ? new Date(f.seit) : null;
+            const wann = seit && !isNaN(seit.getTime()) ? " am " + seit.toLocaleString(Qt.locale("de_CH"), "d. MMMM 'um' HH:mm") : "";
+            return "Eingehende Verbindungen sind nicht gesperrt. Du hast die Firewall" + wann + " ausgeschaltet; zen update lässt sie aus. Einschalten geht ohne Passwort.";
+        }
+        return "Eingehende Verbindungen sind nicht gesperrt. Einschalten geht ohne Passwort; sonst schaltet zen update sie ein.";
+    }
+
+    Component.onCompleted: Dienste.Firewall.aktualisieren()
 
     Process {
         id: version
@@ -63,6 +94,56 @@ Item {
             width: parent.width
             label: "Einstellungen"
             titel: "System"
+        }
+
+        Feld {
+            width: parent.width
+            beschriftung: "Firewall"
+
+            Column {
+                width: parent.width
+                spacing: 10
+
+                Row {
+                    spacing: 14
+
+                    Schalter {
+                        id: firewallSchalter
+
+                        anchors.verticalCenter: parent.verticalCenter
+                        enabled: Dienste.Firewall.bekannt && !Dienste.Firewall.laeuft
+                        an: root._firewallAn()
+                        beschriftung: "Firewall"
+                        onUmgeschaltet: an => {
+                            if (an)
+                                Dienste.Firewall.einschalten();
+                            else
+                                Dienste.Firewall.ausschalten();
+                            // Der Schalter folgt wieder dem Zustand (Bedienung hat die Bindung ersetzt)
+                            firewallSchalter.an = Qt.binding(() => root._firewallAn());
+                        }
+                    }
+
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: root._firewallStatus
+                        color: Theme.text
+                        font.family: Theme.schriftText
+                        font.pixelSize: Theme.groesseText
+                    }
+                }
+
+                Text {
+                    width: parent.width
+                    text: root._firewallText
+                    wrapMode: Text.WordWrap
+                    lineHeightMode: Text.FixedHeight
+                    lineHeight: Math.round(font.pixelSize * 1.45)
+                    color: Theme.gedaempft
+                    font.family: Theme.schriftText
+                    font.pixelSize: Theme.groesseLabel
+                }
+            }
         }
 
         Feld {

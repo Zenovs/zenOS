@@ -3,7 +3,12 @@
 
 # Automatische Sicherheitsupdates (Konfiguration aus system/apt/)
 unattended-upgrades
-# Firewall: Regeln werden vorbereitet, aktiviert wird sie erst mit «zen firewall aktivieren»
+# Firewall: standardmässig an (70-sicherheit), ausschalten nur bewusst (Einstellungen oder zen firewall)
 ufw
+# ss: zenos-firewall schaltet nur ein, wenn jede laufende SSH-Verbindung erlaubt bleibt (bei Ubuntu Server dabei)
+iproute2
+# Schalter «Firewall» in den Einstellungen: pkexec ruft scripts/bin/zenos-firewall über polkit auf
+# (Ausschalten nur mit Passwort; die Abfrage zeigt der polkit-Agent der Oberfläche)
+pkexec
 # Geheimnis-Scanner für den Pre-Commit-Hook (.githooks/pre-commit) und scripts/pruefen.sh
 gitleaks

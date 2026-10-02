@@ -21,17 +21,89 @@ Grundsatz 1: Sicherheit ist Standard und geht vor Design und Bequemlichkeit. Sie
     Paketlisten von `esm.ubuntu.com`. Ob er auch abgeschaltet werden soll, ist offen (`docs/module/m11.md`).
   - `apport` sammelt Absturzberichte nur lokal; gesendet wird erst mit `ubuntu-bug` (whoopsie gehört nicht zu
     Ubuntu Server).
-- Die Firewall (`ufw`) ist vorbereitet: eingehend verweigern, ausgehend erlauben, SSH (22/tcp) nur aus privaten
-  Netzen (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fe80::/10, fd00::/8). Sie bleibt aus, bis Zeno sie mit
-  `zen firewall aktivieren` einschaltet. SSH nur mit Schlüssel ist das Ziel; zenOS ändert die SSH-Konfiguration nicht.
+- Die Firewall (`ufw`) ist standardmässig an. Ausschalten geht nur bewusst und nur mit Passwort (siehe
+  «Firewall» unten). SSH nur mit Schlüssel ist das Ziel; zenOS ändert die SSH-Konfiguration nicht.
 - Festplattenverschlüsselung: auf dem Bürorechner Pflicht. Auf dem Pi ist sie das Ziel; in 0.1 noch nicht umgesetzt (offen).
 - Secure Boot: auf dem Bürorechner aktiv. Auf dem Pi bewusst nicht, weil dort Schlüssel dauerhaft in den Chip geschrieben werden.
 - Backups sollen automatisch und verschlüsselt auf einen eigenen Server oder ein NAS laufen (Ziel, in 0.1 noch nicht umgesetzt).
 
+## Firewall
+
+Der Laptop ist unterwegs in fremden WLANs. Deshalb ist die Firewall ab Werk an und bleibt es, bis Zeno sie
+bewusst ausschaltet.
+
+**Regeln** (`scripts/module/70-sicherheit.sh`, ufw von Ubuntu):
+
+- Eingehend verweigern, ausgehend erlauben, weitergeleitet verweigern. IPv4 und IPv6.
+- SSH (22/tcp) nur aus lokalen Netzen: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fe80::/10, fd00::/8. Mit
+  `limit`: Je Adresse lässt ufw in 30 s fünf neue Verbindungen zu und weist die sechste ab (gegen Durchprobieren;
+  im Container gemessen). Eine Verbindung, die beim Einschalten schon läuft, zählt dabei einmal mit. Wer viele
+  SSH-Verbindungen kurz nacheinander öffnet (Skripte, manche Editoren), nutzt auf dem Mac besser `ControlMaster`.
+- Was ufw ab Werk durchlässt (`/etc/ufw/before*.rules`), bleibt: bestehende Verbindungen, DHCP (v4 und v6), mDNS
+  (`.local`-Namen), UPnP-Suche, ICMP und die IPv6-Nachbarsuche. Eigene Regeln (`sudo ufw allow …`) bleiben.
+- SSH über ein VPN (z. B. Tailscale aus 100.64.0.0/10) oder aus dem Internet kommt nicht durch. Das gilt auch für
+  öffentliche IPv6-Adressen im eigenen Netz: Löst der Name des Geräts auf dem Mac auch zu einer solchen auf (möglich,
+  sobald das Netz IPv6 hat), verwirft die Firewall den Versuch still, und `ssh` wartet rund eine Minute, bevor es
+  IPv4 nimmt (Entscheidung offen, `docs/module/m11.md`).
+
+**Standardmässig an:** `install.sh` (auch bei `zen update`) legt zuerst die SSH-Regeln an und schaltet erst dann
+ein, über den Helfer `scripts/bin/zenos-firewall standard`. Der Helfer prüft vorher, ob jede laufende
+SSH-Verbindung erlaubt bleibt (`ss`), ob sshd nur auf Port 22 läuft und ob alle SSH-Regeln da sind; sonst bleibt die
+Firewall aus und `install.sh` warnt. Bestehende Verbindungen laufen beim Einschalten weiter (im Container mit einer
+offenen SSH-Verbindung geprüft). Im Image-Modus setzt `install.sh` nur `ENABLED=yes`; `ufw.service` lädt die Regeln
+beim ersten Start, vor dem Netz.
+
+**Bewusst ausschalten:** über den Schalter «Firewall» in den Einstellungen (System) oder mit
+`zen firewall deaktivieren`. Dann steht in `/var/lib/zenos/firewall` (root, 0644) `zustand=aus` mit Zeitpunkt, und
+`install.sh` und `zen update` lassen die Firewall aus. Wieder einschalten (Schalter oder `zen firewall aktivieren`)
+schreibt `zustand=an`. Fehlt die Datei, gilt der Standard: an. Ein direktes `sudo ufw disable` hält nur bis zum
+nächsten `zen update`. Jeder Wechsel über den Helfer steht im Journal (`journalctl -t zenos-firewall`), mit dem Weg
+(Einstellungen über pkexec oder sudo). `zen doctor` warnt, solange die Firewall aus ist.
+
+**Schalter in den Einstellungen:** Die Oberfläche startet `pkexec /opt/zenos/scripts/bin/zenos-firewall ein|aus`
+(Argumentliste, keine Shell). Die polkit-Aktionen in `system/polkit/org.zenos.firewall.policy`
+(→ `/usr/share/polkit-1/actions/`):
+
+| Aktion | aktive Sitzung am Gerät | inaktive Sitzung | sonst (z. B. SSH) |
+|---|---|---|---|
+| `org.zenos.firewall.einschalten` | ja, ohne Passwort | nein | nein |
+| `org.zenos.firewall.ausschalten` | nur mit Passwort (`auth_admin`), jedes Mal | nein | nein |
+
+`auth_admin` statt `auth_admin_keep`: polkit merkt sich die Anmeldung nicht, jedes Ausschalten fragt neu. Aus einer
+SSH-Sitzung geht der Schalter nicht; dort gilt `zen firewall` mit sudo. Grenze: Programme der systemd-Benutzerinstanz
+(dort läuft auch die Oberfläche) ordnet polkit der Sitzung am Gerät zu, auch wenn sie aus SSH mit
+`systemd-run --user` gestartet wurden. Dann geht Einschalten ohne Passwort, und Ausschalten öffnet den Dialog am
+Gerät; das Passwort muss trotzdem dort eingetippt werden. Der Helfer läuft als root, nimmt nur
+`ein`, `aus`, `standard` oder `pruefen` an, hat einen festen `PATH` und lädt seine gemeinsamen Teile
+(`scripts/lib/firewall.sh`) nur, wenn sie root gehören und nur für root schreibbar sind. Es läuft immer nur ein
+Wechsel zugleich (`flock` auf `/run/zenos-firewall.lock`), damit sich Schalter, `zen firewall` und `install.sh` nicht
+überholen. `pkexec` ist dafür installiert (Paket von Ubuntu); es ist ein setuid-Programm und vergrössert die
+Angriffsfläche etwas.
+
+## polkit-Agent
+
+Die Oberfläche ist der polkit-Agent der Sitzung (`shell/polkit/Polkit.qml`, `Quickshell.Services.Polkit`). Er
+zeigt den Passwortdialog, wenn ein Programm Rechte verlangt, die polkit nur nach einer Anmeldung gibt: den Schalter
+«Firewall», später auch andere (etwa NetworkManager).
+
+- **Was er sieht:** die Nachricht und die Kennung der Aktion (aus den Dateien unter `/usr/share/polkit-1/actions/`,
+  die nur root ändern kann), die Konten, die bestätigen dürfen (bei Ubuntu die Gruppe `sudo`; vorgewählt ist das
+  eigene) und die Frage von PAM.
+- **Was er weitergibt:** das Passwort, nur an polkit (`AuthFlow.submit`). polkit prüft es in einem eigenen Prozess
+  über PAM (`polkit-agent-helper-1`, Dienst `polkit-1`); zenOS erfährt nur «stimmt» oder «stimmt nicht». Das Feld
+  wird beim Weiterreichen geleert, samt Rückgängig-Verlauf des Textfelds. Das Passwort steht in keiner Eigenschaft,
+  wird nicht gespeichert und nie protokolliert.
+- **Sperre:** Während der Sperre gibt es keine Dialoge. Eine offene Anfrage bricht beim Sperren ab, eine neue
+  während der Sperre sofort; das Programm erfährt «abgebrochen». Begründung: Hinter der Sperre sieht sie niemand,
+  und eine Passwortfrage gleich nach dem Entsperren verleitet dazu, das Passwort aus Gewohnheit ein zweites Mal
+  einzutippen, ohne zu lesen, wofür.
+- Ein Klick neben den Dialog bricht nicht ab; Esc oder «Abbrechen» schon.
+
 ## Oberfläche
 
 - Der Sperrbildschirm nutzt `ext-session-lock`. Stürzt die Oberfläche ab, bleibt der Bildschirm gesperrt.
-- Die Anmeldung läuft über PAM. zenOS verarbeitet nie selbst Passwörter.
+- Die Anmeldung läuft über PAM. zenOS verarbeitet nie selbst Passwörter. Auch der polkit-Dialog reicht das
+  Passwort nur an polkit weiter (siehe «polkit-Agent»).
 - Automatische Sperre bei Inaktivität und Standby. Sie ist nicht abschaltbar.
 - Bei Bildschirmfreigabe werden Mitteilungsinhalte immer verborgen.
 - Das Befehlsfeld startet Prozesse mit Argument-Listen, nie über `sh -c`.

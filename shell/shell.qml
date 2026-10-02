@@ -23,6 +23,7 @@ import qs.freigabe as FreigabeModul
 import qs.modi as ModiModul
 import qs.einstellungen as EinstellungenModul
 import qs.einrichtung as EinrichtungModul
+import qs.polkit as PolkitModul
 // qmllint enable unused-imports
 
 // Einstieg der zenOS-Sitzung.
@@ -72,6 +73,12 @@ ShellRoot {
 
     LazyLoader {
         source: "einrichtung/Einrichtung.qml"
+        loading: true
+    }
+
+    // polkit-Agent der Sitzung (Passwortdialog, z. B. für «Firewall ausschalten»)
+    LazyLoader {
+        source: "polkit/Polkit.qml"
         loading: true
     }
 

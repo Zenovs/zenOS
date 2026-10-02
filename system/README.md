@@ -23,6 +23,7 @@ Verweis angelegt; was generiert wird, erzeugen die Programme unter `scripts/bin/
 | `thunar/uca.xml` | `~/.config/Thunar/uca.xml` (Kopie, nur mit der zenOS-Marke in der ersten Zeile) | Thunar: «Terminal hier öffnen» mit kitty (`48-ablage`) |
 | `applications/thunar-bulk-rename.desktop`, `applications/thunar-settings.desktop` | `/usr/local/share/applications/` | Hilfsstarter von Thunar ausblenden (`Hidden=true`, `48-ablage`) |
 | `pam/zenos-sperre` | direkt aus `/opt/zenos` (`configDirectory`) | PAM-Dienst des Sperrbildschirms |
+| `polkit/org.zenos.firewall.policy` | `/usr/share/polkit-1/actions/` | polkit-Aktionen für den Schalter «Firewall» (pkexec mit `zenos-firewall`, Ausschalten nur mit Passwort) |
 | `kitty/kitty.conf` | `~/.config/kitty/kitty.conf` (Verweis) | Terminal, schlaues Ctrl+C, Super-Kürzel |
 | `fish/zenos.fish`, `fish/functions/` | `~/.config/fish/conf.d/zenos.fish` (Verweis) | Shell: Eingabezeile, Statuszeile, `?`, Warnung vor gefährlichen Befehlen |
 | `chrome/policies/zenos.json` | `/etc/opt/chrome/policies/managed/` | Chrome-Richtlinien (`docs/sicherheit.md`) |

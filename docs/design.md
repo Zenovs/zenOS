@@ -170,6 +170,9 @@ CPU-Temperatur («41 °C»). Zeilen ohne Wert fehlen, ohne Akku und Lüfter blei
 Akku steht sein Symbol in `warnung`. Werte reichen höchstens bis kurz vor den Titel und werden sonst in der Mitte
 gekürzt.
 
+Solange die Firewall aus ist, steht im System-Menü unter «Einstellungen» der Eintrag «Firewall» mit dem Wert «aus»
+und dem offenen Schloss, ohne Farbe; er öffnet die Einstellungen (System). Ist sie an, fehlt er.
+
 ### Hinweise (Toast)
 
 Kurze Rückmeldungen wie «Farbe kopiert» erscheinen als Pille unten mittig, über den Tastenkappen von «Heute»:
@@ -275,12 +278,35 @@ markiert und nicht bedienbar.
   ohne Zahlen. Die Wahl wirkt nach dem Speichern sofort (unter einer Sekunde), ohne Abmelden. Ein Wert, den es nur von
   Hand gibt, steht gedämpft daneben («Eigener Wert: 0,75-fach»), dann ist kein Segment gewählt.
 
+Auf der Seite System steht zuoberst der Schalter «Firewall» mit Zustand («An», «Aus», «Wartet auf dein
+Passwort …») und einer Zeile Erklärung in `gedaempft`. Beim Ausschalten zeigt der Schalter sofort «aus»; bricht die
+Passwortabfrage ab, springt er zurück.
+
 ### Sitzung
 
 - Der geteilte Bildschirm bekommt einen 2-px-Rahmen in `sitzung` (Radius 12) und oben mittig das Label «Dieser Bildschirm wird geteilt» (Pille 24 px, Hintergrund `sitzung`, Text `grund`, Geist Mono 12, Monitor-Symbol).
 - Mitteilungen werden zurückgehalten und nur als Zahl gezeigt.
 - Nach dem Ende der Freigabe bleiben Rahmen und Label rund 5 s auf dem zuletzt geteilten Bildschirm (Nachlauf, siehe
   `docs/architektur.md`). Beginnt in der Zeit eine neue Freigabe, geht es ohne Unterbrechung weiter; nichts blinkt.
+
+### Bestätigung (polkit)
+
+Verlangt ein Programm Administratorrechte (z. B. «Firewall ausschalten»), fragt ein ruhiger Dialog nach dem
+Passwort (`shell/polkit/Polkit.qml`).
+
+- Mittig über dem abgedunkelten Hintergrund (`abdunkeln`, kein Weichzeichnen), auf dem Bildschirm mit dem Zeiger.
+  Karte 460 px, `flaeche`, Rahmen `linie2`, Radius 16 wie das Befehlsfeld, ohne Schatten.
+- Oben das Zeichen 16 px einfarbig `gedaempft` mit «Bestätigung nötig» (Geist Mono 12) wie unten in der Sperre.
+  Darunter, was bestätigt wird: der erste Satz der polkit-Nachricht als Titel in Instrument Serif 36 (lange
+  Nachrichten 24, höchstens drei Zeilen), der Rest in Geist 14 (`text2`), dann die Kennung der Aktion in Geist Mono
+  12 (`gedaempft`). Alles als reiner Text.
+- «Passwort von <Konto>» (Anmeldename, nicht der Anzeigename), Passwortfeld (Eingabe, 44 px), darunter eine
+  reservierte Zeile für Meldungen, rechts «Abbrechen» (sekundär) und «Bestätigen» (primär). Fusszeile wie im
+  Befehlsfeld: «↵ bestätigen · Esc abbrechen».
+- Falsches Passwort: Feldrahmen in `fehler`, darunter «Das Passwort stimmt nicht.» in `text2`, das Feld ist leer
+  und behält den Fokus. Kein Wackeln. «Wird geprüft …» erscheint erst nach 300 ms (PAM wartet nach einem
+  Fehlversuch rund 2 s).
+- Ein- und Ausblenden 120 ms, nur die Deckkraft. Ein Klick daneben schliesst nicht.
 
 ### Sperrbildschirm und Login
 

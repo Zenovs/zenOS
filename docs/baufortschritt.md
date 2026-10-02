@@ -98,8 +98,8 @@ Abnahme in einer echten VM (lima/Apple Virtualization, Ubuntu 26.04 arm64, virti
 - **Abnahme auf dem Pi** nach `ANLEITUNG.md` (C bis E). Danach `CHANGELOG.md` ergänzen und `v0.1.0` taggen (G).
 - **Temporäre sudo-Regel** `/etc/sudoers.d/zenos-bau` nach der Testphase löschen (G1), falls angelegt.
 - **Safe Browsing Stufe 2 oder 1** in Chrome (Zielkonflikt Sicherheit ↔ «keine Telemetrie», `docs/sicherheit.md`).
-- **Firewall einschalten** mit `zen firewall aktivieren` (per SSH aus dem eigenen Netz, dann von einem zweiten Gerät
-  prüfen).
+- **Firewall:** entschieden (Oktober 2026), standardmässig an; Ausschalten nur über den Schalter in den
+  Einstellungen mit Passwort oder `zen firewall deaktivieren` (`docs/module/m11.md`). Am Gerät prüfen.
 - **Bootsplash einschalten** mit `zen bootsplash aktivieren` (Boot-Kommandozeile, Pakete, initramfs; der Pi startet
   danach zweimal). Bis dahin zeigt `zen doctor` «Bootsplash vorbereitet, nicht aktiv». Prüfliste in
   `docs/module/bootsplash.md`.

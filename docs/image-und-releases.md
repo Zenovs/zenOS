@@ -75,7 +75,8 @@ Chrome, VS Code, 1Password und coremail sind nicht im Image; Chrome, VS Code und
 ## Erster Start
 
 1. cloud-init legt den Benutzer an, erzeugt neue SSH-Hostschlüssel und vergrössert Partition und Dateisystem;
-   systemd erzeugt eine neue `machine-id`.
+   systemd erzeugt eine neue `machine-id`. Die Firewall ist von Anfang an an (`ufw.service` lädt die Regeln vor
+   dem Netz): Herein kommt nur SSH aus lokalen Netzen (`docs/sicherheit.md`).
 2. Anmelden: Mit Einstellungen aus dem Raspberry Pi Imager direkt im zenOS-Login. Ohne Einstellungen legt
    cloud-init `ubuntu`/`ubuntu` mit abgelaufenem Passwort an. greetd 0.10 kann Passwörter nicht ändern (kein
    `pam_chauthtok`), der Login zeigt deshalb einen Hinweis. Zuerst an der Textkonsole (`Ctrl + Alt + F2`) oder per

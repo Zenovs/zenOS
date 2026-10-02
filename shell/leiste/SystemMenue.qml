@@ -193,6 +193,20 @@ Menuekarte {
         }
     }
 
+    // Nur solange die Firewall aus ist, ruhig und ohne Farbe: führt zum Schalter in den Einstellungen
+    MenueEintrag {
+        visible: Firewall.bekannt && !Firewall.aktiv
+        width: parent.width
+        symbol: "schloss-offen"
+        text: "Firewall"
+        wert: "aus"
+        Accessible.name: "Firewall ist aus – Einstellungen öffnen"
+        onAusgeloest: {
+            root.schliessen();
+            Aktionen.einstellungen("system");
+        }
+    }
+
     Abschnitt {}
 
     // Beenden erst nach Rückfrage (zweiter Klick)

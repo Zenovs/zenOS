@@ -1,0 +1,220 @@
+#!/bin/bash
+# zenos-firewall ein|aus|standard|pruefen – Firewall (ufw) ein- oder ausschalten. Läuft nur als root: über
+# pkexec (Schalter «Firewall» in den Einstellungen, polkit-Aktionen in system/polkit/org.zenos.firewall.policy),
+# über sudo («zen firewall») oder aus install.sh («standard»).
+#
+#   ein       prüfen (siehe pruefen), einschalten und als bewusst «an» merken
+#   aus       ausschalten und als bewusst «aus» merken: install.sh und zen update lassen sie dann aus
+#   standard  für install.sh: einschalten, ausser sie wurde bewusst ausgeschaltet; merkt sich nichts
+#   pruefen   nur prüfen, ob Einschalten geht: SSH-Regeln für alle lokalen Netze vorhanden, sshd nur auf Port 22,
+#             jede laufende SSH-Verbindung kommt aus einem erlaubten Netz (sonst bliebe sie hängen)
+#
+# Laufende Verbindungen bleiben beim Einschalten bestehen (before.rules lässt ESTABLISHED durch); die Prüfung
+# deckt Verbindungen ab, die conntrack erst mitten im Strom aufnimmt.
+#
+# Sicherheit: Vom Aufrufer kommen nur das eine Argument, PKEXEC_UID bzw. SUDO_UID (nur fürs Journal, als Zahl
+# geprüft) und SSH_CONNECTION (macht die Prüfung höchstens strenger); der PATH ist fest (pkexec räumt die Umgebung
+# ohnehin auf). Keine Shell-Zeichenketten, keine Eingaben an Programme ausser als Argumentliste. Die gemeinsamen
+# Teile kommen aus ../lib/firewall.sh, das root gehören und nur für root schreibbar sein muss. Es läuft immer nur
+# ein Wechsel zugleich (flock). Jeder Wechsel landet im Journal (journalctl -t zenos-firewall).
+#
+# Exit: 0 erledigt (auch: war schon so), 1 Fehler, 2 falscher Aufruf, 3 Prüfung verhindert das Einschalten,
+# 4 ufw fehlt. 126 (abgebrochen) und 127 (nicht erlaubt) vergibt pkexec selbst.
+
+set -euo pipefail
+umask 022
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+unset IFS
+
+_name=zenos-firewall
+
+_melden() { printf '%s\n' "$*"; }
+_fehler() { printf '%s: %s\n' "$_name" "$*" >&2; }
+
+if (( $# != 1 )); then
+  _fehler "Aufruf: zenos-firewall ein|aus|standard|pruefen"
+  exit 2
+fi
+case "$1" in
+  ein | aus | standard | pruefen) _modus=$1 ;;
+  *)
+    _fehler "unbekannter Modus (erlaubt: ein, aus, standard, pruefen)"
+    exit 2
+    ;;
+esac
+if (( EUID != 0 )); then
+  _fehler "läuft nur als root (über pkexec, sudo oder install.sh)"
+  exit 2
+fi
+
+# Gemeinsame Teile: nur, wenn sie root gehören und nur für root schreibbar sind
+_lib=$(readlink -f -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/../lib/firewall.sh")
+_rechte=$(stat -c '%u %a' -- "$_lib" 2>/dev/null) || _rechte=""
+if [[ -z "$_rechte" || "${_rechte%% *}" != 0 ]] || (( (8#${_rechte##* } & 8#022) != 0 )); then
+  _fehler "$_lib fehlt oder ist nicht nur für root schreibbar – abgebrochen"
+  exit 1
+fi
+# shellcheck source=../lib/firewall.sh
+source "$_lib"
+
+# Wer hat gewechselt (nur fürs Journal; pkexec und sudo setzen die Variablen selbst)
+_weg() {
+  if [[ "${PKEXEC_UID:-}" =~ ^[0-9]+$ ]]; then
+    printf 'Einstellungen über pkexec, uid %s' "$PKEXEC_UID"
+  elif [[ "${SUDO_UID:-}" =~ ^[0-9]+$ ]]; then
+    printf 'sudo, uid %s' "$SUDO_UID"
+  else
+    printf 'root'
+  fi
+}
+
+_journal() { logger -t "$_name" -- "$*" 2>/dev/null || true; }
+
+# Bewussten Zustand atomar schreiben (Ordner und Datei gehören root, für alle lesbar). Rückgabe 1 bei Fehler.
+_zustand_schreiben() { # an|aus
+  local ordner=${_FIREWALL_ZUSTAND%/*} tmp
+  install -d -m 0755 -o root -g root -- "$ordner" || return 1
+  tmp=$(mktemp -- "$ordner/.firewall.XXXXXX") || return 1
+  if printf '# zenOS: bewusster Zustand der Firewall (scripts/bin/zenos-firewall). Nicht von Hand ändern.\nzustand=%s\nseit=%s\n' \
+    "$1" "$(date -Iseconds)" > "$tmp" && chmod 0644 -- "$tmp" && mv -f -- "$tmp" "$_FIREWALL_ZUSTAND"; then
+    return 0
+  fi
+  rm -f -- "$tmp"
+  return 1
+}
+
+# Gründe, die gegen das Einschalten sprechen (je eine Zeile auf stdout); Rückgabe 1, wenn es welche gibt
+_pruefen() {
+  local tupel ausgabe ports
+  local -a netze=() fehlend=() gegenstellen=() offen=()
+  mapfile -t netze < <(_firewall_netze)
+  if ! tupel=$(_firewall_tupel); then
+    _melden "Die Regeln von ufw sind nicht lesbar (/etc/ufw/user.rules)."
+    return 1
+  fi
+  if ! ausgabe=$(_firewall_auswerten fehlend "${netze[@]}" <<< "$tupel"); then
+    _melden "Die Regeln liessen sich nicht auswerten (python3)."
+    return 1
+  fi
+  mapfile -t fehlend < <(printf '%s' "$ausgabe" | sed '/^$/d')
+  if (( ${#fehlend[@]} > 0 )); then
+    _melden "SSH-Regeln fehlen für: $(_firewall_liste "${fehlend[@]}") (install.sh legt sie an)."
+    return 1
+  fi
+
+  # SSH muss nur auf Port 22 laufen: Die Regeln erlauben nur 22/tcp, und die Prüfung der laufenden Verbindungen
+  # unten sieht nur Port 22. Eine Sitzung über einen zweiten Port (Port oder ListenAddress mit Port) bräche ab.
+  if [[ -x /usr/sbin/sshd ]]; then
+    ports=$(/usr/sbin/sshd -T 2>/dev/null | _firewall_ssh_ports) || ports=""
+    if [[ -n "$ports" && "$ports" != 22 ]]; then
+      _melden "SSH läuft auf Port ${ports// /, }, die Regeln erlauben nur 22/tcp."
+      return 1
+    fi
+  fi
+
+  # Keine laufende SSH-Verbindung darf abgeschnitten werden. Ohne ss liesse sich das nicht prüfen.
+  if ! command -v ss >/dev/null 2>&1; then
+    _melden "ss fehlt (Paket iproute2): Laufende SSH-Verbindungen lassen sich nicht prüfen."
+    return 1
+  fi
+  mapfile -t gegenstellen < <(_firewall_ssh_gegenstellen)
+  if (( ${#gegenstellen[@]} > 0 )); then
+    if ! ausgabe=$(_firewall_auswerten offen "${gegenstellen[@]}" <<< "$tupel"); then
+      _melden "Die SSH-Verbindungen liessen sich nicht prüfen (python3)."
+      return 1
+    fi
+    mapfile -t offen < <(printf '%s' "$ausgabe" | sed '/^$/d')
+    if (( ${#offen[@]} > 0 )); then
+      _melden "SSH-Verbindung aus einem Netz, das die Regeln nicht erlauben: $(_firewall_liste "${offen[@]}")."
+      return 1
+    fi
+  fi
+  return 0
+}
+
+_einschalten() { # merken (1: bewusst «an»)
+  local merken=$1 grund ausgabe
+  if _firewall_aktiv; then
+    if (( merken )) && [[ "$(_firewall_zustand)" != an ]]; then
+      if ! _zustand_schreiben an; then
+        _fehler "Der Zustand liess sich nicht merken ($_FIREWALL_ZUSTAND)"
+        return 1
+      fi
+      _journal "Firewall bleibt an, jetzt bewusst ($(_weg))"
+    fi
+    _melden "Die Firewall ist schon an."
+    return 0
+  fi
+  if ! grund=$(_pruefen); then
+    _fehler "Firewall bleibt aus: $grund"
+    return 3
+  fi
+  if ! ausgabe=$(ufw --force enable 2>&1) || ! _firewall_aktiv; then
+    _fehler "ufw liess sich nicht einschalten: ${ausgabe##*$'\n'}"
+    return 1
+  fi
+  if (( merken )); then
+    _journal "Firewall eingeschaltet ($(_weg))"
+    if ! _zustand_schreiben an; then
+      _fehler "Firewall ist an, aber der Zustand liess sich nicht merken ($_FIREWALL_ZUSTAND)"
+      return 1
+    fi
+  else
+    _journal "Firewall eingeschaltet (Standard, install.sh)"
+  fi
+  _melden "Die Firewall ist an: eingehend gesperrt, SSH nur aus lokalen Netzen."
+}
+
+_ausschalten() {
+  local ausgabe geschaltet=0
+  if _firewall_aktiv; then
+    if ! ausgabe=$(ufw disable 2>&1) || _firewall_aktiv; then
+      _fehler "ufw liess sich nicht ausschalten: ${ausgabe##*$'\n'}"
+      return 1
+    fi
+    geschaltet=1
+    _journal "Firewall ausgeschaltet ($(_weg))"
+  fi
+  # Auch wenn sie schon aus war, ist «aus» ab jetzt bewusst. War sie schon bewusst aus, bleibt der Zeitpunkt.
+  if (( geschaltet )) || [[ "$(_firewall_zustand)" != aus ]]; then
+    if ! _zustand_schreiben aus; then
+      _fehler "Firewall ist aus, aber der Zustand liess sich nicht merken ($_FIREWALL_ZUSTAND): zen update schaltet sie wieder ein"
+      return 1
+    fi
+  fi
+  _melden "Die Firewall ist aus. Eingehende Verbindungen sind nicht gesperrt."
+}
+
+if ! _firewall_installiert; then
+  _fehler "ufw ist nicht installiert (install.sh ausführen)"
+  exit 4
+fi
+
+# Immer nur ein Lauf: Schalter, zen firewall und install.sh könnten sich sonst überholen (etwa «standard» liest
+# den Zustand, «aus» schaltet aus und merkt es, «standard» schaltet danach doch ein). /run gehört root.
+exec 9> /run/zenos-firewall.lock
+if ! flock -w 60 9; then
+  _fehler "Ein anderer Wechsel der Firewall läuft noch – abgebrochen"
+  exit 1
+fi
+
+case "$_modus" in
+  ein) _einschalten 1 ;;
+  aus) _ausschalten ;;
+  standard)
+    if [[ "$(_firewall_zustand)" == aus ]]; then
+      _seit=$(_firewall_seit)
+      _melden "Die Firewall bleibt aus: bewusst ausgeschaltet${_seit:+ am ${_seit%%T*}}."
+      exit 0
+    fi
+    _einschalten 0
+    ;;
+  pruefen)
+    if ! _grund=$(_pruefen); then
+      _fehler "$_grund"
+      exit 3
+    fi
+    _melden "Einschalten geht: SSH bleibt aus den lokalen Netzen erreichbar."
+    ;;
+esac

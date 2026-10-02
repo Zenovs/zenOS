@@ -11,8 +11,14 @@
 # - Ubuntu-Nachrichten: motd-news (ENABLED=0 in /etc/default/motd-news) und apt-news von ubuntu-pro-client
 #   (pro config set apt_news=false) abschalten, je nur, wenn vorhanden. Beide holen ohne Aktion des Benutzers
 #   Inhalte von motd.ubuntu.com, motd-news schickt dabei Version, Kernel, Architektur und cloud_id mit.
-# - ufw: Regeln werden nur vorbereitet, solange die Firewall aus ist. Eingeschaltet wird sie hier nie,
-#   nur mit «zen firewall aktivieren». Ist sie schon an, bleibt alles, wie es ist.
+# - ufw: standardmässig an. Zuerst die Regeln (eingehend verweigern, ausgehend erlauben, SSH aus den lokalen
+#   Netzen mit «limit»), dann einschalten über scripts/bin/zenos-firewall standard – ausser der Benutzer hat
+#   sie bewusst ausgeschaltet (/var/lib/zenos/firewall: zustand=aus, geschrieben vom Schalter in den
+#   Einstellungen oder von «zen firewall deaktivieren»). Der Helfer schaltet nur ein, wenn jede laufende
+#   SSH-Verbindung erlaubt bleibt. Im Image-Modus (chroot) nur ENABLED=yes: ufw.service lädt die Regeln beim
+#   ersten Start, der Netzfilter des Bau-Rechners bleibt unberührt. Eigene Regeln des Benutzers bleiben.
+# - polkit-Aktionen (system/polkit/org.zenos.firewall.policy): Einschalten ohne, Ausschalten mit Passwort,
+#   beides nur in der aktiven Sitzung am Gerät (pkexec mit zenos-firewall).
 # - gitleaks-Hook: core.hooksPath=.githooks im Quell-Repo (z. B. ~/zenOS), wenn es dem Benutzer gehört.
 #   /opt/zenos bekommt keinen Hook (dort wird nicht committet).
 # Die Pakete aus scripts/pakete/sicherheit.txt installiert 20-pakete; hier wird nur nachgezogen.
@@ -138,16 +144,23 @@ _sicherheit_ufw_wert() { # SCHLUESSEL DATEI
   sed -n "s/^$1=//p" "$2" 2>/dev/null | tail -n 1 | tr -d '"'"'"
 }
 
-# Druckt die Netze, für die die Regel «allow tcp 22 aus NETZ» noch fehlt (Tupel in user.rules/user6.rules)
+# Druckt die Netze, für die die Regel «limit tcp 22 aus NETZ» noch fehlt (Tupel in user.rules/user6.rules).
+# Eine ältere Regel «allow» für dasselbe Netz zählt als fehlend: «ufw limit» ersetzt sie an Ort und Stelle.
 _sicherheit_ssh_fehlend() { # NETZ…
-  local regeln netz
+  _sicherheit_ssh_ohne limit "$@"
+}
+
+# Druckt die Netze ohne SSH-Regel mit einer dieser Aktionen (limit, oder «allow|limit»)
+_sicherheit_ssh_ohne() { # AKTIONEN NETZ…
+  local aktionen=$1 regeln netz
+  shift
   regeln=$({
     $SUDO cat -- /etc/ufw/user.rules 2>/dev/null || true
     $SUDO cat -- /etc/ufw/user6.rules 2>/dev/null || true
   } | grep '^### tuple ###') || regeln=""
   for netz in "$@"; do
-    awk -v netz="$netz" '
-      $4 == "allow" && $5 == "tcp" && $6 == "22" && ($7 == "0.0.0.0/0" || $7 == "::/0") &&
+    awk -v netz="$netz" -v aktionen="^($aktionen)\$" '
+      $4 ~ aktionen && $5 == "tcp" && $6 == "22" && ($7 == "0.0.0.0/0" || $7 == "::/0") &&
         $8 == "any" && $9 == netz && $10 == "in" { gefunden = 1 }
       END { exit !gefunden }
     ' <<< "$regeln" || printf '%s\n' "$netz"
@@ -155,44 +168,40 @@ _sicherheit_ssh_fehlend() { # NETZ…
 }
 
 _sicherheit_firewall() {
-  # Lokale Netze, aus denen SSH erlaubt ist (dieselbe Liste steht in scripts/zen.d/firewall.sh)
+  # Lokale Netze, aus denen SSH erlaubt ist (dieselbe Liste steht in scripts/lib/firewall.sh)
   local -a netze=(10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 fe80::/10 fd00::/8)
-  local -a fehlend=() danach=()
-  local netz wert ausgabe=""
+  local -a fehlend=() danach=() ohne=()
+  local netz wert ausgabe="" grund=""
 
   if ! paket_installiert ufw; then
-    log_warnung "ufw ist nicht installiert, Firewall nicht vorbereitet"
+    log_warnung "ufw ist nicht installiert, Firewall nicht eingerichtet"
     return 0
   fi
 
-  # Eine laufende Firewall gehört dem Benutzer: nichts ändern, nur nachsehen.
-  if [[ "$(_sicherheit_ufw_wert ENABLED /etc/ufw/ufw.conf)" == yes ]]; then
-    mapfile -t fehlend < <(_sicherheit_ssh_fehlend "${netze[@]}")
-    if (( ${#fehlend[@]} > 0 )); then
-      log_warnung "Firewall ist aktiv, aber SSH ist nicht aus allen lokalen Netzen erlaubt (fehlt: ${fehlend[*]}). Regeln bleiben unverändert."
-    else
-      log_info "Firewall ist aktiv, Regeln bleiben unverändert"
-    fi
-    return 0
-  fi
+  # Schalter in den Einstellungen: polkit-Aktionen für pkexec mit scripts/bin/zenos-firewall
+  datei_installieren "$ZENOS_CODE/system/polkit/org.zenos.firewall.policy" \
+    /usr/share/polkit-1/actions/org.zenos.firewall.policy
 
-  # Standard: eingehend verweigern, ausgehend erlauben (ändert bei inaktiver ufw nur /etc/default/ufw)
-  wert=$(_sicherheit_ufw_wert DEFAULT_INPUT_POLICY /etc/default/ufw)
-  if [[ "$wert" != DROP ]]; then
-    ausgabe=$($SUDO ufw default deny incoming 2>&1) || true
-    if [[ "$(_sicherheit_ufw_wert DEFAULT_INPUT_POLICY /etc/default/ufw)" == DROP ]]; then
-      aenderung "Firewall: eingehend verweigern (vorher ${wert:-unbekannt})"
-    else
-      log_warnung "ufw: Standard für eingehend liess sich nicht setzen (${ausgabe##*$'\n'})"
+  # Standard: eingehend verweigern, ausgehend erlauben. Nur solange ufw aus ist: Eine andere Vorgabe bei
+  # laufender Firewall hat der Benutzer selbst gesetzt (zen doctor warnt).
+  if [[ "$(_sicherheit_ufw_wert ENABLED /etc/ufw/ufw.conf)" != yes ]]; then
+    wert=$(_sicherheit_ufw_wert DEFAULT_INPUT_POLICY /etc/default/ufw)
+    if [[ "$wert" != DROP ]]; then
+      ausgabe=$($SUDO ufw default deny incoming 2>&1) || true
+      if [[ "$(_sicherheit_ufw_wert DEFAULT_INPUT_POLICY /etc/default/ufw)" == DROP ]]; then
+        aenderung "Firewall: eingehend verweigern (vorher ${wert:-unbekannt})"
+      else
+        log_warnung "ufw: Standard für eingehend liess sich nicht setzen (${ausgabe##*$'\n'})"
+      fi
     fi
-  fi
-  wert=$(_sicherheit_ufw_wert DEFAULT_OUTPUT_POLICY /etc/default/ufw)
-  if [[ "$wert" != ACCEPT ]]; then
-    ausgabe=$($SUDO ufw default allow outgoing 2>&1) || true
-    if [[ "$(_sicherheit_ufw_wert DEFAULT_OUTPUT_POLICY /etc/default/ufw)" == ACCEPT ]]; then
-      aenderung "Firewall: ausgehend erlauben (vorher ${wert:-unbekannt})"
-    else
-      log_warnung "ufw: Standard für ausgehend liess sich nicht setzen (${ausgabe##*$'\n'})"
+    wert=$(_sicherheit_ufw_wert DEFAULT_OUTPUT_POLICY /etc/default/ufw)
+    if [[ "$wert" != ACCEPT ]]; then
+      ausgabe=$($SUDO ufw default allow outgoing 2>&1) || true
+      if [[ "$(_sicherheit_ufw_wert DEFAULT_OUTPUT_POLICY /etc/default/ufw)" == ACCEPT ]]; then
+        aenderung "Firewall: ausgehend erlauben (vorher ${wert:-unbekannt})"
+      else
+        log_warnung "ufw: Standard für ausgehend liess sich nicht setzen (${ausgabe##*$'\n'})"
+      fi
     fi
   fi
 
@@ -201,21 +210,82 @@ _sicherheit_firewall() {
     netze=(10.0.0.0/8 172.16.0.0/12 192.168.0.0/16)
   fi
 
+  # SSH-Regeln zuerst, eingeschaltet wird zuletzt: So bleibt SSH aus dem lokalen Netz immer erreichbar.
+  # «limit»: je Adresse höchstens 5 neue Verbindungen in 30 s, die sechste abgewiesen (gegen Durchprobieren).
+  # Die Ausgabe von ufw bleibt still: Ist ufw aus (chroot, Container), meldet es mitunter Warnungen, legt die Regeln
+  # aber trotzdem an. Gezählt wird, was danach wirklich in den Regeln steht.
   mapfile -t fehlend < <(_sicherheit_ssh_fehlend "${netze[@]}")
-  (( ${#fehlend[@]} > 0 )) || return 0
-  # Die Ausgabe von ufw bleibt still: Ohne Netzfilter-Rechte (chroot, Container) meldet es Warnungen, legt die
-  # Regeln aber trotzdem an. Gezählt wird, was danach wirklich in den Regeln steht.
-  for netz in "${fehlend[@]}"; do
-    ausgabe=$($SUDO ufw allow proto tcp from "$netz" to any port 22 comment 'zenOS SSH lokal' 2>&1) || true
-  done
-  mapfile -t danach < <(_sicherheit_ssh_fehlend "${netze[@]}")
-  for netz in "${fehlend[@]}"; do
-    if [[ " ${danach[*]} " != *" $netz "* ]]; then
-      aenderung "Firewall: SSH (22/tcp) aus $netz erlaubt (vorbereitet, ufw bleibt aus)"
+  if (( ${#fehlend[@]} > 0 )); then
+    for netz in "${fehlend[@]}"; do
+      ausgabe=$($SUDO ufw limit proto tcp from "$netz" to any port 22 comment 'zenOS SSH lokal' 2>&1) || true
+    done
+    grund=${ausgabe##*$'\n'}
+    mapfile -t danach < <(_sicherheit_ssh_fehlend "${netze[@]}")
+    for netz in "${fehlend[@]}"; do
+      if [[ " ${danach[*]} " != *" $netz "* ]]; then
+        aenderung "Firewall: SSH (22/tcp) aus $netz erlaubt, mit Begrenzung (limit: je Adresse 5 neue Verbindungen in 30 s)"
+      fi
+    done
+    # Ob «limit» geht, prüft ufw am Kernel (Modul recent). Fehlt es oder reichen die Rechte nicht, lehnt ufw limit
+    # ab, für IPv6 etwa mit «Skipping unsupported IPv6 'limit' rule». Dann wenigstens «allow», damit SSH aus dem
+    # lokalen Netz erreichbar bleibt; ein späterer Lauf stellt auf limit um, sobald es geht.
+    for netz in "${danach[@]}"; do
+      [[ -z "$(_sicherheit_ssh_ohne 'allow|limit' "$netz")" ]] && continue
+      ausgabe=$($SUDO ufw allow proto tcp from "$netz" to any port 22 comment 'zenOS SSH lokal' 2>&1) || true
+      if [[ -z "$(_sicherheit_ssh_ohne 'allow|limit' "$netz")" ]]; then
+        aenderung "Firewall: SSH (22/tcp) aus $netz erlaubt, vorerst ohne Begrenzung"
+      else
+        ohne+=("$netz")
+      fi
+    done
+    if (( ${#ohne[@]} > 0 )); then
+      log_warnung "SSH-Regeln liessen sich nicht anlegen für: ${ohne[*]} (${ausgabe##*$'\n'})"
+    elif (( ${#danach[@]} > 0 )); then
+      log_info "SSH aus ${danach[*]} vorerst ohne Begrenzung: ufw lehnt limit hier ab (${grund}); ein späterer Lauf stellt um"
     fi
-  done
-  if (( ${#danach[@]} > 0 )); then
-    log_warnung "SSH-Regeln liessen sich nicht anlegen für: ${danach[*]} (${ausgabe##*$'\n'})"
+  fi
+
+  _sicherheit_firewall_einschalten
+}
+
+# Firewall einschalten, ausser der Benutzer hat sie bewusst ausgeschaltet (Kopf dieser Datei)
+_sicherheit_firewall_einschalten() {
+  local zustand="" ausgabe grund
+  # Dieselbe Regel wie _firewall_zustand in scripts/lib/firewall.sh: nur genau «an» oder «aus» zählt
+  if [[ -r /var/lib/zenos/firewall ]]; then
+    zustand=$(sed -nE 's/^zustand=(an|aus)[[:space:]]*$/\1/p' /var/lib/zenos/firewall | tail -n 1)
+  fi
+  if [[ "$zustand" == aus ]]; then
+    if [[ "$(_sicherheit_ufw_wert ENABLED /etc/ufw/ufw.conf)" != yes ]]; then
+      log_info "Firewall bleibt aus: bewusst ausgeschaltet (einschalten: Einstellungen → System oder zen firewall aktivieren)"
+    fi
+    return 0
+  fi
+
+  # ufw.service lädt die Regeln beim Hochfahren (das Paket aktiviert ihn; hier nur nachgezogen)
+  dienst_aktivieren ufw.service
+  [[ "$(_sicherheit_ufw_wert ENABLED /etc/ufw/ufw.conf)" != yes ]] || return 0
+
+  if (( ZENOS_IMAGE || ! ZENOS_SYSTEMD )); then
+    # chroot: kein «ufw enable», es lüde die Regeln in den Netzfilter des Rechners, der das Image baut
+    sed 's/^ENABLED=.*/ENABLED=yes/' /etc/ufw/ufw.conf | datei_schreiben /etc/ufw/ufw.conf 0644 root:root
+    if [[ "$(_sicherheit_ufw_wert ENABLED /etc/ufw/ufw.conf)" == yes ]]; then
+      log_info "Firewall: an ab dem nächsten Start (ENABLED=yes, ufw.service lädt die Regeln)"
+    else
+      log_warnung "Firewall: ENABLED=yes liess sich nicht setzen (/etc/ufw/ufw.conf)"
+    fi
+    return 0
+  fi
+
+  # Der Helfer prüft vorher, ob jede laufende SSH-Verbindung erlaubt bleibt, sonst bleibt ufw aus
+  ausgabe=$($SUDO "$ZENOS_CODE/scripts/bin/zenos-firewall" standard 2>&1) || true
+  if [[ "$(_sicherheit_ufw_wert ENABLED /etc/ufw/ufw.conf)" == yes ]]; then
+    aenderung "Firewall eingeschaltet: eingehend gesperrt, SSH nur aus lokalen Netzen"
+  else
+    grund=${ausgabe##*$'\n'}
+    grund=${grund#zenos-firewall: }
+    grund=${grund#Firewall bleibt aus: }
+    log_warnung "Firewall bleibt vorerst aus: ${grund:-ohne Meldung} (zen firewall status)"
   fi
 }
 

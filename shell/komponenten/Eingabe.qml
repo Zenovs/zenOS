@@ -20,7 +20,10 @@ Item {
 
     signal accepted
 
+    // Über text = "": Das leert auch den Rückgängig-Verlauf von TextInput, in dem clear() die getippten Zeichen
+    // (auch im Passwortmodus) weiter im Speicher liesse. clear() danach bricht nur noch eine Vorschau (preedit) ab.
     function leeren(): void {
+        input.text = "";
         input.clear();
     }
 

@@ -190,6 +190,9 @@ tmux new -s zenos
   Paketserver kurz weg. Dann `./scripts/install.sh` einfach noch einmal starten, Erledigtes bleibt. Den Rat von apt
   («apt update», «--fix-missing») braucht es nicht.
 - Die SSH-Verbindung bleibt bestehen. Der Bildschirm am Pi bleibt bis zum Neustart bei der Textkonsole.
+- Gegen Ende schaltet es die Firewall ein («Firewall eingeschaltet»): Herein kommt dann nur noch SSH aus lokalen
+  Netzen. Vorher prüft es, ob deine SSH-Verbindung erlaubt bleibt; kommt sie aus einem anderen Netz (etwa über ein
+  VPN), bleibt die Firewall aus und eine Warnung nennt den Grund.
 - Am Ende steht `zenOS … installiert · N Änderungen`. Das Protokoll liegt unter `/var/log/zenos/install.log`.
 
 Bricht die Verbindung ab: wie in B3 wieder verbinden, dann `tmux attach -t zenos`.
@@ -207,9 +210,10 @@ Bricht die Verbindung ab: wie in B3 wieder verbinden, dann `tmux attach -t zenos
 zen doctor
 ```
 
-Erwartet wird `0 Fehler`. Hinweise sind normal, zum Beispiel «greetd läuft noch nicht», «Firewall vorbereitet, aber
-nicht aktiv», «Bootsplash vorbereitet, nicht aktiv» und die noch nicht installierten Apps. Eine Warnung gibt es nur,
-wenn du die sudo-Regel aus B12 angelegt hast.
+Erwartet wird `0 Fehler`. Hinweise sind normal, zum Beispiel «greetd läuft noch nicht», «Bootsplash vorbereitet,
+nicht aktiv» und die noch nicht installierten Apps. Eine Warnung gibt es nur, wenn du die sudo-Regel aus B12 angelegt
+hast, oder wenn die Firewall aus ist. Sie ist ab jetzt an («Firewall an»); bleibt sie aus, steht der Grund in der
+Ausgabe von C2 (zum Beispiel eine SSH-Verbindung aus einem anderen Netz).
 
 **C5.** WLAN-Menü einschalten. Bis hier läuft das Netz wie bei Ubuntu Server über netplan; ein neues WLAN müsstest
 du von Hand in eine netplan-Datei schreiben. Mit diesem Befehl verwaltet NetworkManager das Netz, und du wählst WLANs
@@ -430,7 +434,7 @@ systemctl --user start zenos-shell.service
 
 **System**
 - [ ] `zen doctor` meldet `0 Fehler`. Eine Warnung höchstens zur temporären sudo-Regel (nur mit B12), sonst Hinweise
-  wie «Firewall vorbereitet, aber nicht aktiv».
+  wie «Bootsplash vorbereitet, nicht aktiv».
 - [ ] `zen update` meldet «Schon aktuell» oder alt → neu und endet mit `installiert · N Änderungen`. Die Oberfläche ist
   danach vollständig da.
 - [ ] `zen rollback v0.1.0-rc2` geht auf den Tag zurück, `zen version` zeigt ihn. `zen update` bringt dich wieder auf
@@ -462,8 +466,16 @@ systemctl --user start zenos-shell.service
 - [ ] In Chrome zeigt `chrome://policy` 13 zenOS-Richtlinien ohne Fehler. Die 1Password-Erweiterung ist fest
   installiert, andere Erweiterungen sind gesperrt.
 - [ ] In VS Code steht die Einstellung `telemetry.telemetryLevel` auf `off` und ist von der Organisation verwaltet.
-- [ ] `zen firewall status` zeigt «vorbereitet, nicht aktiv» und die fünf SSH-Regeln für die lokalen Netze. Die
-  Firewall bleibt aus, bis du entscheidest (siehe G).
+- [ ] `zen firewall status` zeigt «an» und die fünf SSH-Regeln für die lokalen Netze (`LIMIT IN`). Von einem
+  zweiten Gerät im selben Netz geht `ssh` weiterhin; die laufende SSH-Sitzung riss beim Einschalten nicht ab.
+- [ ] Einstellungen → System: Der Schalter «Firewall» steht auf «An». Ausschalten: Es erscheint mittig der Dialog
+  «Firewall ausschalten» mit «Passwort von <dein Benutzername>», das Feld hat sofort den Fokus. Ein falsches
+  Passwort: «Das Passwort stimmt nicht.», der Dialog bleibt offen. Esc: Der Dialog schliesst, der Schalter springt
+  auf «An» zurück. Mit dem richtigen Passwort: «Aus», im System-Menü steht «Firewall · aus», `zen doctor` warnt.
+- [ ] `zen update` lässt die ausgeschaltete Firewall aus («Firewall bleibt aus: bewusst ausgeschaltet»).
+- [ ] Wieder einschalten mit dem Schalter: ohne Passwort, sofort «An». Danach nochmals ausschalten, den Dialog offen
+  lassen und mit `Super + L` sperren: Nach dem Entsperren ist kein Dialog da, die Firewall ist noch an.
+- [ ] `journalctl -t zenos-firewall` zeigt jeden Wechsel mit Weg (Einstellungen über pkexec, sudo, install.sh).
 - [ ] 1Password-SSH-Agent: in 1Password → Einstellungen → Entwickler einschalten, ab- und wieder anmelden. Dann meldet
   `ssh -T git@github.com` dich über 1Password an (1Password fragt nach der Freigabe; dein SSH-Schlüssel liegt in
   1Password und ist bei GitHub eingetragen).
@@ -651,8 +663,11 @@ git switch dev
 ```
 
 **Offene Entscheidungen für dich**
-- Firewall einschalten: per SSH aus dem eigenen Netz `zen firewall aktivieren`, danach von einem zweiten Gerät neu
-  per SSH verbinden. Zurück mit `sudo ufw disable`.
+- Firewall: Sie ist jetzt standardmässig an (eingehend gesperrt, SSH nur aus lokalen Netzen, je Adresse höchstens
+  fünf neue Verbindungen in 30 s). Wer SSH über ein VPN (z. B. Tailscale) braucht, sagt es; dafür fehlt heute
+  eine Regel. Verbindet sich dein Mac über eine öffentliche IPv6-Adresse des Geräts (möglich, wenn das Heimnetz
+  IPv6 hat und der Name auch zu einer IPv6-Adresse auflöst), hängt ein neues `ssh` bei eingeschalteter Firewall
+  rund eine Minute, bevor es über IPv4 geht; siehe «Offen» in `docs/module/m11.md`.
 - Safe Browsing in Chrome: Stufe 2 (erweitert, heute gesetzt) oder Stufe 1, siehe `docs/sicherheit.md`.
 - Sicheres DNS in Chrome: heute aus, weil Chrome es mit Richtlinien von selbst abschaltet. Eine Richtlinie könnte es
   festlegen, der Schalter bliebe gesperrt, siehe `docs/sicherheit.md`.

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!--
+  zenOS: Firewall über den Schalter in den Einstellungen (pkexec mit scripts/bin/zenos-firewall).
+  70-sicherheit legt die Datei nach /usr/share/polkit-1/actions/ (root, 0644).
+
+  - pkexec ordnet einen Aufruf über den echten Pfad des Programms (exec.path) und das erste Argument
+    (exec.argv1) einer dieser Aktionen zu. Andere Argumente fallen auf org.freedesktop.policykit.exec
+    (Administrator-Passwort); der Helfer nimmt ohnehin nur ein, aus, standard und pruefen an.
+  - Nur in der aktiven Sitzung am Gerät (allow_active). Aus SSH oder einer inaktiven Sitzung nie: dort gilt
+    «zen firewall» mit sudo.
+  - Einschalten macht das System sicherer und geht ohne Passwort. Ausschalten verlangt jedes Mal das Passwort
+    (auth_admin, nicht auth_admin_keep: polkit merkt sich die Anmeldung nicht).
+-->
+<policyconfig>
+  <vendor>zenOS</vendor>
+
+  <action id="org.zenos.firewall.einschalten">
+    <description>Firewall einschalten</description>
+    <message>Firewall einschalten.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/opt/zenos/scripts/bin/zenos-firewall</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">ein</annotate>
+  </action>
+
+  <action id="org.zenos.firewall.ausschalten">
+    <description>Firewall ausschalten</description>
+    <message>Firewall ausschalten. Eingehende Verbindungen sind danach nicht mehr gesperrt.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/opt/zenos/scripts/bin/zenos-firewall</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">aus</annotate>
+  </action>
+</policyconfig>

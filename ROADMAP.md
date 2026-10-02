@@ -17,7 +17,7 @@ Jeder Checkpoint endet mit einem Tag und einer Abnahme durch Zeno auf echter Har
 - Ubuntu Server 26.04 LTS auf dem Pi 5
 - `scripts/install.sh`, idempotent: labwc, Quickshell, kitty, fish, Schriften
 - Autostart: Der Pi bootet direkt in eine leere labwc-Sitzung (0.1: Login über greetd mit Quickshell-Greeter, kein Autologin)
-- Sicherheit Basis: automatische Sicherheitsupdates, Firewall, SSH nur mit Schlüssel über den 1Password-Agent (0.1: Firewall vorbereitet, aber aus, `zen firewall aktivieren`; SSH-Konfiguration fasst zenOS nicht an)
+- Sicherheit Basis: automatische Sicherheitsupdates, Firewall, SSH nur mit Schlüssel über den 1Password-Agent (0.1: Firewall vorbereitet, aber aus; danach standardmässig an, Ausschalten nur mit Passwort; SSH-Konfiguration fasst zenOS nicht an)
 - `zen update` und `zen rollback`
 - Argon ONE: Lüftersteuerung als Dienst
 

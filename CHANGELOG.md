@@ -42,6 +42,16 @@ an; eine Version entspricht einem Tag `v…` im Repo.
 - **Dateimanager Thunar** (von Ubuntu, im Image): öffnet Ordner aus dem Befehlsfeld und die Ablage, folgt hell und
   dunkel, ohne Indexer im Hintergrund. Vorher öffneten Ordner in kitty. «Terminal hier öffnen» im Rechtsklick
   startet kitty im Ordner. `zen doctor` prüft Ablage und Dateimanager.
+- **Firewall standardmässig an:** `install.sh` (auch `zen update`) schaltet ufw ein: eingehend gesperrt, ausgehend
+  offen, SSH nur aus lokalen Netzen. Vorher prüft es, ob jede laufende SSH-Verbindung erlaubt bleibt; sonst bleibt
+  die Firewall aus und es warnt. Neue Images starten mit eingeschalteter Firewall.
+- **Schalter «Firewall»** in Einstellungen → System. Einschalten geht sofort, Ausschalten nur mit dem Passwort, jedes
+  Mal. Wer sie bewusst ausschaltet, behält das: `zen update` lässt sie dann aus (`/var/lib/zenos/firewall`). Solange
+  sie aus ist, steht «Firewall · aus» im System-Menü, und `zen doctor` warnt.
+- **Passwortdialog für Administratorrechte (polkit-Agent):** Verlangt ein Programm Rechte, die polkit nur nach einer
+  Anmeldung gibt, fragt ein ruhiger Dialog nach dem Passwort und zeigt, wofür. Das Passwort geht nur an polkit.
+  Während der Sperre gibt es keine Dialoge. Neu per IPC: `zenos-ipc polkit status|agent|abbrechen`.
+- **`zen firewall deaktivieren`** schaltet nach der Eingabe «deaktivieren» aus und merkt sich das.
 
 ### Geändert
 
@@ -55,6 +65,13 @@ an; eine Version entspricht einem Tag `v…` im Repo.
 - **Natürliches Scrollen** wie auf dem Mac, für Touchpad und Maus (labwc, `rc.xml`).
 - **Fenstergrösse leichter ziehen:** Ränder wirken mindestens 16 px breit (vorher 8), Ecken greifen auf 40 px
   entlang jeder Kante (vorher 17).
+- **SSH-Regeln der Firewall mit Begrenzung** (`limit` statt `allow`): Je Adresse lässt sie in 30 s fünf neue
+  Verbindungen zu und weist die sechste ab. `zen firewall aktivieren` schaltet über denselben Helfer ein wie der Schalter
+  (`scripts/bin/zenos-firewall`) und merkt sich «an».
+- **Neue Pakete:** `pkexec` (für den Schalter) und `iproute2` (`ss`, für die Prüfung der SSH-Verbindungen; bei Ubuntu
+  Server schon dabei).
+- **Passwortfelder leeren gründlicher:** Nach dem Weiterreichen bleibt das Getippte auch nicht im
+  Rückgängig-Verlauf des Feldes stehen (Login, polkit-Dialog).
 
 ## 0.1.0-rc2 – 2026-09-28
 

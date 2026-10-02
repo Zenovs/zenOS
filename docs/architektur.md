@@ -77,8 +77,8 @@ erscheint erst nach dem Neustart, und eine SSH-Verbindung bleibt während der In
   (`docs/design.md`).
 - **Komponenten** (`qs.komponenten`): gemeinsame Bausteine wie `Symbol`, `Chip`, `Knopf`, `Eingabe`, `Toast`.
 - **Oberflächen:** `leiste/`, `heute/`, `befehlsfeld/`, `mitteilungen/`, `sperre/`, `freigabe/`, `modi/`
-  (Modus- und Zustand-Wahl), `einstellungen/`, `einrichtung/`, dazu `komponenten/Hinweise.qml` (Toast) und
-  `greeter.qml` mit `greeter/` für den Login.
+  (Modus- und Zustand-Wahl), `einstellungen/`, `einrichtung/`, `polkit/` (Passwortdialog als polkit-Agent), dazu
+  `komponenten/Hinweise.qml` (Toast) und `greeter.qml` mit `greeter/` für den Login.
 - **Apps aus der Oberfläche** starten über `zenos-oeffnen` in eigenen Einheiten
   (`app-zenos-<name>-<zeit>.scope` in `app.slice`). Ein Neustart von `zenos-shell.service` beendet sie nicht.
 - **WLAN** (`leiste/WlanQuelle.qml`, kein Dienst unter `dienste/`): spricht NetworkManager über
@@ -105,6 +105,7 @@ erscheint erst nach dem Neustart, und eine SSH-Verbindung bleibt während der In
 | `Freigabe` | Bildschirmfreigabe (Marker und IPC) |
 | `Leitplanken` | feste Regeln, siehe unten |
 | `Raster` | aktives Raster, Bildschirm-Profile, Aufruf von `zenos-labwc` (auch nach geändertem Scroll-Tempo) und `zenos-kanshi` |
+| `Firewall` | Zustand der Firewall lesen (`/etc/ufw/ufw.conf`, `/var/lib/zenos/firewall`), ein- und ausschalten über `pkexec zenos-firewall` |
 
 Dienste importieren nie `qs.theme`. Im Greeter (Benutzer `_greetd`, ohne `~/.config/zenos`) schreiben und starten
 sie nichts.
@@ -130,6 +131,7 @@ selbst endet in v0.3.1 auch bei Fehlern mit 0; `zenos-ipc` wertet die Ausgabe au
 | `hinweis` | `zeigen(text)`, `warnen(text)` |
 | `einrichtung` | `oeffnen`, `apps`, `schliessen`, `status` |
 | `leiste` | `menue(system\|raster\|wlan)` (`wlan`: System-Menü mit aufgeklappter WLAN-Liste), `schliessen` |
+| `polkit` | `status` (`offen`/`zu`), `agent` (`angemeldet`/`nicht angemeldet`), `abbrechen` |
 
 Die Tastenkürzel von labwc rufen dieselben Ziele auf (Liste in `docs/module/m9.md`).
 
@@ -150,6 +152,7 @@ Die Tastenkürzel von labwc rufen dieselben Ziele auf (Liste in `docs/module/m9.
 | `zenos-apps` | proprietäre Apps installieren (`zen apps`) |
 | `zenos-argon` | Argon ONE: Lüfter und Power-Button (V3), Akku-Messchip (ONE UP), Werte für die Leiste |
 | `zenos-netzwerk` | Netz von netplan/systemd-networkd auf NetworkManager umstellen und zurück (`zen netzwerk`) |
+| `zenos-firewall` | Firewall ein- und ausschalten (root: über pkexec, sudo oder `install.sh`), bewussten Zustand merken |
 
 ### Portale und Bildschirmfreigabe
 
@@ -182,6 +185,20 @@ Die Tastenkürzel von labwc rufen dieselben Ziele auf (Liste in `docs/module/m9.
 - `zen lock` (auch per SSH): IPC, sonst Neustart von `zenos-shell.service`, sonst **Notfall-Sperre** mit swaylock
   als eigene Einheit (Farben aus den Tokens, keine Inhalte). So fällt die Sperre nie aus.
 - 1Password sperrt sich mit (`zenos-1password-sperren`), sobald es installiert ist.
+
+### Rechte (polkit und pkexec)
+
+- Die Oberfläche ist der polkit-Agent der Sitzung (`shell/polkit/Polkit.qml`, `PolkitAgent` aus
+  `Quickshell.Services.Polkit`). Quickshell läuft in `user@.service`, nicht im Bereich der Sitzung; polkit ordnet
+  den Agenten und die Programme der Oberfläche deshalb über die «Display»-Sitzung des Benutzers zu (die Sitzung von
+  greetd, Typ wayland, Sitz `seat0`, lokal und aktiv).
+- Der Dialog zeigt Nachricht und Kennung der Aktion und das Konto, reicht das Passwort nur an polkit weiter
+  (`AuthFlow.submit`) und leert das Feld sofort. polkit prüft es über PAM in `polkit-agent-helper-1`. Während der
+  Sperre gibt es keine Dialoge (Begründung in `docs/sicherheit.md`).
+- Programme mit Rootrechten aus der Oberfläche: nur über `pkexec` mit einer eigenen polkit-Aktion, deren
+  `exec.path` und `exec.argv1` genau ein Programm unter `/opt/zenos` und ein Argument nennen. Bisher eines:
+  `zenos-firewall ein|aus` (`system/polkit/org.zenos.firewall.policy`). Einschalten erlaubt polkit in der aktiven
+  Sitzung ohne Passwort, Ausschalten nur mit Passwort, jedes Mal; ausserhalb der aktiven Sitzung am Gerät nie.
 
 ### Leitplanken im Code
 
@@ -253,6 +270,8 @@ Die Logik läuft in Quickshell selbst, ohne eigenen Hintergrunddienst.
 | Lüfterkurve (optional) | `/etc/xdg/zenos/argon.json` | nie |
 | Freigabe Akkuprofil (ONE UP) | `/etc/xdg/zenos/argon-akkuprofil` (`zen akku freigeben`) | nie |
 | Gerätewerte (Akku, Lüfter) | `/run/zenos/geraet.json` (flüchtig, Ordner gehört `zenos-argon`) | nie |
+| Firewall, bewusster Zustand | `/var/lib/zenos/firewall` (`zustand=an\|aus`, `seit=…`; root, 0644; fehlt = Standard an) | nie |
+| polkit-Aktionen | `/usr/share/polkit-1/actions/org.zenos.firewall.policy` | ja (Kopie von `system/polkit/`) |
 | Quickshell | `/usr/local/bin/quickshell`, Stempel `/usr/local/share/zenos/quickshell.version` | nein, Quellbau |
 | Schriften | `/usr/local/share/fonts/zenos/` | ja (`assets/fonts/`) |
 | App-Icon `zenos` | `~/.local/share/icons/hicolor/<n>x<n>/apps/zenos.png` | ja (`assets/zeichen/png/`) |
@@ -306,7 +325,7 @@ Systemteile, dann alle Benutzerteile.
 | `55-zustaende` | Freigabe-Portal, Vorlagen der Zustände |
 | `60-terminal` | kitty, fish, tldr-Seiten |
 | `65-oberflaeche` | automatische Sperre, Notfall-Sperre, Hilfsprogramme |
-| `70-sicherheit` | Sicherheitsupdates, Richtlinien, Ubuntu-Nachrichten aus, Firewall vorbereiten, gitleaks-Hook |
+| `70-sicherheit` | Sicherheitsupdates, Richtlinien, Ubuntu-Nachrichten aus, Firewall (standardmässig an) und polkit-Aktionen, gitleaks-Hook |
 | `75-apps` | Werkzeuge für `zen apps`, Starter für Chrome und Web-Apps |
 | `80-argon` | Argon-Dienst (V3 und ONE UP) und Shutdown-Hook |
 | `90-benutzer` | Oberfläche verknüpfen, Ordner für persönliche Daten |

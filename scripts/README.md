@@ -4,6 +4,7 @@
 |---|---|
 | `install.sh` | installiert zenOS, idempotent, darf beliebig oft laufen |
 | `lib/gemeinsam.sh` | Hilfsfunktionen für install.sh, Module und zen (API im Kopf der Datei) |
+| `lib/firewall.sh` | gemeinsame Teile der Firewall für `zen firewall`, `zen doctor` und `bin/zenos-firewall` |
 | `module/NN-name.sh` | Installationsschritte, laufen in Namensreihenfolge |
 | `pakete/<modul>.txt` | apt-Pakete je Modul (ein Paket pro Zeile, `#` Kommentar) |
 | `zen` | Werkzeug `zen`, `/usr/local/bin/zen` verweist darauf |

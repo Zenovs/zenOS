@@ -36,9 +36,9 @@
 #   auch Typen im eigenen Ordner wie Quickshell). Die Meldungen nennen wieder die Pfade unter shell/.
 #   «uncreatable-type» ist abgeschaltet (Quickshell-Fenstertypen erscheinen fälschlich so).
 #   Fehler: Syntaxfehler und andere kritische Meldungen. Alle anderen Befunde sind Warnungen und
-#   lassen den Test nicht scheitern (Liste mit --ausfuehrlich). Vier bekannte Fehlalarme aus Quickshells
-#   Typdaten (FileView.adapter, Process.onExited, Notification.actions, PanelWindow.margins) bleiben immer
-#   Warnungen und werden getrennt gezählt. Doppelte ids («syntax.duplicate-ids») sind Warnungen: qmllint 6.10
+#   lassen den Test nicht scheitern (Liste mit --ausfuehrlich). Fünf bekannte Fehlalarme aus Quickshells
+#   Typdaten (FileView.adapter, Process.onExited, Notification.actions, PolkitAgent.flow,
+#   PanelWindow.margins) bleiben immer Warnungen und werden getrennt gezählt. Doppelte ids («syntax.duplicate-ids») sind Warnungen: qmllint 6.10
 #   meldet sie auch für getrennte implizite Komponenten (zwei Delegates mit derselben id), die die QML-Engine
 #   annimmt; eine echte Doppelung lädt nicht («id is not unique») und fällt im Teil start auf.
 #   Ohne Quickshell-Module (/usr/local/lib/qt6/qml/Quickshell, z. B. in CI) zählen nur echte Syntaxfehler
@@ -602,6 +602,8 @@ BEKANNT = [
     re.compile(r"Type QProcess::ExitStatus of parameter exitStatus\b"),
     # Notification.actions: die Liste der NotificationAction-Objekte ist nicht deklarativ exportiert
     re.compile(r'Type "QList<qs::service::notifications::NotificationAction\*>"'),
+    # PolkitAgent.flow: die Typdaten nennen «AuthFlow» ohne Namensraum, exportiert ist qs::service::polkit::AuthFlow
+    re.compile(r'Type "AuthFlow" of property "flow" not found'),
 ]
 # PanelWindow.margins: gruppierte Eigenschaft ohne Typdaten. qmllint meldet die Gruppe und jede Kante darin
 # (auch in der Blockform «margins { top: … }», deshalb bis sechs Zeilen danach).
@@ -721,6 +723,10 @@ START_BEKANNT=(
   # Qt meldet die App-ID beim Desktop-Portal an. Der Sitzungsbus der Testsitzung hat kein Portal, in einer
   # echten Sitzung ist die Verbindung oft schon registriert. Ohne Folgen für die Oberfläche.
   '^\s*WARN qt\.qpa\.services: Failed to register with host portal'
+  # Der polkit-Agent (polkit/Polkit.qml) meldet sich für die logind-Sitzung an. Die Testsitzung hat keine eigene
+  # (Container, CI), oder sie läuft neben einer echten, deren Oberfläche schon Agent ist: polkit lehnt dann ab.
+  # Ohne Folgen für die Prüfung; der Dialog wird trotzdem geladen, die echte Oberfläche bleibt Agent.
+  '^\s*WARN quickshell\.service\.polkit(\.listener)?: failed to (create subject for listener|register listener)'
 )
 
 # Rundgang über IPC in shell/shell.qml (Ziele und Funktionen aus BAUPLAN 6). Jeder Aufruf muss gelingen;
@@ -767,6 +773,8 @@ START_RUNDGANG=(
   "einrichtung status → offen 1"
   "hinweis zeigen Prüfung"
   "hinweis warnen Prüfung"
+  # polkit-Dialog geladen, keine Anfrage offen
+  "polkit status → zu"
   # Bildschirmfreigabe mit offener Zentrale (Leitplanke: Inhalte verborgen), danach zurück
   "freigabe gestartet"
   "mitteilungen zentrale"

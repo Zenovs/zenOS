@@ -2,7 +2,8 @@
 # 70-sicherheit: automatische Updates, Chrome- und VS Code-Richtlinie, Ubuntu-Nachrichten, gitleaks und Hook, Firewall
 # shellcheck shell=bash
 #
-# Die sudo-Regel aus dem Bau prüft schon 00-basis. Die Firewall-Regeln sind nur für root lesbar; ohne
+# Die sudo-Regel aus dem Bau prüft schon 00-basis. Die Firewall ist standardmässig an; ist sie aus, warnt doctor
+# (auch wenn der Benutzer sie bewusst ausgeschaltet hat). Die Firewall-Regeln sind nur für root lesbar; ohne
 # sudo ohne Passwort bleibt es bei einem Hinweis. Ausgegeben werden nur Anzahlen, keine Adressen.
 
 pruefe_sicherheit() {
@@ -244,9 +245,9 @@ _sicherheit_gitleaks() {
 }
 
 _sicherheit_firewall() {
-  local eingehend ausgehend tupel ausgabe
-  local -a fehlend=() netze=()
-  # Gemeinsame Hilfsfunktionen und die Liste der lokalen Netze
+  local eingehend ausgehend tupel ausgabe seit policy=/usr/share/polkit-1/actions/org.zenos.firewall.policy
+  local -a fehlend=() unbegrenzt=() netze=()
+  # Gemeinsame Hilfsfunktionen (scripts/lib/firewall.sh) und die Liste der lokalen Netze
   # shellcheck source=../zen.d/firewall.sh
   source "$ZEN_SKRIPTE/zen.d/firewall.sh" || { fehler "zen.d/firewall.sh nicht ladbar"; return 0; }
 
@@ -255,9 +256,19 @@ _sicherheit_firewall() {
     return 0
   fi
   if _firewall_aktiv; then
-    ok "Firewall aktiv"
+    ok "Firewall an (eingehend gesperrt, SSH nur aus lokalen Netzen)"
+    if [[ "$(systemctl is-enabled ufw.service 2>/dev/null)" != enabled ]]; then
+      warnung "ufw.service ist nicht aktiviert – die Firewall startet beim Hochfahren nicht (install.sh)"
+    fi
+    # ufw.service lädt die Regeln beim Hochfahren; scheitert das, steht in ufw.conf trotzdem «an»
+    if [[ "$(systemctl is-active ufw.service 2>/dev/null)" == failed ]]; then
+      warnung "ufw.service ist beim Hochfahren gescheitert – die Regeln sind womöglich nicht geladen (journalctl -u ufw)"
+    fi
+  elif [[ "$(_firewall_zustand)" == aus ]]; then
+    seit=$(_firewall_seit_text)
+    warnung "Firewall ist aus – bewusst ausgeschaltet${seit:+ am $seit} (einschalten: Einstellungen → System oder zen firewall aktivieren)"
   else
-    hinweis "Firewall vorbereitet, aber nicht aktiv (einschalten: zen firewall aktivieren)"
+    warnung "Firewall ist aus – install.sh bzw. zen update schaltet sie ein (sofort: zen firewall aktivieren)"
   fi
   eingehend=$(_firewall_wert DEFAULT_INPUT_POLICY /etc/default/ufw)
   ausgehend=$(_firewall_wert DEFAULT_OUTPUT_POLICY /etc/default/ufw)
@@ -265,6 +276,17 @@ _sicherheit_firewall() {
     ok "Firewall-Standard: eingehend verweigern, ausgehend erlauben"
   else
     warnung "Firewall-Standard: eingehend $(_firewall_politik "$eingehend"), ausgehend $(_firewall_politik "$ausgehend") (erwartet: verweigern, erlauben)"
+  fi
+
+  # Schalter in den Einstellungen: pkexec und die polkit-Aktionen
+  if ! command -v pkexec >/dev/null 2>&1; then
+    warnung "pkexec fehlt – der Schalter «Firewall» in den Einstellungen geht nicht (install.sh)"
+  elif [[ ! -f "$policy" ]]; then
+    warnung "polkit-Aktionen der Firewall fehlen ($policy) – der Schalter in den Einstellungen geht nicht (install.sh)"
+  elif [[ -r /opt/zenos/system/polkit/org.zenos.firewall.policy ]] && ! cmp -s "$policy" /opt/zenos/system/polkit/org.zenos.firewall.policy; then
+    warnung "polkit-Aktionen der Firewall weichen vom Stand in /opt/zenos ab (install.sh stellt ihn wieder her)"
+  else
+    ok "Schalter in den Einstellungen bereit (Ausschalten nur mit Passwort)"
   fi
 
   if ! tupel=$(_firewall_tupel --still); then
@@ -277,12 +299,17 @@ _sicherheit_firewall() {
     return 0
   fi
   mapfile -t fehlend < <(printf '%s' "$ausgabe" | sed '/^$/d')
+  ausgabe=$(_firewall_auswerten unbegrenzt "${netze[@]}" <<< "$tupel") || ausgabe=""
+  mapfile -t unbegrenzt < <(printf '%s' "$ausgabe" | sed '/^$/d')
   if (( ${#fehlend[@]} == 0 )); then
     ok "SSH (22/tcp) aus den lokalen Netzen erlaubt (${#netze[@]} Regeln)"
   elif _firewall_aktiv; then
-    fehler "Firewall aktiv, aber ${#fehlend[@]} von ${#netze[@]} SSH-Regeln fehlen – SSH aus dem lokalen Netz kann gesperrt sein"
+    fehler "Firewall an, aber ${#fehlend[@]} von ${#netze[@]} SSH-Regeln fehlen – SSH aus dem lokalen Netz kann gesperrt sein"
   else
-    warnung "${#fehlend[@]} von ${#netze[@]} SSH-Regeln fehlen (install.sh bereitet sie vor)"
+    warnung "${#fehlend[@]} von ${#netze[@]} SSH-Regeln fehlen (install.sh legt sie an)"
+  fi
+  if (( ${#unbegrenzt[@]} > 0 )); then
+    hinweis "${#unbegrenzt[@]} SSH-Regeln ohne Begrenzung (allow statt limit; install.sh stellt um)"
   fi
   if [[ "$(_firewall_wert IPV6 /etc/default/ufw)" != yes ]]; then
     warnung "IPv6 ist in ufw ausgeschaltet (IPV6 in /etc/default/ufw) – IPv6-Verkehr bliebe ungefiltert"
