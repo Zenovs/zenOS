@@ -83,11 +83,23 @@
     "bewegung": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kurz", "maximal", "kurve"],
+      "required": ["kurz", "maximal", "kurve", "massstab", "versatz"],
       "properties": {
         "kurz": { "type": "integer", "minimum": 0, "maximum": 200 },
         "maximal": { "type": "integer", "minimum": 0, "maximum": 200 },
-        "kurve": { "const": "OutCubic" }
+        "kurve": { "const": "OutCubic" },
+        "massstab": {
+          "description": "Startmassstab, mit dem eine Fläche aufgleitet (App-Übersicht des Befehlsfelds), endet bei 1",
+          "type": "number",
+          "minimum": 0.8,
+          "maximum": 1
+        },
+        "versatz": {
+          "description": "px, um die Einträge beim Einblenden nach oben rücken (Kacheln der App-Übersicht)",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16
+        }
       }
     },
     "leiste": {

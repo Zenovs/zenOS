@@ -8,6 +8,14 @@ Singleton {
     id: root
 
     property bool befehlsfeldOffen: false
+    // Ansicht des Befehlsfelds: "" = Suche (Super+Leertaste), "apps" = Übersicht der installierten Apps
+    // (Klick auf das Zeichen in der Leiste). Bleibt beim Schliessen stehen, damit beim Ausblenden nichts
+    // springt; jedes Öffnen setzt sie neu (befehlsfeldApps() bzw. das Befehlsfeld selbst).
+    property string befehlsfeldAnsicht: ""
+    // Klickfläche des Zeichens in der Leiste in Bildschirmkoordinaten (die Leiste liegt oben über die ganze
+    // Breite); leer, solange das Zeichen fehlt (Leiste «aus»). Setzt nur die Leiste. Das Befehlsfeld nimmt
+    // sie als Ursprung fürs Aufgleiten und als Klickfläche über seiner Abdunklung.
+    property rect zeichenBereich: Qt.rect(0, 0, 0, 0)
     property bool zentraleOffen: false
     // Name des Bildschirms (ShellScreen.name), auf dem die Zentrale erscheint; leer = erster Bildschirm
     property string zentraleBildschirm: ""
@@ -43,6 +51,21 @@ Singleton {
 
     function sperren(): void {
         sperrenAngefordert();
+    }
+
+    // Befehlsfeld in der Apps-Ansicht öffnen (Klick auf das Zeichen, IPC befehlsfeld apps). Ist es in der
+    // Suche offen, wechselt es in die Apps-Ansicht. umschalten: ist die Apps-Ansicht schon offen, schliessen.
+    // Während der Sperre und der Einrichtung öffnet sich nichts (wie beim Befehlsfeld selbst).
+    function befehlsfeldApps(umschalten: bool): void {
+        if (gesperrt || einrichtungOffen)
+            return;
+        if (umschalten && befehlsfeldOffen && befehlsfeldAnsicht === "apps") {
+            befehlsfeldOffen = false;
+            return;
+        }
+        // Zuerst die Ansicht, dann öffnen: Das Befehlsfeld richtet sich beim Öffnen nach ihr
+        befehlsfeldAnsicht = "apps";
+        befehlsfeldOffen = true;
     }
 
     function einstellungenOeffnen(seite: var): void {

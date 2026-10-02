@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-    bewerten, dateiPasst, dateienSortieren, einzeilig, findArgumente, findZeile, globMaskieren, normalisieren, nutzungBonus,
+    appsAlphabetisch, bewerten, dateiPasst, dateienSortieren, einzeilig, findArgumente, findZeile, globMaskieren, normalisieren, nutzungBonus,
     nutzungLeer, nutzungMerken, nutzungPruefen, nutzungRangliste, pfadAnzeige, programmName, sortieren,
     wortBewerten, woerter
 } from "../../shell/befehlsfeld/suche.mjs";
@@ -172,4 +172,25 @@ test("Nutzung: Alterung und Obergrenze", () => {
     assert.equal(viele.zuletzt.length, 20);
     assert.equal(viele.zuletzt[0], "app249");
     assert.ok(viele.anzahl.app249 === 1);
+});
+
+test("App-Übersicht: alphabetisch, ohne Akzente und Gross-/Kleinschreibung", () => {
+    const apps = [
+        { id: "zoom", name: "Zoom" },
+        { id: "aerger", name: "Ärger" },
+        { id: "code", name: "Visual Studio Code" },
+        { id: "1password", name: "1Password" },
+        { id: "chrome", name: "chrome" },
+        { id: "b2", name: "Beispiel" },
+        { id: "b1", name: "Beispiel" },
+        { id: "ohne-name" },
+        null,
+        { name: "ohne ID" }
+    ];
+    const vorher = JSON.stringify(apps);
+    assert.deepEqual(appsAlphabetisch(apps).map(a => a.id), ["1password", "aerger", "b1", "b2", "chrome", "ohne-name", "code", "zoom"]);
+    // das Original bleibt, wie es war
+    assert.equal(JSON.stringify(apps), vorher);
+    assert.deepEqual(appsAlphabetisch(null), []);
+    assert.deepEqual(appsAlphabetisch([]), []);
 });

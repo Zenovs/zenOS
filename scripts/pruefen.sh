@@ -51,7 +51,7 @@
 #   Die Testsitzung ist abgeschottet: eigenes HOME, eigene XDG-Ordner und eigener Sitzungsbus ohne Dienste im
 #   Temp-Ordner, ZENOS_CODE zeigt auf dieses Repo, PipeWire-Client ohne Echtzeit über RTKit (module-rt aus,
 #   Begründung bei start_lauf). In shell.qml folgt ein Rundgang über IPC (Thema hin und zurück, Einrichtung
-#   zu, Befehlsfeld, Zentrale, Umschalter, jede Einstellungen-Seite, Einrichtung auf, Hinweis,
+#   zu, Befehlsfeld mit Apps-Ansicht, Zentrale, Umschalter, jede Einstellungen-Seite, Einrichtung auf, Hinweis,
 #   Bildschirmfreigabe, zuletzt die Sperre).
 #   Fehler: kein «Configuration Loaded» im Zeitlimit, Absturz, ERROR-Zeilen, «Type … unavailable», «is not a
 #   type», ReferenceError/TypeError, «Cannot assign», «Binding loop», Warnungen aus Dateien unter shell/,
@@ -734,7 +734,18 @@ START_RUNDGANG=(
   "einrichtung status → zu"
   "befehlsfeld oeffnen"
   "befehlsfeld status → offen"
+  "befehlsfeld ansicht → suche"
   "befehlsfeld werkzeuge"
+  # Apps-Ansicht (Klick auf das Zeichen): aus der Suche heraus, Super+Leertaste zurück zur Suche, dann zu
+  "befehlsfeld apps"
+  "befehlsfeld ansicht → apps"
+  "befehlsfeld oeffnen"
+  "befehlsfeld ansicht → suche"
+  "befehlsfeld schliessen"
+  # … und geschlossen geöffnet (Aufgleiten, Kacheln blenden ein)
+  "befehlsfeld apps"
+  "befehlsfeld status → offen"
+  "befehlsfeld ansicht → apps"
   "befehlsfeld schliessen"
   "mitteilungen zentrale"
   "mitteilungen zentrale"

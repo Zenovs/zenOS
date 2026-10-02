@@ -76,6 +76,10 @@ Singleton {
     readonly property int dauerKurz: Math.min(_number(_t?.bewegung?.kurz, 120), 200)
     readonly property int dauerMax: Math.min(_number(_t?.bewegung?.maximal, 200), 200)
     readonly property int kurve: Easing.OutCubic
+    // Aufgleiten: Startmassstab einer Fläche (endet bei 1) und Versatz in px, um den Einträge beim
+    // Einblenden nach oben rücken (App-Übersicht des Befehlsfelds)
+    readonly property real bewegungMassstab: Math.max(0.8, Math.min(1, _real(_t?.bewegung?.massstab, 0.96)))
+    readonly property int bewegungVersatz: Math.max(0, Math.min(16, _number(_t?.bewegung?.versatz, 6)))
 
     // Masse
     readonly property int leisteHoehe: _number(_t?.leiste?.hoehe, 40)
@@ -140,6 +144,10 @@ Singleton {
 
     function _number(value: var, fallback: int): int {
         return typeof value === "number" && isFinite(value) ? Math.round(value) : fallback;
+    }
+
+    function _real(value: var, fallback: real): real {
+        return typeof value === "number" && isFinite(value) ? value : fallback;
     }
 
     function _pfad(value: var): string {

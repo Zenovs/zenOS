@@ -14,16 +14,25 @@ import "suche.mjs" as Suche
 // Befehlsfeld (Super+Leertaste) nach Entwurf 2: Apps, Web-Apps, Aktionen, Modus und Zustand,
 // Rechnen, Dateien und Werkzeuge. Eingaben gehen nie an eine Shell; Prozesse starten mit
 // Argumentlisten (Aktionen, Dateisuche, wl-copy).
+// Ansicht «apps» (Klick auf das Zeichen der Leiste, Oberflaeche.befehlsfeldApps): bei leerem Feld alle
+// installierten Apps als Raster (AppRaster), getippt wird gesucht wie sonst.
 Scope {
     id: root
 
     readonly property bool offen: Oberflaeche.befehlsfeldOffen
     readonly property string anfrage: eingabe.text.trim()
 
+    // Apps-Ansicht; die Suche ist die Ansicht "" (Oberflaeche.befehlsfeldAnsicht)
+    readonly property bool appsAnsicht: Oberflaeche.befehlsfeldAnsicht === "apps"
+    // Apps-Ansicht mit leerem Feld: das Raster statt der Liste
+    readonly property bool rasterAktiv: appsAnsicht && anfrage.length === 0 && eingabe.preeditText.length === 0
+    // Alle Apps fürs Raster, alphabetisch (dieselbe Quelle wie die Suche)
+    readonly property var appsAlphabetisch: Suche.appsAlphabetisch(_apps)
+
     // Beim Ausblenden bleibt der Inhalt stehen (nichts springt), danach ist die Liste leer
     readonly property bool _sichtbar: offen || fenster.visible
-    // Flache Liste der Einträge; jeder kennt seinen Abschnitt
-    readonly property var eintraege: _sichtbar ? _erstellen(anfrage) : []
+    // Flache Liste der Einträge; jeder kennt seinen Abschnitt. Im Raster gibt es keine Liste.
+    readonly property var eintraege: _sichtbar && !rasterAktiv ? _erstellen(anfrage) : []
     property int auswahl: 0
     // Tab: Auswahl liegt bei den Werkzeugen statt in der Liste
     property bool werkzeugModus: false
@@ -125,6 +134,7 @@ Scope {
                 name: name,
                 webApp: webApp,
                 icon: e.icon ? Quickshell.iconPath(e.icon, true) : "",
+                buchstabe: _buchstabe(name),
                 felder: [
                     {
                         text: Suche.normalisieren(name),
@@ -157,6 +167,8 @@ Scope {
         // unsichtbar hinter ihrer Vollfläche, und die Tastatur bliebe bei ihr
         if (Oberflaeche.einrichtungOffen)
             return;
+        // Super+Leertaste und IPC oeffnen/werkzeuge zeigen immer die Suche, auch aus der Apps-Ansicht heraus
+        Oberflaeche.befehlsfeldAnsicht = "";
         if (!offen)
             Oberflaeche.befehlsfeldOffen = true;
         werkzeugModus = werkzeugeZuerst;
@@ -215,6 +227,21 @@ Scope {
             Aktionen.dateiOeffnen(e.pfad);
             break;
         }
+    }
+
+    // Kachel im Raster starten (wie eine App aus der Liste); ohne Apps führt Enter zu «Apps installieren»
+    function rasterAusfuehren(index: int): void {
+        if (appsAlphabetisch.length === 0) {
+            schliessen();
+            _aktionAusfuehren("apps");
+            return;
+        }
+        const app = appsAlphabetisch[index];
+        if (!app)
+            return;
+        nutzung.merken(app.id);
+        schliessen();
+        Aktionen.appStarten(app.eintrag);
     }
 
     // Werkzeuge starten erst, wenn das Befehlsfeld nicht mehr zu sehen ist
@@ -577,7 +604,83 @@ Scope {
         bestaetigen = "";
         _werkzeugDanach = "";
         listenAnsicht.contentY = 0;
+        _rasterVonVorn();
         eingabe.forceActiveFocus();
+        // Über das Zeichen geöffnet: Die Karte gleitet vom Zeichen her auf, die Kacheln folgen
+        if (appsAnsicht) {
+            aufgleiten.restart();
+            raster.einblenden();
+        }
+    }
+
+    // Aus der Suche in die Apps-Ansicht (Klick auf das Zeichen bei offenem Feld): Feld leeren, Raster von
+    // vorn, die Kacheln blenden ein (die Karte steht schon)
+    onAppsAnsichtChanged: {
+        if (!offen || !appsAnsicht)
+            return;
+        eingabe.text = "";
+        werkzeugModus = false;
+        bestaetigen = "";
+        _rasterVonVorn();
+        raster.einblenden();
+    }
+
+    // Feld wieder leer: das Raster von vorn, ohne Einblenden
+    onRasterAktivChanged: {
+        if (rasterAktiv && offen)
+            _rasterVonVorn();
+    }
+
+    function _rasterVonVorn(): void {
+        raster.auswahl = 0;
+        raster.tastatur = false;
+        raster.anfang();
+    }
+
+    // Tasten im Raster: Pfeile (auch Tab, Ctrl+N/P, Bild↑/↓) wählen, Enter startet, Esc schliesst.
+    // Alles andere geht an die Eingabe: Tippen sucht.
+    function _rasterTaste(event: KeyEvent): void {
+        const strg = (event.modifiers & Qt.ControlModifier) !== 0;
+        let erledigt = true;
+        switch (event.key) {
+        case Qt.Key_Escape:
+            schliessen();
+            break;
+        case Qt.Key_Return:
+        case Qt.Key_Enter:
+            rasterAusfuehren(raster.auswahl);
+            break;
+        case Qt.Key_Left:
+        case Qt.Key_Backtab:
+            raster.bewegen(-1, 0);
+            break;
+        case Qt.Key_Right:
+        case Qt.Key_Tab:
+            raster.bewegen(1, 0);
+            break;
+        case Qt.Key_Up:
+            raster.bewegen(0, -1);
+            break;
+        case Qt.Key_Down:
+            raster.bewegen(0, 1);
+            break;
+        case Qt.Key_PageUp:
+            raster.bewegen(0, -raster.seitenZeilen);
+            break;
+        case Qt.Key_PageDown:
+            raster.bewegen(0, raster.seitenZeilen);
+            break;
+        case Qt.Key_N:
+        case Qt.Key_P:
+            erledigt = strg;
+            if (strg)
+                raster.bewegen(event.key === Qt.Key_N ? 1 : -1, 0);
+            break;
+        default:
+            erledigt = false;
+        }
+        if (erledigt)
+            event.accepted = true;
     }
 
     function _schritt(d: int): void {
@@ -604,6 +707,10 @@ Scope {
     }
 
     function _taste(event: KeyEvent): void {
+        if (rasterAktiv) {
+            _rasterTaste(event);
+            return;
+        }
         const strg = (event.modifiers & Qt.ControlModifier) !== 0;
         let erledigt = true;
         switch (event.key) {
@@ -665,8 +772,8 @@ Scope {
             listenAnsicht.contentY = item.y + item.height - hoehe;
     }
 
-    // Höhe der Liste ohne Animation (für das Scrollen)
-    readonly property real listenZiel: Math.max(0, Math.min(spalte.implicitHeight, _maxPanel - _festeHoehe))
+    // Höhe der Liste bzw. des Rasters ohne Animation (für das Scrollen); darüber hinaus scrollt der Inhalt
+    readonly property real listenZiel: Math.max(0, Math.min(rasterAktiv ? raster.inhaltHoehe : spalte.implicitHeight, _maxPanel - _festeHoehe))
     readonly property real _festeHoehe: 2 + zeile.height + werkzeugBlock.height + fuss.height
     readonly property real _maxPanel: Math.max(240, fenster.height - Theme.befehlsfeldOben - Theme.a7)
 
@@ -733,10 +840,39 @@ Scope {
             root.oeffnen(true);
         }
 
+        // Apps-Ansicht öffnen wie der Klick auf das Zeichen, aber ohne Umschalten (ist die Suche offen, wechselt sie)
+        function apps(): void {
+            Oberflaeche.befehlsfeldApps(false);
+        }
+
         // "offen" oder "zu" (für Tests und die Abnahme); "zu" erst, wenn die Fläche weg ist
         function status(): string {
             return root.offen || fenster.visible ? "offen" : "zu";
         }
+
+        // "apps" oder "suche" (für Tests und die Abnahme)
+        function ansicht(): string {
+            return root.appsAnsicht ? "apps" : "suche";
+        }
+    }
+
+    // Aufgleiten der Karte beim Öffnen über das Zeichen: Massstab Theme.bewegungMassstab → 1, Ursprung beim
+    // Zeichen (ohne Zeichen oben mittig). So rückt die Karte zugleich ein paar px vom Zeichen her in ihre Lage.
+    property real _massstab: 1
+    readonly property point _ursprung: {
+        const z = Oberflaeche.zeichenBereich;
+        return z.width > 0 ? Qt.point(z.x + z.width / 2, z.y + z.height / 2) : Qt.point(fenster.width / 2, Theme.befehlsfeldOben);
+    }
+
+    NumberAnimation {
+        id: aufgleiten
+
+        target: root
+        property: "_massstab"
+        from: Theme.bewegungMassstab
+        to: 1
+        duration: Theme.dauerMax
+        easing.type: Theme.kurve
     }
 
     PanelWindow {
@@ -795,10 +931,37 @@ Scope {
                 }
             }
 
+            // Das Zeichen der Leiste liegt unter der Abdunklung: Ein Klick darauf wechselt in die Apps-Ansicht
+            // bzw. schliesst sie wieder, wie der Klick auf das Zeichen selbst
+            MouseArea {
+                readonly property rect bereich: Oberflaeche.zeichenBereich
+
+                visible: bereich.width > 0
+                x: bereich.x
+                y: bereich.y
+                width: bereich.width
+                height: bereich.height
+                cursorShape: Qt.PointingHandCursor
+                onClicked: Oberflaeche.befehlsfeldApps(true)
+            }
+
+            // Aufgleiten beim Öffnen über das Zeichen (root._massstab, Ursprung beim Zeichen): Karte und Schatten
+            // teilen sich diese Transformation (keine Ebene, kein Effekt). Sonst steht die Karte still, und nur die
+            // Deckkraft blendet.
+            Scale {
+                id: aufgleitMassstab
+
+                origin.x: root._ursprung.x - panel.x
+                origin.y: root._ursprung.y - panel.y
+                xScale: root._massstab
+                yScale: root._massstab
+            }
+
             // Schatten ohne Weichzeichnen der Umgebung; braucht die GPU (fehlt im Software-Backend)
             RectangularShadow {
                 visible: GraphicsInfo.api !== GraphicsInfo.Software
                 anchors.fill: panel
+                transform: aufgleitMassstab
                 offset: Qt.vector2d(0, 30)
                 blur: 80
                 radius: panel.radius
@@ -812,6 +975,7 @@ Scope {
                 y: Theme.befehlsfeldOben
                 width: Math.min(Theme.befehlsfeldBreite, parent.width - 2 * Theme.a4)
                 height: root._festeHoehe + root.listenZiel
+                transform: aufgleitMassstab
                 radius: Theme.radiusBefehlsfeld
                 color: Theme.flaeche
                 border.width: 1
@@ -915,6 +1079,7 @@ Scope {
                         id: listenAnsicht
 
                         anchors.top: zeile.bottom
+                        visible: !root.rasterAktiv
                         width: parent.width
                         height: Math.max(0, parent.height - root._festeHoehe + 2)
                         contentHeight: spalte.implicitHeight
@@ -1016,13 +1181,28 @@ Scope {
                         }
                     }
 
+                    // Apps-Ansicht mit leerem Feld: alle Apps als Raster, an der Stelle der Liste
+                    AppRaster {
+                        id: raster
+
+                        anchors.top: zeile.bottom
+                        visible: root.rasterAktiv
+                        width: parent.width
+                        height: listenAnsicht.height
+                        apps: root.appsAlphabetisch
+                        onAusgefuehrt: index => root.rasterAusfuehren(index)
+                        onInstallieren: root.rasterAusfuehren(-1)
+                    }
+
                     // Werkzeuge (Tab)
                     Item {
                         id: werkzeugBlock
 
                         anchors.top: listenAnsicht.bottom
+                        // Im Raster gibt es nur Apps
+                        visible: !root.rasterAktiv
                         width: parent.width
-                        height: 12 + werkzeugTitel.implicitHeight + 6 + 34 + 16
+                        height: visible ? 12 + werkzeugTitel.implicitHeight + 6 + 34 + 16 : 0
 
                         Abschnittstitel {
                             id: werkzeugTitel
@@ -1098,7 +1278,7 @@ Scope {
                             spacing: 20
 
                             Repeater {
-                                model: ["↑↓ wählen", "↵ ausführen", "Tab Werkzeuge", "Esc schliessen"]
+                                model: !root.rasterAktiv ? ["↑↓ wählen", "↵ ausführen", "Tab Werkzeuge", "Esc schliessen"] : root.appsAlphabetisch.length > 0 ? ["←↑↓→ wählen", "↵ starten", "Tippen sucht", "Esc schliessen"] : ["↵ Apps installieren", "Esc schliessen"]
 
                                 delegate: Text {
                                     required property string modelData

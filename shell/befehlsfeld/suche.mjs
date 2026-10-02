@@ -82,6 +82,23 @@ export function sortieren(treffer) {
     });
 }
 
+// App-Übersicht: Apps [{id, name, …}] alphabetisch nach Namen, ohne Rücksicht auf Gross-/Kleinschreibung und
+// Akzente («Ärger» steht bei «A», auch wenn die Locale der Sitzung C ist). Gleiche Schlüssel nach dem Namen,
+// zuletzt nach der ID (sort ist in Qt nicht stabil). Einträge ohne ID fallen weg; das Original bleibt unverändert.
+export function appsAlphabetisch(apps) {
+    if (!Array.isArray(apps))
+        return [];
+    const vergleichen = (a, b) => a < b ? -1 : (a > b ? 1 : 0);
+    return apps.filter(a => a && typeof a.id === "string" && a.id.length > 0).map(a => {
+        const name = typeof a.name === "string" && a.name.length > 0 ? a.name : a.id;
+        return {
+            app: a,
+            name: name,
+            schluessel: normalisieren(name)
+        };
+    }).sort((x, y) => x.schluessel.localeCompare(y.schluessel, "de") || x.name.localeCompare(y.name, "de") || vergleichen(x.app.id, y.app.id)).map(x => x.app);
+}
+
 // --- Dateisuche -----------------------------------------------------------------
 
 // Ordner, die die Dateisuche nie betritt (neben allen versteckten)

@@ -266,15 +266,18 @@ Item {
             }
         }
 
-        // Zeichen (18 px, Pixel-Variante, unterer Stein im Modus-Akzent) mit 6 px Luft links und rechts
-        Item {
+        // Zeichen (18 px, Pixel-Variante, unterer Stein im Modus-Akzent) mit 6 px Luft links und rechts.
+        // Ein Klick öffnet das Befehlsfeld mit allen installierten Apps, ein zweiter schliesst es.
+        LeistenKnopf {
+            id: zeichenKnopf
+
             visible: root.stufe !== "aus"
             width: 30
-            height: 28
+            aktiv: Oberflaeche.befehlsfeldOffen && Oberflaeche.befehlsfeldAnsicht === "apps"
+            beschreibung: "Apps zeigen"
+            onClicked: Oberflaeche.befehlsfeldApps(true)
 
             ZenZeichen {
-                x: 6
-                y: 5
                 groesse: 18
             }
         }
@@ -316,6 +319,15 @@ Item {
             Accessible.name: root._raster ? "Raster: " + (root._raster.name ?? root._raster.id) : "Raster wählen"
             onClicked: root.menueGewuenscht("raster", root.menueX("raster"))
         }
+    }
+
+    // Wo das Zeichen liegt (Fensterkoordinaten der Leiste = Bildschirmkoordinaten). Auf jedem Bildschirm
+    // gleich; das Befehlsfeld legt darüber eine Klickfläche und gleitet von dort auf.
+    Binding {
+        target: Oberflaeche
+        property: "zeichenBereich"
+        value: zeichenKnopf.visible ? Qt.rect(links.x + zeichenKnopf.x, links.y + zeichenKnopf.y, zeichenKnopf.width, zeichenKnopf.height) : Qt.rect(0, 0, 0, 0)
+        restoreMode: Binding.RestoreNone
     }
 
     // --- Mitte (absolut zentriert) ---
