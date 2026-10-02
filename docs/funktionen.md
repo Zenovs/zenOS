@@ -19,6 +19,7 @@ was davon erst «Danach» kommt oder noch ohne Wirkung ist.
 | Sitzung | startet bei Bildschirmfreigabe; hält Mitteilungen zurück, blendet Privates aus | ✓ |
 | Mitteilungen | gebündelt statt einzeln; Dringendes kommt sofort | ✓ |
 | Raster | Einrasten per Tastendruck; Vorlagen Voll, Hälften, 3 Spalten, 4er-Grid, Gross + 2 | ✓ |
+| Fenster wechseln | `Alt + Tab` mit grossen App-Symbolen · App-Leiste: Zeiger rechts mittig an den Rand, ein Symbol pro offener App, ein Klick wechselt, auch aus dem Vollbild | ✓ (beides nach 0.1, unveröffentlicht) |
 | Bildschirm-Profile | erkennt angeschlossene Bildschirme und lädt das passende Raster | ✓ (ein Raster für alle Bildschirme, Grenze von labwc 0.9) |
 | Sperrbildschirm | ohne Inhalte; sperrt 1Password mit | ✓ |
 | WLAN-Menü | oben rechts im System-Menü: Netze in Reichweite, verbinden (mit Passwortfeld), vergessen, WLAN an/aus; nur eine Oberfläche für NetworkManager, eingeschaltet mit `zen netzwerk umstellen` | nach 0.1, unveröffentlicht |

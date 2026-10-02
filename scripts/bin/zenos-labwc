@@ -448,6 +448,8 @@ def render(raster_id, raster, scroll=SCROLL_DEFAULT):
         "@@SCHRIFT_TEXT@@": xml_text(font.get("text", "Geist")),
         "@@GROESSE_TEXT@@": str(pt(sizes.get("label", 13))),
         "@@SCROLL_TEMPO@@": scroll_text(valid_scroll(scroll) or SCROLL_DEFAULT),
+        # Fensterwechsler (Alt+Tab): «gross», 16 px = 12 pt
+        "@@GROESSE_OSD@@": str(pt(sizes.get("gross", 16))),
         "@@BIN@@": BIN,
         "@@ZEN@@": os.path.join(CODE, "scripts", "zen"),
     }

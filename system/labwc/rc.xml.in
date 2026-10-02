@@ -69,18 +69,26 @@
       <name>@@SCHRIFT_TEXT@@</name>
       <size>@@GROESSE_TEXT@@</size>
     </font>
+    <!-- Fensterwechsler (Alt+Tab): grösser als die Menüs («gross» aus den Tokens) -->
     <font place="OnScreenDisplay">
       <name>@@SCHRIFT_TEXT@@</name>
-      <size>@@GROESSE_TEXT@@</size>
+      <size>@@GROESSE_OSD@@</size>
     </font>
   </theme>
 
+  <!--
+    Fensterwechsler (Alt+Tab, NextWindow/PreviousWindow): Liste «classic» mit dem App-Symbol vorne (40 px, Grösse,
+    Breite und Abstände in themerc-override von zenos-thema), daneben App-Name und Fenstertitel. Der Titel steht nur
+    da, wenn er sich von der App-Kennung unterscheidet (%t). «thumbnail» wäre symbolstärker, rendert aber bei jedem
+    Alt+Tab jedes Fenster in voller Grösse in einen eigenen Puffer (labwc 0.9, osd-thumbnail.c) und zeigt die
+    Inhalte aller Fenster: zu teuer für den Pi und zu unruhig (docs/module/m9.md, Entscheidungen).
+  -->
   <windowSwitcher preview="yes" outlines="yes" allWorkspaces="no">
     <osd show="yes" style="classic" output="focused" />
     <fields>
-      <field content="icon" width="5%" />
-      <field content="desktop_entry_name" width="30%" />
-      <field content="title" width="65%" />
+      <field content="icon" width="9%" />
+      <field content="desktop_entry_name" width="33%" />
+      <field content="custom" format="%t" width="58%" />
     </fields>
   </windowSwitcher>
 

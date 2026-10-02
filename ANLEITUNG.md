@@ -421,6 +421,18 @@ systemctl --user start zenos-shell.service
   «Sehr schnell» scrollt in Chrome und kitty sofort halb bzw. doppelt so weit, mit Touchpad und Mausrad, ohne
   Abmelden. Zum Schluss die Stufe wählen, die sich richtig anfühlt.
 
+**Fenster wechseln**
+- [ ] `Alt + Tab` (Alt halten): Die Liste ist breit, jede Zeile beginnt mit einem grossen App-Symbol, daneben Name und
+  Fenstertitel. Hell und dunkel prüfen; nichts ruckelt beim ersten Tastendruck.
+- [ ] Mehrere Apps offen (z. B. Chrome, Mail, kitty): Mit der Maus rechts in der Mitte an den Rand fahren und kurz
+  ruhen. Rechts gleitet eine schmale Karte mit einem Symbol pro App herein, die aktive App hat einen kleinen Punkt,
+  beim Zeigen steht der Name daneben. Oben oder unten am Rand und beim blossen Vorbeifahren erscheint nichts, sonst
+  ist am Rand nichts zu sehen.
+- [ ] Chrome im Vollbild (`F11`): rechts mittig an den Rand, Klick auf das Mail-Symbol → die Mail ist vorne. Über
+  die Leiste zurück zu Chrome. Die Karte verschwindet nach dem Klick und kurz nach dem Wegfahren.
+- [ ] App mit zwei Fenstern (z. B. zwei kitty): Die Karte zeigt «2» am Symbol, ein Klick auf die schon aktive App
+  wechselt zum anderen Fenster. Ein minimiertes Fenster kommt per Klick zurück.
+
 **Terminal**
 - [ ] `Ctrl + Alt + T` öffnet kitty mit fish und der zenOS-Eingabezeile.
 - [ ] Text markieren, dann `Ctrl + C`: Der Text ist kopiert. Ohne Markierung bricht `Ctrl + C` ein laufendes
@@ -486,8 +498,8 @@ systemctl --user start zenos-shell.service
   aus, bis du entscheidest (siehe G).
 
 **Flüssigkeit**
-- [ ] Befehlsfeld, Hell/Dunkel, Fensterwechsel (`Alt + Tab`) und Einrasten laufen flüssig (60 fps). Nichts ruckelt,
-  nichts blinkt.
+- [ ] Befehlsfeld, Hell/Dunkel, Fensterwechsel (`Alt + Tab` und App-Leiste) und Einrasten laufen flüssig (60 fps).
+  Nichts ruckelt, nichts blinkt.
 
 ---
 

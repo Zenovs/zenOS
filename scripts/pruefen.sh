@@ -51,8 +51,8 @@
 #   Die Testsitzung ist abgeschottet: eigenes HOME, eigene XDG-Ordner und eigener Sitzungsbus ohne Dienste im
 #   Temp-Ordner, ZENOS_CODE zeigt auf dieses Repo, PipeWire-Client ohne Echtzeit über RTKit (module-rt aus,
 #   Begründung bei start_lauf). In shell.qml folgt ein Rundgang über IPC (Thema hin und zurück, Einrichtung
-#   zu, Befehlsfeld mit Apps-Ansicht, Zentrale, Umschalter, jede Einstellungen-Seite, Einrichtung auf, Hinweis,
-#   Bildschirmfreigabe, zuletzt die Sperre).
+#   zu, Befehlsfeld mit Apps-Ansicht, Zentrale, Umschalter, jede Einstellungen-Seite, App-Leiste, Einrichtung auf,
+#   Hinweis, Bildschirmfreigabe, zuletzt die Sperre).
 #   Fehler: kein «Configuration Loaded» im Zeitlimit, Absturz, ERROR-Zeilen, «Type … unavailable», «is not a
 #   type», ReferenceError/TypeError, «Cannot assign», «Binding loop», Warnungen aus Dateien unter shell/,
 #   console.warn/console.error, ein gescheiterter IPC-Aufruf, eine andere als die erwartete Antwort (z. B.
@@ -769,6 +769,12 @@ START_RUNDGANG=(
   "einstellungen oeffnen apps"
   "einstellungen oeffnen allgemein"
   "einstellungen oeffnen system"
+  # App-Leiste: offen sind nur die Einstellungen, ein Fenster der Oberfläche. Es zählt nicht, die Leiste bleibt zu.
+  "appleiste status → zu"
+  "appleiste apps"
+  "appleiste zeigen"
+  "appleiste status → zu"
+  "appleiste verbergen"
   "einrichtung oeffnen"
   "einrichtung status → offen 1"
   "hinweis zeigen Prüfung"

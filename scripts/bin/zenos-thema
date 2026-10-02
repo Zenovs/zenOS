@@ -400,6 +400,29 @@ def apply_kitty(tokens, accent, changes):
 
 # ---------------------------------------------------------------- labwc
 
+def switcher_sizes(tokens):
+    """Grössen des Fensterwechslers (Alt+Tab, Stil «classic») aus den Tokens.
+
+    So breit wie das Befehlsfeld, Abstände aus der Abstandsreihe, App-Symbol 40 px wie in der App-Übersicht und
+    der App-Leiste. Der aktive Eintrag bekommt den 2-px-Rahmen des Tastaturfokus.
+    """
+    spacing = tokens.get("abstand")
+    if not (isinstance(spacing, list) and len(spacing) == 7 and all(isinstance(a, int) for a in spacing)):
+        spacing = [4, 8, 12, 16, 24, 32, 48]
+    command_field = tokens.get("befehlsfeld") if isinstance(tokens.get("befehlsfeld"), dict) else {}
+    width = command_field.get("breite", 720)
+    if not isinstance(width, int) or width <= 0:
+        width = 720
+    return [
+        ("osd.window-switcher.style-classic.width", str(width)),
+        ("osd.window-switcher.style-classic.padding", str(spacing[1])),
+        ("osd.window-switcher.style-classic.item.padding.x", str(spacing[2])),
+        ("osd.window-switcher.style-classic.item.padding.y", str(spacing[1])),
+        ("osd.window-switcher.style-classic.item.icon.size", "40"),
+        ("osd.window-switcher.style-classic.item.active.border.width", "2"),
+    ]
+
+
 def labwc_themerc(tokens, mode, accent):
     p = palette(tokens, mode, accent)
     values = [
@@ -436,6 +459,7 @@ def labwc_themerc(tokens, mode, accent):
         ("osd.border.color", hex6(p["linie2"])),
         ("osd.border.width", "1"),
         ("osd.label.text.color", hex6(p["text"])),
+        *switcher_sizes(tokens),
         ("osd.window-switcher.style-classic.item.active.bg.color", hex6(p["flaeche2"])),
         ("osd.window-switcher.style-classic.item.active.border.color", hex6(p["akzent"])),
         ("osd.window-switcher.style-thumbnail.item.active.bg.color", hex6(p["flaeche2"])),

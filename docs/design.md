@@ -209,6 +209,42 @@ Formularfehler erscheinen nicht als Hinweis, sondern ruhig unter dem Formular.
   Ablage und Hell/Dunkel aus, `aus` lässt nur Zustand und Uhrzeit stehen. Der Platz bleibt in beiden Fällen reserviert,
   damit Fenster nicht springen. Einzelheiten in `docs/module/m4.md`.
 
+### App-Leiste (rechter Rand)
+
+Wechselt mit der Maus zwischen offenen Apps, auch wenn eine im Vollbild läuft. Sonst ist von ihr nichts zu sehen:
+keine Kante, kein Strich.
+
+- **Auslösen:** Pro Bildschirm liegt im mittleren Drittel des rechten Rands eine unsichtbare Zone von 1 px (Ebene
+  Overlay, damit sie auch über Vollbild-Fenstern liegt). Die Leiste erscheint erst, wenn der Zeiger dort 300 ms
+  verweilt; wandert er dabei mehr als 24 px auf oder ab, beginnt die Zeit neu. Oben und unten am Rand passiert
+  nichts. 1 px genügt, weil der Zeiger am Rand anstösst, und nimmt dem Fenster darunter am wenigsten weg (etwa die
+  Bildlaufleiste eines Browsers im Vollbild): Ein Klick genau in diese letzte Spalte erreicht das Fenster nicht,
+  denn unter Wayland nimmt eine Fläche, die das Zeigen bemerkt, auch die Klicks. 300 ms sind länger als ein
+  Vorbeistreifen oder Überschiessen beim Zielen (meist unter 200 ms) und kürzer als die 500 ms der
+  Einrast-Vorschau.
+- **Karte** wie die Menüs: `flaeche`, Rahmen `linie2`, Radius 12, ohne Schatten; 72 px breit, 8 px vom Rand,
+  senkrecht mittig. Zellen 48 px mit Symbol 40 px, 4 px Abstand, innen 8 px oben und unten, 12 px seitlich. Zeigen
+  hinterlegt mit `flaeche2` (Radius 10, 120 ms). Ohne Symbol der Anfangsbuchstabe auf `flaeche2` wie in der
+  App-Übersicht. Passen nicht alle Apps in die Höhe, scrollt die Spalte.
+- **Markierungen:** Die aktive App hat einen Punkt (5 px) im Akzent rechts neben dem Symbol, zum Rand hin. Mehrere
+  Fenster einer App zeigt eine Zahl unten rechts am Symbol (Pille 18 px, `flaeche`, Rahmen `linie2`, Geist Mono 12
+  in `text2`, ab zehn «9+»).
+- **Beschriftung:** Beim Zeigen steht der Name der App links neben der Karte auf Höhe des Symbols (28 px, Radius 8,
+  `flaeche`, Rahmen `linie2`, Geist 13 in `text`, höchstens 240 px, sonst gekürzt), ein- und ausgeblendet in
+  120 ms. Klicks gehen dort durch.
+- **Bewegung:** Die Karte gleitet in 200 ms von rechts herein (Lage, `OutCubic`), die Deckkraft folgt in 120 ms.
+  Ausblenden nur über die Deckkraft (120 ms). Keine Bewegung pro Symbol; Einträge, die beim Hereingleiten unter dem
+  ruhenden Zeiger durchziehen, gelten nicht als gezeigt.
+- **Verschwinden:** 400 ms, nachdem der Zeiger Karte und Zone verlassen hat (kurzes Abrutschen schliesst nicht),
+  sofort nach einem Klick auf eine App und sobald Befehlsfeld, ein Menü der Leiste, die Modus- oder Zustand-Wahl
+  oder die Zentrale aufgehen. Während Sperre und Einrichtung erscheint sie nie.
+- **Reihenfolge** fest, nach dem ersten Fenster jeder App; neue Apps kommen unten dazu, nichts springt beim
+  Wechseln.
+- **Klick** holt das zuletzt aktive Fenster der App nach vorne, auch ein minimiertes und auch über ein
+  Vollbild-Fenster. Ist die App schon aktiv und hat mehrere Fenster, kommt das nächste.
+- Fenster der Oberfläche selbst (Einstellungen) erscheinen nicht. Ohne offene App gibt es weder Leiste noch Zone.
+  Bedient wird nur mit der Maus; die Tastatur hat das Befehlsfeld und Alt+Tab.
+
 ### «Heute»
 
 Hintergrund auf jedem Bildschirm, in `grund`: Wochentag und Monat (Mono, Grossbuchstaben), Tageszahl in Instrument
@@ -265,6 +301,17 @@ Während einer Freigabe und bei `heute: false` blendet der Inhalt aus (200 ms).
 - Titelzeile, Akzentrand und Radius gelten für Fenster mit labwc-Rahmen. Apps mit eigenem Rahmen (Chrome,
   GTK4/libadwaita) behalten ihren; eingerastet ragt ihr eigener Schatten in die 8-px-Lücke (`docs/module/m9.md`,
   «Apps mit eigenem Rahmen»).
+
+### Fensterwechsler (Alt+Tab)
+
+labwc zeichnet ihn selbst, als Liste (Stil «classic»), mittig auf dem Bildschirm mit dem Fokus. So breit wie das
+Befehlsfeld (720 px), `flaeche` mit 1-px-Rahmen `linie2`, innen 8 px. Jeder Eintrag beginnt mit dem App-Symbol
+(40 px wie in App-Übersicht und App-Leiste), dann App-Name und Fenstertitel in Geist 16 px (`text`); der Titel fehlt,
+wenn er nur die App-Kennung wiederholt. Einträge 12 px seitlich und 8 px oben und unten. Der gewählte Eintrag ist
+mit `flaeche2` hinterlegt und hat den 2-px-Rahmen im Akzent wie der Tastaturfokus; das gewählte Fenster selbst
+umrandet labwc im Akzent. Grenzen von labwc 0.9: keine runden Ecken, eine Schrift für Name und Titel (der Titel kann
+nicht kleiner oder gedämpft sein). Grössen und Farben schreibt `zenos-thema`, Felder und Schrift `zenos-labwc`.
+Warum nicht der Stil mit Vorschaubildern: `docs/module/m9.md`, «Entscheidungen».
 
 ### Einstellungen
 

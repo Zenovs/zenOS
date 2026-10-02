@@ -76,9 +76,10 @@ erscheint erst nach dem Neustart, und eine SSH-Verbindung bleibt während der In
 - **Theme** (`qs.theme`): liest `shell/theme/tokens.json` und ist die einzige Stelle mit Farbwerten
   (`docs/design.md`).
 - **Komponenten** (`qs.komponenten`): gemeinsame Bausteine wie `Symbol`, `Chip`, `Knopf`, `Eingabe`, `Toast`.
-- **Oberflächen:** `leiste/`, `heute/`, `befehlsfeld/`, `mitteilungen/`, `sperre/`, `freigabe/`, `modi/`
-  (Modus- und Zustand-Wahl), `einstellungen/`, `einrichtung/`, `polkit/` (Passwortdialog als polkit-Agent), dazu
-  `komponenten/Hinweise.qml` (Toast) und `greeter.qml` mit `greeter/` für den Login.
+- **Oberflächen:** `leiste/`, `heute/`, `befehlsfeld/`, `mitteilungen/`, `appleiste/` (App-Leiste am rechten
+  Rand, Fenster über `ToplevelManager` aus Quickshell.Wayland, wlr-foreign-toplevel), `sperre/`, `freigabe/`, `modi/`
+  (Modus- und Zustand-Wahl), `einstellungen/`, `einrichtung/`, `polkit/` (Passwortdialog als polkit-Agent), dazu `komponenten/Hinweise.qml` (Toast) und
+  `greeter.qml` mit `greeter/` für den Login.
 - **Apps aus der Oberfläche** starten über `zenos-oeffnen` in eigenen Einheiten
   (`app-zenos-<name>-<zeit>.scope` in `app.slice`). Ein Neustart von `zenos-shell.service` beendet sie nicht.
 - **WLAN** (`leiste/WlanQuelle.qml`, kein Dienst unter `dienste/`): spricht NetworkManager über
@@ -132,6 +133,7 @@ selbst endet in v0.3.1 auch bei Fehlern mit 0; `zenos-ipc` wertet die Ausgabe au
 | `einrichtung` | `oeffnen`, `apps`, `schliessen`, `status` |
 | `leiste` | `menue(system\|raster\|wlan)` (`wlan`: System-Menü mit aufgeklappter WLAN-Liste), `schliessen` |
 | `polkit` | `status` (`offen`/`zu`), `agent` (`angemeldet`/`nicht angemeldet`), `abbrechen` |
+| `appleiste` | `zeigen` (auf dem Bildschirm des aktiven Fensters, nur wenn sie erscheinen darf), `verbergen`, `status` (`offen`/`zu`), `apps` (eine Zeile pro App: appId, Anzahl Fenster, `aktiv`) |
 
 Die Tastenkürzel von labwc rufen dieselben Ziele auf (Liste in `docs/module/m9.md`).
 

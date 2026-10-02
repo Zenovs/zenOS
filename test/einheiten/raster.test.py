@@ -145,6 +145,22 @@ class RasterTest(unittest.TestCase):
             ziffern = {t for t in tasten if re.fullmatch(r"W-[0-9]", t)}
             self.assertEqual(ziffern, {f"W-{i}" for i in range(1, min(4, len(bereiche)) + 1)}, raster)
 
+    def test_fensterwechsler_mit_app_symbol(self):
+        """Alt+Tab: Liste «classic», App-Symbol vorne, Schrift «gross» aus den Tokens (docs/module/m9.md)."""
+        wurzel = self.ausgeben("4er-grid")
+        wechsler = wurzel.find("windowSwitcher")
+        self.assertIsNotNone(wechsler)
+        self.assertEqual(wechsler.find("osd").get("style"), "classic")
+        felder = list(wechsler.find("fields"))
+        self.assertEqual([f.get("content") for f in felder], ["icon", "desktop_entry_name", "custom"])
+        self.assertEqual(felder[2].get("format"), "%t")
+        self.assertEqual(sum(int(f.get("width").rstrip("%")) for f in felder), 100)
+        with open(os.path.join(WURZEL, "shell", "theme", "tokens.json"), encoding="utf-8") as f:
+            gross = json.load(f)["schrift"]["groessen"]["gross"]
+        osd = [s for s in wurzel.find("theme").findall("font") if s.get("place") == "OnScreenDisplay"]
+        self.assertEqual(len(osd), 1)
+        self.assertEqual(int(osd[0].find("size").text), round(gross * 72 / 96))
+
     def test_tastenkuerzel_nach_bauplan(self):
         tasten = [k.get("key") for k in self.ausgeben("4er-grid").iter("keybind")]
         self.assertEqual(len(tasten), len(set(tasten)), "doppelte Tastenkürzel")

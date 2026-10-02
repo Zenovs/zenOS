@@ -24,6 +24,7 @@ import qs.modi as ModiModul
 import qs.einstellungen as EinstellungenModul
 import qs.einrichtung as EinrichtungModul
 import qs.polkit as PolkitModul
+import qs.appleiste as AppleisteModul
 // qmllint enable unused-imports
 
 // Einstieg der zenOS-Sitzung.
@@ -53,6 +54,11 @@ ShellRoot {
 
     LazyLoader {
         source: "mitteilungen/Mitteilungen.qml"
+        loading: true
+    }
+
+    LazyLoader {
+        source: "appleiste/AppLeiste.qml"
         loading: true
     }
 

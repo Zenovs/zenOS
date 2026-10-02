@@ -15,6 +15,7 @@ Modul (`import qs.<ordner>`).
 | `heute/` | Hintergrund «Heute» |
 | `befehlsfeld/` | Befehlsfeld mit App-Übersicht (`AppRaster`, `Kachel`); `rechner.mjs` und `suche.mjs` testet auch node |
 | `mitteilungen/` | Karten und Zentrale |
+| `appleiste/` | App-Leiste am rechten Rand (`AppLeiste`, `AppEintrag`); `fenster.mjs` (Gruppieren, Reihenfolge, Ziel eines Klicks) testet auch node |
 | `sperre/` | Sperrbildschirm (ext-session-lock, PAM) |
 | `freigabe/` | Rahmen und Label bei Bildschirmfreigabe |
 | `modi/` | Modus- und Zustand-Wahl, `zustandslogik.js` (Logik der Zustände, auch mit node getestet) |

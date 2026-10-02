@@ -85,8 +85,8 @@ scripts/pruefen.sh --ausfuehrlich start  # dazu alle Warnungen von Qt/Quickshell
 Startet `shell/shell.qml`, `shell/greeter.qml` und den Notfall-Login (jede kleingeschriebene `.qml`-Datei
 unter `shell/` mit `ShellRoot`) nacheinander in labwc ohne Bildschirm, wartet auf «Configuration Loaded»
 und wertet das Quickshell-Protokoll aus. In `shell.qml` folgt ein Rundgang über IPC (Thema hin und zurück,
-Befehlsfeld mit Apps-Ansicht, Zentrale, Umschalter, jede Einstellungen-Seite, Einrichtung, Hinweis, Bildschirmfreigabe,
-zuletzt die Sperre).
+Befehlsfeld mit Apps-Ansicht, Zentrale, Umschalter, jede Einstellungen-Seite, App-Leiste, Einrichtung, Hinweis,
+Bildschirmfreigabe, zuletzt die Sperre).
 Gemeldet werden die gefundenen Zeilen: Ladefehler («Type … unavailable», «is not a type»),
 ReferenceError/TypeError, «Cannot assign», «Binding loop», jede Warnung aus einer Datei unter `shell/`,
 `console.warn`/`console.error`, gescheiterte IPC-Aufrufe und eine Sperre, die nicht «gesperrt» meldet.

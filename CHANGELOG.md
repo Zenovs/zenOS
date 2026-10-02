@@ -52,6 +52,12 @@ an; eine Version entspricht einem Tag `v…` im Repo.
   Anmeldung gibt, fragt ein ruhiger Dialog nach dem Passwort und zeigt, wofür. Das Passwort geht nur an polkit.
   Während der Sperre gibt es keine Dialoge. Neu per IPC: `zenos-ipc polkit status|agent|abbrechen`.
 - **`zen firewall deaktivieren`** schaltet nach der Eingabe «deaktivieren» aus und merkt sich das.
+- **App-Leiste am rechten Rand:** Mit der Maus rechts in der Mitte an den Rand fahren und kurz ruhen (300 ms), dann
+  gleitet eine schmale Karte mit einem Symbol pro offener App herein, auch über einem Vollbild-Fenster. Ein Klick
+  holt die App nach vorne (minimierte kommen zurück), bei der aktiven App mit mehreren Fenstern das nächste. Die
+  aktive App trägt einen Punkt im Akzent, mehrere Fenster eine kleine Zahl, beim Zeigen steht der Name daneben.
+  Sonst ist am Rand nichts zu sehen; oben und unten und beim Vorbeifahren passiert nichts. Nie während Sperre und
+  Einrichtung. Neu per IPC: `zenos-ipc appleiste zeigen|verbergen|status|apps`.
 
 ### Geändert
 
@@ -72,6 +78,9 @@ an; eine Version entspricht einem Tag `v…` im Repo.
   Server schon dabei).
 - **Passwortfelder leeren gründlicher:** Nach dem Weiterreichen bleibt das Getippte auch nicht im
   Rückgängig-Verlauf des Feldes stehen (Login, polkit-Dialog).
+- **Alt+Tab grösser und mit App-Symbolen:** Der Fensterwechsler ist so breit wie das Befehlsfeld (720 statt 600 px),
+  jede Zeile beginnt mit dem App-Symbol in 40 px (vorher so gross wie die Schrift), Name und Titel in 16 px, mehr
+  Abstand. Der Titel fehlt, wenn er nur die App-Kennung wiederholt. Das Verhalten bleibt.
 
 ## 0.1.0-rc2 – 2026-09-28
 
