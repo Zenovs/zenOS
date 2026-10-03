@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
-# 80-argon: Argon ONE V3 am Raspberry Pi 5 – Dienst für Lüfterkurve und Power-Button
+# 80-argon: Argon ONE – Dienst für Lüfter und Power-Button (V3) bzw. Akku (ONE UP), Shutdown-Hook
 # shellcheck shell=bash
+#
+# Argon ONE V3 am Raspberry Pi 5: Lüfterkurve und Power-Button. Argon ONE UP am Compute Module 5: Akku, Anzeige
+# von Lüfter und Temperatur.
 #
 # Installiert zenos-argon.service nach /etc/systemd/system und aktiviert ihn. Ausser im Image-Modus startet
 # das Modul ihn auch (nach einer Änderung an der Einheit oder wenn zenos-argon neuer ist als der laufende
-# Dienst). Ob es etwas zu tun gibt (Pi 5, I2C-Bus 1, Argon an 0x1a), entscheidet der Dienst selbst; sonst
-# endet er mit einer Meldung. Dazu der Hook /usr/lib/systemd/system-shutdown/zenos-argon, der beim
-# Ausschalten das Abschaltsignal an die Platine sendet. Firmware und /boot/firmware/config.txt fasst zenOS
-# nie an: Fehlt auf einem Pi 5 der I2C-Bus, gibt es nur einen Hinweis (Rückfrage-Thema).
+# Dienst). Ob es etwas zu tun gibt (Pi 5 mit Argon an 0x1a oder Compute Module 5 mit Akku-Messchip an 0x64,
+# I2C-Bus 1), entscheidet der Dienst selbst; sonst endet er mit einer Meldung. Dazu der Hook
+# /usr/lib/systemd/system-shutdown/zenos-argon, der beim Ausschalten das Abschaltsignal an die Platine des V3
+# sendet. Firmware und /boot/firmware/config.txt fasst zenOS nie an: Fehlt der I2C-Bus, gibt es nur einen
+# Hinweis (Rückfrage-Thema).
 
 modul_system() {
   local einheit=zenos-argon.service zeile
@@ -36,6 +40,7 @@ modul_system() {
     /usr/lib/systemd/system-shutdown/zenos-argon 0755 root:root
 
   _argon_i2c_hinweis
+  _argon_akku_hinweis
   _argon_originalskript
 }
 
@@ -99,20 +104,35 @@ _argon_i2c_hinweis() {
     return 0
   fi
   modell=$(_argon_modell)
-  [[ "$modell" == "Raspberry Pi 5"* ]] || return 0
+  [[ "$modell" == "Raspberry Pi 5"* || "$modell" == "Raspberry Pi Compute Module 5"* ]] || return 0
   [[ -e /dev/i2c-1 ]] && return 0
   if _argon_i2c_eingetragen; then
     log_info "Hinweis: dtparam=i2c_arm=on steht in /boot/firmware, /dev/i2c-1 fehlt aber noch (wirkt nach einem Neustart)."
   else
     log_info "Hinweis: Für den Argon ONE braucht es I2C: dtparam=i2c_arm=on in /boot/firmware/config.txt, danach Neustart."
-    log_info "zenOS ändert Firmware-Einstellungen nicht selbst. Ohne I2C regelt zenos-argon den Lüfter nicht."
+    log_info "zenOS ändert Firmware-Einstellungen nicht selbst. Ohne I2C regelt zenos-argon weder Lüfter noch Akku."
   fi
 }
 
-# Das Installationsskript von Argon richtet argononed.service und argon-shutdown.sh ein; zwei Dienste am
-# selben Lüfter und Knopf stören sich gegenseitig.
+# Argon ONE UP: Ohne Zenos Freigabe schreibt zenos-argon nichts in den Akku-Messchip (docs/module/m13.md). Nur ein
+# Hinweis, die Freigabe gibt Zeno selbst mit «zen akku freigeben».
+_argon_akku_hinweis() {
+  [[ "$ZENOS_IMAGE" == 1 ]] && return 0
+  [[ "$(_argon_modell)" == "Raspberry Pi Compute Module 5"* ]] || return 0
+  [[ -f /etc/xdg/zenos/argon-akkuprofil ]] && return 0
+  log_info "Hinweis: Schläft der Akku-Messchip, misst zenOS den Akku erst nach «zen akku freigeben» (weckt ihn und schreibt Argons Akkuprofil, nur mit deinem Ja)."
+}
+
+# Das Installationsskript von Argon richtet argononed.service und argon-shutdown.sh ein (V3) bzw.
+# argononeupd.service (ONE UP); zwei Dienste am selben Lüfter, Knopf oder Akku-Messchip stören sich gegenseitig.
 _argon_originalskript() {
   local zustand
+  zustand=$(systemctl is-enabled argononeupd.service 2> /dev/null) || true
+  case "$zustand" in
+    enabled | enabled-runtime | static | alias | generated | indirect)
+      log_warnung "argononeupd.service (Argon-Software für den ONE UP) ist eingerichtet: zenos-argon liest den Akku dann nur und lädt kein Profil. Entfernen: argon-uninstall oder sudo systemctl disable --now argononeupd.service"
+      ;;
+  esac
   zustand=$(systemctl is-enabled argononed.service 2> /dev/null) || true
   case "$zustand" in
     enabled | enabled-runtime | static | alias | generated | indirect)

@@ -96,8 +96,9 @@ class FalscherStatus:
         self.geschrieben = []
         self.entfernt = False
 
-    def write(self, temperatur, luefter, now=None):
-        self.geschrieben.append((temperatur, luefter))
+    def write(self, daten, now=None):
+        self.daten = daten
+        self.geschrieben.append((daten["temperatur"]["cpu"], daten["luefter"]["prozent"]))
         return True
 
     def remove(self):
@@ -456,28 +457,33 @@ class Dienst(unittest.TestCase):
 class Statusdatei(unittest.TestCase):
     def test_atomar_und_lesbar(self):
         with tempfile.TemporaryDirectory() as ordner:
-            pfad = os.path.join(ordner, "zenos", "argon.json")
+            pfad = os.path.join(ordner, "zenos", "geraet.json")
             status = A.StatusFile(pfad, stille())
-            self.assertTrue(status.write(46.6, 30))
+            self.assertTrue(status.write(A.argon_v3_report(46.64, 30)))
             with open(pfad, encoding="utf-8") as f:
                 daten = json.load(f)
-            self.assertEqual(daten["temperatur"], 47)
-            self.assertEqual(daten["luefter"], 30)
+            self.assertEqual(daten["version"], 1)
+            self.assertEqual(daten["geraet"], "argon-one-v3")
+            self.assertEqual(daten["temperatur"], {"cpu": 46.6})
+            self.assertEqual(daten["luefter"], {"vorhanden": True, "prozent": 30})
+            self.assertEqual(daten["akku"], {"vorhanden": False})
             self.assertRegex(daten["zeit"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d$")
             self.assertEqual(stat.S_IMODE(os.stat(pfad).st_mode), 0o644)
-            status.write(None, None)
+            self.assertEqual(stat.S_IMODE(os.stat(os.path.dirname(pfad)).st_mode) & 0o022, 0)
+            status.write(A.argon_v3_report(None, None))
             with open(pfad, encoding="utf-8") as f:
-                self.assertEqual({k: v for k, v in json.load(f).items() if k != "zeit"},
-                                 {"temperatur": -1, "luefter": -1})
-            self.assertEqual(os.listdir(os.path.dirname(pfad)), ["argon.json"])
+                daten = json.load(f)
+            self.assertEqual((daten["temperatur"], daten["luefter"]),
+                             ({"cpu": None}, {"vorhanden": True, "prozent": None}))
+            self.assertEqual(os.listdir(os.path.dirname(pfad)), ["geraet.json"])
             status.remove()
             self.assertFalse(os.path.exists(pfad))
 
     def test_nicht_schreibbar(self):
         log = A.Log(journal=False, stream=io.StringIO())
-        status = A.StatusFile("/proc/gibt-es-nicht/argon.json", log)
-        self.assertFalse(status.write(50, 0))
-        self.assertFalse(status.write(50, 0))
+        status = A.StatusFile("/proc/gibt-es-nicht/geraet.json", log)
+        self.assertFalse(status.write(A.argon_v3_report(50, 0)))
+        self.assertFalse(status.write(A.argon_v3_report(50, 0)))
         self.assertEqual(log.stream.getvalue().count("lässt sich nicht schreiben"), 1)
 
 
@@ -648,6 +654,8 @@ class Aufruf(unittest.TestCase):
         self.assertEqual((o["mode"], o["temperatur"], o["pulse"], o["intervall"], o["durchlaeufe"], o["status"]),
                          ("simulation", 61.5, [25.0, 45.0], 0.2, 3, "/srv/x.json"))
         self.assertEqual(A.parse_args([])["mode"], "dienst")
+        # ohne --intervall entscheidet das Gerät (V3 5 s, UP 15 s)
+        self.assertIsNone(A.parse_args([])["intervall"])
 
     def test_falsche_aufrufe(self):
         for argv in (["--temperatur", "50"], ["--simulieren", "--temperatur"], ["--intervall", "0"],
@@ -668,7 +676,14 @@ class Aufruf(unittest.TestCase):
     def test_pi5_erkennen(self):
         self.assertTrue(A.is_pi5("Raspberry Pi 5 Model B Rev 1.0"))
         self.assertFalse(A.is_pi5("Raspberry Pi 4 Model B Rev 1.5"))
+        self.assertFalse(A.is_pi5("Raspberry Pi Compute Module 5 Lite Rev 1.0"))
         self.assertFalse(A.is_pi5(""))
+
+    def test_cm5_erkennen(self):
+        self.assertTrue(A.is_cm5("Raspberry Pi Compute Module 5 Lite Rev 1.0"))
+        self.assertTrue(A.is_cm5("Raspberry Pi Compute Module 5 Rev 1.0"))
+        self.assertFalse(A.is_cm5("Raspberry Pi Compute Module 4 Rev 1.1"))
+        self.assertFalse(A.is_cm5("Raspberry Pi 5 Model B Rev 1.0"))
 
 
 # --- Hook für systemd-shutdown (system/systemd/system-shutdown/zenos-argon) ---

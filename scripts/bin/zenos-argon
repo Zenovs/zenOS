@@ -1,18 +1,24 @@
 #!/usr/bin/python3
-"""zenos-argon: Lüfter und Power-Button des Argon ONE V3 am Raspberry Pi 5.
+"""zenos-argon: Argon ONE V3 am Raspberry Pi 5 (Lüfter, Power-Button) und Argon ONE UP am Compute Module 5
+(Akku, Anzeige von Lüfter und Temperatur).
 
 Aufruf:
   zenos-argon                        Dienst (zenos-argon.service, als root)
   zenos-argon --simulieren [--temperatur GRAD | --temperatur-datei PFAD] [--puls MS …]
-                                     ohne I2C und GPIO: Lüfterwerte und Tastendrücke nur ins Log
-  zenos-argon --pruefen              nur lesend: Pi-Modell, I2C-Bus, Argon an 0x1a, GPIO4, Konfiguration
+                                     Argon ONE V3 ohne I2C und GPIO: Lüfterwerte und Tastendrücke nur ins Log
+  zenos-argon --pruefen              nur lesend: Gerät, I2C-Bus, Argon an 0x1a bzw. Akku-Messchip an 0x64,
+                                     GPIO4, Lüfter, Konfiguration, Freigabe für das Akkuprofil
   zenos-argon --konfig-pruefen       Konfiguration prüfen und die wirksame Kurve zeigen
 
 Optionen:
   --konfig PFAD          Konfiguration (Standard /etc/xdg/zenos/argon.json, darf fehlen)
-  --status-datei PFAD    Werte für die Leiste (Standard /run/zenos/argon.json)
-  --intervall SEKUNDEN   Takt für Messen und Schreiben (Standard 5)
+  --status-datei PFAD    Werte für die Leiste (Standard /run/zenos/geraet.json)
+  --intervall SEKUNDEN   Takt für Messen und Schreiben (Standard 5, beim Argon ONE UP 15)
   --durchlaeufe N        nach N Messungen beenden (für Tests)
+
+Nur für Tests: ZENOS_ARGON_TESTWURZEL=<ordner> legt alle festen Pfade (Gerätebaum, /dev/i2c-1, /sys, Argons
+Dienst) unter diesen Ordner; I2C-Geräte sind dann JSON-Dateien <ordner>/i2c-1/0x<adresse>.json
+({"0x04": 87, …}), jedes Schreiben steht zusätzlich in <ordner>/i2c-1/protokoll.
 
 Orientiert am offiziellen Argon-Skript (download.argon40.com/argon1.sh mit argononed.py, argonregister.py
 und argonpowerbutton-libgpiod.py, Version 2608001; Einzelheiten in docs/module/m13.md):
@@ -28,9 +34,31 @@ und argonpowerbutton-libgpiod.py, Version 2608001; Einzelheiten in docs/module/m
   RP1). 20–30 ms = Doppeltipp → systemctl reboot, 40–50 ms = gedrückt halten → systemctl poweroff.
   Gemessen wird mit den Zeitstempeln der Flanken; die Fenster haben 5 ms Rand um diese Werte.
 
-Alle 5 s schreibt der Dienst /run/zenos/argon.json atomar: {"temperatur": int, "luefter": int, "zeit": ISO-8601},
--1 heisst unbekannt. Ohne Raspberry Pi 5, I2C-Bus oder Argon endet er mit einer Meldung und Exit 0.
 Beim Beenden stellt er den Lüfter auf 100 % (niemand regelt mehr), beim Herunterfahren aus (wie das Original).
+
+Argon ONE UP (Laptop mit Compute Module 5; Quelle: Argons argononeupd.py, Version 2608001):
+- Akku-Messchip Cellwise CW2217 an I2C-Bus 1, Adresse 0x64 (Chip-ID 0xA0 in Register 0x00). Beim Start nur
+  lesend prüfen: aktiv (Register 0x08 = 0x00), Profil geladen (0x0B Bit 7) und gleich Argons Profil (0x10–0x5F).
+  Stimmt alles, wird nichts geschrieben. Sonst, und nur mit Zenos Freigabe (Datei /etc/xdg/zenos/argon-akkuprofil,
+  angelegt von «zen akku freigeben»; ohne sie bleibt alles nur lesend), Argons Akkuprofil laden, genau wie
+  battery_checkupdateprofile:
+  0x08 ← 0x30, 0x08 ← 0xF0, 80 Byte nach 0x10–0x5F, 0x0B ← 0x80, 0x0A ← 0x00, dann aktivieren wie
+  battery_restart (0x08 ← 0x30, 0x08 ← 0x00, bis 5 s auf Register 0xA7 warten), je 0,5 s Pause. Höchstens
+  dreimal pro Stunde, nach einem Fehler erst nach 30 s, dann 60 s, 120 s … (höchstens 1 h).
+- Alle 15 s Ladestand (Register 0x04, ganze %) und Stromrichtung (0x0E Bit 7 gesetzt = Entladen) lesen.
+  «lädt» wechselt erst nach drei gleichen Messungen (bis dahin alle 5 s). Unplausible Werte zählen nicht,
+  ein Sprung um mehr als 10 % braucht eine zweite Messung.
+- Lüfter und Temperatur nur anzeigen: Kernel-Treiber pwm-fan (hwmon «pwmfan», cooling_device «pwm-fan»,
+  nach Namen gesucht). Der Kernel regelt den Lüfter, zenos-argon fasst ihn nicht an.
+
+Statusdatei /run/zenos/geraet.json (atomar, 0644), alle 5 s (V3) bzw. 15 s (UP):
+  {"version": 1, "zeit": ISO-8601, "geraet": "argon-one-v3" | "argon-one-up",
+   "akku": {"vorhanden": bool, "prozent": int|null, "laedt": bool|null,
+            "zustand": "ok"|"unbekannt"|"fehler"|"freigabe" (Messchip misst nicht, Freigabe fehlt)},
+   "luefter": {"vorhanden": true, "prozent": int|null} (V3) oder
+              {"vorhanden": bool, "stufe": int|null, "stufen": int|null, "upm": int|null} (UP),
+   "temperatur": {"cpu": float|null}}
+Ohne passendes Gerät, I2C-Bus oder Argon endet der Dienst mit einer Meldung und Exit 0.
 
 Konfiguration /etc/xdg/zenos/argon.json (optional, wird im laufenden Betrieb neu gelesen):
   {"kurve": [{"temperatur": 55, "luefter": 30}, {"temperatur": 60, "luefter": 55},
@@ -43,6 +71,7 @@ Exit: 0 in Ordnung oder nichts zu tun · 1 Fehler · 2 Aufruf.
 
 import datetime
 import errno
+import io
 import json
 import math
 import os
@@ -72,10 +101,15 @@ POWEROFF_PULSE_MS = (35.0, 55.0)
 ACTIONS = {"neustart": ("reboot", "Neustart"), "ausschalten": ("poweroff", "Ausschalten")}
 
 CONFIG_PATH = "/etc/xdg/zenos/argon.json"
-STATUS_PATH = "/run/zenos/argon.json"
+STATUS_PATH = "/run/zenos/geraet.json"
+STATUS_VERSION = 1
 THERMAL_PATH = "/sys/class/thermal/thermal_zone0/temp"
 MODEL_PATHS = ("/sys/firmware/devicetree/base/model", "/proc/device-tree/model")
 PI5_MODEL = "Raspberry Pi 5"
+CM5_MODEL = "Raspberry Pi Compute Module 5"
+V3_INTERVAL = 5.0
+# Nur für Tests: legt alle festen Pfade unter diesen Ordner (siehe Kopf)
+TEST_ROOT_VARIABLE = "ZENOS_ARGON_TESTWURZEL"
 # So lange wartet der Dienst kurz nach dem Start des Systems auf /dev/i2c-1 (RP1 hängt am PCIe)
 I2C_WAIT_SECONDS = 30
 I2C_WAIT_UPTIME = 180
@@ -84,6 +118,61 @@ DEFAULT_CURVE = ((55.0, 30), (60.0, 55), (65.0, 100))
 DEFAULT_HYSTERESIS = 3.0
 DEFAULT_DELAY = 30.0
 CONFIG_KEYS = ("kurve", "hysterese", "absenkenNachSekunden")
+
+# Argon ONE UP: Akku-Messchip Cellwise CW2217BAAD (Datenblatt V0.1, Register wie in Argons argononeupd.py)
+GAUGE_ADDRESS = 0x64
+GAUGE_CHIP_ID = 0xA0
+REG_VERSION = 0x00
+REG_SOC = 0x04
+REG_CONTROL = 0x08
+REG_GPIOCONFIG = 0x0A
+REG_SOCALERT = 0x0B
+REG_CURRENT_HIGH = 0x0E
+REG_PROFILE = 0x10
+# IC-Status: nicht im Datenblatt, nur aus argononeupd.py (Bit 2 oder 3 gesetzt = bereit)
+REG_ICSTATE = 0xA7
+ICSTATE_READY = 0x0C
+CONTROL_ACTIVE = 0x00
+CONTROL_RESTART = 0x30
+CONTROL_SLEEP = 0xF0
+PROFILE_LOADED = 0x80
+CURRENT_NEGATIVE = 0x80
+GAUGE_PAUSE = 0.5
+# Akkuprofil aus Argons argononeupd.py (PROFILE_DATALIST in battery_checkupdateprofile), Version 2608001,
+# gelesen am 01.10.2026 (SHA-256 der Datei in docs/module/m13.md). Gehört in die Register 0x10 bis 0x5F.
+ARGON_UP_PROFILE = bytes((
+    0x32, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xA8, 0xAA,
+    0xBE, 0xC6, 0xB8, 0xAE, 0xC2, 0x98, 0x82, 0xFF, 0xFF, 0xCA,
+    0x98, 0x75, 0x63, 0x55, 0x4E, 0x4C, 0x49, 0x98, 0x88, 0xDC,
+    0x34, 0xDB, 0xD3, 0xD4, 0xD3, 0xD0, 0xCE, 0xCB, 0xBB, 0xE7,
+    0xA2, 0xC2, 0xC4, 0xAE, 0x96, 0x89, 0x80, 0x74, 0x67, 0x63,
+    0x71, 0x8E, 0x9F, 0x85, 0x6F, 0x3B, 0x20, 0x00, 0xAB, 0x10,
+    0xFF, 0xB0, 0x73, 0x00, 0x00, 0x00, 0x64, 0x08, 0xD3, 0x77,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFA,
+))
+GAUGE_STATES = {
+    "ok": "misst mit Argons Akkuprofil",
+    "schlaeft": "schläft",
+    "ohne-profil": "hat kein Akkuprofil geladen",
+    "anderes-profil": "hat ein anderes Akkuprofil als Argon",
+}
+UP_INTERVAL = 15.0
+# Takt, solange eine Änderung bestätigt werden muss (Laden/Entladen, Sprung im Ladestand)
+UP_PENDING_INTERVAL = 5.0
+CHARGE_CONFIRMATIONS = 3
+# So viele Lesefehler hintereinander behalten den letzten Wert (ein einzelner Fehler lässt nichts springen)
+READ_TOLERANCE = 2
+SOC_JUMP = 10
+SOC_ZERO_NOTICE = 120.0
+PROFILE_WRITES_PER_HOUR = 3
+PROFILE_RETRY_FIRST = 30.0
+PROFILE_RETRY_MAX = 3600.0
+FAN_RESCAN_SECONDS = 60.0
+# Argons eigene Software für den ONE UP (argononeup.sh): aktiviert, wenn dieser Verweis existiert
+ARGON_UP_DAEMON_WANTS = "/etc/systemd/system/multi-user.target.wants/argononeupd.service"
+# Zenos Freigabe für das Schreiben des Akkuprofils (zen akku freigeben, nur root kann sie anlegen). Fehlt sie,
+# liest zenos-argon den Messchip nur. Geprüft bei jedem Versuch, also ohne Neustart des Dienstes wirksam.
+PROFILE_RELEASE_PATH = "/etc/xdg/zenos/argon-akkuprofil"
 
 
 # --- Log -------------------------------------------------------------------
@@ -448,10 +537,20 @@ def apply_speed(fan, value, previous):
     fan.set_speed(value)
 
 
+def test_root():
+    """Ordner aus ZENOS_ARGON_TESTWURZEL (nur für Tests) oder ""."""
+    return os.environ.get(TEST_ROOT_VARIABLE, "").rstrip("/")
+
+
+def system_path(path):
+    """Fester Pfad, in Tests unter ZENOS_ARGON_TESTWURZEL."""
+    return test_root() + path
+
+
 def read_model():
     for path in MODEL_PATHS:
         try:
-            with open(path, "rb") as handle:
+            with open(system_path(path), "rb") as handle:
                 return handle.read().replace(b"\0", b"").decode("utf-8", "replace").strip()
         except OSError:
             continue
@@ -462,8 +561,13 @@ def is_pi5(model):
     return model.startswith(PI5_MODEL)
 
 
-def read_temperature(path=THERMAL_PATH):
+def is_cm5(model):
+    return model.startswith(CM5_MODEL)
+
+
+def read_temperature(path=None):
     """°C aus der Thermal-Zone (Milligrad) oder None."""
+    path = path or system_path(THERMAL_PATH)
     try:
         with open(path, encoding="ascii") as handle:
             value = int(handle.read().strip()) / 1000
@@ -505,23 +609,36 @@ def system_stopping(runner=subprocess.run):
 # --- Status für die Leiste -------------------------------------------------
 
 
+def round_temperature(value):
+    return None if value is None else round(float(value), 1)
+
+
+def argon_v3_report(temperature, speed):
+    """Inhalt der Statusdatei beim Argon ONE V3: Lüfter in %, kein Akku."""
+    return {
+        "geraet": "argon-one-v3",
+        "akku": {"vorhanden": False},
+        "luefter": {"vorhanden": True, "prozent": None if speed is None else int(speed)},
+        "temperatur": {"cpu": round_temperature(temperature)},
+    }
+
+
 class StatusFile:
+    """/run/zenos/geraet.json: Version 1, atomar (tmp + rename), 0644."""
+
     def __init__(self, path, log):
         self.path = path
         self.log = log
 
-    def write(self, temperature, speed, now=None):
+    def write(self, report, now=None):
         now = now or datetime.datetime.now().astimezone()
-        data = {
-            "temperatur": -1 if temperature is None else int(round(temperature)),
-            "luefter": -1 if speed is None else int(speed),
-            "zeit": now.isoformat(timespec="seconds"),
-        }
+        data = {"version": STATUS_VERSION, "zeit": now.isoformat(timespec="seconds")}
+        data.update(report)
         directory = os.path.dirname(self.path) or "."
         temp = None
         try:
             os.makedirs(directory, mode=0o755, exist_ok=True)
-            handle, temp = tempfile.mkstemp(prefix=".argon-", suffix=".tmp", dir=directory)
+            handle, temp = tempfile.mkstemp(prefix=".geraet-", suffix=".tmp", dir=directory)
             with os.fdopen(handle, "w", encoding="utf-8") as out:
                 out.write(json.dumps(data, ensure_ascii=False) + "\n")
             os.chmod(temp, 0o644)
@@ -618,7 +735,7 @@ class Daemon:
                 self.log.solved("i2c", "I2C antwortet wieder")
                 shown = "?" if temperature is None else _fmt(round(temperature, 1))
                 self.log.info(f"Lüfter {value} % bei {shown} °C")
-        self.status.write(temperature, self.applied)
+        self.status.write(argon_v3_report(temperature, self.applied))
 
     def on_pulse(self, width_ms):
         action = classify_pulse(width_ms)
@@ -675,6 +792,490 @@ class Daemon:
         return 0
 
 
+# --- I2C-Bus ---------------------------------------------------------------
+
+
+class FileBus:
+    """Nur für Tests (ZENOS_ARGON_TESTWURZEL): jedes I2C-Gerät ist eine JSON-Datei <ordner>/0x<adresse>.json mit
+    Registerwerten ({"0x04": 87}, fehlende Register lesen 0). Fehlt die Datei oder steht darin "fehler": true,
+    antwortet das Gerät nicht. Schreiben ändert die Datei und steht in <ordner>/protokoll («0x64 0x08 0x30»)."""
+
+    def __init__(self, folder):
+        self.folder = folder
+
+    def _path(self, address):
+        return os.path.join(self.folder, f"0x{address:02x}.json")
+
+    def _load(self, address):
+        try:
+            with open(self._path(address), encoding="utf-8") as handle:
+                registers = json.load(handle)
+        except (OSError, ValueError):
+            registers = None
+        if not isinstance(registers, dict) or registers.get("fehler"):
+            raise OSError(getattr(errno, "EREMOTEIO", 121), "Remote I/O error")
+        return registers
+
+    def _log(self, *values):
+        with open(os.path.join(self.folder, "protokoll"), "a", encoding="utf-8") as handle:
+            handle.write(" ".join(f"0x{v:02x}" for v in values) + "\n")
+
+    def read_byte_data(self, address, register):
+        return int(self._load(address).get(f"0x{register:02x}", 0)) & 0xFF
+
+    def write_byte_data(self, address, register, value):
+        registers = self._load(address)
+        registers[f"0x{register:02x}"] = value & 0xFF
+        self._log(address, register, value)
+        temp = self._path(address) + ".tmp"
+        with open(temp, "w", encoding="utf-8") as handle:
+            json.dump(registers, handle, sort_keys=True)
+        os.replace(temp, self._path(address))
+
+    def read_byte(self, address):
+        self._load(address)
+        return 0
+
+    def write_byte(self, address, value):
+        self._load(address)
+        self._log(address, value)
+
+    def write_quick(self, address):
+        self._load(address)
+
+    def close(self):
+        pass
+
+
+def open_bus(log):
+    """I2C-Bus 1 (in Tests FileBus) oder None mit Meldung."""
+    root = test_root()
+    if root:
+        return FileBus(os.path.join(root, "i2c-1"))
+    try:
+        import smbus
+    except ImportError:
+        log.error("python3-smbus fehlt (install.sh ausführen)")
+        return None
+    try:
+        return smbus.SMBus(I2C_BUS)
+    except OSError as err:
+        log.error(f"{I2C_DEVICE} lässt sich nicht öffnen: {err}")
+        return None
+
+
+# --- Argon ONE UP: Akku-Messchip CW2217 ------------------------------------
+
+
+class BatteryGauge:
+    """Akku-Messchip CW2217 an 0x64 (Protokoll wie argononeupd.py). Schreibt nur in load_profile und restart."""
+
+    def __init__(self, bus, sleep=time.sleep, stop=None):
+        self.bus = bus
+        self.sleep = sleep
+        self.stop = stop or threading.Event()
+
+    def _read(self, register):
+        return self.bus.read_byte_data(GAUGE_ADDRESS, register)
+
+    def _write(self, register, value):
+        self.bus.write_byte_data(GAUGE_ADDRESS, register, value)
+
+    def chip_id(self):
+        return self._read(REG_VERSION)
+
+    def read_profile(self):
+        return bytes(self._read(REG_PROFILE + offset) for offset in range(len(ARGON_UP_PROFILE)))
+
+    def status(self):
+        """Nur lesend, ohne Profilvergleich: «ok», «schlaeft» oder «ohne-profil»."""
+        if self._read(REG_CONTROL) != CONTROL_ACTIVE:
+            return "schlaeft"
+        if not self._read(REG_SOCALERT) & PROFILE_LOADED:
+            return "ohne-profil"
+        return "ok"
+
+    def check(self):
+        """Nur lesend: wie status, dazu «anderes-profil», wenn die Register 0x10–0x5F nicht Argons Profil sind."""
+        state = self.status()
+        if state == "ok" and self.read_profile() != ARGON_UP_PROFILE:
+            return "anderes-profil"
+        return state
+
+    def load_profile(self):
+        """Argons Profil schreiben und den Chip aktivieren, genau wie battery_checkupdateprofile in argononeupd.py.
+        Gibt (bereit, Zustand) zurück: bereit = Register 0xA7 meldete «bereit», Zustand = check() danach."""
+        self._write(REG_CONTROL, CONTROL_RESTART)
+        self.sleep(GAUGE_PAUSE)
+        self._write(REG_CONTROL, CONTROL_SLEEP)
+        self.sleep(GAUGE_PAUSE)
+        for offset, value in enumerate(ARGON_UP_PROFILE):
+            self._write(REG_PROFILE + offset, value)
+        self._write(REG_SOCALERT, PROFILE_LOADED)
+        self.sleep(GAUGE_PAUSE)
+        self._write(REG_GPIOCONFIG, 0x00)
+        self.sleep(GAUGE_PAUSE)
+        ready = self.restart()
+        return ready, self.check()
+
+    def restart(self, attempts=3, wait_seconds=5):
+        """Aktivieren wie battery_restart: 0x08 ← 0x30, 0x08 ← 0x00, dann bis zu 5 s auf Register 0xA7 warten;
+        höchstens dreimal. Beim Beenden des Dienstes wird nicht weiter gewartet."""
+        for _ in range(attempts):
+            self._write(REG_CONTROL, CONTROL_RESTART)
+            self.sleep(GAUGE_PAUSE)
+            self._write(REG_CONTROL, CONTROL_ACTIVE)
+            self.sleep(GAUGE_PAUSE)
+            for _ in range(wait_seconds):
+                if self._read(REG_ICSTATE) & ICSTATE_READY:
+                    return True
+                if self.stop.is_set():
+                    return False
+                self.sleep(1)
+        return False
+
+    def read_soc(self):
+        """Ladestand in ganzen % (Register 0x04, ohne Bruchteil aus 0x05)."""
+        return self._read(REG_SOC)
+
+    def read_discharging(self):
+        """Stromrichtung: Bit 7 von 0x0E (Vorzeichen des Stroms) gesetzt = Entladen (battery_isplugged)."""
+        return bool(self._read(REG_CURRENT_HIGH) & CURRENT_NEGATIVE)
+
+
+class Debounce:
+    """Ein neuer Wert gilt erst, wenn er so oft hintereinander gemessen wurde. Der erste gilt sofort."""
+
+    def __init__(self, needed):
+        self.needed = needed
+        self.value = None
+        self._candidate = None
+        self._count = 0
+
+    @property
+    def pending(self):
+        return self._candidate is not None
+
+    def update(self, sample):
+        """True, wenn der Wert gewechselt hat (nicht beim ersten Wert)."""
+        if self.value is None:
+            self.value = sample
+            return False
+        if sample == self.value:
+            self._candidate, self._count = None, 0
+            return False
+        if sample == self._candidate:
+            self._count += 1
+        else:
+            self._candidate, self._count = sample, 1
+        if self._count < self.needed:
+            return False
+        self.value = sample
+        self._candidate, self._count = None, 0
+        return True
+
+    def reset(self):
+        self.value = None
+        self._candidate, self._count = None, 0
+
+
+def profile_backoff(failures):
+    """Pause vor dem nächsten Versuch nach N gescheiterten: 30 s, 60 s, 120 s … höchstens 1 h."""
+    return min(PROFILE_RETRY_FIRST * 2 ** max(0, failures - 1), PROFILE_RETRY_MAX)
+
+
+class BatteryMonitor:
+    """Ladestand und Laderichtung: Profil prüfen und nur bei Bedarf laden (mit Grenze und Pausen), Werte auf
+    Plausibilität prüfen, Laden/Entladen entprellen. Schreibt nichts ins Journal, was sich nur wiederholt."""
+
+    def __init__(self, gauge, log, clock=time.monotonic, read_only=False, released=None):
+        self.gauge = gauge
+        self.log = log
+        self.clock = clock
+        self.read_only = read_only
+        # Freigabe für das Schreiben (im Dienst: profile_released); ohne Angabe frei (Einheitentests)
+        self.released = released or (lambda: True)
+        self._blocked = False
+        self.ready = False
+        self.percent = None
+        self.charging = Debounce(CHARGE_CONFIRMATIONS)
+        self._soc_candidate = None
+        self._read_failures = 0
+        self._profile_failures = 0
+        self._next_profile = 0.0
+        self._profile_writes = []
+        self._failed = False
+        self._zero_since = None
+        self._announced = False
+
+    @property
+    def pending(self):
+        """Wartet eine Änderung auf Bestätigung? Dann misst der Dienst öfter."""
+        return self.charging.pending or self._soc_candidate is not None
+
+    def snapshot(self):
+        if self.percent is not None:
+            state = "ok"
+        elif self._blocked:
+            state = "freigabe"
+        elif self._failed or self._read_failures > READ_TOLERANCE:
+            state = "fehler"
+        else:
+            state = "unbekannt"
+        return {"vorhanden": True, "prozent": self.percent, "laedt": self.charging.value, "zustand": state}
+
+    def tick(self):
+        now = self.clock()
+        try:
+            if not self.ready and not self._prepare(now):
+                return self.snapshot()
+            state = self.gauge.status()
+            if state != "ok":
+                # Nach einem Zurücksetzen (z. B. Akku ganz leer) schläft der Chip wieder oder Bit 7 von 0x0B fehlt
+                self.log.warning(f"Akku-Messchip {GAUGE_STATES[state]} (zurückgesetzt?)")
+                self._forget()
+                if not self._prepare(now):
+                    return self.snapshot()
+            soc = self.gauge.read_soc()
+            discharging = self.gauge.read_discharging()
+        except OSError as err:
+            self._read_failures += 1
+            self.log.problem("akku-i2c", f"Akku-Messchip an 0x{GAUGE_ADDRESS:02x} antwortet nicht ({err}), neuer "
+                             "Versuch im nächsten Takt")
+            if self._read_failures > READ_TOLERANCE:
+                self._forget(keep_ready=True)
+            return self.snapshot()
+        self._read_failures = 0
+        self.log.solved("akku-i2c", "Akku-Messchip antwortet wieder")
+        self._take(soc, discharging, now)
+        return self.snapshot()
+
+    def _forget(self, keep_ready=False):
+        self.ready = self.ready and keep_ready
+        self.percent = None
+        self.charging.reset()
+        self._soc_candidate = None
+
+    def _prepare(self, now):
+        """Profil prüfen und nur bei Bedarf laden. True, wenn der Chip danach misst."""
+        if now < self._next_profile:
+            return False
+        state = self.gauge.check()
+        if state == "ok":
+            if not self._announced:
+                self.log.info("Akku-Messchip misst, Argons Akkuprofil ist geladen (nichts geschrieben)")
+            self._set_ready()
+            return True
+        if self.read_only:
+            self._failed = True
+            self.log.problem("akku-profil", f"Akku-Messchip {GAUGE_STATES[state]}; Argons eigene Software ist "
+                             "aktiviert, zenos-argon schreibt nichts in den Chip")
+            return False
+        if not self.released():
+            # Ohne Zenos Freigabe nur lesen; geprüft wird bei jedem Takt (zwei Register), geschrieben nichts
+            self._blocked = True
+            self.log.problem("akku-freigabe", f"Akku-Messchip {GAUGE_STATES[state]}; zenos-argon lädt Argons "
+                             "Akkuprofil erst nach der Freigabe (zen akku freigeben) und schreibt bis dahin nichts")
+            return False
+        self._blocked = False
+        self.log.solved("akku-freigabe", "Freigabe für das Akkuprofil ist da")
+        self._profile_writes = [t for t in self._profile_writes if now - t < 3600]
+        if len(self._profile_writes) >= PROFILE_WRITES_PER_HOUR:
+            self._failed = True
+            self._next_profile = self._profile_writes[0] + 3600
+            minutes = max(1, math.ceil((self._next_profile - now) / 60))
+            self.log.problem("akku-profil", f"Akku-Messchip {GAUGE_STATES[state]}; das Profil wurde in der letzten "
+                             f"Stunde schon {len(self._profile_writes)}-mal geschrieben, nächster Versuch in "
+                             f"{minutes} min")
+            return False
+        self._profile_writes.append(now)
+        self._profile_failures += 1
+        # gilt auch, wenn das Schreiben mit einem I2C-Fehler abbricht
+        self._next_profile = now + profile_backoff(self._profile_failures)
+        self._failed = True
+        self.log.info(f"Akku-Messchip {GAUGE_STATES[state]}: lade Argons Akkuprofil (80 Byte) und aktiviere ihn")
+        ready, after = self.gauge.load_profile()
+        if after != "ok":
+            self.log.warning(f"Akkuprofil laden hat nicht geklappt: Der Chip {GAUGE_STATES[after]}. Neuer Versuch in "
+                             f"{_fmt(profile_backoff(self._profile_failures))} s")
+            return False
+        if not ready:
+            self.log.info("Register 0xA7 meldete nicht «bereit», Steuerregister und Profil stimmen aber")
+        self.log.info("Akkuprofil geladen, der Messchip misst")
+        self._profile_failures = 0
+        self._next_profile = 0.0
+        self._set_ready()
+        return True
+
+    def _set_ready(self):
+        self.ready = True
+        self._failed = False
+        self._blocked = False
+        self._announced = True
+        self.log.solved("akku-profil", "Akku-Messchip misst wieder")
+
+    def _take(self, soc, discharging, now):
+        if 100 < soc <= 105:
+            soc = 100
+        if soc == 0:
+            # Kurz nach dem Aktivieren meldet der Chip 0 %, bis er den ersten Wert hat (Argon wertet 0 ebenso
+            # als ungültig). Bleibt es dabei, einmal ins Journal.
+            self._zero_since = self._zero_since if self._zero_since is not None else now
+            if now - self._zero_since >= SOC_ZERO_NOTICE:
+                self.log.problem("akku-null", "Der Akku-Messchip meldet seit 2 Minuten 0 % (noch kein Messwert?)")
+            return
+        self._zero_since = None
+        self.log.solved("akku-null", "Der Akku-Messchip meldet wieder einen Ladestand")
+        if soc > 100:
+            self.log.problem("akku-wert", f"Unplausibler Ladestand {soc} % ignoriert")
+            return
+        self.log.solved("akku-wert", "Ladestand wieder plausibel")
+        if self.percent is not None and abs(soc - self.percent) > SOC_JUMP:
+            if self._soc_candidate is None or abs(soc - self._soc_candidate) > 2:
+                self._soc_candidate = soc
+                return
+        self._soc_candidate = None
+        first = self.percent is None
+        self.percent = soc
+        changed = self.charging.update(not discharging)
+        if first:
+            self.log.info(f"Akku {soc} %, {'lädt' if self.charging.value else 'entlädt'}")
+        elif changed:
+            self.log.info(f"Netzteil angeschlossen, Akku {soc} %" if self.charging.value else
+                          f"Akkubetrieb, Akku {soc} %")
+
+
+# --- Lüfter am Compute Module 5 (Kernel) -----------------------------------
+
+
+def _read_int(path):
+    try:
+        with open(path, encoding="ascii") as handle:
+            return int(handle.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _natural(name):
+    digits = "".join(c for c in name if c.isdigit())
+    return (int(digits) if digits else -1, name)
+
+
+def find_sysfs_device(directory, prefix, attribute, value):
+    """Erster Eintrag <directory>/<prefix>N, dessen Datei <attribute> genau <value> enthält, oder None.
+    Die Nummern N wechseln zwischen zwei Starts, deshalb immer nach Namen suchen."""
+    try:
+        names = sorted((n for n in os.listdir(directory) if n.startswith(prefix)), key=_natural)
+    except OSError:
+        return None
+    for name in names:
+        try:
+            with open(os.path.join(directory, name, attribute), encoding="utf-8") as handle:
+                if handle.read().strip() == value:
+                    return os.path.join(directory, name)
+        except OSError:
+            continue
+    return None
+
+
+class KernelFan:
+    """Lüfter am Lüfteranschluss (Kernel-Treiber pwm-fan, Regler step_wise). Nur lesen: Stufe aus der
+    cooling_device «pwm-fan» (cur_state/max_state), Drehzahl aus hwmon «pwmfan» (fan1_input)."""
+
+    def __init__(self, sysfs, log, clock=time.monotonic):
+        self.sysfs = sysfs
+        self.log = log
+        self.clock = clock
+        self.hwmon = None
+        self.cooling = None
+        self._next_scan = 0.0
+        self._announced = None
+
+    def _scan(self, now):
+        self._next_scan = now + FAN_RESCAN_SECONDS
+        self.hwmon = find_sysfs_device(os.path.join(self.sysfs, "class", "hwmon"), "hwmon", "name", "pwmfan")
+        self.cooling = find_sysfs_device(os.path.join(self.sysfs, "class", "thermal"), "cooling_device", "type",
+                                         "pwm-fan")
+        found = (self.hwmon, self.cooling)
+        if found == self._announced:
+            return
+        self._announced = found
+        names = [os.path.basename(p) for p in found if p]
+        if names:
+            self.log.info(f"Lüfter: Kernel-Treiber pwm-fan ({', '.join(names)}), der Kernel regelt ihn")
+        else:
+            self.log.info("Kein Kernel-Lüfter (pwm-fan) gefunden")
+
+    def read(self):
+        now = self.clock()
+        if self.hwmon is None and self.cooling is None and now >= self._next_scan:
+            self._scan(now)
+        stage = stages = rpm = None
+        broken = False
+        if self.cooling:
+            stage = _read_int(os.path.join(self.cooling, "cur_state"))
+            stages = _read_int(os.path.join(self.cooling, "max_state"))
+            if stage is None or stages is None or not 0 <= stage <= stages <= 20:
+                stage = stages = None
+                broken = True
+        if self.hwmon:
+            # fan1_input fehlt, wenn der Lüfter keinen Drehzahlgeber hat
+            rpm = _read_int(os.path.join(self.hwmon, "fan1_input"))
+            if rpm is not None and not 0 <= rpm <= 30000:
+                rpm = None
+            if not os.path.isdir(self.hwmon):
+                broken = True
+        if broken and now >= self._next_scan:
+            self._scan(now)
+        return {"vorhanden": bool(self.hwmon or self.cooling), "stufe": stage, "stufen": stages, "upm": rpm}
+
+
+class UpDaemon:
+    """Takt beim Argon ONE UP: Akku, Lüfter und Temperatur lesen, Statusdatei schreiben. Schreibt nur beim Laden
+    des Akkuprofils etwas an die Hardware."""
+
+    def __init__(self, monitor, fan, log, status, temperature_source):
+        self.monitor = monitor
+        self.fan = fan
+        self.log = log
+        self.status = status
+        self.temperature_source = temperature_source
+        self.stop = threading.Event()
+
+    def tick(self):
+        temperature = self.temperature_source()
+        self.status.write({
+            "geraet": "argon-one-up",
+            "akku": self.monitor.tick(),
+            "luefter": self.fan.read(),
+            "temperatur": {"cpu": round_temperature(temperature)},
+        })
+
+    def run(self, interval, rounds=None):
+        count = 0
+        try:
+            while not self.stop.is_set():
+                self.tick()
+                count += 1
+                if rounds is not None and count >= rounds:
+                    break
+                self.stop.wait(min(interval, UP_PENDING_INTERVAL) if self.monitor.pending else interval)
+        finally:
+            self.stop.set()
+            self.status.remove()
+        return 0
+
+
+def argon_up_original_active():
+    """Ist Argons eigener Dienst für den ONE UP (argononeupd.service) aktiviert?"""
+    return os.path.lexists(system_path(ARGON_UP_DAEMON_WANTS))
+
+
+def profile_released():
+    """Hat Zeno das Schreiben des Akkuprofils freigegeben (zen akku freigeben)?"""
+    return os.path.isfile(system_path(PROFILE_RELEASE_PATH))
+
+
 # --- Aufruf ----------------------------------------------------------------
 
 
@@ -704,7 +1305,7 @@ def parse_args(argv):
         "mode": "dienst",
         "konfig": CONFIG_PATH,
         "status": STATUS_PATH,
-        "intervall": 5.0,
+        "intervall": None,
         "durchlaeufe": None,
         "temperatur": None,
         "temperatur_datei": None,
@@ -767,12 +1368,13 @@ def run_service(options, log):
     install_signals(stop, log)
 
     model = read_model()
-    if not is_pi5(model):
-        log.info(f"Kein Raspberry Pi 5 ({model or 'kein Gerätebaum'}), zenos-argon hat nichts zu tun")
+    if not is_pi5(model) and not is_cm5(model):
+        log.info(f"Weder Raspberry Pi 5 noch Compute Module 5 ({model or 'kein Gerätebaum'}), zenos-argon hat "
+                 "nichts zu tun")
         return 0
 
     wait = I2C_WAIT_SECONDS if uptime_seconds() < I2C_WAIT_UPTIME else 0
-    if not wait_for_device(I2C_DEVICE, stop, wait):
+    if not wait_for_device(system_path(I2C_DEVICE), stop, wait):
         if stop.is_set():
             return 0
         log.info(f"I2C-Bus 1 fehlt ({I2C_DEVICE}), zenos-argon hat nichts zu tun. Für den Argon ONE braucht es "
@@ -780,16 +1382,14 @@ def run_service(options, log):
                  "nicht selbst (zen doctor)")
         return 0
 
-    try:
-        import smbus
-    except ImportError:
-        log.error("python3-smbus fehlt (install.sh ausführen)")
+    bus = open_bus(log)
+    if bus is None:
         return 1
-    try:
-        bus = smbus.SMBus(I2C_BUS)
-    except OSError as err:
-        log.error(f"{I2C_DEVICE} lässt sich nicht öffnen: {err}")
-        return 1
+    if is_cm5(model):
+        try:
+            return run_up_service(options, log, model, bus, stop)
+        finally:
+            bus.close()
 
     fan = ArgonFan(bus)
     present = False
@@ -814,9 +1414,46 @@ def run_service(options, log):
     daemon.stop = stop
     ButtonWatcher(stop, daemon.on_pulse, log).start()
     try:
-        return daemon.run(options["intervall"], options["durchlaeufe"])
+        return daemon.run(options["intervall"] or V3_INTERVAL, options["durchlaeufe"])
     finally:
         bus.close()
+
+
+def find_gauge(gauge, stop):
+    """Chip-ID an 0x64 lesen (nur lesend, bis zu dreimal). Gibt die gelesene ID oder None zurück."""
+    chip = None
+    for _ in range(3):
+        try:
+            chip = gauge.chip_id()
+        except OSError:
+            chip = None
+        if chip == GAUGE_CHIP_ID or stop.is_set():
+            break
+        stop.wait(2)
+    return chip
+
+
+def run_up_service(options, log, model, bus, stop):
+    """Argon ONE UP am Compute Module 5: Akku-Messchip CW2217 an 0x64, Lüfter und Temperatur vom Kernel."""
+    gauge = BatteryGauge(bus, stop=stop)
+    chip = find_gauge(gauge, stop)
+    if stop.is_set():
+        return 0
+    if chip != GAUGE_CHIP_ID:
+        seen = "keine Antwort" if chip is None else f"Chip-ID 0x{chip:02x}"
+        log.info(f"Kein Argon ONE UP: kein Akku-Messchip CW2217 an I2C-Adresse 0x{GAUGE_ADDRESS:02x} ({seen}), "
+                 "zenos-argon hat nichts zu tun")
+        return 0
+    log.info(f"Argon ONE UP erkannt ({model}): Akku-Messchip CW2217 an 0x{GAUGE_ADDRESS:02x}")
+    read_only = argon_up_original_active()
+    if read_only:
+        log.warning("Argons eigene Software (argononeupd.service) ist aktiviert: zenos-argon liest den Akku nur "
+                    "und schreibt nichts in den Messchip (entfernen: argon-uninstall)")
+    monitor = BatteryMonitor(gauge, log, read_only=read_only, released=profile_released)
+    fan = KernelFan(system_path("/sys"), log)
+    daemon = UpDaemon(monitor, fan, log, StatusFile(options["status"], log), read_temperature)
+    daemon.stop = stop
+    return daemon.run(options["intervall"] or UP_INTERVAL, options["durchlaeufe"])
 
 
 def run_simulation(options, log):
@@ -840,7 +1477,7 @@ def run_simulation(options, log):
     daemon.stop = stop
     for width in options["pulse"]:
         daemon.on_pulse(width)
-    return daemon.run(options["intervall"], options["durchlaeufe"])
+    return daemon.run(options["intervall"] or V3_INTERVAL, options["durchlaeufe"])
 
 
 def run_config_check(options, out=sys.stdout):
@@ -866,6 +1503,8 @@ def run_check(options, out=sys.stdout):
 
     model = read_model()
     pi5 = is_pi5(model)
+    if is_cm5(model):
+        return run_check_up(model, out)
     line(pi5, f"Gerät: {model or 'kein Gerätebaum'}")
     # Auf anderen Geräten können I2C-Bus 1 und GPIO4 etwas ganz anderes sein: dort nichts anfragen
     if not pi5:
@@ -917,6 +1556,85 @@ def run_check(options, out=sys.stdout):
 
     _check_config_line(options, line)
     return 0 if good else 1
+
+
+def run_check_up(model, out=sys.stdout):
+    """Argon ONE UP, nur lesend: Messchip (Chip-ID, Steuerregister, Profil, Ladestand, Stromrichtung), Lüfter,
+    Temperatur. Schreibt nichts in den Chip, auch wenn er schläft."""
+
+    def line(mark, text):
+        print(f"  {mark} {text}", file=out)
+
+    line("✓", f"Gerät: {model} (Argon ONE UP erwartet)")
+    good = True
+    if not os.path.exists(system_path(I2C_DEVICE)):
+        line("✗", f"I2C-Bus 1 fehlt ({I2C_DEVICE}): dtparam=i2c_arm=on in /boot/firmware/config.txt nötig")
+        good = False
+    else:
+        line("✓", f"I2C-Bus 1 ({I2C_DEVICE})")
+        bus = open_bus(Log(journal=False, stream=out))
+        if bus is None:
+            good = False
+        else:
+            try:
+                good = _check_gauge(BatteryGauge(bus), line)
+            finally:
+                bus.close()
+    fan = KernelFan(system_path("/sys"), Log(journal=False, stream=io.StringIO())).read()
+    if fan["vorhanden"]:
+        parts = []
+        if fan["stufe"] is not None:
+            parts.append("aus" if fan["stufe"] == 0 else f"Stufe {fan['stufe']} von {fan['stufen']}")
+        if fan["upm"] is not None:
+            parts.append(f"{fan['upm']} U/min")
+        line("✓", "Lüfter (Kernel, pwm-fan): " + (" · ".join(parts) or "keine Werte"))
+    else:
+        line("·", "Kein Kernel-Lüfter (pwm-fan) gefunden")
+    temperature = read_temperature()
+    line("✓" if temperature is not None else "✗",
+         f"CPU {_fmt(round(temperature, 1))} °C" if temperature is not None else "CPU-Temperatur nicht lesbar")
+    if argon_up_original_active():
+        line("·", "Argons eigene Software (argononeupd.service) ist aktiviert: zenos-argon schreibt dann nichts in "
+                  "den Messchip")
+    elif profile_released():
+        line("✓", f"Akkuprofil schreiben: freigegeben ({PROFILE_RELEASE_PATH})")
+    else:
+        line("·", "Akkuprofil schreiben: nicht freigegeben, zenos-argon liest den Messchip nur (zen akku freigeben)")
+    return 0 if good else 1
+
+
+def _check_gauge(gauge, line):
+    try:
+        chip = gauge.chip_id()
+    except OSError as err:
+        line("✗", f"Keine Antwort an 0x{GAUGE_ADDRESS:02x} ({err}): kein Argon ONE UP?")
+        return False
+    if chip != GAUGE_CHIP_ID:
+        line("✗", f"An 0x{GAUGE_ADDRESS:02x} antwortet kein CW2217 (Chip-ID 0x{chip:02x} statt "
+                  f"0x{GAUGE_CHIP_ID:02x})")
+        return False
+    line("✓", f"Akku-Messchip CW2217 an 0x{GAUGE_ADDRESS:02x} (Chip-ID 0x{chip:02x}, Lesezugriff)")
+    try:
+        control = gauge._read(REG_CONTROL)
+        state = gauge.check()
+        if state != "ok":
+            if argon_up_original_active():
+                folge = "Argons eigene Software ist zuständig"
+            elif profile_released():
+                folge = "der Dienst lädt Argons Akkuprofil im nächsten Takt"
+            else:
+                folge = "Argons Akkuprofil kommt erst nach «zen akku freigeben»"
+            line("·", f"Messchip {GAUGE_STATES[state]} (Register 0x08 = 0x{control:02x}); {folge}")
+            return True
+        line("✓", "Messchip aktiv, Argons Akkuprofil ist geladen")
+        soc = gauge.read_soc()
+        discharging = gauge.read_discharging()
+    except OSError as err:
+        line("✗", f"Messchip nicht lesbar ({err})")
+        return False
+    shown = f"{soc} %" if 1 <= soc <= 100 else f"noch kein Wert (Register 0x04 = {soc})"
+    line("✓", f"Akku {shown}, {'entlädt' if discharging else 'lädt oder Netzteil'}")
+    return True
 
 
 def _check_config_line(options, line):

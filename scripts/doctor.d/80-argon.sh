@@ -1,25 +1,31 @@
 #!/usr/bin/env bash
-# 80-argon: Argon ONE – Dienst, Abschaltsignal, Pi-Modell, I2C-Bus, Argon an 0x1a (nur lesend), Werte für die
-# Leiste, Kurve
+# 80-argon: Argon ONE – Dienst, Abschaltsignal, Gerät (Pi 5 mit V3 oder Compute Module 5 mit ONE UP), I2C-Bus,
+# Argon an 0x1a bzw. Akku-Messchip an 0x64 (nur lesend), Werte für die Leiste (Akku, Lüfter), Kurve
 # shellcheck shell=bash
 
 pruefe_argon() {
   abschnitt "Argon ONE"
-  local modell i2c=0
+  local modell geraet i2c=0
   _argon_einheit
-  _argon_abschaltsignal
   modell=$(_argon_modell)
-  if [[ "$modell" != "Raspberry Pi 5"* ]]; then
-    hinweis "Kein Raspberry Pi 5 (${modell:-kein Gerätebaum}), der Argon-Dienst hat nichts zu tun"
+  case "$modell" in
+    "Raspberry Pi 5"*) geraet=v3 ;;
+    "Raspberry Pi Compute Module 5"*) geraet=up ;;
+    *) geraet="" ;;
+  esac
+  # Das Abschaltsignal gibt es nur beim V3; der Hook liegt aber überall (install.sh legt ihn immer ab)
+  [[ "$geraet" == up ]] || _argon_abschaltsignal
+  if [[ -z "$geraet" ]]; then
+    hinweis "Weder Raspberry Pi 5 noch Compute Module 5 (${modell:-kein Gerätebaum}), der Argon-Dienst hat nichts zu tun"
     return 0
   fi
   _argon_temperatur
   if _argon_i2c; then
     i2c=1
-    _argon_antwort
+    if [[ "$geraet" == up ]]; then _argon_messchip; else _argon_antwort; fi
   fi
   _argon_dienst "$i2c"
-  _argon_kurve
+  [[ "$geraet" == up ]] || _argon_kurve
   _argon_originalskript
 }
 
@@ -97,7 +103,7 @@ _argon_i2c() {
   if _argon_i2c_eingetragen; then
     warnung "I2C-Bus 1 fehlt, obwohl dtparam=i2c_arm=on eingetragen ist (wirkt nach einem Neustart)"
   else
-    warnung "I2C-Bus 1 fehlt: Der Argon-Lüfter braucht dtparam=i2c_arm=on in /boot/firmware/config.txt und einen Neustart (Firmware-Einstellung, zenOS ändert sie nicht selbst)"
+    warnung "I2C-Bus 1 fehlt: Der Argon ONE (Lüfter bzw. Akku) braucht dtparam=i2c_arm=on in /boot/firmware/config.txt und einen Neustart (Firmware-Einstellung, zenOS ändert sie nicht selbst)"
   fi
   return 1
 }
@@ -117,6 +123,25 @@ _argon_antwort() {
   else
     warnung "Keine Antwort an I2C-Adresse 0x1a (Argon-Platine nicht erkannt)"
   fi
+}
+
+# Argon ONE UP: Akku-Messchip CW2217 an 0x64, nur Chip-ID lesen (Register 0x00 = 0xa0), nie schreiben
+_argon_messchip() {
+  local id
+  if ! command -v i2cget > /dev/null 2>&1; then
+    hinweis "i2cget fehlt (Paket i2c-tools), Akku-Messchip an 0x64 nicht direkt geprüft"
+    return 0
+  fi
+  if [[ ! -r /dev/i2c-1 || ! -w /dev/i2c-1 ]]; then
+    hinweis "Akku-Messchip an 0x64 nur mit Zugriff auf /dev/i2c-1 direkt prüfbar (sudo /opt/zenos/scripts/bin/zenos-argon --pruefen)"
+    return 0
+  fi
+  id=$(i2cget -y 1 0x64 0x00 2> /dev/null) || id=""
+  case "$id" in
+    0xa0) ok "Akku-Messchip CW2217 antwortet an I2C-Adresse 0x64 (Argon ONE UP)" ;;
+    "") warnung "Keine Antwort an I2C-Adresse 0x64 (Akku-Messchip des Argon ONE UP nicht erkannt)" ;;
+    *) warnung "An I2C-Adresse 0x64 antwortet kein CW2217 (Chip-ID $id statt 0xa0)" ;;
+  esac
 }
 
 # Letzte Meldung von zenos-argon selbst (Gerätemeldungen, keine persönlichen Daten), falls lesbar
@@ -147,8 +172,9 @@ _argon_dienst() {
   fi
 }
 
+# /run/zenos/geraet.json (Version 1): Alter, Akku, Lüfter. Nur Gerätewerte, nichts Persönliches.
 _argon_werte() {
-  local datei=/run/zenos/argon.json jetzt zeit alter temperatur luefter
+  local datei=/run/zenos/geraet.json jetzt zeit alter zeile geraet temperatur luefter akku zustand
   if [[ ! -r "$datei" ]]; then
     fehler "$datei fehlt, obwohl zenos-argon läuft"
     return 0
@@ -156,22 +182,43 @@ _argon_werte() {
   jetzt=$(date +%s)
   zeit=$(stat -c %Y -- "$datei" 2> /dev/null)
   alter=$(( jetzt - ${zeit:-0} ))
-  temperatur=$(jq -r '.temperatur' "$datei" 2> /dev/null)
-  luefter=$(jq -r '.luefter' "$datei" 2> /dev/null)
-  if [[ ! "$temperatur" =~ ^-?[0-9]+$ || ! "$luefter" =~ ^-?[0-9]+$ ]]; then
+  # eine Zeile, Felder mit «|» getrennt: Gerät|Temperatur|Lüfter|Akku|Akku-Zustand
+  zeile=$(jq -r 'select(.version == 1) | [
+      .geraet,
+      (.temperatur.cpu // "?" | if type == "number" then round else . end),
+      (.luefter | if .vorhanden != true then "kein Lüfter"
+                  elif .prozent != null then "Lüfter \(.prozent) %"
+                  elif .stufe == 0 then "Lüfter aus"
+                  elif .stufe != null then "Lüfter Stufe \(.stufe) von \(.stufen)"
+                    + (if .upm != null then " · \(.upm) U/min" else "" end)
+                  elif .upm != null then "Lüfter \(.upm) U/min"
+                  else "Lüfter ohne Werte" end),
+      (.akku | if .vorhanden != true then "" elif .prozent != null
+               then "Akku \(.prozent) %" + (if .laedt == true then ", lädt" elif .laedt == false then ", Akkubetrieb"
+                                              else "" end)
+               else "Akku ohne Wert" end),
+      (.akku.zustand // "")
+    ] | map(tostring) | join("|")' "$datei" 2> /dev/null) || zeile=""
+  if [[ -z "$zeile" ]]; then
     fehler "$datei ist ungültig"
     return 0
   fi
-  if (( alter > 30 )); then
+  IFS='|' read -r geraet temperatur luefter akku zustand <<< "$zeile"
+  if (( alter > 60 )); then
     warnung "Werte in $datei sind $alter s alt (hängt zenos-argon? sudo systemctl restart zenos-argon)"
     return 0
   fi
-  (( temperatur >= 0 )) || temperatur="?"
-  if (( luefter < 0 )); then
-    warnung "Leiste bekommt $temperatur °C, der Lüfter antwortet aber nicht (journalctl -u zenos-argon)"
-  else
-    ok "Leiste bekommt $temperatur °C · Lüfter $luefter % (vor $alter s)"
-  fi
+  case "$luefter" in
+    "Lüfter ohne Werte") warnung "Leiste bekommt $temperatur °C, der Lüfter antwortet aber nicht (journalctl -u zenos-argon)" ;;
+    *) ok "Leiste bekommt $temperatur °C · $luefter (${geraet:-?}, vor $alter s)" ;;
+  esac
+  [[ "$geraet" == argon-one-up ]] || return 0
+  case "$zustand" in
+    ok) ok "$akku" ;;
+    unbekannt) hinweis "Akku: noch kein Messwert (der Messchip startet gerade; journalctl -u zenos-argon)" ;;
+    freigabe) hinweis "Akku: Der Messchip misst nicht, und das Akkuprofil schreiben ist nicht freigegeben (zen akku freigeben)" ;;
+    *) warnung "Akku nicht lesbar (${zustand:-unbekannt}; journalctl -u zenos-argon)" ;;
+  esac
 }
 
 _argon_kurve() {
@@ -186,6 +233,12 @@ _argon_kurve() {
 
 _argon_originalskript() {
   local zustand
+  zustand=$(systemctl is-enabled argononeupd.service 2> /dev/null)
+  case "$zustand" in
+    enabled | enabled-runtime | static | alias | generated | indirect)
+      warnung "argononeupd.service (Argon-Software für den ONE UP) ist eingerichtet: zenos-argon liest den Akku nur (argon-uninstall)"
+      ;;
+  esac
   zustand=$(systemctl is-enabled argononed.service 2> /dev/null)
   case "$zustand" in
     enabled | enabled-runtime | static | alias | generated | indirect)
