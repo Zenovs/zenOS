@@ -6,6 +6,7 @@ import qs.theme
 import qs.dienste
 import qs.komponenten
 import "zeit.js" as Zeit
+import "wlan.js" as Wlan
 
 // Inhalt der Leiste nach Entwurf 2 (Innenabstand 0 10 px):
 // links «wo bin ich» (Zeichen, Modus, Zustand, Raster), in der Mitte Datum und Uhrzeit,
@@ -19,6 +20,8 @@ Item {
     property string offenesMenue: ""
     // Name des Bildschirms dieser Leiste (Anker für Modus-/Zustandswahl und Zentrale)
     property string bildschirm: ""
+    // WlanQuelle aus Leiste.qml (null ohne NetworkManager): Signalstufe des verbundenen WLANs
+    property var wlan: null
 
     // x in Fensterkoordinaten: Raster-Menü beginnt an der linken Kante des Knopfs,
     // das System-Menü endet an der rechten Kante des System-Knopfs
@@ -184,16 +187,30 @@ Item {
 
     // WLAN ohne Standardroute («ohne Internet») bleibt beim WLAN-Symbol, dann gedämpft
     readonly property string _networkSymbol: System.netzArt === "kabel" ? "kabel" : System.netzArt === "wlan" || System.wlanVerbunden ? "wlan" : "wlan-aus"
+    // Signalstufe des WLAN-Symbols (1–3; 0 = «wlan-aus»): von NetworkManager, sonst aus /proc/net/wireless
+    readonly property int _wlanStufe: {
+        if (_networkSymbol === "wlan-aus")
+            return 0;
+        if (wlan && wlan.bereit && wlan.geraetDa && !wlan.wlanAn)
+            return 0;
+        if (wlan && wlan.bereit && wlan.verbundenStufe > 0)
+            return wlan.verbundenStufe;
+        return Wlan.stufe(System.wlanSignal);
+    }
     readonly property string _systemDescription: {
         const parts = [];
-        parts.push(System.netzArt === "wlan" ? "WLAN verbunden" : System.netzArt === "kabel" ? "Kabel verbunden" : System.wlanVerbunden ? "WLAN ohne Internet" : "nicht verbunden");
+        parts.push(System.netzArt === "wlan" ? "WLAN verbunden, Signal " + _wlanStufe + " von 3" : System.netzArt === "kabel" ? "Kabel verbunden" : System.wlanVerbunden ? "WLAN ohne Internet" : "nicht verbunden");
         parts.push(!System.tonVerfuegbar ? "kein Tonausgang" : System.stumm ? "Ton stumm" : "Lautstärke " + Math.round(System.lautstaerke * 100) + " %");
         if (System.einsPasswortInstalliert)
             parts.push(System.einsPasswortLaeuft ? "1Password läuft" : "1Password nicht gestartet");
         if (System.temperatur >= 0)
             parts.push(System.temperatur + " Grad");
+        if (Geraet.akkuVorhanden)
+            parts.push(!Geraet.akkuBekannt ? "Akku unbekannt" : "Akku " + Geraet.akkuProzent + " Prozent" + (Geraet.akkuLaedt ? ", lädt" : ""));
         return "System: " + parts.join(", ");
     }
+    // Akku: ohne Messwert gedämpft, bei höchstens 10 % und Entladen in der Warnfarbe (ruhig, ohne Blinken)
+    readonly property color _akkuFarbe: !Geraet.akkuBekannt ? Theme.gedaempft : Geraet.akkuNiedrig ? Theme.warnung : Theme.text
 
     // --- Platz links: lange Namen kürzen, damit nichts in die Uhrzeit ragt ---
 
@@ -439,7 +456,17 @@ Item {
 
             Symbol {
                 anchors.verticalCenter: parent.verticalCenter
-                name: root._networkSymbol
+                visible: root._networkSymbol === "kabel"
+                name: "kabel"
+                groesse: 14
+                farbe: System.netzVerbunden ? Theme.text : Theme.gedaempft
+            }
+
+            // WLAN mit Signalstufe (fehlende Bögen blass), ohne Verbindung «wlan-aus»
+            WlanSymbol {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: root._networkSymbol !== "kabel"
+                stufe: root._wlanStufe
                 groesse: 14
                 farbe: System.netzVerbunden ? Theme.text : Theme.gedaempft
             }
@@ -466,6 +493,30 @@ Item {
                 color: Theme.text
                 font.family: Theme.schriftMono
                 font.pixelSize: Theme.groesseKlein
+            }
+
+            // Akku (nur mit Akku, z. B. Argon ONE UP): Füllstand oder Ladeblitz, Prozent in Mono. Ruhig: bei
+            // höchstens 10 % und Entladen nur in der Warnfarbe, ohne Blinken; ohne Messwert gedämpft.
+            Row {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: Geraet.akkuVorhanden
+                spacing: 3
+
+                Symbol {
+                    anchors.verticalCenter: parent.verticalCenter
+                    name: Geraet.akkuSymbol
+                    groesse: 15
+                    farbe: root._akkuFarbe
+                }
+
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: text !== ""
+                    text: Geraet.akkuText
+                    color: root._akkuFarbe
+                    font.family: Theme.schriftMono
+                    font.pixelSize: Theme.groesseKlein
+                }
             }
         }
     }

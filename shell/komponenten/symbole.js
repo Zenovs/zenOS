@@ -9,6 +9,10 @@ var daten = {
     "mond": { d: "M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z", strich: 1.7 },
     "sonne": { d: "M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0zM12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4", strich: 1.7 },
     "wlan": { d: "M5 12.6a11 11 0 0 1 14 0M1.5 9a16 16 0 0 1 21 0M8.5 16.1a6 6 0 0 1 7 0M12 20h.01", strich: 1.8 },
+    // Signalstufen: «wlan» ohne den äusseren (2) bzw. ohne die beiden äusseren Bögen (1). Die Leiste legt sie über
+    // ein blasses «wlan», damit die fehlenden Bögen angedeutet bleiben (leiste/WlanSymbol.qml).
+    "wlan-2": { d: "M5 12.6a11 11 0 0 1 14 0M8.5 16.1a6 6 0 0 1 7 0M12 20h.01", strich: 1.8 },
+    "wlan-1": { d: "M8.5 16.1a6 6 0 0 1 7 0M12 20h.01", strich: 1.8 },
     // Bögen wie «wlan», hinter dem Strich unterbrochen
     "wlan-aus": { d: "M1.5 9a16 16 0 0 1 4.67-2.83M10.78 5.12A16 16 0 0 1 22.5 9M5 12.6a11 11 0 0 1 5.23-2.37M16.89 11.23A11 11 0 0 1 19 12.6M8.5 16.1a6 6 0 0 1 7 0M12 20h.01M2 2l20 20", strich: 1.8 },
     // Netzwerkbuchse (Ethernet)
@@ -41,6 +45,15 @@ var daten = {
     "qr-code": { d: "M4 3h5a1 1 0 0 1 1 1v5a1 1 0 0 1 -1 1h-5a1 1 0 0 1 -1 -1v-5a1 1 0 0 1 1 -1zM15 3h5a1 1 0 0 1 1 1v5a1 1 0 0 1 -1 1h-5a1 1 0 0 1 -1 -1v-5a1 1 0 0 1 1 -1zM4 14h5a1 1 0 0 1 1 1v5a1 1 0 0 1 -1 1h-5a1 1 0 0 1 -1 -1v-5a1 1 0 0 1 1 -1zM14 14h3v3h-3zM20 14v.01M14 20h.01M17 20h4v-3", strich: 1.7 },
     "zwischenablage": { d: "M9 2h6a1 1 0 0 1 1 1v2a1 1 0 0 1 -1 1h-6a1 1 0 0 1 -1 -1v-2a1 1 0 0 1 1 -1zM16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2", strich: 1.7 },
     "thermometer": { d: "M14 4v10.54a4 4 0 1 1 -4 0V4a2 2 0 0 1 4 0z", strich: 1.8 },
+    // Akku waagrecht (Körper 16 × 10, Pol rechts), Füllstand als Striche: leer ≤ 10 %, wenig, halb, voll
+    "akku-leer": { d: "M4 7h12a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-6a2 2 0 0 1 2 -2zM21 10.5v3", strich: 1.8 },
+    "akku-wenig": { d: "M4 7h12a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-6a2 2 0 0 1 2 -2zM21 10.5v3M6 10.5v3", strich: 1.8 },
+    "akku-halb": { d: "M4 7h12a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-6a2 2 0 0 1 2 -2zM21 10.5v3M6 10.5v3M10 10.5v3", strich: 1.8 },
+    "akku-voll": { d: "M4 7h12a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-6a2 2 0 0 1 2 -2zM21 10.5v3M6 10.5v3M10 10.5v3M14 10.5v3", strich: 1.8 },
+    // Akku mit Ladeblitz: der Körper ist oben und unten dort offen, wo der Blitz hindurchgeht
+    "akku-laedt": { d: "M8.5 7H4a2 2 0 0 0 -2 2v6a2 2 0 0 0 2 2h2.5M13.5 7h2.5a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-4.5M21 10.5v3M11.5 5.5l-3.5 6.5h4l-3.5 6.5", strich: 1.8 },
+    // Lüfter: drei geschwungene Blätter um eine Nabe
+    "luefter": { d: "M11.1 10C9.4 6.8 10.6 2.4 13.6 2.6C16.6 2.8 16.4 7 13.9 10.6M14.18 12.22C17.8 12.35 21.01 15.59 19.34 18.09C17.67 20.58 14.13 18.31 12.26 14.35M10.72 13.78C8.8 16.85 4.39 18.01 3.06 15.31C1.73 12.62 5.47 10.69 9.84 11.05M10.4 12a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0 -3.2 0z", strich: 1.7 },
     "ausschalten": { d: "M12 3v9M18.4 6.6a9 9 0 1 1-12.8 0", strich: 1.8 },
     "neustart": { d: "M3 12a9 9 0 1 0 2.64-6.36L3 8.3M3 3v5.3h5.3", strich: 1.8 },
     "abmelden": { d: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9", strich: 1.8 },

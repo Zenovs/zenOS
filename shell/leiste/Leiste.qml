@@ -10,6 +10,7 @@ import qs.dienste
 // Leiste oben auf jedem Bildschirm (40 px, reserviert ihren Platz), dazu das System- und das
 // Raster-Menü. Modus- und Zustandswahl (Oberflaeche.modusWahlOffen/zustandWahlOffen) zeigt
 // modi/Umschalter.qml, die Zentrale (Oberflaeche.zentraleOffen) mitteilungen/Mitteilungen.qml.
+// WLAN: WlanQuelle (NetworkManager über Quickshell.Networking) entsteht erst, wenn NetworkManager läuft.
 Scope {
     id: root
 
@@ -18,6 +19,19 @@ Scope {
     property string menueBildschirm: ""
     // Anker in Fensterkoordinaten (siehe LeistenInhalt.menueGewuenscht)
     property real menueX: 0
+    // System-Menü mit aufgeklappter WLAN-Liste öffnen (zenos-ipc leiste menue wlan)
+    property bool menueWlanOffen: false
+
+    // NetworkManager läuft (geprüft beim Start und beim Öffnen des System-Menüs, bis er einmal lief). Erst dann
+    // entsteht WlanQuelle: Quickshell wählt sein Netz-Backend beim ersten Zugriff und behält es bis zum Neustart.
+    property bool nmLaeuft: false
+    // WlanQuelle oder null
+    readonly property var wlan: wlanLader.item ?? null
+
+    function _nmPruefen(): void {
+        if (!nmLaeuft && !nmPruefung.running)
+            nmPruefung.running = true;
+    }
 
     // umschalten: ein zweiter Klick auf denselben Knopf schliesst das Menü wieder
     function menueOeffnen(name: string, bildschirm: string, x: real, umschalten: bool): void {
@@ -39,12 +53,41 @@ Scope {
         menueX = x;
         menueBildschirm = bildschirm;
         menue = name;
-        if (name === "system")
+        if (name === "system") {
             System.aktualisieren();
+            Geraet.aktualisieren();
+            _nmPruefen();
+        }
     }
 
     function menueSchliessen(): void {
         menue = "";
+        menueWlanOffen = false;
+    }
+
+    // Nur der Zustand des Dienstes (Argumentliste, keine Shell); Exit 0 = läuft
+    Process {
+        id: nmPruefung
+
+        command: ["systemctl", "is-active", "--quiet", "NetworkManager.service"]
+    }
+
+    // Über «source» geladen: Fehlt Quickshell.Networking oder hat WlanQuelle einen Fehler, bleibt die Leiste stehen
+    // (das Menü zeigt dann die Netzzeile wie ohne NetworkManager)
+    LazyLoader {
+        id: wlanLader
+
+        active: root.nmLaeuft
+        source: "WlanQuelle.qml"
+    }
+
+    Component.onCompleted: {
+        // exited(code, status) hier verbunden: qmllint kennt QProcess::ExitStatus nicht
+        nmPruefung.exited.connect(code => {
+            if (code === 0)
+                root.nmLaeuft = true;
+        });
+        root._nmPruefen();
     }
 
     // Bildschirm mit offenem Menü für die anderen Oberflächen (leer = keins)
@@ -104,6 +147,7 @@ Scope {
 
                     anchors.fill: parent
                     jetzt: uhr.date
+                    wlan: root.wlan
                     bildschirm: proBildschirm.bildschirmName
                     offenesMenue: proBildschirm.menueHier ? root.menue : ""
                     onMenueGewuenscht: (name, x) => root.menueOeffnen(name, proBildschirm.bildschirmName, x, true)
@@ -152,6 +196,9 @@ Scope {
                     id: systemMenue
 
                     SystemMenue {
+                        wlanQuelle: root.wlan
+                        wlanNmLaeuft: root.nmLaeuft
+                        wlanOffen: root.menueWlanOffen
                         onSchliessen: root.menueSchliessen()
                     }
                 }
@@ -200,16 +247,25 @@ Scope {
         }
     }
 
-    // zenos-ipc leiste menue system|raster · zenos-ipc leiste schliessen
-    // (für Tests und eigene Tastenkürzel; öffnet auf dem ersten Bildschirm)
+    // zenos-ipc leiste menue system|raster|wlan · zenos-ipc leiste schliessen
+    // (für Tests und eigene Tastenkürzel; öffnet auf dem ersten Bildschirm; «wlan» ist das System-Menü mit
+    // aufgeklappter WLAN-Liste)
     IpcHandler {
         target: "leiste"
 
         function menue(name: string): void {
-            if (name !== "system" && name !== "raster")
+            if (name !== "system" && name !== "raster" && name !== "wlan")
                 return;
             const instanz = leisten.instances.length > 0 ? leisten.instances[0] : null;
-            instanz?.menueOeffnen(name);
+            if (!instanz)
+                return;
+            if (name === "wlan") {
+                // neu aufbauen, damit die Liste aufgeklappt beginnt
+                root.menueSchliessen();
+                root.menueWlanOffen = true;
+                name = "system";
+            }
+            instanz.menueOeffnen(name);
         }
 
         function schliessen(): void {

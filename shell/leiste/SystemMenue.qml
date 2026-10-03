@@ -5,11 +5,17 @@ import qs.theme
 import qs.dienste
 import qs.komponenten
 
-// System-Menü unter dem System-Knopf der Leiste: Netz (nur Anzeige – zenOS hat kein eigenes
-// WLAN-Menü), Lautstärke mit Regler und Stumm, 1Password, Temperatur und Lüfter,
-// dann Sperren, Einstellungen, Abmelden, Neustart und Ausschalten.
+// System-Menü unter dem System-Knopf der Leiste: Netz mit WLAN (WlanAbschnitt: Netz wählen, verbinden,
+// vergessen, WLAN ein/aus über NetworkManager), Lautstärke mit Regler und Stumm, 1Password, dann das Gerät
+// (Akku, Lüfter, CPU-Temperatur; nur Anzeige), dann Sperren, Einstellungen, Abmelden, Neustart und Ausschalten.
 Menuekarte {
     id: root
+
+    // WlanQuelle aus Leiste.qml (null, solange NetworkManager nicht läuft)
+    property var wlanQuelle: null
+    property bool wlanNmLaeuft: false
+    // Liste der WLANs gleich aufgeklappt (zenos-ipc leiste menue wlan)
+    property bool wlanOffen: false
 
     breite: 300
 
@@ -21,11 +27,15 @@ Menuekarte {
         property string titel
         property string wert
         property bool gedaempft: false
+        // Symbol in der Warnfarbe (niedriger Akku)
+        property bool warnend: false
 
         width: parent ? parent.width : 0
         height: 36
 
         Row {
+            id: titelZeile
+
             x: 10
             anchors.verticalCenter: parent.verticalCenter
             spacing: 10
@@ -40,7 +50,7 @@ Menuekarte {
                     anchors.fill: parent
                     name: zeile.symbol
                     groesse: 15
-                    farbe: zeile.gedaempft ? Theme.gedaempft : Theme.text2
+                    farbe: zeile.warnend ? Theme.warnung : zeile.gedaempft ? Theme.gedaempft : Theme.text2
                 }
             }
 
@@ -53,11 +63,16 @@ Menuekarte {
             }
         }
 
+        // Höchstens bis kurz vor den Titel; ist der Wert länger (z. B. fünfstellige U/min), wird er in der Mitte gekürzt
         Text {
             anchors.right: parent.right
             anchors.rightMargin: 10
             anchors.verticalCenter: parent.verticalCenter
+            width: Math.max(0, Math.min(implicitWidth, zeile.width - titelZeile.x - titelZeile.width - Theme.a2 - 10))
+            horizontalAlignment: Text.AlignRight
             text: zeile.wert
+            textFormat: Text.PlainText
+            elide: Text.ElideMiddle
             color: Theme.gedaempft
             font.family: Theme.schriftMono
             font.pixelSize: Theme.groesseKlein
@@ -76,19 +91,13 @@ Menuekarte {
 
     // --- Netz ---
 
-    // Symbole wie in der Leiste
-    Statuszeile {
-        symbol: System.netzArt === "kabel" ? "kabel" : System.netzArt === "wlan" || System.wlanVerbunden ? "wlan" : "wlan-aus"
-        gedaempft: !System.netzVerbunden
-        titel: System.netzArt === "kabel" ? "Kabel" : System.netzArt === "wlan" || System.wlanVerbunden ? "WLAN" : "Netzwerk"
-        wert: {
-            if (!System.netzVerbunden)
-                return System.wlanVerbunden ? "WLAN ohne Internet" : "nicht verbunden";
-            if (System.netzArt === "wlan" && System.wlanSignal >= 0)
-                return "verbunden · " + System.wlanSignal + " %";
-            return "verbunden";
-        }
+    WlanAbschnitt {
+        quelle: root.wlanQuelle
+        nmLaeuft: root.wlanNmLaeuft
+        offen: root.wlanOffen
     }
+
+    Abschnitt {}
 
     // --- Ton ---
 
@@ -118,7 +127,7 @@ Menuekarte {
         }
     }
 
-    // --- 1Password, Temperatur ---
+    // --- 1Password ---
 
     Statuszeile {
         symbol: "schloss"
@@ -127,18 +136,39 @@ Menuekarte {
         wert: System.einsPasswortLaeuft ? "läuft" : System.einsPasswortInstalliert ? "nicht gestartet" : "nicht installiert"
     }
 
+    // --- Gerät: Akku, Lüfter, CPU-Temperatur (nur Anzeige; Werte von zenos-argon bzw. aus /sys) ---
+
+    Abschnitt {
+        visible: akkuZeile.visible || luefterZeile.visible || temperaturZeile.visible
+    }
+
     Statuszeile {
-        visible: System.temperatur >= 0 || System.luefter >= 0
+        id: akkuZeile
+
+        visible: Geraet.akkuVorhanden
+        symbol: Geraet.akkuSymbol
+        gedaempft: !Geraet.akkuBekannt
+        warnend: Geraet.akkuNiedrig
+        titel: "Akku"
+        wert: Geraet.akkuWert
+    }
+
+    Statuszeile {
+        id: luefterZeile
+
+        visible: Geraet.luefterWert !== ""
+        symbol: "luefter"
+        titel: "Lüfter"
+        wert: Geraet.luefterWert
+    }
+
+    Statuszeile {
+        id: temperaturZeile
+
+        visible: System.temperatur >= 0
         symbol: "thermometer"
-        titel: "Temperatur"
-        wert: {
-            const parts = [];
-            if (System.temperatur >= 0)
-                parts.push(System.temperatur + " °C");
-            if (System.luefter >= 0)
-                parts.push("Lüfter " + System.luefter + " %");
-            return parts.join(" · ");
-        }
+        titel: "CPU-Temperatur"
+        wert: System.temperatur + " °C"
     }
 
     Abschnitt {}

@@ -747,6 +747,10 @@ START_RUNDGANG=(
   "befehlsfeld status → offen"
   "befehlsfeld ansicht → apps"
   "befehlsfeld schliessen"
+  # System-Menü, auch mit aufgeklappter WLAN-Liste (ohne NetworkManager: Anzeige und Hinweis)
+  "leiste menue system"
+  "leiste menue wlan"
+  "leiste schliessen"
   "mitteilungen zentrale"
   "mitteilungen zentrale"
   "modus waehlen"

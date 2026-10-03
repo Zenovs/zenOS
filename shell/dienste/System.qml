@@ -6,17 +6,15 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Services.Pipewire
 
-// Systemzustand für die Leiste: Temperatur, Lüfter, Netz, Ton, 1Password.
-// Sparsam für den Pi: ein Timer (5 s) liest ein paar kleine Dateien aus /sys, /proc und /run,
+// Systemzustand für die Leiste: Temperatur, Netz, Ton, 1Password (Akku und Lüfter: Geraet).
+// Sparsam für den Pi: ein Timer (5 s) liest ein paar kleine Dateien aus /sys und /proc,
 // der Ton kommt direkt von PipeWire. Prozesse startet der Dienst nur für die 1Password-Prüfung
 // (selten und nur, wenn 1Password installiert ist).
 Singleton {
     id: root
 
-    // °C aus /sys/class/thermal/thermal_zone0/temp (sonst aus argon.json), -1 wenn unbekannt
-    readonly property int temperatur: _temperature >= 0 ? _temperature : _argonTemperature
-    // Lüfter in % aus /run/zenos/argon.json (zenos-argon), -1 wenn unbekannt
-    readonly property int luefter: _fan
+    // °C aus /sys/class/thermal/thermal_zone0/temp, -1 wenn unbekannt
+    readonly property int temperatur: _temperature
 
     // Netz: Standardverbindung über ein Gerät, das oben ist (nur Anzeige, zenOS verwaltet kein Netz)
     readonly property bool netzVerbunden: _network.best !== ""
@@ -25,6 +23,9 @@ Singleton {
     readonly property string netzArt: _network.best === "" ? "" : (_isWireless(_network.best) ? "wlan" : "kabel")
     // Signal des verbundenen WLANs in %, -1 wenn unbekannt
     readonly property int wlanSignal: _network.wlan !== "" ? (_wireless[_network.wlan] ?? -1) : -1
+    // Es gibt ein WLAN-Gerät (/proc/net/wireless oder ein Gerät «wl…» in /proc/net/dev; für den Hinweis im
+    // System-Menü, solange NetworkManager das Netz nicht verwaltet)
+    readonly property bool wlanGeraet: Object.keys(_wireless).length > 0 || _wlanNamen
 
     // Ton über PipeWire (Standardausgang)
     readonly property bool tonVerfuegbar: (_sink?.audio ?? null) !== null
@@ -60,31 +61,14 @@ Singleton {
         _poll(true);
     }
 
-    // --- Temperatur und Lüfter ---
+    // --- Temperatur ---
 
     property int _temperature: -1
-    property int _argonTemperature: -1
-    property int _fan: -1
 
     // Plausible Werte, sonst -1
     function _celsius(value: var): int {
         const n = Number(value);
         return isFinite(n) && n > -40 && n < 150 ? Math.round(n) : -1;
-    }
-
-    // zenos-argon schreibt alle 5 s; ältere Werte (Dienst hängt oder ist beendet) gelten als unbekannt
-    readonly property int _argonMaxAgeMs: 30000
-    // zuletzt gelesene Werte aus argon.json: { luefter, temperatur, zeit (ms seit 1970, NaN wenn unbekannt) }
-    property var _argonData: null
-
-    function _applyArgon(): void {
-        const d = _argonData;
-        const age = d ? Date.now() - d.zeit : NaN;
-        // ohne gültige Zeit oder mehr als 30 s daneben (auch in der Zukunft, z. B. nach einer Uhrkorrektur)
-        const fresh = isFinite(age) && Math.abs(age) <= _argonMaxAgeMs;
-        const fan = fresh ? Number(d.luefter) : NaN;
-        _fan = isFinite(fan) && fan >= 0 && fan <= 100 ? Math.round(fan) : -1;
-        _argonTemperature = fresh ? _celsius(d.temperatur) : -1;
     }
 
     FileView {
@@ -97,32 +81,6 @@ Singleton {
         onLoadFailed: root._temperature = -1
     }
 
-    FileView {
-        id: argonFile
-
-        path: "/run/zenos/argon.json"
-        printErrors: false
-        onLoaded: {
-            let data = null;
-            try {
-                data = JSON.parse(text());
-            } catch (e) {
-                // wird gerade geschrieben oder ist ungültig: beim nächsten Mal wieder
-            }
-            // «zeit» ist ISO 8601 mit Zeitzone, z. B. «2026-09-27T18:12:05+02:00»
-            root._argonData = data && typeof data === "object" ? {
-                luefter: data.luefter,
-                temperatur: data.temperatur,
-                zeit: typeof data.zeit === "string" ? Date.parse(data.zeit) : NaN
-            } : null;
-            root._applyArgon();
-        }
-        onLoadFailed: {
-            root._argonData = null;
-            root._applyArgon();
-        }
-    }
-
     // --- Netz ---
 
     // Standardrouten: Gerät → kleinste Metrik (IPv4 und IPv6)
@@ -133,6 +91,8 @@ Singleton {
     property var _operstate: ({})
     // Geräte, deren operstate gelesen wird
     property list<string> _devices: []
+    // ein Gerät «wl…» in /proc/net/dev (nur beim Start und beim Öffnen des System-Menüs gelesen)
+    property bool _wlanNamen: false
 
     readonly property var _network: {
         const up = name => _operstate[name] === "up" || _operstate[name] === "unknown";
@@ -245,6 +205,16 @@ Singleton {
         onLoadFailed: root._updateNetwork()
     }
 
+    // «Inter-|   Receive …», dann je Gerät «  wlan0: 1234 …»
+    FileView {
+        id: devFile
+
+        path: "/proc/net/dev"
+        printErrors: false
+        onLoaded: root._wlanNamen = /^\s*wl[^\s:]*:/m.test(text())
+        onLoadFailed: root._wlanNamen = false
+    }
+
     Instantiator {
         id: operstateFiles
 
@@ -308,14 +278,13 @@ Singleton {
 
     function _poll(full: bool): void {
         thermalFile.reload();
-        argonFile.reload();
-        // falls argon.json nicht mehr geschrieben wird: Alter auch ohne neues Laden prüfen
-        _applyArgon();
         routeFile.reload();
         route6File.reload();
         wirelessFile.reload();
         for (let i = 0; i < operstateFiles.count; i++)
             (operstateFiles.objectAt(i) as FileView)?.reload();
+        if (full)
+            devFile.reload();
         // 1Password: installiert alle 5 Minuten, läuft alle 30 s (nur wenn installiert)
         if ((full || _tick % 60 === 0) && !opInstalledCheck.running)
             opInstalledCheck.running = true;
