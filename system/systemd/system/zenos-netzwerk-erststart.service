@@ -1,0 +1,25 @@
+# zenOS: erster Start eines Images. cloud-init schreibt das WLAN aus dem Raspberry Pi Imager nach netplan (für
+# systemd-networkd); dieser Dienst stellt danach und vor NetworkManager auf NetworkManager um (zenos-netzwerk
+# erststart). Läuft nur, solange /var/lib/zenos/netzwerk-erststart da ist (legt nur «install.sh --image» an), und
+# löscht die Marke vor dem Versuch: höchstens einmal. Scheitert er, bleibt das Netz bei systemd-networkd, und
+# NetworkManager wird für die nächsten Starts deaktiviert.
+# cloud-init ab 24.3 heisst die Netz-Stufe cloud-init-network.service (vorher cloud-init.service); beide stehen hier.
+[Unit]
+Description=zenOS: Netz beim ersten Start auf NetworkManager umstellen
+Documentation=file:///opt/zenos/docs/module/netzwerk.md
+DefaultDependencies=no
+ConditionPathExists=/var/lib/zenos/netzwerk-erststart
+ConditionPathExists=/opt/zenos/scripts/bin/zenos-netzwerk
+Wants=network-pre.target
+After=local-fs.target systemd-remount-fs.service systemd-udevd.service cloud-init-local.service
+Before=network-pre.target systemd-networkd.service NetworkManager.service cloud-init-network.service cloud-init.service shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /opt/zenos/scripts/bin/zenos-netzwerk erststart
+TimeoutStartSec=300
+SyslogIdentifier=zenos-netzwerk
+
+[Install]
+WantedBy=multi-user.target

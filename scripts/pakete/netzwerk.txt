@@ -1,0 +1,10 @@
+# Netz: NetworkManager für das WLAN-Menü der Leiste (scripts/module/35-netzwerk.sh, docs/module/netzwerk.md).
+# Ohne Empfehlungen, also ohne Ubuntus Konnektivitätsprüfung (network-manager-config-connectivity-ubuntu fragt
+# sonst regelmässig bei connectivity-check.ubuntu.com nach), ohne ModemManager, ppp und dnsmasq.
+# Installiert wird nur das Paket; NetworkManager läuft erst nach «zen netzwerk umstellen» und dem Neustart.
+network-manager
+# NetworkManager empfiehlt wpasupplicant nur; ohne ihn kein WLAN nach dem Umstieg (zenos-netzwerk prüft das vorher)
+wpasupplicant
+# WLAN-Regulierung und Land setzen (zenos-wlan-land.service)
+wireless-regdb
+iw

@@ -1,0 +1,718 @@
+#!/usr/bin/python3
+"""zenos-netzwerk: das Netz von netplan mit systemd-networkd auf NetworkManager umstellen (für das WLAN-Menü
+der Leiste) und zurück. Für Menschen ist «zen netzwerk …» gedacht: Es zeigt vorher den Plan und fragt nach.
+
+Aufruf:
+  zenos-netzwerk status       Zustand, ohne Passwörter (ohne root mit weniger Einzelheiten)
+  zenos-netzwerk plan         zeigt, was «umstellen» täte, und ändert nichts (root)
+  zenos-netzwerk umstellen    stellt um (root). Wirksam erst nach dem Neustart, bis dahin bleibt alles, wie es ist.
+  zenos-netzwerk zurueck      letzte Sicherung zurück (root). Wirksam nach dem Neustart, geht ohne Netz und apt.
+  zenos-netzwerk erststart    nur für zenos-netzwerk-erststart.service: erster Start eines Images
+
+Umstellen:
+  1. Nichts tun, wenn /etc/netplan/90-zenos-netzwerk.yaml schon da ist.
+  2. Die ganze netplan-Konfiguration lesen («netplan get all»; netplan führt die Dateien selbst zusammen).
+  3. Ohne jede Änderung abbrechen, wenn etwas nicht sicher übernommen werden kann: andere Typen als ethernets
+     und wifis, unbekannte Schlüssel, Unternehmens-WLAN (EAP), key-management ausser psk und none, mehrere Länder.
+  4. 90-zenos-netzwerk.yaml: renderer NetworkManager für alles, jede Kabel-Definition übernommen.
+  5. Jeder WLAN-Zugangspunkt wird ein eigenes Profil in 90-NM-<uuid>.yaml, im selben Format, das NetworkManager
+     selbst schreibt (eigene Definition, «match: {}»). So löscht «Vergessen» im Menü genau dieses eine Netz.
+     Hängen alle WLANs an einer Definition wlan0, löscht NetworkManager beim Vergessen eines Netzes alle.
+  6. Probe: die neuen Dateien allein in einem leeren Ordner mit «netplan generate --root-dir» erzeugen. Verlangt:
+     Exit 0, keine Fehlerzeile, ein NetworkManager-Profil je Netz und Kabel, nichts für systemd-networkd.
+  7. Sicherung der bisherigen Dateien nach /var/lib/zenos/netplan-vorher/<zeit>/ (0700) mit zenos.json.
+  8. Neue Dateien atomar schreiben (0600 root), erst dann die alten löschen.
+  9. WLAN-Land nach /etc/xdg/zenos/wlan-land (zenos-wlan-land.service setzt es mit iw), cloud-init schreibt keine
+     Netzwerk-Konfiguration mehr, und auf Raspberry Pis schaltet /etc/modprobe.d/zenos-brcmfmac.conf WPA3 im
+     WLAN-Treiber ab. Sonst versucht NetworkManager bei WPA2/WPA3-Mischnetzen immer WPA3 (SAE), und das scheitert
+     mit diesem WLAN-Chip (status_code=16). Mischnetze verbinden dann über WPA2, reine WPA3-Netze gehen nicht.
+ 10. NetworkManager aktivieren, nicht starten. Kein «netplan apply»: Eine SSH-Verbindung über WLAN bliebe sonst
+     womöglich mitten im Umschalten hängen.
+
+Zurück: Die neueste Sicherung zurückkopieren, die Dateien von NetworkManager (90-zenos-netzwerk.yaml und alle
+90-NM-*.yaml, auch später im Menü angelegte) in die Sicherung verschieben, angelegte Zusatzdateien entfernen,
+NetworkManager deaktivieren. Wirksam nach dem Neustart.
+
+Erster Start eines Images (zenos-netzwerk-erststart.service, nur wenn /var/lib/zenos/netzwerk-erststart da ist):
+nach cloud-init (das die WLAN-Daten aus dem Raspberry Pi Imager nach netplan schreibt) und vor NetworkManager
+umstellen wie oben, dann sofort wirksam machen (netplan generate). Die Marke wird vorher gelöscht: höchstens ein
+Versuch. Scheitert er, bleibt das Netz bei systemd-networkd.
+
+Nur für Tests: --wurzel ORDNER legt alle Pfade unter diesen Ordner und führt systemctl, udevadm und
+«netplan generate» auf dem System nicht aus (sie stehen dann nur in der Ausgabe).
+
+Exit: 0 in Ordnung oder nichts zu tun · 1 Fehler oder abgebrochen · 2 Aufruf.
+"""
+
+import argparse
+import datetime
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import uuid
+
+NETPLAN_DIR = "etc/netplan"
+TARGET_NAME = "90-zenos-netzwerk.yaml"
+NM_PREFIX = "90-NM-"
+BACKUP_DIR = "var/lib/zenos/netplan-vorher"
+BACKUP_INFO = "zenos.json"
+LAND_FILE = "etc/xdg/zenos/wlan-land"
+CLOUD_DIR = "etc/cloud/cloud.cfg.d"
+CLOUD_FILE = "etc/cloud/cloud.cfg.d/99-zenos-netzwerk.cfg"
+MODPROBE_FILE = "etc/modprobe.d/zenos-brcmfmac.conf"
+FIRSTBOOT_MARKER = "var/lib/zenos/netzwerk-erststart"
+NM_BINARY = "usr/sbin/NetworkManager"
+# NetworkManager empfiehlt wpasupplicant nur (Recommends); ohne ihn gäbe es nach dem Umstieg kein WLAN
+WPA_BINARY = "usr/sbin/wpa_supplicant"
+MODEL_PATHS = ("sys/firmware/devicetree/base/model", "proc/device-tree/model")
+DRIVER_MODULE = "sys/module/brcmfmac"
+
+# Vorlagen im Repo (neben scripts/bin)
+CODE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+MODPROBE_SOURCE = os.path.join(CODE, "system", "modprobe", "zenos-brcmfmac.conf")
+CLOUD_SOURCE = os.path.join(CODE, "system", "cloud", "99-zenos-netzwerk.cfg")
+
+NM_UNITS = ("NetworkManager.service", "NetworkManager-wait-online.service")
+LAND_UNIT = "zenos-wlan-land.service"
+
+# Schlüssel, die sicher in jedes WLAN-Profil übernommen werden (sie galten bisher für das Gerät und alle Netze)
+WIFI_COPY_KEYS = {
+    "dhcp4", "dhcp6", "optional", "addresses", "routes", "nameservers", "ipv6-privacy", "link-local",
+    "accept-ra", "mtu", "dhcp4-overrides", "dhcp6-overrides", "gateway4", "gateway6", "macaddress",
+}
+# Schlüssel, die zum Gerät gehören und im Profil wegfallen (das Profil gilt für jedes WLAN-Gerät)
+WIFI_DROP_KEYS = {"renderer", "match", "set-name", "regulatory-domain", "access-points", "wakeonlan"}
+AP_KEYS = {"password", "auth", "hidden", "mode", "band", "channel", "bssid"}
+AUTH_KEYS = {"key-management", "password"}
+TOP_KEYS = {"version", "renderer", "ethernets", "wifis"}
+
+HEADER_TARGET = (
+    "# zenOS: NetworkManager verwaltet alle Netzwerkgeräte (WLAN-Menü in der Leiste).\n"
+    "# Erzeugt von «zen netzwerk umstellen». Rückweg: zen netzwerk zurueck, danach sudo reboot\n"
+)
+
+
+class Abort(Exception):
+    """Abbruch ohne Änderung, mit einer Meldung für Menschen."""
+
+
+def say(text=""):
+    print(text, flush=True)
+
+
+def warn(text):
+    print("zenos-netzwerk: " + text, file=sys.stderr, flush=True)
+
+
+# --- YAML ------------------------------------------------------------------------------------------------------
+
+def _yaml():
+    try:
+        import yaml  # python3-yaml, eine Abhängigkeit von netplan.io
+    except ImportError as error:
+        raise Abort("python3-yaml fehlt (sudo apt install python3-yaml)") from error
+    return yaml
+
+
+def yaml_load(text):
+    """YAML lesen, Zahlen und Zeitangaben bleiben Text: Ein Hex-PSK «0011…» oder eine SSID «0815» darf nie zu einer
+    Zahl werden (die führende Null ginge verloren). Wahrheitswerte bleiben Wahrheitswerte."""
+    yaml = _yaml()
+
+    class Loader(yaml.SafeLoader):
+        pass
+
+    weg = {"tag:yaml.org,2002:int", "tag:yaml.org,2002:float", "tag:yaml.org,2002:timestamp"}
+    Loader.yaml_implicit_resolvers = {
+        k: [(tag, rx) for tag, rx in v if tag not in weg]
+        for k, v in yaml.SafeLoader.yaml_implicit_resolvers.items()
+    }
+    return yaml.load(text, Loader=Loader)
+
+
+def yaml_dump(data, header):
+    yaml = _yaml()
+    return header + yaml.safe_dump({"network": data}, sort_keys=False, allow_unicode=True,
+                                   default_flow_style=False, width=1000)
+
+
+# --- Pfade und Dateien -----------------------------------------------------------------------------------------
+
+class Paths:
+    def __init__(self, root):
+        self.root = os.path.abspath(root)
+        self.test = self.root != "/"
+
+    def __call__(self, relative):
+        return os.path.join(self.root, relative)
+
+    def netplan(self, name=""):
+        return os.path.join(self.root, NETPLAN_DIR, name) if name else os.path.join(self.root, NETPLAN_DIR)
+
+
+def write_atomic(path, content, mode):
+    folder = os.path.dirname(path)
+    os.makedirs(folder, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=folder, prefix=".zenos-neu.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def read_text(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def netplan_files(paths):
+    try:
+        return sorted(n for n in os.listdir(paths.netplan()) if n.endswith(".yaml"))
+    except FileNotFoundError:
+        return []
+
+
+def switched(paths):
+    return os.path.exists(paths.netplan(TARGET_NAME))
+
+
+def model(paths):
+    for p in MODEL_PATHS:
+        text = read_text(paths(p)).replace("\0", "").strip()
+        if text:
+            return text
+    return ""
+
+
+def driver_relevant(paths):
+    """WPA3-Option nur, wo der WLAN-Treiber brcmfmac läuft oder laufen wird (Raspberry Pi, Compute Module)."""
+    return os.path.isdir(paths(DRIVER_MODULE)) or model(paths).startswith("Raspberry Pi")
+
+
+# --- Systembefehle ---------------------------------------------------------------------------------------------
+
+def run(paths, argv, check=True, timeout=120):
+    """Befehl mit Argumentliste (nie über eine Shell). In Tests (--wurzel) nur ausgeben."""
+    if paths.test:
+        say("  (Test, nicht ausgeführt) " + " ".join(argv))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+    result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
+    if check and result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip().splitlines()
+        raise Abort("«%s» ist gescheitert (Exit %d)%s" % (" ".join(argv), result.returncode,
+                                                         ": " + detail[-1] if detail else ""))
+    return result
+
+
+def unit_state(unit, what):
+    """systemctl is-enabled|is-active, ohne Fehler bei fehlendem systemd."""
+    try:
+        r = subprocess.run(["systemctl", what, unit], capture_output=True, text=True, timeout=15, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return "unbekannt"
+    return (r.stdout.strip().splitlines() or ["unbekannt"])[0]
+
+
+def netplan_get(paths):
+    if not shutil.which("netplan"):
+        raise Abort("netplan fehlt (Paket netplan.io)")
+    r = subprocess.run(["netplan", "get", "--root-dir", paths.root, "all"], capture_output=True, text=True,
+                       timeout=60, check=False)
+    if r.returncode != 0:
+        detail = (r.stderr or r.stdout).strip().splitlines()
+        raise Abort("netplan kann die bisherige Konfiguration nicht lesen%s" % (": " + detail[-1] if detail else ""))
+    data = yaml_load(r.stdout) or {}
+    network = data.get("network") if isinstance(data, dict) else None
+    return network if isinstance(network, dict) else {}
+
+
+def initramfs_driver():
+    """Liegt brcmfmac im initramfs, gilt dort die Treiber-Option erst mit einem neu gebauten initramfs.
+    Rückgabe: (Abbild, Werkzeug) wenn der Treiber drin ist und die Option nicht, sonst None."""
+    image = ""
+    for candidate in ("/boot/initrd.img-" + os.uname().release, "/boot/initrd.img"):
+        if os.path.exists(candidate):
+            image = candidate
+            break
+    if not image:
+        return None
+    for tool in ("lsinitrd", "lsinitramfs"):
+        path = shutil.which(tool)
+        if not path:
+            continue
+        try:
+            r = subprocess.run([path, image], capture_output=True, text=True, timeout=180, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if r.returncode != 0:
+            continue
+        listing = r.stdout
+        if "brcmfmac.ko" in listing and MODPROBE_FILE not in listing:
+            return image, tool
+        return None
+    return None
+
+
+# --- Plan ------------------------------------------------------------------------------------------------------
+
+def _mapping(value, where):
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise Abort("%s hat eine unerwartete Form" % where)
+    return value
+
+
+def _definitions(network, kind):
+    """Definitionen eines Typs; ein Renderer auf Typ-Ebene («wifis: renderer: networkd») ist keine Definition."""
+    result = {}
+    for name, definition in _mapping(network.get(kind), kind).items():
+        if name == "renderer" and isinstance(definition, str):
+            continue
+        result[str(name)] = _mapping(definition, "%s/%s" % (kind, name))
+    return result
+
+
+class Plan:
+    def __init__(self):
+        self.files = {}          # Dateiname in /etc/netplan → Inhalt
+        self.wifis = []          # (SSID, "mit Passwort" | "offen")
+        self.ethernets = []      # (Name, Kurzbeschreibung)
+        self.land = ""
+        self.old = []            # bisherige Dateien in /etc/netplan
+        self.driver = False      # WPA3 im Treiber abschalten
+
+
+def prepare(paths):
+    plan = Plan()
+    network = netplan_get(paths)
+    plan.old = netplan_files(paths)
+
+    unknown = sorted(set(network) - TOP_KEYS)
+    if unknown:
+        raise Abort("die Konfiguration enthält %s; das übernimmt zenOS nicht von selbst" % ", ".join(unknown))
+
+    target = {"version": 2, "renderer": "NetworkManager"}
+    ethernets = {}
+    for name, definition in _definitions(network, "ethernets").items():
+        definition = dict(definition)
+        definition["renderer"] = "NetworkManager"
+        ethernets[name] = definition
+        art = "DHCP" if definition.get("dhcp4") is True or definition.get("dhcp6") is True else "feste Adresse"
+        plan.ethernets.append((name, art))
+    if ethernets:
+        target["ethernets"] = ethernets
+
+    countries = set()
+    for name, definition in _definitions(network, "wifis").items():
+        unknown = sorted(set(definition) - WIFI_COPY_KEYS - WIFI_DROP_KEYS)
+        if unknown:
+            raise Abort("WLAN-Definition «%s» enthält %s; das übernimmt zenOS nicht von selbst"
+                        % (name, ", ".join(unknown)))
+        if definition.get("regulatory-domain"):
+            countries.add(str(definition["regulatory-domain"]).upper())
+        base = {k: v for k, v in definition.items() if k in WIFI_COPY_KEYS}
+        for ssid, ap in _mapping(definition.get("access-points"), "access-points").items():
+            ssid = str(ssid)
+            ap = _mapping(ap, "Zugangspunkt «%s»" % ssid)
+            unknown = sorted(set(ap) - AP_KEYS)
+            if unknown:
+                raise Abort("WLAN «%s» enthält %s; das übernimmt zenOS nicht von selbst" % (ssid, ", ".join(unknown)))
+            if ap.get("mode") not in (None, "infrastructure"):
+                raise Abort("WLAN «%s» ist kein gewöhnliches Netz (mode: %s)" % (ssid, ap.get("mode")))
+            auth = _mapping(ap.get("auth"), "auth von «%s»" % ssid)
+            unknown = sorted(set(auth) - AUTH_KEYS)
+            if unknown:
+                raise Abort("WLAN «%s» ist ein Unternehmens-WLAN (%s); das kann das WLAN-Menü nicht"
+                            % (ssid, ", ".join(unknown)))
+            password = auth.get("password", ap.get("password"))
+            management = auth.get("key-management", "psk" if password is not None else "none")
+            if management not in ("psk", "none"):
+                raise Abort("WLAN «%s» nutzt key-management «%s»; übernommen werden nur psk und offene Netze"
+                            % (ssid, management))
+            if management == "psk" and (not isinstance(password, str) or not password):
+                raise Abort("WLAN «%s» hat kein Passwort" % ssid)
+
+            ident = str(uuid.uuid4())
+            nm = {"uuid": ident, "name": ssid}
+            new_ap = {}
+            if management == "psk":
+                new_ap["auth"] = {"key-management": "psk", "password": password}
+            for key in ("hidden", "band", "channel", "bssid"):
+                if key in ap:
+                    new_ap[key] = ap[key]
+            new_ap["networkmanager"] = dict(nm)
+            profile = {"renderer": "NetworkManager", "match": {}}
+            profile.update(base)
+            profile["access-points"] = {ssid: new_ap}
+            profile["networkmanager"] = dict(nm)
+            header = "# zenOS: übernommen aus der bisherigen netplan-Konfiguration (ein Profil je WLAN)\n"
+            plan.files["%s%s.yaml" % (NM_PREFIX, ident)] = yaml_dump({"version": 2, "wifis": {"NM-" + ident: profile}},
+                                                                     header)
+            plan.wifis.append((ssid, "mit Passwort" if management == "psk" else "offen"))
+    if len(countries) > 1:
+        raise Abort("mehrere WLAN-Länder eingetragen (%s)" % ", ".join(sorted(countries)))
+    plan.land = countries.pop() if countries else ""
+    if plan.land and (len(plan.land) != 2 or not plan.land.isalpha() or not plan.land.isascii()):
+        raise Abort("WLAN-Land «%s» ist kein Ländercode" % plan.land)
+
+    plan.files[TARGET_NAME] = yaml_dump(target, HEADER_TARGET)
+    plan.driver = driver_relevant(paths)
+    probe(plan, len(plan.wifis) + len(plan.ethernets))
+    return plan
+
+
+def probe(plan, expected):
+    """Die neuen Dateien allein in einem leeren Ordner von netplan erzeugen lassen."""
+    folder = tempfile.mkdtemp(prefix="zenos-netzprobe-")
+    try:
+        os.makedirs(os.path.join(folder, NETPLAN_DIR))
+        for name, content in plan.files.items():
+            write_atomic(os.path.join(folder, NETPLAN_DIR, name), content, 0o600)
+        r = subprocess.run(["netplan", "generate", "--root-dir", folder], capture_output=True, text=True,
+                           timeout=120, check=False)
+        errors = [z for z in (r.stderr + r.stdout).splitlines() if "error" in z.lower()]
+        nm_dir = os.path.join(folder, "run", "NetworkManager", "system-connections")
+        nd_dir = os.path.join(folder, "run", "systemd", "network")
+        profiles = os.listdir(nm_dir) if os.path.isdir(nm_dir) else []
+        networkd = os.listdir(nd_dir) if os.path.isdir(nd_dir) else []
+        if r.returncode != 0 or errors:
+            raise Abort("netplan lehnt die neue Konfiguration ab%s" % (": " + errors[-1].strip() if errors else ""))
+        if len(profiles) != expected or networkd:
+            raise Abort("Probe ergab %d NetworkManager-Profile statt %d%s" % (
+                len(profiles), expected, " und Dateien für systemd-networkd" if networkd else ""))
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+def show_plan(paths, plan):
+    say("Umstellung auf NetworkManager (WLAN-Menü in der Leiste):")
+    if plan.wifis:
+        say("  WLANs, die übernommen werden (je ein eigenes Profil, Passwörter bleiben, wo sie sind):")
+        for ssid, art in plan.wifis:
+            say("    · %s (%s)" % (ssid, art))
+    else:
+        say("  Keine WLANs eingetragen; neue verbindest du danach im Menü oben rechts.")
+    for name, art in plan.ethernets:
+        say("  Kabel %s (%s) bleibt, verwaltet dann NetworkManager." % (name, art))
+    if plan.land:
+        say("  WLAN-Land %s (setzt danach zenos-wlan-land.service)." % plan.land)
+    if plan.driver:
+        say("  WPA3 im WLAN-Treiber (brcmfmac) wird abgeschaltet: Mischnetze (WPA2/WPA3) verbinden dann über WPA2,")
+        say("  reine WPA3-Netze gehen nicht (das tun sie mit diesem WLAN-Chip heute schon nicht).")
+    say("  Sicherung der bisherigen Dateien (%s): %s/<zeit>/" % (", ".join(plan.old) or "keine", "/" + BACKUP_DIR))
+    say("  Wirksam erst nach dem Neustart. Bis dahin bleibt das Netz, wie es ist.")
+    say("  Rückweg, auch ohne Netz: zen netzwerk zurueck, danach sudo reboot")
+
+
+# --- Umstellen -------------------------------------------------------------------------------------------------
+
+def _require_root(paths):
+    if not paths.test and os.geteuid() != 0:
+        raise Abort("braucht root (zen netzwerk … fragt selbst nach sudo)")
+
+
+def _backup_folder(paths):
+    base = paths(BACKUP_DIR)
+    os.makedirs(base, mode=0o700, exist_ok=True)
+    os.chmod(base, 0o700)
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    folder = os.path.join(base, stamp)
+    n = 2
+    while os.path.exists(folder):
+        folder = os.path.join(base, "%s-%d" % (stamp, n))
+        n += 1
+    os.mkdir(folder, 0o700)
+    return folder
+
+
+def _copy_template(source, target):
+    """Vorlage aus dem Repo nach target (0644). Rückgabe: True, wenn die Datei neu angelegt wurde."""
+    with open(source, encoding="utf-8") as f:
+        content = f.read()
+    created = not os.path.exists(target)
+    if read_text(target) != content:
+        write_atomic(target, content, 0o644)
+    return created
+
+
+def apply_plan(paths, plan):
+    """Sicherung, neue Dateien, alte weg, Zusatzdateien. Rückgabe: Sicherungsordner."""
+    folder = _backup_folder(paths)
+    for name in plan.old:
+        shutil.copy2(paths.netplan(name), os.path.join(folder, name))
+    info = {"version": 1, "zeit": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "alt": plan.old, "neu": sorted(plan.files), "land": plan.land, "angelegt": []}
+    write_atomic(os.path.join(folder, BACKUP_INFO), json.dumps(info, indent=2, ensure_ascii=False) + "\n", 0o600)
+
+    written = []
+    try:
+        for name, content in plan.files.items():
+            write_atomic(paths.netplan(name), content, 0o600)
+            written.append(name)
+    except OSError as error:
+        for name in written:
+            os.unlink(paths.netplan(name))
+        raise Abort("neue Dateien liessen sich nicht schreiben (%s); nichts geändert" % error) from error
+    for name in plan.old:
+        if name not in plan.files:
+            os.unlink(paths.netplan(name))
+
+    created = []
+    if plan.land:
+        if not os.path.exists(paths(LAND_FILE)):
+            created.append(LAND_FILE)
+        write_atomic(paths(LAND_FILE), "# zenOS: WLAN-Land, übernommen aus netplan (regulatory-domain)\nLAND=%s\n"
+                     % plan.land, 0o644)
+    if os.path.isdir(paths(CLOUD_DIR)) and _copy_template(CLOUD_SOURCE, paths(CLOUD_FILE)):
+        created.append(CLOUD_FILE)
+    if plan.driver and _copy_template(MODPROBE_SOURCE, paths(MODPROBE_FILE)):
+        created.append(MODPROBE_FILE)
+    info["angelegt"] = created
+    write_atomic(os.path.join(folder, BACKUP_INFO), json.dumps(info, indent=2, ensure_ascii=False) + "\n", 0o600)
+
+    # Ab hier ist umgestellt; ein Fehler beim Aktivieren ist nur noch eine Warnung (install.sh holt es nach)
+    units = list(NM_UNITS) + ([LAND_UNIT] if plan.land else [])
+    if run(paths, ["systemctl", "enable", "--quiet"] + units, check=False).returncode != 0:
+        warn("Dienste liessen sich nicht aktivieren: sudo systemctl enable " + " ".join(units))
+    return folder
+
+
+def cmd_plan(paths):
+    _require_root(paths)
+    if switched(paths):
+        say("Schon umgestellt: NetworkManager verwaltet das Netz (zen netzwerk status).")
+        return 0
+    show_plan(paths, prepare(paths))
+    return 0
+
+
+def _checks(paths):
+    if not os.path.exists(paths(NM_BINARY)):
+        raise Abort("NetworkManager ist nicht installiert (erst zen update bzw. scripts/install.sh)")
+    if not os.path.exists(paths(WPA_BINARY)):
+        raise Abort("wpa_supplicant fehlt (Paket wpasupplicant; erst zen update bzw. scripts/install.sh), ohne ihn "
+                    "gäbe es nach dem Umstieg kein WLAN")
+    if not paths.test and driver_relevant(paths):
+        found = initramfs_driver()
+        if found:
+            image, tool = found
+            befehl = "sudo dracut -f" if tool == "lsinitrd" else "sudo update-initramfs -u"
+            raise Abort("der WLAN-Treiber liegt im initramfs (%s), die WPA3-Option wirkte dort nicht. Erst die "
+                        "Option ablegen («sudo install -m 0644 %s /etc/modprobe.d/»), das initramfs neu bauen "
+                        "(«%s») und neu starten, dann noch einmal «zen netzwerk umstellen»"
+                        % (image, MODPROBE_SOURCE, befehl))
+
+
+def cmd_switch(paths):
+    _require_root(paths)
+    if switched(paths):
+        say("Schon umgestellt: NetworkManager verwaltet das Netz (zen netzwerk status).")
+        return 0
+    _checks(paths)
+    plan = prepare(paths)
+    folder = apply_plan(paths, plan)
+    say("Umgestellt. Sicherung: %s" % ("/" + os.path.relpath(folder, paths.root) if not paths.test else folder))
+    say("Wirksam nach dem Neustart: sudo reboot")
+    return 0
+
+
+def cmd_first_boot(paths):
+    """Erster Start eines Images: vor NetworkManager umstellen und sofort wirksam machen."""
+    _require_root(paths)
+    marker = paths(FIRSTBOOT_MARKER)
+    if not os.path.exists(marker):
+        return 0
+    os.unlink(marker)  # höchstens ein Versuch
+    if switched(paths):
+        say("Schon umgestellt.")
+        return 0
+    try:
+        _checks(paths)
+        plan = prepare(paths)
+    except Abort as error:
+        say("Nicht umgestellt, das Netz bleibt bei systemd-networkd: %s." % error)
+        say("Später von Hand: zen netzwerk umstellen")
+        # Das Image hat NetworkManager aktiviert. Ohne Umstieg gehört er nicht neben systemd-networkd (und
+        # NetworkManager-wait-online liesse jeden Start warten); ab dem nächsten Start bleibt er aus, wie nach
+        # «zen update» auf einem nicht umgestellten System.
+        run(paths, ["systemctl", "disable", "--quiet"] + list(NM_UNITS), check=False)
+        return 1
+    apply_plan(paths, plan)
+    say("Umgestellt: %d WLAN(s), %d Kabel. NetworkManager startet gleich." % (len(plan.wifis), len(plan.ethernets)))
+    # Sofort wirksam: netplan erzeugt die Profile für NetworkManager neu (lädt dabei systemd neu), udev vergisst
+    # die Markierung «NM_UNMANAGED» aus dem ersten Lauf von cloud-init.
+    run(paths, ["netplan", "generate"], check=False)
+    run(paths, ["udevadm", "trigger", "--action=change", "--subsystem-match=net"], check=False)
+    run(paths, ["udevadm", "settle", "--timeout=10"], check=False)
+    if plan.land:
+        run(paths, ["systemctl", "start", "--no-block", LAND_UNIT], check=False)
+    return 0
+
+
+# --- Zurück ----------------------------------------------------------------------------------------------------
+
+def newest_backup(paths):
+    base = paths(BACKUP_DIR)
+    try:
+        names = sorted(n for n in os.listdir(base) if os.path.isfile(os.path.join(base, n, BACKUP_INFO)))
+    except OSError:
+        return "", {}
+    if not names:
+        return "", {}
+    folder = os.path.join(base, names[-1])
+    try:
+        with open(os.path.join(folder, BACKUP_INFO), encoding="utf-8") as f:
+            info = json.load(f)
+    except (OSError, ValueError):
+        return folder, {}
+    return folder, info if isinstance(info, dict) else {}
+
+
+def cmd_back(paths):
+    _require_root(paths)
+    if not switched(paths):
+        say("Nicht umgestellt: Das Netz läuft über netplan mit systemd-networkd. Nichts zu tun.")
+        return 0
+    folder, info = newest_backup(paths)
+    old = info.get("alt") if isinstance(info.get("alt"), list) else None
+    if not folder or old is None:
+        raise Abort("keine Sicherung unter /%s gefunden" % BACKUP_DIR)
+    missing = [n for n in old if not os.path.isfile(os.path.join(folder, n))]
+    if missing:
+        raise Abort("Sicherung %s ist unvollständig (fehlt: %s)" % (folder, ", ".join(missing)))
+
+    after = os.path.join(folder, "nachher-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+    os.makedirs(after, mode=0o700, exist_ok=True)
+    moved = []
+    for name in netplan_files(paths):
+        if name == TARGET_NAME or (name.startswith(NM_PREFIX) and name not in old):
+            shutil.move(paths.netplan(name), os.path.join(after, name))
+            moved.append(name)
+    for name in old:
+        shutil.copy2(os.path.join(folder, name), paths.netplan(name))
+    for relative in info.get("angelegt") or []:
+        if relative in (LAND_FILE, CLOUD_FILE, MODPROBE_FILE) and os.path.exists(paths(relative)):
+            os.unlink(paths(relative))
+
+    run(paths, ["systemctl", "disable", "--quiet"] + list(NM_UNITS) + [LAND_UNIT], check=False)
+    say("Zurückgestellt auf die Sicherung %s." % os.path.basename(folder))
+    if len(moved) > 1:
+        say("Die Profile von NetworkManager (%d Dateien) liegen jetzt in %s." % (len(moved), after))
+    say("Wirksam nach dem Neustart: sudo reboot")
+    return 0
+
+
+# --- Status ----------------------------------------------------------------------------------------------------
+
+def _driver_reports_sae():
+    """True/False, ob ein WLAN-Gerät SAE (WPA3) meldet; None, wenn iw fehlt oder nichts meldet."""
+    iw = shutil.which("iw") or ("/usr/sbin/iw" if os.path.exists("/usr/sbin/iw") else "")
+    if not iw:
+        return None
+    try:
+        r = subprocess.run([iw, "phy"], capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0 or "Wiphy" not in r.stdout:
+        return None
+    return "SAE with AUTHENTICATE" in r.stdout
+
+
+def _profiles():
+    """Namen der WLAN-Profile von NetworkManager (nur wenn er läuft), ohne Passwörter."""
+    if not shutil.which("nmcli"):
+        return None
+    try:
+        r = subprocess.run(["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"], capture_output=True, text=True,
+                           timeout=10, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0:
+        return None
+    names = []
+    for line in r.stdout.splitlines():
+        name, _, kind = line.rpartition(":")
+        if kind == "802-11-wireless" and name:
+            names.append(name.replace("\\:", ":"))
+    return names
+
+
+def cmd_status(paths):
+    nm_installed = os.path.exists(paths(NM_BINARY))
+    enabled = unit_state("NetworkManager.service", "is-enabled") if nm_installed else "nicht installiert"
+    active = unit_state("NetworkManager.service", "is-active") if nm_installed else "inactive"
+    if switched(paths):
+        folder, info = newest_backup(paths)
+        when = str(info.get("zeit", ""))[:16].replace("T", " ") if info else ""
+        say("Netz: NetworkManager (umgestellt%s)" % (", am " + when if when else ""))
+    else:
+        say("Netz: netplan mit systemd-networkd (nicht umgestellt)")
+    if nm_installed:
+        aktiviert = {"enabled": "aktiviert", "disabled": "deaktiviert", "masked": "maskiert"}.get(enabled, enabled)
+        say("  NetworkManager: %s · %s" % (aktiviert, "läuft" if active == "active" else "läuft nicht"))
+    else:
+        say("  NetworkManager: nicht installiert (zen update bzw. scripts/install.sh)")
+    if active == "active":
+        names = _profiles()
+        if names is not None:
+            say("  WLAN-Profile: %d%s" % (len(names), " (" + ", ".join(names) + ")" if names else ""))
+    land = ""
+    for line in read_text(paths(LAND_FILE)).splitlines():
+        if line.startswith("LAND="):
+            land = line[5:].strip()
+    if land:
+        zustand = unit_state(LAND_UNIT, "is-active")
+        zustand = {"active": "gesetzt", "inactive": "noch nicht gesetzt", "failed": "gescheitert"}.get(zustand, zustand)
+        say("  WLAN-Land: %s (%s: %s)" % (land, LAND_UNIT, zustand))
+    if os.path.exists(paths(MODPROBE_FILE)):
+        sae = _driver_reports_sae()
+        if sae is True:
+            say("  WPA3 im Treiber: Option gesetzt, der Treiber meldet aber noch SAE (Neustart ausstehend?)")
+        else:
+            say("  WPA3 im Treiber: aus (%s)" % ("/" + MODPROBE_FILE))
+    elif driver_relevant(paths):
+        sae = _driver_reports_sae()
+        if sae is not None:
+            say("  WPA3 im Treiber: %s" % ("an (Treiber meldet SAE)" if sae else "Treiber meldet kein SAE"))
+    if switched(paths):
+        say("Rückweg, auch ohne Netz: zen netzwerk zurueck, danach sudo reboot")
+    elif nm_installed:
+        say("Umstellen (zeigt vorher, was passiert): zen netzwerk umstellen")
+    return 0
+
+
+# --- Aufruf ----------------------------------------------------------------------------------------------------
+
+def main(argv):
+    parser = argparse.ArgumentParser(prog="zenos-netzwerk", add_help=True,
+                                     description="Netz auf NetworkManager umstellen (WLAN-Menü) und zurück.")
+    parser.add_argument("befehl", choices=("status", "plan", "umstellen", "zurueck", "erststart"))
+    parser.add_argument("--wurzel", default="/", help=argparse.SUPPRESS)
+    args = parser.parse_args(argv)
+    paths = Paths(args.wurzel)
+    commands = {"status": cmd_status, "plan": cmd_plan, "umstellen": cmd_switch, "zurueck": cmd_back,
+                "erststart": cmd_first_boot}
+    try:
+        return commands[args.befehl](paths)
+    except Abort as error:
+        warn("abgebrochen, nichts geändert: %s." % error if args.befehl in ("plan", "umstellen")
+             else "%s." % error)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

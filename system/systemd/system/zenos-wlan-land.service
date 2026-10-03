@@ -1,0 +1,21 @@
+# zenOS: WLAN-Land (Regulierung) setzen, wie es netplan-regdom.service unter systemd-networkd tut (gleiche
+# Reihenfolge). Das Land steht nur lokal in /etc/xdg/zenos/wlan-land (LAND=XX), übernommen aus netplan
+# (regulatory-domain) von «zen netzwerk umstellen», das die Einheit auch aktiviert.
+[Unit]
+Description=zenOS: WLAN-Land setzen
+Documentation=file:///opt/zenos/docs/module/netzwerk.md
+After=network.target
+ConditionFileIsExecutable=/usr/sbin/iw
+ConditionPathExists=/etc/xdg/zenos/wlan-land
+# Ohne WLAN-Treiber (cfg80211) gibt es nichts zu setzen; der Dienst wird dann übersprungen statt zu scheitern
+ConditionPathIsDirectory=/sys/module/cfg80211
+
+[Service]
+Type=oneshot
+# bleibt nach dem Setzen «active» (zen netzwerk status und zen doctor zeigen so, dass es geklappt hat)
+RemainAfterExit=yes
+EnvironmentFile=/etc/xdg/zenos/wlan-land
+ExecStart=/usr/sbin/iw reg set ${LAND}
+
+[Install]
+WantedBy=network.target
