@@ -39,6 +39,75 @@ Grundsatz 1: Sicherheit ist Standard und geht vor Design und Bequemlichkeit. Sie
   Apps, keine Zeiten und keine Fenstertitel (`~/.local/share/zenos/`, nur für den Benutzer lesbar).
 - Eine Zwischenablage-Historie, falls sie kommt, ignoriert 1Password und löscht sich selbst.
 
+## Netz (NetworkManager)
+
+Das WLAN-Menü oben rechts ist nur eine Oberfläche für den NetworkManager von Ubuntu; einen eigenen Netzwerk-Stack
+hat zenOS nicht. Einzelheiten in `docs/module/netzwerk.md`.
+
+- **Umstellen nur ausdrücklich:** `zen update` installiert NetworkManager, lässt ihn aber aus. Erst
+  `zen netzwerk umstellen` stellt um, nach einem Plan und der Eingabe «umstellen», wirksam mit dem nächsten
+  Neustart (CLAUDE.md, Regel 3). Zurück geht es ohne Netz mit `zen netzwerk zurueck`.
+- **WLAN-Passwörter** speichert NetworkManager wie bisher netplan: im Klartext in `/etc/netplan/90-NM-<uuid>.yaml`,
+  nur für root lesbar (0600). zenOS liest und schreibt sie nicht selbst. Das Passwortfeld im Menü gibt das
+  Passwort nur über D-Bus an NetworkManager weiter (nie in eine Kommandozeile, ein Protokoll oder eine
+  zenOS-Datei) und leert sich danach. Ein Profil, das ein abgebrochener oder gescheiterter erster Versuch angelegt
+  hat, vergisst das Menü wieder. `zen doctor` warnt, wenn eine Datei unter `/etc/netplan` mehr als root lesen darf.
+- **Sicherungen enthalten Passwörter:** `zen netzwerk umstellen` sichert die bisherigen netplan-Dateien samt
+  WLAN-Passwörtern nach `/var/lib/zenos/netplan-vorher/<zeit>/`, und `zen netzwerk zurueck` legt dort auch die
+  Profile von NetworkManager ab (`nachher-<zeit>/`), also auch Passwörter von Netzen, die im Menü längst vergessen
+  sind. Nur root kann sie lesen (Ordner 0700, Dateien 0600). zenOS räumt sie nicht selbst weg; wer sie nicht mehr
+  braucht, löscht sie mit `sudo rm -r /var/lib/zenos/netplan-vorher/<zeit>` (danach geht `zurueck` nicht mehr).
+- **Offene Netze nur auf Klick:** Verbindet Zeno ein neues offenes Netz (auch OWE), bekommt sein Profil gleich
+  «autoconnect: nein». Sonst verbände sich NetworkManager später überall von selbst mit jedem Zugangspunkt
+  gleichen Namens («Free WiFi», Hotel), auch mit einem nachgemachten.
+- **Netznamen sind fremder Text:** Der Name eines Netzes kommt ungeprüft aus der Luft. Das Menü zeigt ihn nur als
+  reinen Text (keine Auszeichnungen, keine Bilder) und macht Unsichtbares darin sichtbar («�»), damit ein
+  nachgemachtes Netz nicht genau wie ein bekanntes aussieht.
+- **Rechte:** keine eigene polkit-Regel. Ubuntus Regel erlaubt lokalen, aktiven Sitzungen von Mitgliedern der
+  Gruppe `sudo` (oder `netdev`), Netzprofile anzulegen, zu ändern und zu löschen. Suchen und Verbinden erlaubt
+  NetworkManager jeder lokalen Sitzung, auch einer inaktiven, WLAN an/aus jeder aktiven (Vorgaben der
+  NetworkManager-Policy, im Container nachgelesen). Damit darf jeder Prozess in Zenos Sitzung
+  Netzprofile ändern, wie auf jedem Ubuntu-Desktop. Das gilt auch für Prozesse ohne eigene Sitzung, etwa
+  Benutzerdienste: polkit nimmt für sie Zenos grafische Sitzung. Direkt in einer SSH-Sitzung verlangt
+  NetworkManager das Passwort, über die Benutzerinstanz (`systemd-run --user …`) aber nicht. Wer sich als Zeno per
+  SSH anmeldet, etwa mit einem gestohlenen Schlüssel, kann also ohne sudo-Passwort Netzprofile anlegen oder ändern
+  (DNS, Routen), solange Zeno grafisch angemeldet ist. Eine engere Regel liesse sich unter einem Benutzer kaum
+  nach Aufrufer unterscheiden; der Schutz ist der SSH-Schlüssel selbst.
+- **Keine Konnektivitätsprüfung:** Ubuntus Paket dafür (`network-manager-config-connectivity-ubuntu`) fragte
+  regelmässig bei `connectivity-check.ubuntu.com` nach. zenOS installiert NetworkManager ohne Empfehlungen, also
+  ohne dieses Paket; `zen doctor` warnt, falls es doch da ist.
+- **WPA3 aus (Raspberry Pi):** Der WLAN-Chip bricht WPA3 ab, und NetworkManager versuchte es bei WPA2/WPA3-
+  Mischnetzen trotzdem. `zen netzwerk umstellen` schaltet WPA3 deshalb im Treiber ab
+  (`/etc/modprobe.d/zenos-brcmfmac.conf`) und sagt es vorher im Plan. Mischnetze verbinden dann über WPA2-PSK. Das
+  ist schwächer als WPA3: Wer die Anmeldung mitschneidet, kann das Passwort offline raten. Ein langes, zufälliges
+  WLAN-Passwort hält das aus. Reine WPA3-Netze gehen mit diesem Chip ohnehin nicht.
+- **Leitplanken:** Während einer Bildschirmfreigabe zeigt das Menü keine Netznamen (sie verraten Orte). Während
+  der Sperre sind die Menüs der Leiste zu.
+
+## Hardware (Argon ONE)
+
+Schreibzugriffe auf Hardware gibt es nur im Systemdienst `zenos-argon` (Einzelheiten in `docs/module/m13.md`). Er
+läuft als root, aber gehärtet: nur I2C- und GPIO-Geräte, kein Netz, System nur lesbar, geschrieben wird nur
+`/run/zenos`. Firmware-Einstellungen (`/boot/firmware/config.txt`, EEPROM) fasst zenOS nie an.
+
+- **Argon ONE V3 (Pi 5):** Lüfterwert über I2C an 0x1a und beim Ausschalten das Abschaltsignal an die Platine.
+- **Argon ONE UP (Compute Module 5): Akku-Messchip CW2217 an 0x64.** Ab Werk schläft der Chip und hat kein
+  Akkuprofil, er meldet dann 0 %. zenOS weckt ihn und schreibt Argons Akkuprofil hinein, genau wie Argons eigene
+  Software, aber erst nach Zenos ausdrücklicher Freigabe: `zen akku freigeben` erklärt den Schreibzugriff und legt
+  nach der Eingabe «freigeben» `/etc/xdg/zenos/argon-akkuprofil` an (nur root kann das). Ohne diese Datei liest
+  zenos-argon den Chip nur; `zen update` allein schreibt nie in den Chip. `zen akku sperren` nimmt die Freigabe
+  zurück. Auch mit Freigabe gilt:
+  - nur die Register, die auch Argon beschreibt: 0x08 (Steuerung: wecken, schlafen legen, aktivieren), 0x0A
+    (Interrupts aus), 0x0B (Profil geladen) und 0x10–0x5F (Argons Profil, 80 Byte, im Code fest hinterlegt);
+  - nur wenn nötig: Erst wird gelesen; ist der Chip aktiv und das Profil gleich, schreibt zenOS nichts. Höchstens
+    dreimal pro Stunde, mit wachsender Pause nach Fehlern;
+  - kein Absuchen des Busses und keine anderen Adressen (die Erkennung liest nur die Chip-ID an 0x64);
+  - nichts, solange Argons eigener Dienst (`argononeupd.service`) aktiviert ist.
+
+  Risiko: gering. Der Chip misst nur, er steuert weder Laden noch Strom noch das Abschalten. Ein falsches Profil
+  ergäbe höchstens falsche Prozentwerte; ein erneutes Laden behebt es. Den Lüfter am Compute Module 5 regelt der
+  Kernel, zenOS liest ihn nur.
+
 ## 1Password
 
 - Passwörter, Karten und Schlüssel liegen nur in 1Password.

@@ -78,6 +78,8 @@ erscheint erst nach dem Neustart, und eine SSH-Verbindung bleibt während der In
   `greeter.qml` mit `greeter/` für den Login.
 - **Apps aus der Oberfläche** starten über `zenos-oeffnen` in eigenen Einheiten
   (`app-zenos-<name>-<zeit>.scope` in `app.slice`). Ein Neustart von `zenos-shell.service` beendet sie nicht.
+- **WLAN** (`leiste/WlanQuelle.qml`, kein Dienst unter `dienste/`): spricht NetworkManager über
+  `Quickshell.Networking` (D-Bus) und entsteht erst, wenn NetworkManager läuft (siehe «Netz» unten).
 
 **Dienste** (`qs.dienste`, Singletons ohne Oberfläche):
 
@@ -88,7 +90,8 @@ erscheint erst nach dem Neustart, und eine SSH-Verbindung bleibt während der In
 | `Erscheinung` | hell, dunkel oder nach Tageszeit, Akzent; überträgt beides mit `zenos-thema` nach aussen |
 | `Oberflaeche` | Zustand der Oberfläche (was offen ist, `gesperrt`), Hinweise, Sperr-Anforderung |
 | `Aktionen` | Prozessstarts mit Argumentlisten: Apps, Terminal, Dateien, Werkzeuge, Abmelden, Neustart, Ausschalten |
-| `System` | Temperatur, Lüfter, Netz, Ton (PipeWire), 1Password |
+| `System` | Temperatur, Netz, Ton (PipeWire), 1Password |
+| `Geraet` | Akku und Lüfter aus `/run/zenos/geraet.json` (`zenos-argon`), Mitteilung bei niedrigem Akku |
 | `Mitteilungen` | Mitteilungsdienst (`NotificationServer`), Bündelung, Zentrale |
 | `Konfig` | Modi, Zustände, Raster, Bildschirme, Web-Apps lesen; schreiben über `zenos-konfig` |
 | `Modi` | aktiver Modus, Wechsel (Akzent, Raster, Apps, Chrome-Profil) |
@@ -120,7 +123,7 @@ selbst endet in v0.3.1 auch bei Fehlern mit 0; `zenos-ipc` wertet die Ausgabe au
 | `raster` | `setzen(id)`, `aktiv` |
 | `hinweis` | `zeigen(text)`, `warnen(text)` |
 | `einrichtung` | `oeffnen`, `apps`, `schliessen`, `status` |
-| `leiste` | `menue(system\|raster)`, `schliessen` |
+| `leiste` | `menue(system\|raster\|wlan)` (`wlan`: System-Menü mit aufgeklappter WLAN-Liste), `schliessen` |
 
 Die Tastenkürzel von labwc rufen dieselben Ziele auf (Liste in `docs/module/m9.md`).
 
@@ -139,7 +142,8 @@ Die Tastenkürzel von labwc rufen dieselben Ziele auf (Liste in `docs/module/m9.
 | `zenos-bildschirmfoto`, `zenos-pipette` | Werkzeuge des Befehlsfelds |
 | `zenos-chrome`, `zenos-webapp` | Chrome im Profil des Modus, Web-Apps |
 | `zenos-apps` | proprietäre Apps installieren (`zen apps`) |
-| `zenos-argon` | Lüfter und Power-Button des Argon ONE |
+| `zenos-argon` | Argon ONE: Lüfter und Power-Button (V3), Akku-Messchip (ONE UP), Werte für die Leiste |
+| `zenos-netzwerk` | Netz von netplan/systemd-networkd auf NetworkManager umstellen und zurück (`zen netzwerk`) |
 
 ### Portale und Bildschirmfreigabe
 
@@ -187,14 +191,30 @@ Die Regeln aus dem Manifest stehen im Code, nicht in der Konfiguration, und lass
 - Prozesse starten mit Argumentlisten, nie über `sh -c`. `zenos-labwc` lehnt eine Vorlage ab, die eine Shell
   startet. `scripts/pruefen.sh` prüft beides.
 
+### Netz
+
+- **NetworkManager** von Ubuntu verwaltet das Netz, sobald Zeno einmal `zen netzwerk umstellen` und einen Neustart
+  gemacht hat (ein neues Image stellt beim ersten Start selbst um). Vorher läuft es wie bei Ubuntu Server über
+  netplan mit systemd-networkd, und das System-Menü zeigt nur den Zustand. zenOS hat keinen eigenen
+  Netzwerk-Stack; das WLAN-Menü oben rechts ist nur eine Oberfläche für NetworkManager (`MANIFEST.md`).
+- Der Umstieg übernimmt jedes WLAN aus netplan als eigenes Profil (`/etc/netplan/90-NM-<uuid>.yaml`), sichert
+  die alten Dateien und ist mit `zen netzwerk zurueck` umkehrbar. Nichts wird live angewendet (kein
+  `netplan apply`), eine SSH-Verbindung bleibt bis zum Neustart.
+- Auf Raspberry Pis schaltet zenOS dabei WPA3 im WLAN-Treiber ab, weil der Chip es nicht zuverlässig kann;
+  Mischnetze verbinden über WPA2. Einzelheiten, Rechte (polkit) und Dateien in `docs/module/netzwerk.md`.
+
 ### Terminal, Apps und Hardware
 
 - **Terminal:** kitty (`system/kitty/kitty.conf`) mit fish (`system/fish/`). Farben schreibt `zenos-thema`.
 - **Apps:** `zen apps installieren` holt Chrome, VS Code, 1Password mit CLI und coremail aus den Quellen der
   Hersteller, nur nach ausdrücklicher Zustimmung und nie im Image. Nubix folgt, sobald es einen arm64-Build gibt.
-- **Argon ONE:** `zenos-argon.service` (Systemdienst, gehärtet) regelt den Lüfter über I2C, wertet den
-  Power-Button aus und schreibt `/run/zenos/argon.json` für die Leiste. Ein systemd-shutdown-Hook sendet beim
-  Ausschalten das Abschaltsignal an die Platine.
+- **Argon ONE:** `zenos-argon.service` (Systemdienst, gehärtet) erkennt das Gerät am Gerätebaum. Am Raspberry Pi 5
+  mit Argon ONE V3 regelt er den Lüfter über I2C und wertet den Power-Button aus; ein systemd-shutdown-Hook sendet
+  beim Ausschalten das Abschaltsignal an die Platine. Am Compute Module 5 im Argon ONE UP liest er den
+  Akku-Messchip CW2217 (lädt bei Bedarf Argons Akkuprofil hinein, erst nach `zen akku freigeben`, siehe
+  `docs/sicherheit.md`) und zeigt Lüfter
+  und Temperatur des Kernels an. Beide schreiben `/run/zenos/geraet.json`; die Oberfläche (`Geraet`) zeigt Akku
+  und Lüfter in Leiste und System-Menü und meldet niedrigen Akku. Einzelheiten in `docs/module/m13.md`.
 
 ## Entscheidung: Logik für Modi und Zustände (C5)
 
@@ -225,13 +245,17 @@ Die Logik läuft in Quickshell selbst, ohne eigenen Hintergrunddienst.
 | `zen` | `/usr/local/bin/zen` verweist auf `/opt/zenos/scripts/zen` | ja |
 | Kanal für `zen update` | `/etc/xdg/zenos/kanal` (`dev` oder `main`) | nein, vom Installer |
 | Lüfterkurve (optional) | `/etc/xdg/zenos/argon.json` | nie |
-| Argon-Werte | `/run/zenos/argon.json` (flüchtig, Ordner gehört dem Dienst) | nie |
+| Freigabe Akkuprofil (ONE UP) | `/etc/xdg/zenos/argon-akkuprofil` (`zen akku freigeben`) | nie |
+| Gerätewerte (Akku, Lüfter) | `/run/zenos/geraet.json` (flüchtig, Ordner gehört `zenos-argon`) | nie |
 | Quickshell | `/usr/local/bin/quickshell`, Stempel `/usr/local/share/zenos/quickshell.version` | nein, Quellbau |
 | Schriften | `/usr/local/share/fonts/zenos/` | ja (`assets/fonts/`) |
 | App-Icon `zenos` | `~/.local/share/icons/hicolor/<n>x<n>/apps/zenos.png` | ja (`assets/zeichen/png/`) |
 | Bootsplash-Theme | `/usr/share/plymouth/themes/zenos/` (eingeschaltet erst mit `zen bootsplash aktivieren`) | ja (`system/plymouth/zenos/`) |
 | Benutzereinheiten | `/etc/systemd/user/` (`zenos-sitzung.target`, `zenos-shell`, `zenos-idle`, `zenos-kanshi`, Drop-in für `xdg-desktop-portal-wlr`) | ja (Kopien) |
 | Systemeinheiten | `/etc/systemd/system/zenos-argon.service`, `/usr/lib/systemd/system-shutdown/zenos-argon` | ja (Kopien) |
+| Netz-Einheiten | `/etc/systemd/system/zenos-wlan-land.service`, `zenos-netzwerk-erststart.service`, Drop-in `systemd-networkd-wait-online.service.d/zenos-netzwerk.conf` | ja (Kopien) |
+| Netz nach dem Umstieg | `/etc/netplan/90-zenos-netzwerk.yaml`, WLAN-Profile `/etc/netplan/90-NM-<uuid>.yaml` (0600 root, Passwörter wie bisher in netplan) | nie |
+| Netz: Sicherung, Land, Treiber | `/var/lib/zenos/netplan-vorher/<zeit>/` (0700), `/etc/xdg/zenos/wlan-land`, `/etc/modprobe.d/zenos-brcmfmac.conf`, `/etc/cloud/cloud.cfg.d/99-zenos-netzwerk.cfg` | nie (Vorlagen: `system/modprobe/`, `system/cloud/`) |
 | Login, Portale | `/etc/greetd/config.toml`, `/etc/xdg/xdg-desktop-portal/labwc-portals.conf`, `/etc/xdg/xdg-desktop-portal-wlr/config` | ja (Kopien) |
 | Richtlinien | `/etc/opt/chrome/policies/managed/zenos.json`, `/etc/vscode/policy.json`, `/etc/apt/apt.conf.d/52zenos-unattended` | ja (Kopien) |
 | Install-Log | `/var/log/zenos/install.log`, Rückfall `~/.local/state/zenos/install.log` | nie |
@@ -263,6 +287,7 @@ Systemteile, dann alle Benutzerteile.
 | `20-pakete` | alle Paketlisten aus `scripts/pakete/` in einem apt-Lauf |
 | `25-quickshell` | Quickshell bauen, nur wenn der Stempel fehlt oder abweicht |
 | `30-schriften` | Geist, Geist Mono, Instrument Serif |
+| `35-netzwerk` | NetworkManager fürs WLAN-Menü bereitlegen (umgestellt wird mit `zen netzwerk umstellen`), WLAN-Land, wait-online |
 | `40-sitzung` | greetd mit Greeter, Benutzereinheiten, Portale |
 | `42-bootsplash` | Bootsplash-Theme ablegen, nicht einschalten |
 | `45-thema` | Erscheinungsbild auf GTK, Qt, kitty, labwc und VS Code, App-Icon `zenos` |
@@ -272,7 +297,7 @@ Systemteile, dann alle Benutzerteile.
 | `65-oberflaeche` | automatische Sperre, Notfall-Sperre, Hilfsprogramme |
 | `70-sicherheit` | Sicherheitsupdates, Richtlinien, Ubuntu-Nachrichten aus, Firewall vorbereiten, gitleaks-Hook |
 | `75-apps` | Werkzeuge für `zen apps`, Starter für Chrome und Web-Apps |
-| `80-argon` | Argon-Dienst und Shutdown-Hook |
+| `80-argon` | Argon-Dienst (V3 und ONE UP) und Shutdown-Hook |
 | `90-benutzer` | Oberfläche verknüpfen, Ordner für persönliche Daten |
 | `95-zen` | `/usr/local/bin/zen`, Log-Ordner |
 
@@ -313,6 +338,7 @@ Mac (Claude Code, Tests im Container) ── push ──▶ GitHub dev ──▶
 ## Plattformen
 
 - **Raspberry Pi 5 (arm64):** Hauptziel und Messlatte. Gebaut und getestet wurde 0.1 in Docker-Containern mit
-  Ubuntu 26.04 arm64 (`test/container/`); die Abnahme auf dem Pi steht aus.
+  Ubuntu 26.04 arm64 (`test/container/`); die Abnahme auf dem Pi steht aus. Zenos Gerät ist ein Argon ONE UP:
+  ein Laptop mit Compute Module 5 Lite (gleicher Chip BCM2712 wie der Pi 5), eingebauter Tastatur und Akku.
 - **x86-Bürorechner (amd64):** später. Gleiche Oberfläche, eigene Hardware-Teile, zum Beispiel ohne Argon-Dienst
   (`zenos-argon.service` startet dort nicht). Dort ist GNOME als Rückfall-Sitzung beim Login vorgesehen.

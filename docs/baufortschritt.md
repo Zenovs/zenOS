@@ -103,6 +103,13 @@ Abnahme in einer echten VM (lima/Apple Virtualization, Ubuntu 26.04 arm64, virti
 - **Bootsplash einschalten** mit `zen bootsplash aktivieren` (Boot-Kommandozeile, Pakete, initramfs; der Pi startet
   danach zweimal). Bis dahin zeigt `zen doctor` «Bootsplash vorbereitet, nicht aktiv». Prüfliste in
   `docs/module/bootsplash.md`.
+- **WLAN-Menü einschalten** mit `zen netzwerk umstellen` und `sudo reboot` am Gerät (NetworkManager statt netplan
+  mit systemd-networkd, WPA3 im WLAN-Treiber aus). Rückweg `zen netzwerk zurueck`. Prüfliste in
+  `docs/module/netzwerk.md`.
+- **Akku messen (Argon ONE UP)** mit `zen akku freigeben`: Erst dann weckt zenos-argon den Akku-Messchip und
+  schreibt Argons Akkuprofil (Register und Risiko in `docs/sicherheit.md`). Bis dahin «nicht freigegeben».
+- **Akku im Sperrbildschirm:** Die Sperre zeigt heute keinen Akku. Ein kleines Symbol mit Prozent wäre kein Inhalt
+  im Sinn der Leitplanke, berührt aber die Sperre (sicherheitskritisch); eigener Schritt nach Zenos Entscheid.
 - **GitHub-Avatar und Vorschaubild** von Hand hochladen: `assets/zeichen/png/github-avatar-500.png` und
   `github-social-preview-1280x640.png` (`docs/bildmarke.md`, Abschnitt «GitHub»).
 - **`main`** auf `v0.1.0` vorspulen, damit `git clone` ohne `git switch dev` funktioniert (ANLEITUNG G7–G10); danach

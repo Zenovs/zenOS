@@ -142,6 +142,34 @@ Tastenkürzel geöffnet erscheint die Wahl mittig. Pfeile und Tab wandern durch 
 Ausschalten fragen einmal nach («Wirklich ausschalten?»), erst der zweite Klick löst aus. Esc oder ein Klick daneben
 schliesst. Beim Sperren schliessen alle Menüs, und während der Sperre bleiben sie zu.
 
+**WLAN im System-Menü** (oben, vor Lautstärke; nur mit NetworkManager, siehe `docs/module/netzwerk.md`):
+
+- Zeilen wie Menüeinträge (36 px, Radius 8). «WLAN» mit Schalter (36 × 20) rechts; nur der Schalter schaltet (auch
+  mit der Tastatur, eigener Eintrag), die Zeile ist eine Beschriftung. So trennt ein Klick auf «WLAN» oder Pfeil
+  runter und Enter nicht versehentlich die Verbindung. Darunter das verbundene Netz: Signal links, Name, rechts Schloss (12 px, `gedaempft`), Haken im Akzent
+  und «x» (12 px, `gedaempft`) zum Vergessen. Dann «Netze in Reichweite» mit Pfeil rechts zum Auf- und Zuklappen
+  (ohne Animation, die Karte wächst einfach).
+- Aufgeklappt: höchstens fünfeinhalb Zeilen, dann scrollt die Liste; die angeschnittene Zeile und ein schmaler
+  Balken rechts (3 px, `gedaempft` zu 50 %, ohne Animation) zeigen, dass es weitergeht. Netznamen als reiner Text, Unsichtbares darin (Zeichen ohne Breite, Richtungs- und Steuerzeichen)
+  als «�». Signal als WLAN-Symbol mit ein bis drei Bögen, die
+  fehlenden Bögen blass (30 % der Farbe). Nicht verbindbare Netze (802.1X, WEP) ganze Zeile blass mit «nicht
+  möglich» in Mono. Während eines Versuchs «verbindet …» in Mono.
+- Neues Netz mit Passwort: An Stelle der Liste das Netz und darunter das Passwortfeld (Eingabe, 36 px, Text auf
+  der Höhe der Namen), darunter 12 px `gedaempft` «Enter verbindet · Esc bricht ab», dann «Verbinde …». Fehler
+  ruhig in `fehler` unter dem Feld («Passwort falsch?»), das Feld bekommt den Rahmen in `fehler`. Bietet das Netz
+  WPA3 an und scheitert es an Zeit, Ablehnung oder ohne Antwort, steht dazu «Bietet das Netz nur WPA3 an, geht es
+  mit diesem WLAN-Chip nicht.» (Mischnetze melden sich gleich, deshalb nur als Möglichkeit). Fehler bei bekannten Netzen stehen unter ihrer Zeile.
+- Vergessen fragt einmal nach: Die Zeile zeigt ««Telefon» vergessen?» in `fehler`, erst der zweite Klick löst aus.
+- Bildschirmfreigabe: «Netzname verborgen» in `gedaempft`, «Netze in Reichweite» mit «verborgen» und ohne Pfeil.
+- Ohne NetworkManager: die Netzzeile wie bisher, mit WLAN-Gerät darunter 12 px `gedaempft` «WLAN wählen: im
+  Terminal «zen netzwerk umstellen», dann neu starten.»
+
+Im System-Menü folgt nach 1Password und einer Trennlinie das Gerät, nur zur Anzeige: Akku («87 % · lädt»,
+«100 % · Netzteil», «9 %», «nicht freigegeben»), Lüfter («aus» oder «Stufe 2 von 4 · 3120 U/min») und
+CPU-Temperatur («41 °C»). Zeilen ohne Wert fehlen, ohne Akku und Lüfter bleibt nur die Temperatur. Bei niedrigem
+Akku steht sein Symbol in `warnung`. Werte reichen höchstens bis kurz vor den Titel und werden sonst in der Mitte
+gekürzt.
+
 ### Hinweise (Toast)
 
 Kurze Rückmeldungen wie «Farbe kopiert» erscheinen als Pille unten mittig, über den Tastenkappen von «Heute»:
@@ -163,7 +191,14 @@ Formularfehler erscheinen nicht als Hinweis, sondern ruhig unter dem Formular.
   Ein Klick öffnet die App-Übersicht des Befehlsfelds, ein zweiter schliesst sie.
 - **Mitte:** Datum und Uhrzeit in Geist Mono. Der nächste Termin kommt «Danach».
 - **Rechts:** Mitteilungen mit nächster Zustellung («3 · 10:00», «2 warten»), Hell/Dunkel (Mond im Hellen, Sonne im
-  Dunkeln), System-Knopf auf `abgesetzt` (Netz, Ton, 1Password, Temperatur). Die Dev-Server-Übersicht kommt «Danach».
+  Dunkeln), System-Knopf auf `abgesetzt` (Netz, Ton, 1Password, Temperatur, mit Akku zuletzt der Akku). Die
+  Dev-Server-Übersicht kommt «Danach».
+- **Netz im System-Knopf:** Kabel als Buchse, WLAN mit Signalstufe: drei Bögen ab 60 %, zwei ab 35 %, sonst einer;
+  die fehlenden Bögen blass (30 % der Farbe), ohne Animation. Ohne Verbindung `wlan-aus` in `gedaempft`.
+- **Akku** (nur wenn das Gerät einen hat, z. B. Argon ONE UP): Symbol 15 px, waagrecht, der Füllstand in bis zu drei
+  Strichen, beim Laden ein Blitz; daneben die Prozent in Geist Mono 12 («87 %»), beides in `text`. Bei höchstens
+  10 % im Akkubetrieb stehen Symbol und Zahl in `warnung`, ruhig und ohne Blinken. Ohne sicheren Messwert nur das
+  leere Symbol in `gedaempft`.
 - **Zustand und Leiste:** Ein Zustand kann die Leiste zurücknehmen (Schlüssel `leiste`). `reduziert` blendet Raster
   und Hell/Dunkel aus, `aus` lässt nur Zustand und Uhrzeit stehen. Der Platz bleibt in beiden Fällen reserviert,
   damit Fenster nicht springen. Einzelheiten in `docs/module/m4.md`.
@@ -210,6 +245,11 @@ Während einer Freigabe und bei `heute: false` blendet der Inhalt aus (200 ms).
   Bildschirm ein Menü der Leiste offen ist, treten die Karten zurück und kommen danach wieder (120 ms, nur
   Deckkraft); die 10 s der Sammelkarte beginnen dann von vorn.
 - Zentrale als Panel rechts (400 px). Kein Ton, kein Blinken; neue Karten kommen unten dazu, damit nichts verrutscht.
+- zenOS selbst meldet sich nur bei niedrigem Akku (10 % und 5 % im Akkubetrieb, je einmal): Absender «zenOS» mit
+  der Bildmarke. 10 % mit Dringlichkeit normal, also nach der Regel des Zustands wie jede andere Mitteilung. 5 %
+  dringend: Die Karte kommt sofort (ausser im Zustand «keine») und bleibt bis zum Schliessen, ohne Ton und ohne
+  Blinken; zenOS fährt nicht selbst herunter, also darf sie nicht warten. Es steht immer nur eine Akku-Mitteilung
+  da (5 % ersetzt 10 %), und am Netzteil verschwindet sie.
 
 ### Fenster
 

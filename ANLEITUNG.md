@@ -211,6 +211,22 @@ Erwartet wird `0 Fehler`. Hinweise sind normal, zum Beispiel «greetd läuft noc
 nicht aktiv», «Bootsplash vorbereitet, nicht aktiv» und die noch nicht installierten Apps. Eine Warnung gibt es nur,
 wenn du die sudo-Regel aus B12 angelegt hast.
 
+**C5.** WLAN-Menü einschalten. Bis hier läuft das Netz wie bei Ubuntu Server über netplan; ein neues WLAN müsstest
+du von Hand in eine netplan-Datei schreiben. Mit diesem Befehl verwaltet NetworkManager das Netz, und du wählst WLANs
+oben rechts im System-Menü. Der Befehl zeigt vorher, was passiert: welche WLANs er übernimmt (je ein eigenes
+Profil, die Passwörter bleiben), wo er die alten Dateien sichert, und dass er auf dem Raspberry Pi WPA3 im
+WLAN-Treiber abschaltet (Mischnetze verbinden dann über WPA2, reine WPA3-Netze gehen mit diesem WLAN-Chip ohnehin
+nicht). Erst wenn du «umstellen» eintippst, stellt er um. Wirksam wird es mit dem Neustart in D1, bis dahin bleibt
+das Netz, wie es ist:
+
+```
+zen netzwerk umstellen
+```
+
+Mach den Neustart am Gerät, dort, wo ein bekanntes WLAN oder ein Kabel da ist. Geht danach kein Netz, am Gerät in
+kitty `zen netzwerk zurueck` und `sudo reboot` (siehe F). Auf einem schon installierten zenOS gilt dasselbe: nach
+`zen update` einmal `zen netzwerk umstellen`, dann `sudo reboot`.
+
 ---
 
 ## D · Neustart
@@ -263,6 +279,32 @@ unter «Am Pi prüfen».
   seinem ersten Start). Ein laufendes Chrome wechselt in beide Richtungen, auch von dunkel zurück auf hell.
 - [ ] Das System-Menü zeigt Netz, Lautstärke mit Regler, 1Password, Temperatur und Lüfter, dazu Sperren,
   Einstellungen, Abmelden, Neustart und Ausschalten. Abmelden, Neustart und Ausschalten fragen einmal nach.
+
+**WLAN (oben rechts, nach C5)**
+- [ ] `zen netzwerk status` zeigt «Netz: NetworkManager», «NetworkManager: aktiviert · läuft», die übernommenen
+  WLANs und das WLAN-Land mit «gesetzt». `zen doctor` zeigt im Abschnitt «Netz» keine Warnung.
+- [ ] Die Leiste zeigt im System-Knopf das WLAN-Symbol mit Signalstufe (ein bis drei Bögen, die fehlenden blass).
+- [ ] Das System-Menü zeigt «WLAN» mit Schalter und das verbundene Netz mit Haken. «Netze in Reichweite» klappt
+  die Liste auf: Netze mit Signal und Schloss, das verbundene oben, dann die bekannten.
+- [ ] Ein neues Netz mit Passwort: Klick darauf, das Passwortfeld erscheint (Punkte statt Zeichen), Enter verbindet.
+  Danach steht es oben mit Haken.
+- [ ] Ein falsches Passwort zeigt ruhig «Passwort falsch?» unter dem Feld, das Feld ist leer. Esc bricht ab;
+  danach liegt für dieses Netz kein Profil herum (`ls /etc/netplan` zeigt keine neue Datei).
+- [ ] Ein bekanntes Netz verbindet mit einem Klick, ohne Passwort.
+- [ ] «x» bei einem gespeicherten Netz fragt «… vergessen?», der zweite Klick vergisst es; unter `/etc/netplan`
+  verschwindet genau eine Datei.
+- [ ] Der Schalter schaltet WLAN aus und wieder ein; danach verbindet es sich von selbst wieder. Ein Klick auf das
+  Wort «WLAN» schaltet nichts.
+- [ ] Ein offenes Netz (ohne Schloss) verbindet mit einem Klick. Danach zeigt
+  `nmcli -g connection.autoconnect connection show <Name>` «no»: Es verbindet sich später nur auf Klick.
+- [ ] Mit mehr als fünf Netzen in Reichweite ist die unterste Zeile angeschnitten, und die Liste scrollt.
+- [ ] Mit der Tastatur: Pfeile wandern durch die Netze, Enter wählt, im Passwortfeld bricht Esc ab, sonst schliesst
+  Esc das Menü.
+- [ ] Beim Teilen des Bildschirms zeigt das Menü keine Netznamen («Netzname verborgen»).
+- [ ] Das Büro-WLAN: Erst nachsehen, was es anbietet: `nmcli -f SSID,SECURITY dev wifi | grep -i <Name>`.
+  «WPA2 WPA3» heisst Mischnetz, es verbindet jetzt über WPA2. Steht nur «WPA3», ist es reines WPA3 und geht mit
+  diesem WLAN-Chip nicht (im Menü dann z. B. «Anmeldung dauerte zu lange. Bietet das Netz nur WPA3 an, geht es mit
+  diesem WLAN-Chip nicht.»); dann vergessen. Der Menütext allein unterscheidet die beiden nicht.
 
 **Befehlsfeld**
 - [ ] `Super + Leertaste` öffnet es, `Esc` oder nochmals `Super + Leertaste` schliesst es.
@@ -391,6 +433,27 @@ systemctl --user start zenos-shell.service
 - [ ] Die Temperatur steht in der Leiste, der Lüfter im System-Menü (Argon ONE). Unter Last (in kitty viermal
   `yes > /dev/null &`, danach `pkill yes`) wird der Lüfter hörbar schneller und später wieder leiser.
 - [ ] Argon-Knopf: Doppeltipp startet neu, drei Sekunden halten schaltet aus, einmal kurz drücken tut nichts.
+  (Nur Argon ONE V3 am Pi 5.)
+
+**Argon ONE UP (Laptop mit Compute Module 5)**
+- [ ] Vor der Freigabe: Im System-Menü steht «Akku · nicht freigegeben», `zen akku status` zeigt «Akkuprofil
+  schreiben: nicht freigegeben». Der Messchip bleibt unberührt.
+- [ ] In kitty `zen akku freigeben`: Die Erklärung nennt die Register und das Risiko, erst «freigeben» legt die
+  Freigabe an. Innerhalb von 15 Sekunden steht der Ladestand in der Leiste.
+- [ ] Oben rechts im System-Knopf steht der Akku mit Prozent, etwa «87 %». Am Netzteil zeigt das Symbol einen
+  Blitz. Netzteil aus- und wieder einstecken: Der Blitz verschwindet bzw. erscheint nach 10 bis 25 Sekunden, ohne
+  Flackern.
+- [ ] Das System-Menü zeigt nach 1Password: Akku («87 % · lädt», am Netz voll «100 % · Netzteil»), Lüfter («aus»
+  oder «Stufe 2 von 4 · 3120 U/min») und CPU-Temperatur. Unter Last (viermal `yes > /dev/null &`, danach
+  `pkill yes`) steigen Temperatur und Lüfterstufe, danach sinken sie wieder.
+- [ ] Der Prozentwert ist plausibel: voll geladen nahe 100 %, nach einer Stunde Arbeit spürbar weniger. Direkt nach
+  dem ersten Start braucht der Akku-Messchip etwas Zeit, bis die Werte stimmen.
+- [ ] Im Akkubetrieb bei 10 % und darunter: Akku in Gelb (Warnfarbe), nichts blinkt. Eine ruhige Mitteilung «Akku
+  bei N %» kommt (ohne Zustand gebündelt zur nächsten vollen Stunde, Glocke «1 · HH:00»). Bei 5 % ersetzt sie eine
+  dringende Karte, die sofort erscheint, ohne Ton. Es steht immer nur eine Akku-Mitteilung da. zenOS fährt nicht
+  selbst herunter. Nach dem Einstecken verschwindet die Akku-Mitteilung, und es beginnt von vorn.
+- [ ] Per SSH, nur lesend: `sudo /opt/zenos/scripts/bin/zenos-argon --pruefen` zeigt «Messchip aktiv, Argons
+  Akkuprofil ist geladen» und den Ladestand. `zen doctor` zeigt im Abschnitt «Argon ONE» den Akku.
 - [ ] In Chrome zeigt `chrome://policy` 13 zenOS-Richtlinien ohne Fehler. Die 1Password-Erweiterung ist fest
   installiert, andere Erweiterungen sind gesperrt.
 - [ ] In VS Code steht die Einstellung `telemetry.telemetryLevel` auf `off` und ist von der Organisation verwaltet.
@@ -449,6 +512,13 @@ Die Oberfläche hängt oder fehlt: per SSH neu starten. Ist die Sitzung gesperrt
 
 ```
 systemctl --user restart zenos-shell.service
+```
+
+Nach `zen netzwerk umstellen` und dem Neustart kein Netz: am Gerät in kitty zurück auf netplan, danach neu
+starten (geht ohne Netz):
+
+```
+zen netzwerk zurueck
 ```
 
 Nach einem Update geht etwas nicht mehr: zurück zum letzten guten Stand.

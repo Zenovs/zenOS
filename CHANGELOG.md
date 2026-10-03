@@ -12,9 +12,36 @@ an; eine Version entspricht einem Tag `v…` im Repo.
   Kacheln blenden diagonal ein, alles in 200 ms. Pfeiltasten wählen, Enter oder ein Klick startet, Tippen sucht wie
   gewohnt; ein zweiter Klick auf das Zeichen schliesst. Ohne Apps steht dort «Apps installieren». Neu per IPC:
   `zenos-ipc befehlsfeld apps` und `befehlsfeld ansicht`.
+- **Akku und Lüfter (Argon ONE UP):** Auf dem Laptop Argon ONE UP mit Compute Module 5 zeigt die Leiste oben rechts
+  den Akku mit Prozent, beim Laden mit Blitz; bei höchstens 10 % im Akkubetrieb ruhig in der Warnfarbe. Das
+  System-Menü zeigt Akku, Lüfter («aus» oder «Stufe 2 von 4 · 3120 U/min») und CPU-Temperatur. Bei 10 % kommt eine
+  ruhige Mitteilung, bei 5 % ersetzt sie eine dringende Karte, die sofort erscheint (ohne Ton); am Netzteil
+  verschwindet sie. zenOS fährt nicht selbst herunter. Der Dienst `zenos-argon` erkennt das Gerät und liest den
+  Akku-Messchip (Cellwise CW2217). Schläft der Chip, weckt er ihn und lädt Argons Akkuprofil, aber erst nach
+  `zen akku freigeben` und nur wenn nötig; danach misst er alle 15 s. Den Lüfter regelt weiter der Kernel.
+  `zen akku status`, `zenos-argon --pruefen` und `zen doctor` zeigen den Akku.
+- **WLAN-Menü oben rechts:** Das System-Menü zeigt «WLAN» mit Schalter, das verbundene Netz und aufklappbar die
+  Netze in Reichweite mit Signal und Schloss. Ein Klick verbindet ein bekanntes Netz, bei einem neuen erscheint ein
+  Passwortfeld (Enter verbindet, Esc bricht ab); gespeicherte Netze lassen sich vergessen. Es ist nur eine
+  Oberfläche für den NetworkManager von Ubuntu; Passwörter gehen nur über D-Bus an ihn. Netznamen stehen als reiner
+  Text da, offene Netze verbinden sich später nur auf Klick. Während einer Bildschirmfreigabe stehen keine
+  Netznamen da. Neu per IPC: `zenos-ipc leiste menue wlan`.
+- **`zen netzwerk`:** `zen netzwerk umstellen` stellt das Netz einmal von netplan mit systemd-networkd auf
+  NetworkManager um: jedes WLAN wird ein eigenes Profil, die alten Dateien werden gesichert, wirksam nach dem
+  Neustart (kein `netplan apply`). Auf dem Raspberry Pi schaltet es dabei WPA3 im WLAN-Treiber ab, weil der Chip
+  es nicht kann; Mischnetze verbinden über WPA2. `zen netzwerk zurueck` geht ohne Netz zurück, `zen netzwerk
+  status` zeigt den Stand, `zen doctor` hat einen Abschnitt «Netz». Ein neues Image stellt beim ersten Start
+  selbst um.
 
 ### Geändert
 
+- **Manifest:** «kein eigenes WLAN-Menü» heisst jetzt «kein eigener Netzwerk-Stack»; das WLAN-Menü oben rechts
+  bedient nur den NetworkManager von Ubuntu.
+- **Netzsymbol in der Leiste** mit Signalstufe: ein bis drei Bögen, die fehlenden blass.
+- **`zen update` installiert NetworkManager** (ohne Empfehlungen, also ohne Ubuntus Konnektivitätsprüfung) und lässt
+  ihn aus, bis `zen netzwerk umstellen` läuft.
+- **Gerätewerte für die Leiste:** `zenos-argon` schreibt `/run/zenos/geraet.json` (Version 1, mit Akku) statt
+  `/run/zenos/argon.json`. Der Lüfter steht im System-Menü in einer eigenen Zeile, die CPU-Temperatur ebenso.
 - **Natürliches Scrollen** wie auf dem Mac, für Touchpad und Maus (labwc, `rc.xml`).
 - **Fenstergrösse leichter ziehen:** Ränder wirken mindestens 16 px breit (vorher 8), Ecken greifen auf 40 px
   entlang jeder Kante (vorher 17).

@@ -17,6 +17,7 @@ Eine Datei unter `modi/`, `zustaende/` oder `raster/` mit ungültigem Inhalt feh
 | `~/.local/state/zenos/laufzeit.json` | was gerade gilt | die Oberfläche und `zenos-labwc`, nie von Hand |
 | `/etc/xdg/zenos/kanal` | Kanal für `zen update` | Installer beim ersten Mal |
 | `/etc/xdg/zenos/argon.json` | Lüfterkurve (optional) | von Hand mit sudo |
+| `/etc/xdg/zenos/argon-akkuprofil` | Freigabe: zenos-argon darf Argons Akkuprofil in den Messchip schreiben (Argon ONE UP) | `zen akku freigeben`, entfernt mit `zen akku sperren` |
 
 Die ID ist der Dateiname ohne `.json` (Kleinbuchstaben, Ziffern, Bindestriche). Geschrieben wird mit `zenos-konfig`
 (`scripts/bin/`): Es prüft gegen das Schema und darüber hinaus (Akzent aus den Tokens, Raster im Bildschirm,
