@@ -80,6 +80,22 @@ Wechsel zugleich (`flock` auf `/run/zenos-firewall.lock`), damit sich Schalter, 
 überholen. `pkexec` ist dafür installiert (Paket von Ubuntu); es ist ein setuid-Programm und vergrössert die
 Angriffsfläche etwas.
 
+**Lüfter im System-Menü:** Die Oberfläche startet `pkexec /opt/zenos/scripts/bin/zenos-luefter auto|1|2|3|4`
+(Argumentliste, keine Shell). Die polkit-Aktion in `system/polkit/org.zenos.luefter.policy` (→
+`/usr/share/polkit-1/actions/`, Modul `80-argon`):
+
+| Aktion | aktive Sitzung am Gerät | inaktive Sitzung | sonst (z. B. SSH) |
+|---|---|---|---|
+| `org.zenos.luefter.setzen` | ja, ohne Passwort | nein | nein |
+
+Ohne Passwort, weil die Wahl harmlos ist: Eine Mindeststufe macht den Lüfter höchstens lauter, nie leiser als
+automatisch, und die Leitplanken stehen im Code von `zenos-argon`, nicht im Wunsch. Eine Passwortfrage für «Lüfter auf
+Stufe 2» wäre Lärm und gewöhnte daran, das Passwort ohne Lesen einzutippen. Die Aktion hat keine `exec.argv1`-Angabe
+(sie gilt für jeden Aufruf des Helfers); der Helfer selbst nimmt nur `auto`, `1` bis `4` und `status` an, hat einen
+festen `PATH`, schreibt nur `/var/lib/zenos/luefter` (atomar, 0644) und trägt jeden Wechsel ins Journal ein
+(`journalctl -t zenos-luefter`, mit Weg und uid). Aus SSH geht es mit `zen luefter` und sudo. Für Programme der
+systemd-Benutzerinstanz gilt dieselbe Grenze wie bei der Firewall: polkit ordnet sie der Sitzung am Gerät zu.
+
 ## polkit-Agent
 
 Die Oberfläche ist der polkit-Agent der Sitzung (`shell/polkit/Polkit.qml`, `Quickshell.Services.Polkit`). Er
@@ -160,7 +176,9 @@ hat zenOS nicht. Einzelheiten in `docs/module/netzwerk.md`.
 
 Schreibzugriffe auf Hardware gibt es nur im Systemdienst `zenos-argon` (Einzelheiten in `docs/module/m13.md`). Er
 läuft als root, aber gehärtet: nur I2C- und GPIO-Geräte, kein Netz, System nur lesbar, geschrieben wird nur
-`/run/zenos`. Firmware-Einstellungen (`/boot/firmware/config.txt`, EEPROM) fasst zenOS nie an.
+`/run/zenos` und unter `/sys` nur `/sys/devices/virtual/thermal` (Thermal-Zonen und Kühler, für die Mindeststufe des
+Lüfters; `ReadWritePaths` als Ausnahme von `ProtectKernelTunables`, im Container mit der vollen Härtung geprüft: der
+Rest von `/sys` bleibt nur lesbar). Firmware-Einstellungen (`/boot/firmware/config.txt`, EEPROM) fasst zenOS nie an.
 
 - **Argon ONE V3 (Pi 5):** Lüfterwert über I2C an 0x1a und beim Ausschalten das Abschaltsignal an die Platine.
 - **Argon ONE UP (Compute Module 5): Akku-Messchip CW2217 an 0x64.** Ab Werk schläft der Chip und hat kein
@@ -177,8 +195,27 @@ läuft als root, aber gehärtet: nur I2C- und GPIO-Geräte, kein Netz, System nu
   - nichts, solange Argons eigener Dienst (`argononeupd.service`) aktiviert ist.
 
   Risiko: gering. Der Chip misst nur, er steuert weder Laden noch Strom noch das Abschalten. Ein falsches Profil
-  ergäbe höchstens falsche Prozentwerte; ein erneutes Laden behebt es. Den Lüfter am Compute Module 5 regelt der
-  Kernel, zenOS liest ihn nur.
+  ergäbe höchstens falsche Prozentwerte; ein erneutes Laden behebt es.
+- **Lüfter einstellen (Mindeststufe).** Standard ist «auto»: Am Compute Module 5 regelt der Kernel (`step_wise`)
+  allein, zenOS liest nur. Wählt Zeno eine Mindeststufe 1–4 (System-Menü oder `zen luefter`), stellt zenos-argon die
+  Thermal-Zone des Lüfters auf den Regler `user_space` und setzt alle 2 s die Stufe selbst. Beim Argon ONE V3 hebt
+  die Mindeststufe die Kurve auf 30 / 50 / 70 / 100 % an. Leitplanken im Code, nicht abschaltbar:
+  - nie weniger Kühlung als automatisch: Stufe = max(Mindeststufe, Stufe des Kernels), die Stufe des Kernels aus
+    Temperatur und Trip-Punkten der Zone mit Hysterese nachgerechnet;
+  - ab 80 °C und wenn die Temperatur nicht lesbar ist, volle Stufe;
+  - bei «auto», beim Beenden des Dienstes und nach jedem Schreibfehler regelt wieder der Kernel (`step_wise`), mit
+    einer Stufe nicht unter der automatischen und nicht unter der beim Übernehmen (sonst hielte `step_wise` den Lüfter
+    bei steigender Temperatur zu tief, `docs/module/m13.md`); endet der Dienst hart (Absturz, SIGKILL), stellt
+    `ExecStopPost` (`zenos-argon --luefter-kernel`) den Regler zurück; hängt er, beendet ihn der Watchdog von systemd
+    nach 30 s ohne Lebenszeichen (dann ebenso `ExecStopPost`); ein Neustart des Dienstes räumt einen verwaisten
+    `user_space` zuerst auf;
+  - übernommen wird nur eine Zone, die genau so am Lüfter hängt, wie zenos-argon nachrechnet (nur der Lüfter als
+    Kühler, je aktiver Trip-Punkt eine Stufe). Zonen mit passiven Trip-Punkten (der Kernel drosselt dort die CPU) oder
+    weiteren Kühlern übernimmt zenOS nicht, `user_space` hielte sie an. Die kritische Grenze (110 °C, Abschalten)
+    behandelt der Kernel unabhängig vom Regler weiter.
+
+  Ein «aus» gibt es nicht. Den Wunsch schreibt nur der Helfer `zenos-luefter` nach `/var/lib/zenos/luefter` (root,
+  0644). Ein ungültiger Inhalt gilt als «auto».
 
 ## 1Password
 

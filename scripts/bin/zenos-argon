@@ -9,6 +9,8 @@ Aufruf:
   zenos-argon --pruefen              nur lesend: Gerät, I2C-Bus, Argon an 0x1a bzw. Akku-Messchip an 0x64,
                                      GPIO4, Lüfter, Konfiguration, Freigabe für das Akkuprofil
   zenos-argon --konfig-pruefen       Konfiguration prüfen und die wirksame Kurve zeigen
+  zenos-argon --luefter-kernel       Sicherung für ExecStopPost: steht die Thermal-Zone des Kernel-Lüfters noch auf
+                                     dem Regler user_space, wieder step_wise (schreibt sonst nichts)
 
 Optionen:
   --konfig PFAD          Konfiguration (Standard /etc/xdg/zenos/argon.json, darf fehlen)
@@ -48,15 +50,27 @@ Argon ONE UP (Laptop mit Compute Module 5; Quelle: Argons argononeupd.py, Versio
 - Alle 15 s Ladestand (Register 0x04, ganze %) und Stromrichtung (0x0E Bit 7 gesetzt = Entladen) lesen.
   «lädt» wechselt erst nach drei gleichen Messungen (bis dahin alle 5 s). Unplausible Werte zählen nicht,
   ein Sprung um mehr als 10 % braucht eine zweite Messung.
-- Lüfter und Temperatur nur anzeigen: Kernel-Treiber pwm-fan (hwmon «pwmfan», cooling_device «pwm-fan»,
-  nach Namen gesucht). Der Kernel regelt den Lüfter, zenos-argon fasst ihn nicht an.
+- Lüfter: Kernel-Treiber pwm-fan (hwmon «pwmfan», cooling_device «pwm-fan», nach Namen gesucht). Standard
+  «auto»: Der Kernel regelt (step_wise), zenos-argon liest nur.
 
-Statusdatei /run/zenos/geraet.json (atomar, 0644), alle 5 s (V3) bzw. 15 s (UP):
+Lüfterwunsch /var/lib/zenos/luefter (nur scripts/bin/zenos-luefter schreibt ihn; «modus=auto» oder «modus=mindest»
+mit «stufe=1…4»), gelesen bei jeder Änderung, wirkt also ohne Neustart. Ungültig oder fehlend: «auto».
+- Argon ONE V3: Die Kurve läuft mindestens mit 30 / 50 / 70 / 100 % für Stufe 1–4.
+- Argon ONE UP: zenos-argon stellt die Thermal-Zone des Lüfters auf den Regler user_space und setzt alle 2 s
+  cur_state = max(Mindeststufe, Stufe des Kernels). Die Stufe des Kernels wird aus der Temperatur und den aktiven
+  Trip-Punkten der Zone mit ihrer Hysterese nachgerechnet (aus /sys gelesen, sonst 50 / 60 / 67,5 / 75 °C mit 5 °C).
+  Leitplanken im Code: nie weniger Kühlung als automatisch, ab 80 °C und ohne lesbare Temperatur volle Stufe,
+  beim Beenden, bei «auto» und bei jedem Schreibfehler wieder step_wise; ein verwaister user_space beim Start wird
+  aufgeräumt (dazu ExecStopPost mit --luefter-kernel). Zonen mit passiven Trip-Punkten übernimmt es nicht.
+
+Statusdatei /run/zenos/geraet.json (atomar, 0644), alle 5 s (V3) bzw. 15 s (UP), nach einem neuen Lüfterwunsch sofort:
   {"version": 1, "zeit": ISO-8601, "geraet": "argon-one-v3" | "argon-one-up",
    "akku": {"vorhanden": bool, "prozent": int|null, "laedt": bool|null,
             "zustand": "ok"|"unbekannt"|"fehler"|"freigabe" (Messchip misst nicht, Freigabe fehlt)},
-   "luefter": {"vorhanden": true, "prozent": int|null} (V3) oder
-              {"vorhanden": bool, "stufe": int|null, "stufen": int|null, "upm": int|null} (UP),
+   "luefter": {"vorhanden": true, "prozent": int|null, …} (V3) oder
+              {"vorhanden": bool, "stufe": int|null, "stufen": int|null, "upm": int|null, …} (UP),
+              … = "modus": "auto"|"mindest", "mindeststufe": int|null, "steuerbar": bool (zenOS kann den
+              Lüfterwunsch umsetzen),
    "temperatur": {"cpu": float|null}}
 Ohne passendes Gerät, I2C-Bus oder Argon endet der Dienst mit einer Meldung und Exit 0.
 
@@ -76,6 +90,7 @@ import json
 import math
 import os
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -173,6 +188,25 @@ ARGON_UP_DAEMON_WANTS = "/etc/systemd/system/multi-user.target.wants/argononeupd
 # Zenos Freigabe für das Schreiben des Akkuprofils (zen akku freigeben, nur root kann sie anlegen). Fehlt sie,
 # liest zenos-argon den Messchip nur. Geprüft bei jedem Versuch, also ohne Neustart des Dienstes wirksam.
 PROFILE_RELEASE_PATH = "/etc/xdg/zenos/argon-akkuprofil"
+
+# Lüfterwunsch (scripts/bin/zenos-luefter schreibt ihn, root, 0644): «auto» oder Mindeststufe 1–4
+FAN_WISH_PATH = "/var/lib/zenos/luefter"
+FAN_WISH_MAX_BYTES = 4096
+FAN_MIN_STAGES = (1, 2, 3, 4)
+# Mindeststufe beim Argon ONE V3 in %: die PWM-Werte des Kernel-Lüfters am Compute Module 5 (75 / 125 / 175 / 250
+# von 255, also 29 / 49 / 69 / 98 %), gerundet
+FAN_STAGE_PERCENT = (0, 30, 50, 70, 100)
+# Takt der Mindeststufe am Kernel-Lüfter: Begründung in docs/module/m13.md (Abschnitt «Lüfter einstellen»)
+FAN_CONTROL_INTERVAL = 2.0
+# Nach einem Schreibfehler regelt der Kernel; so lange, bis zenos-argon es erneut versucht
+FAN_RETRY_SECONDS = 60.0
+THERMAL_CLASS = "/sys/class/thermal"
+FALLBACK_ZONE = "thermal_zone0"
+POLICY_KERNEL = "step_wise"
+POLICY_USER = "user_space"
+# Aktive Trip-Punkte (°C, Hysterese °C) der Thermal-Zone am Compute Module 5, am Gerät gelesen (Oktober 2026). Gelten
+# nur, wenn die Zone selbst keine brauchbaren liefert.
+FALLBACK_TRIPS = ((50.0, 5.0), (60.0, 5.0), (67.5, 5.0), (75.0, 5.0))
 
 
 # --- Log -------------------------------------------------------------------
@@ -314,10 +348,12 @@ def fan_speed(temperature, curve):
 
 
 class FanController:
-    """Entscheidet über den Lüfterwert: schneller sofort, langsamer mit Hysterese und Verzögerung."""
+    """Entscheidet über den Lüfterwert: schneller sofort, langsamer mit Hysterese und Verzögerung. minimum (in %, aus
+    der Mindeststufe) hebt die Kurve nur an, nie ab; ab 80 °C bleibt es bei 100 %."""
 
-    def __init__(self, config):
+    def __init__(self, config, minimum=0):
         self.config = config
+        self.minimum = minimum
         self.speed = None
         self._lower_since = None
 
@@ -326,16 +362,18 @@ class FanController:
         self.speed = None
         self._lower_since = None
 
+    def _speed(self, temperature):
+        return max(fan_speed(temperature, self.config.curve), self.minimum)
+
     def update(self, temperature, now):
         """Neuer Lüfterwert oder None, wenn alles bleibt."""
         if temperature is None:
             return self._set(SAFE_SPEED)
-        curve = self.config.curve
-        higher = fan_speed(temperature, curve)
+        higher = self._speed(temperature)
         if self.speed is None or higher > self.speed:
             return self._set(higher)
         # Wert, der auch bei um die Hysterese höherer Temperatur gälte: erst darunter wird abgesenkt
-        lower = fan_speed(temperature + self.config.hysteresis, curve)
+        lower = self._speed(temperature + self.config.hysteresis)
         if lower >= self.speed:
             self._lower_since = None
             return None
@@ -596,6 +634,23 @@ def uptime_seconds():
         return 0.0
 
 
+def watchdog_ping():
+    """Lebenszeichen an systemd (WatchdogSec= in zenos-argon.service, NotifyAccess=main). Bleibt es aus, beendet
+    systemd den hängenden Dienst; ExecStopPost gibt den Lüfter dann dem Kernel zurück, und der Dienst startet neu.
+    Ohne NOTIFY_SOCKET (Tests, --simulieren von Hand) geschieht nichts."""
+    address = os.environ.get("NOTIFY_SOCKET", "")
+    if not address:
+        return
+    if address.startswith("@"):
+        address = "\0" + address[1:]
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sock:
+            sock.connect(address)
+            sock.sendall(b"WATCHDOG=1")
+    except OSError:
+        pass
+
+
 def system_stopping(runner=subprocess.run):
     """Fährt das System gerade herunter (Neustart oder Ausschalten)?"""
     try:
@@ -613,12 +668,23 @@ def round_temperature(value):
     return None if value is None else round(float(value), 1)
 
 
-def argon_v3_report(temperature, speed):
-    """Inhalt der Statusdatei beim Argon ONE V3: Lüfter in %, kein Akku."""
+def fan_wish_report(wish, steerable):
+    """Lüfterwunsch für die Statusdatei: modus, mindeststufe und ob zenOS ihn umsetzen kann (steuerbar)."""
+    return {
+        "modus": wish.mode if wish is not None else "auto",
+        "mindeststufe": wish.stage if wish is not None else None,
+        "steuerbar": bool(steerable and wish is not None),
+    }
+
+
+def argon_v3_report(temperature, speed, wish=None):
+    """Inhalt der Statusdatei beim Argon ONE V3: Lüfter in % mit dem Wunsch, kein Akku."""
+    luefter = {"vorhanden": True, "prozent": None if speed is None else int(speed)}
+    luefter.update(fan_wish_report(wish, True))
     return {
         "geraet": "argon-one-v3",
         "akku": {"vorhanden": False},
-        "luefter": {"vorhanden": True, "prozent": None if speed is None else int(speed)},
+        "luefter": luefter,
         "temperatur": {"cpu": round_temperature(temperature)},
     }
 
@@ -663,12 +729,106 @@ class StatusFile:
             pass
 
 
+# --- Lüfterwunsch ----------------------------------------------------------
+
+
+def parse_fan_wish(text):
+    """Inhalt von /var/lib/zenos/luefter → (modus, stufe, Fehler). Kommentare (#) und unbekannte Schlüssel (z. B.
+    «seit») zählen nicht, bei doppelten gilt der letzte. Ungültiges gilt als «auto»: Dann regelt der Kernel bzw. die
+    Kurve allein, also nie weniger Kühlung als vorgesehen."""
+    values = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, sep, value = line.partition("=")
+        if not sep:
+            return "auto", None, f"Zeile «{line[:40]}» ohne «=»"
+        values[key.strip()] = value.strip()
+    mode = values.get("modus")
+    if mode == "auto":
+        return "auto", None, None
+    if mode == "mindest":
+        stage = values.get("stufe")
+        if stage in tuple(str(s) for s in FAN_MIN_STAGES):
+            return "mindest", int(stage), None
+        return "auto", None, "«stufe» muss 1, 2, 3 oder 4 sein"
+    if mode is None:
+        return "auto", None, "«modus» fehlt"
+    return "auto", None, "«modus» muss «auto» oder «mindest» sein"
+
+
+def read_fan_wish(path):
+    """(modus, stufe, Fehler) aus der Datei. Fehlt sie, gilt «auto» ohne Fehler."""
+    try:
+        with open(path, "rb") as handle:
+            data = handle.read(FAN_WISH_MAX_BYTES + 1)
+    except FileNotFoundError:
+        return "auto", None, None
+    except OSError as err:
+        return "auto", None, f"nicht lesbar ({err.strerror or err})"
+    if len(data) > FAN_WISH_MAX_BYTES:
+        return "auto", None, f"grösser als {FAN_WISH_MAX_BYTES} Byte"
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return "auto", None, "kein UTF-8"
+    return parse_fan_wish(text)
+
+
+def describe_fan_wish(mode, stage):
+    return f"Mindeststufe {stage}" if mode == "mindest" else "automatisch"
+
+
+class FanWish:
+    """Zenos Wunsch für den Lüfter (/var/lib/zenos/luefter): «auto» oder eine Mindeststufe 1–4. Neu gelesen, sobald
+    sich die Datei ändert (Inode, Grösse, Zeit); ein neuer Wunsch wirkt also ohne Neustart des Dienstes."""
+
+    def __init__(self, path, log):
+        self.path = path
+        self.log = log
+        self.mode = "auto"
+        self.stage = None
+        self._stamp = ()  # noch nie gelesen
+
+    @property
+    def minimum(self):
+        """Mindeststufe oder 0 (auto)."""
+        return self.stage if self.mode == "mindest" else 0
+
+    def _current_stamp(self):
+        try:
+            info = os.stat(self.path)
+        except FileNotFoundError:
+            return None
+        except OSError as err:
+            return ("fehler", err.errno)
+        return (info.st_ino, info.st_size, info.st_mtime_ns)
+
+    def refresh(self):
+        """Liest die Datei neu, wenn sie sich geändert hat. True, wenn sich der Wunsch geändert hat."""
+        stamp = self._current_stamp()
+        if stamp == self._stamp:
+            return False
+        self._stamp = stamp
+        mode, stage, problem = read_fan_wish(self.path)
+        if problem:
+            self.log.problem("luefter-wunsch", f"Lüfterwunsch {self.path}: {problem}, es gilt «automatisch»")
+        else:
+            self.log.solved("luefter-wunsch", f"Lüfterwunsch {self.path} ist wieder gültig")
+        if (mode, stage) == (self.mode, self.stage):
+            return False
+        self.mode, self.stage = mode, stage
+        self.log.info(f"Lüfterwunsch: {describe_fan_wish(mode, stage)}")
+        return True
+
+
 # --- Dienst ----------------------------------------------------------------
 
 
 class Daemon:
     def __init__(self, fan, log, status, config_path, temperature_source, simulate=False,
-                 clock=time.monotonic, runner=subprocess.run, stopping=None):
+                 clock=time.monotonic, runner=subprocess.run, stopping=None, wish=None):
         self.fan = fan
         self.log = log
         self.status = status
@@ -678,6 +838,8 @@ class Daemon:
         self.clock = clock
         self.runner = runner
         self.stopping = stopping or (lambda: system_stopping(runner))
+        # Lüfterwunsch (FanWish) oder None: dann nur die Kurve (Einheitentests)
+        self.wish = wish
         self.stop = threading.Event()
         self.applied = None
         self._config_stamp = None
@@ -714,8 +876,15 @@ class Daemon:
         if self._stamp() != self._config_stamp:
             self.controller.config = self._load_config()
 
+    def _check_wish(self):
+        """Mindeststufe aus dem Lüfterwunsch: hebt die Kurve auf 30 / 50 / 70 / 100 % an (nie darunter)."""
+        if self.wish is not None and self.wish.refresh():
+            self.controller.minimum = FAN_STAGE_PERCENT[self.wish.minimum]
+
     def tick(self):
+        watchdog_ping()
         self._check_config()
+        self._check_wish()
         temperature = self.temperature_source()
         if temperature is None:
             self.log.problem("temperatur", "Temperatur nicht lesbar, der Lüfter läuft sicherheitshalber mit 100 %")
@@ -734,8 +903,9 @@ class Daemon:
                 self.applied = value
                 self.log.solved("i2c", "I2C antwortet wieder")
                 shown = "?" if temperature is None else _fmt(round(temperature, 1))
-                self.log.info(f"Lüfter {value} % bei {shown} °C")
-        self.status.write(argon_v3_report(temperature, self.applied))
+                floor = f" (Mindeststufe {self.wish.stage})" if self.wish is not None and self.wish.minimum else ""
+                self.log.info(f"Lüfter {value} % bei {shown} °C{floor}")
+        self.status.write(argon_v3_report(temperature, self.applied, self.wish))
 
     def on_pulse(self, width_ms):
         action = classify_pulse(width_ms)
@@ -1179,8 +1349,9 @@ def find_sysfs_device(directory, prefix, attribute, value):
 
 
 class KernelFan:
-    """Lüfter am Lüfteranschluss (Kernel-Treiber pwm-fan, Regler step_wise). Nur lesen: Stufe aus der
-    cooling_device «pwm-fan» (cur_state/max_state), Drehzahl aus hwmon «pwmfan» (fan1_input)."""
+    """Lüfter am Lüfteranschluss (Kernel-Treiber pwm-fan, Regler step_wise). Liest die Stufe aus der
+    cooling_device «pwm-fan» (cur_state/max_state) und die Drehzahl aus hwmon «pwmfan» (fan1_input). Geschrieben
+    wird nur über KernelFanControl (Mindeststufe)."""
 
     def __init__(self, sysfs, log, clock=time.monotonic):
         self.sysfs = sysfs
@@ -1202,14 +1373,20 @@ class KernelFan:
         self._announced = found
         names = [os.path.basename(p) for p in found if p]
         if names:
-            self.log.info(f"Lüfter: Kernel-Treiber pwm-fan ({', '.join(names)}), der Kernel regelt ihn")
+            self.log.info(f"Lüfter: Kernel-Treiber pwm-fan ({', '.join(names)})")
         else:
             self.log.info("Kein Kernel-Lüfter (pwm-fan) gefunden")
 
-    def read(self):
+    def locate(self):
+        """Pfad der cooling_device «pwm-fan» oder None (sucht höchstens jede Minute neu, solange nichts da ist)."""
         now = self.clock()
         if self.hwmon is None and self.cooling is None and now >= self._next_scan:
             self._scan(now)
+        return self.cooling
+
+    def read(self):
+        now = self.clock()
+        self.locate()
         stage = stages = rpm = None
         broken = False
         if self.cooling:
@@ -1230,38 +1407,513 @@ class KernelFan:
         return {"vorhanden": bool(self.hwmon or self.cooling), "stufe": stage, "stufen": stages, "upm": rpm}
 
 
-class UpDaemon:
-    """Takt beim Argon ONE UP: Akku, Lüfter und Temperatur lesen, Statusdatei schreiben. Schreibt nur beim Laden
-    des Akkuprofils etwas an die Hardware."""
+# --- Mindeststufe für den Kernel-Lüfter --------------------------------------
 
-    def __init__(self, monitor, fan, log, status, temperature_source):
+
+def _read_text(path, limit=256):
+    try:
+        with open(path, encoding="ascii", errors="replace") as handle:
+            return handle.read(limit).strip()
+    except OSError:
+        return None
+
+
+def write_sysfs(path, value):
+    """Ein Wert in eine sysfs-Datei, mit einem einzigen write (O_TRUNC wirkt nur bei den Attrappen der Tests)."""
+    handle = os.open(path, os.O_WRONLY | os.O_TRUNC)
+    try:
+        os.write(handle, str(value).encode("ascii"))
+    finally:
+        os.close(handle)
+
+
+def _zone_name(zone):
+    return os.path.basename(zone.rstrip("/")) if zone else "?"
+
+
+def find_fan_zones(thermal_dir, cooling):
+    """Thermal-Zonen, an die der Kühler gebunden ist (Verweis thermal_zoneN/cdevK → cooling_deviceM)."""
+    target = os.path.realpath(cooling)
+    try:
+        names = sorted((n for n in os.listdir(thermal_dir) if n.startswith("thermal_zone")), key=_natural)
+    except OSError:
+        return []
+    zones = []
+    for name in names:
+        zone = os.path.join(thermal_dir, name)
+        try:
+            entries = os.listdir(zone)
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.startswith("cdev") and entry[4:].isdigit() and \
+                    os.path.realpath(os.path.join(zone, entry)) == target:
+                zones.append(zone)
+                break
+    return zones
+
+
+def fan_zone(thermal_dir, cooling):
+    """Die Thermal-Zone des Lüfters: die erste mit Verweis auf ihn, sonst thermal_zone0 (wie am Gerät gelesen)."""
+    zones = find_fan_zones(thermal_dir, cooling)
+    if zones:
+        return zones[0]
+    fallback = os.path.join(thermal_dir, FALLBACK_ZONE)
+    return fallback if os.path.isdir(fallback) else None
+
+
+def trip_types(zone):
+    types = []
+    for index in range(64):
+        kind = _read_text(os.path.join(zone, f"trip_point_{index}_type"))
+        if kind is None:
+            break
+        types.append(kind)
+    return types
+
+
+def read_trips(zone):
+    """Aktive Trip-Punkte der Zone als ((°C, Hysterese °C), …), aufsteigend, oder None, wenn sie fehlen oder
+    unplausibel sind. Kritische und heisse Trip-Punkte gehören nicht zum Lüfter (die behandelt der Kernel immer,
+    unabhängig vom Regler)."""
+    trips = []
+    for index, kind in enumerate(trip_types(zone)):
+        if kind != "active":
+            continue
+        base = os.path.join(zone, f"trip_point_{index}_")
+        temperature = _read_int(base + "temp")
+        hysteresis = _read_int(base + "hyst")
+        if temperature is None:
+            return None
+        trips.append((temperature / 1000, (hysteresis or 0) / 1000))
+    trips.sort()
+    if not 1 <= len(trips) <= 10:
+        return None
+    for temperature, hysteresis in trips:
+        if not 20 <= temperature <= 100 or not 0 <= hysteresis <= 20:
+            return None
+    if any(t1 == t2 for (t1, _h1), (t2, _h2) in zip(trips, trips[1:])):
+        return None
+    return tuple(trips)
+
+
+def describe_trips(trips):
+    hystereses = {h for _t, h in trips}
+    text = " / ".join(_fmt(t) for t, _h in trips) + " °C"
+    if len(hystereses) == 1:
+        return f"{text}, Hysterese {_fmt(hystereses.pop())} °C"
+    return text + " (Hysterese " + " / ".join(_fmt(h) for _t, h in trips) + " °C)"
+
+
+def zone_links(zone):
+    """Verweise cdevN der Zone als [(echter Pfad des Kühlers, Index des Trip-Punkts oder None)]."""
+    try:
+        entries = sorted((e for e in os.listdir(zone) if e.startswith("cdev") and e[4:].isdigit()), key=_natural)
+    except OSError:
+        return []
+    return [(os.path.realpath(os.path.join(zone, entry)), _read_int(os.path.join(zone, f"{entry}_trip_point")))
+            for entry in entries]
+
+
+def zone_problem(zone, cooling=None):
+    """Warum zenos-argon die Zone nicht übernehmen kann, oder None. Mit cooling (Pfad der cooling_device «pwm-fan»)
+    auch, ob die Zone genau so am Lüfter hängt, wie AutoStage es nachrechnet: Unter user_space regelt der Kernel an
+    dieser Zone gar nichts mehr, und die Leitplanke «nie weniger als automatisch» stimmt nur für dieses Muster."""
+    policy = os.path.join(zone, "policy")
+    if _read_text(policy) is None:
+        return "Regler der Thermal-Zone nicht lesbar"
+    available = (_read_text(os.path.join(zone, "available_policies"), 1024) or "").split()
+    for needed in (POLICY_USER, POLICY_KERNEL):
+        if needed not in available:
+            return f"der Kernel kennt den Regler {needed} nicht"
+    types = trip_types(zone)
+    if "passive" in types:
+        # user_space schaltete auch das Drosseln der CPU durch den Kernel ab: weniger Kühlung als automatisch
+        return "die Zone drosselt auch die CPU (passiver Trip-Punkt)"
+    if cooling is not None:
+        fan = os.path.realpath(cooling)
+        links = zone_links(zone)
+        if not any(target == fan for target, _trip in links):
+            return "die Thermal-Zone ist nicht mit dem Lüfter verbunden"
+        if any(target != fan for target, _trip in links):
+            # user_space hielte auch diesen Kühler an: weniger Kühlung als automatisch
+            return "an der Thermal-Zone hängt noch ein anderer Kühler"
+        active = {index for index, kind in enumerate(types) if kind == "active"}
+        linked = {trip for target, trip in links if target == fan}
+        stages = _read_int(os.path.join(cooling, "max_state"))
+        # Ohne lesbare Trip-Punkte gelten FALLBACK_TRIPS (am Gerät gelesen); sonst je aktiver Trip-Punkt eine Stufe
+        if active and (len(active) != stages or not active <= linked):
+            return "Trip-Punkte und Stufen des Lüfters passen nicht zusammen"
+        if not os.access(os.path.join(cooling, "cur_state"), os.W_OK):
+            return "Stufe des Lüfters nicht schreibbar"
+    if not os.access(policy, os.W_OK):
+        return "Regler der Thermal-Zone nicht schreibbar"
+    return None
+
+
+class AutoStage:
+    """Stufe, die der Kernel-Regler step_wise wählen würde: Der N-te aktive Trip-Punkt (aufsteigend) bringt Stufe N.
+    Er greift ab seiner Temperatur und lässt erst unter Temperatur − Hysterese wieder los, wie im Kernel.
+    stage: Ausgangsstufe für die Hysterese (beim Übernehmen die Stufe, die der Kernel gerade hat)."""
+
+    def __init__(self, trips, stage=0):
+        self.trips = tuple(trips)
+        self.on = [index < stage for index in range(len(self.trips))]
+
+    @property
+    def stage(self):
+        return max((index + 1 for index, on in enumerate(self.on) if on), default=0)
+
+    def update(self, temperature):
+        for index, (trip, hysteresis) in enumerate(self.trips):
+            if temperature >= trip:
+                self.on[index] = True
+            elif temperature < trip - hysteresis:
+                self.on[index] = False
+        return self.stage
+
+
+def kernel_fan_target(temperature, auto_stage, minimum, max_state):
+    """Stufe für den Kernel-Lüfter. Leitplanken: nie unter der automatischen Stufe, ab 80 °C und ohne lesbare
+    Temperatur die volle."""
+    if temperature is None or temperature >= EMERGENCY_TEMPERATURE:
+        return max_state
+    return max(0, min(max(auto_stage, minimum), max_state))
+
+
+class KernelFanControl:
+    """Mindeststufe für den Kernel-Lüfter am Compute Module 5 (pwm-fan an einer Thermal-Zone mit step_wise).
+
+    «auto» (Standard): Der Kernel regelt allein, zenos-argon schreibt nichts nach /sys.
+    Mindeststufe 1–4: zenos-argon stellt die Zone auf den Regler user_space (der Kernel ändert die Stufe dann nicht
+    mehr selbst) und setzt in jedem Takt cur_state = max(Mindeststufe, Stufe des Kernels). Die Stufe des Kernels
+    rechnet AutoStage aus der Temperatur der Zone und ihren Trip-Punkten nach. Kritische Trip-Punkte (Abschalten bei
+    110 °C) behandelt der Kernel unabhängig vom Regler weiter.
+    Leitplanken (Code, nicht Konfiguration): nie weniger als automatisch, ab 80 °C und ohne lesbare Temperatur volle
+    Stufe; bei «auto», beim Beenden und nach jedem Schreibfehler regelt wieder der Kernel (step_wise)."""
+
+    def __init__(self, fan, wish, log, thermal_dir, clock=time.monotonic, temperature_source=None):
+        self.fan = fan
+        self.wish = wish
+        self.log = log
+        self.thermal_dir = thermal_dir
+        self.clock = clock
+        # Ohne Angabe die Temperatur der Zone selbst (dieselbe, nach der der Kernel regelt)
+        self._temperature_source = temperature_source
+        self.zone = None
+        self.reason = "kein Kernel-Lüfter (pwm-fan)"
+        self.active = False
+        self.auto = None
+        self.trips = None
+        self._trips_at = 0.0
+        self._next_scan = 0.0
+        self._retry_at = 0.0
+        self._announced = None
+        self._reported = None
+        # Stufe, die der Kernel beim Übernehmen hatte. step_wise behält unter user_space seine Ziele je Trip-Punkt
+        # (höchstens diese Stufe) und setzt die Stufe erst neu, wenn sich eines davon ändert: Beim Zurückgeben nie
+        # darunter, sonst bliebe der Lüfter bei steigender Temperatur unter dem, was automatisch gälte (_hand_back).
+        self._kernel_floor = 0
+        # Stufe in diesem Takt geändert: Die Statusdatei soll sie gleich zeigen, nicht erst nach 15 s
+        self._stage_changed = False
+
+    # --- Hilfen ---
+
+    def _path(self, name):
+        return os.path.join(self.zone, name)
+
+    def _cooling(self, name):
+        return os.path.join(self.fan.cooling, name)
+
+    def temperature(self):
+        if self._temperature_source is not None:
+            return self._temperature_source()
+        return read_temperature(self._path("temp")) if self.zone else None
+
+    def policy(self):
+        return _read_text(self._path("policy")) if self.zone else None
+
+    def _max_state(self):
+        value = _read_int(self._cooling("max_state"))
+        if value is None or not 1 <= value <= 20:
+            raise OSError(errno.EIO, f"max_state des Lüfters unplausibel ({value})")
+        return value
+
+    def _set_stage(self, stage, temperature, why=""):
+        current = _read_int(self._cooling("cur_state"))
+        if current == stage:
+            return
+        write_sysfs(self._cooling("cur_state"), stage)
+        self._stage_changed = True
+        shown = "?" if temperature is None else _fmt(round(temperature, 1))
+        self.log.info(f"Lüfter Stufe {stage} bei {shown} °C{why}")
+
+    # --- Suche ---
+
+    def _discover(self, now):
+        self._next_scan = now + FAN_RESCAN_SECONDS
+        cooling = self.fan.locate()
+        zone = fan_zone(self.thermal_dir, cooling) if cooling else None
+        if cooling is None:
+            reason = "kein Kernel-Lüfter (pwm-fan)"
+        elif zone is None:
+            reason = "keine Thermal-Zone zum Lüfter"
+        else:
+            reason = zone_problem(zone, cooling)
+        self.zone, self.reason = zone, reason
+        if (zone, reason) == self._announced:
+            return
+        self._announced = (zone, reason)
+        if zone is not None and reason is None:
+            self.log.info(f"Lüfter einstellbar über {_zone_name(zone)} (Regler {self.policy()})")
+        elif cooling is not None:
+            self.log.info(f"Lüfter nicht einstellbar: {reason}; der Kernel regelt allein")
+
+    def _load_trips(self, now):
+        self._trips_at = now
+        trips = read_trips(self.zone)
+        if trips is None:
+            self.log.problem("luefter-trips", f"Trip-Punkte von {_zone_name(self.zone)} fehlen oder sind unplausibel, "
+                             f"es gelten {describe_trips(FALLBACK_TRIPS)}")
+            trips = FALLBACK_TRIPS
+        else:
+            self.log.solved("luefter-trips", f"Trip-Punkte von {_zone_name(self.zone)} wieder lesbar")
+        if trips != self.trips and self.auto is not None:
+            self.log.info(f"Trip-Punkte von {_zone_name(self.zone)} geändert: {describe_trips(trips)}")
+            self.auto = AutoStage(trips, self.auto.stage)
+        self.trips = trips
+        return trips
+
+    # --- Übernehmen und zurückgeben ---
+
+    def _take_over(self, now):
+        trips = self._load_trips(now)
+        # Die Hysterese beginnt bei der Stufe, die der Kernel gerade hat
+        current = _read_int(self._cooling("cur_state")) or 0
+        self.auto = AutoStage(trips, current)
+        write_sysfs(self._path("policy"), POLICY_USER)
+        if self.policy() != POLICY_USER:
+            raise OSError(errno.EIO, f"Regler {POLICY_USER} nicht übernommen")
+        self.active = True
+        # Mit max: Wurde der Regler von Hand zurückgestellt und gleich wieder übernommen, gelten die Ziele von davor
+        self._kernel_floor = max(self._kernel_floor, current)
+        self.log.info(f"Lüfter: Mindeststufe {self.wish.stage}, zenos-argon regelt ({_zone_name(self.zone)}: Regler "
+                      f"{POLICY_USER}, Trip-Punkte {describe_trips(trips)})")
+
+    def _hand_back(self, why, conservative=False):
+        """Der Kernel regelt wieder: zuerst cur_state auf die Stufe, die er selbst hätte, dann der Regler step_wise.
+        step_wise setzt die Stufe nur neu, wenn sich das Ziel eines Trip-Punkts ändert (Trend der Temperatur über eine
+        Schwelle); bis dahin bleibt cur_state, wie es ist. Deshalb:
+        - nicht die Mindeststufe stehen lassen (sie bliebe sonst bis zum nächsten Wechsel an einem Trip-Punkt);
+        - nicht unter die Stufe beim Übernehmen (_kernel_floor): Die Ziele von damals gelten für step_wise weiter. Läge
+          cur_state darunter und stiege die Temperatur ohne Zwischentief über diese Trip-Punkte, änderte sich kein Ziel,
+          und der Lüfter bliebe leiser als automatisch. Darüber bringt ihn der Kernel mit der nächsten fallenden Messung
+          herunter.
+        conservative: ohne eigene Hysterese (verwaister Zustand) die höchste Stufe, die der Kernel haben könnte."""
+        temperature = self.temperature()
+        if self.fan.cooling:
+            try:
+                max_state = self._max_state()
+                floor = min(self._kernel_floor, max_state)
+                if temperature is None:
+                    # Ohne Temperatur regelt auch der Kernel nicht: die Stufe lassen (der letzte Takt ohne Temperatur
+                    # hat sie schon auf voll gestellt), nur nicht unter die Ziele des Kernels
+                    stage = _read_int(self._cooling("cur_state")) or 0
+                    target = min(max(stage, floor), max_state)
+                else:
+                    trips = self.trips or read_trips(self.zone) or FALLBACK_TRIPS
+                    if conservative or self.auto is None:
+                        stage = AutoStage(trips, len(trips)).update(temperature)
+                    else:
+                        stage = self.auto.update(temperature)
+                    target = kernel_fan_target(temperature, max(stage, floor), 0, max_state)
+                note = ""
+                if floor > stage and target == floor:
+                    note = " (Stufe beim Übernehmen; der Kernel senkt sie mit der nächsten fallenden Messung)"
+                self._set_stage(target, temperature, note)
+            except OSError as err:
+                self.log.warning(f"Lüfterstufe vor der Rückgabe an den Kernel nicht gesetzt ({err})")
+        write_sysfs(self._path("policy"), POLICY_KERNEL)
+        self.active = False
+        self.auto = None
+        self._kernel_floor = 0
+        self.log.info(f"Lüfter: wieder automatisch, der Kernel regelt ({_zone_name(self.zone)}: Regler "
+                      f"{POLICY_KERNEL}; {why})")
+
+    def _fail(self, now, err):
+        """Schreibfehler oder Programmfehler: dem Kernel zurückgeben und erst nach einer Pause neu versuchen."""
+        self._retry_at = now + FAN_RETRY_SECONDS
+        self.log.problem("luefter-steuern", f"Lüfter lässt sich nicht einstellen ({err}); der Kernel regelt, neuer "
+                         f"Versuch in {_fmt(FAN_RETRY_SECONDS)} s")
+        if self.zone is None or (not self.active and self.policy() != POLICY_USER):
+            return
+        try:
+            self._hand_back("Fehler beim Einstellen")
+        except Exception as again:
+            self._last_resort(again)
+
+    def _last_resort(self, err):
+        """Zurückgeben an den Kernel ging schief: Dann wenigstens voll kühlen (Sicherheit vor Ruhe)."""
+        self.log.error(f"Regler {POLICY_KERNEL} liess sich nicht setzen ({err}), der Lüfter läuft auf voller Stufe")
+        try:
+            write_sysfs(self._cooling("cur_state"), self._max_state())
+        except (OSError, TypeError) as again:
+            self.log.error(f"Auch die volle Lüfterstufe liess sich nicht setzen ({again})")
+
+    # --- Takt ---
+
+    def start(self):
+        """Beim Start des Dienstes: Steht die Zone noch auf user_space (zenos-argon zuvor abgestürzt oder hart
+        beendet), regelt zuerst wieder der Kernel. Eine Mindeststufe übernimmt danach tick()."""
+        try:
+            self._discover(self.clock())
+        except Exception as err:  # Programmfehler: tick() versucht es wieder, ExecStopPost sichert ab
+            self.log.error(f"Lüfter: Suche nach der Thermal-Zone fehlgeschlagen ({err!r})")
+            return
+        if self.zone is None or self.policy() != POLICY_USER:
+            return
+        self.log.warning(f"{_zone_name(self.zone)} stand noch auf dem Regler {POLICY_USER} (zenos-argon zuvor "
+                         f"abgestürzt?), zurück auf {POLICY_KERNEL}")
+        try:
+            self._hand_back("verwaister Zustand aufgeräumt", conservative=True)
+        except Exception as err:
+            self._last_resort(err)
+
+    def tick(self):
+        """Wunsch prüfen; bei einer Mindeststufe regeln, sonst dem Kernel überlassen. True, wenn sich die Angaben für
+        die Statusdatei oder die Stufe geändert haben (dann schreibt der Dienst sie sofort)."""
+        now = self.clock()
+        self.wish.refresh()
+        try:
+            if not self.active and now >= self._next_scan:
+                self._discover(now)
+            want = self.wish.mode == "mindest" and self.zone is not None and self.reason is None
+            if want and now >= self._retry_at:
+                self._regulate(now)
+                self.log.solved("luefter-steuern", "Lüfter lässt sich wieder einstellen")
+            elif not want and self.active:
+                self._hand_back("Wunsch «automatisch»" if self.wish.mode == "auto" else self.reason or "Lüfter fehlt")
+        except Exception as err:  # auch Programmfehler: Akku und Statusdatei sollen weiterlaufen
+            self._fail(now, err)
+        report = self.report()
+        changed = report != self._reported or self._stage_changed
+        self._reported = report
+        self._stage_changed = False
+        return changed
+
+    def _regulate(self, now):
+        if not self.active:
+            self._take_over(now)
+        else:
+            if now - self._trips_at >= FAN_RESCAN_SECONDS:
+                self._load_trips(now)
+            if self.policy() != POLICY_USER:
+                # Jemand hat den Regler von Hand umgestellt: neu übernehmen (mit der Stufe, die der Kernel jetzt hat)
+                self.active = False
+                self._take_over(now)
+        max_state = self._max_state()
+        temperature = self.temperature()
+        if temperature is None:
+            self.log.problem("luefter-temperatur", "Temperatur der Zone nicht lesbar, der Lüfter läuft sicherheitshalber "
+                             "auf voller Stufe")
+            auto = max_state
+        else:
+            self.log.solved("luefter-temperatur", "Temperatur der Zone wieder lesbar")
+            auto = self.auto.update(temperature)
+        minimum = min(self.wish.stage, max_state)
+        target = kernel_fan_target(temperature, auto, minimum, max_state)
+        why = " (Mindeststufe)" if target == minimum and auto < minimum else ""
+        self._set_stage(target, temperature, why)
+
+    def release(self):
+        """Beim Beenden des Dienstes: Steht die Zone auf user_space, regelt danach wieder der Kernel."""
+        if self.zone is None or (not self.active and self.policy() != POLICY_USER):
+            return
+        try:
+            self._hand_back("der Dienst endet")
+        except Exception as err:
+            self._last_resort(err)
+            try:
+                write_sysfs(self._path("policy"), POLICY_KERNEL)
+            except OSError:
+                pass
+
+    def report(self):
+        """Angaben für die Statusdatei: Wunsch und ob zenOS ihn umsetzen kann."""
+        return fan_wish_report(self.wish, self.zone is not None and self.reason is None)
+
+
+class UpDaemon:
+    """Takt beim Argon ONE UP: Akku, Lüfter und Temperatur lesen, Statusdatei schreiben. Schreibt an die Hardware nur
+    beim Laden des Akkuprofils und, mit einer Mindeststufe für den Lüfter, über control (KernelFanControl)."""
+
+    def __init__(self, monitor, fan, log, status, temperature_source, control=None):
         self.monitor = monitor
         self.fan = fan
         self.log = log
         self.status = status
         self.temperature_source = temperature_source
+        self.control = control
         self.stop = threading.Event()
+        self._akku = None
 
-    def tick(self):
+    def _write(self):
         temperature = self.temperature_source()
+        luefter = self.fan.read()
+        if self.control is not None:
+            luefter.update(self.control.report())
         self.status.write({
             "geraet": "argon-one-up",
-            "akku": self.monitor.tick(),
-            "luefter": self.fan.read(),
+            "akku": self._akku,
+            "luefter": luefter,
             "temperatur": {"cpu": round_temperature(temperature)},
         })
+
+    def tick(self):
+        watchdog_ping()
+        if self.control is not None:
+            self.control.tick()
+        self._akku = self.monitor.tick()
+        self._write()
+
+    def pause(self, seconds):
+        """Pause mitten in einer längeren Arbeit am Messchip (Akkuprofil laden und aktivieren, bis etwa 20 s; als
+        sleep von BatteryGauge): Lüfter weiter regeln und Lebenszeichen geben, sonst stünde die Mindeststufe so lange
+        ohne Blick auf die Temperatur."""
+        watchdog_ping()
+        if self.control is not None and self.control.tick() and self._akku is not None:
+            self._write()
+        time.sleep(seconds)
+
+    def _wait(self, seconds):
+        """Bis zur nächsten Messung warten. Mit Lüftersteuerung in Schritten von höchstens FAN_CONTROL_INTERVAL: Jeder
+        Schritt prüft den Wunsch und regelt bei einer Mindeststufe; ein neuer Wunsch steht sofort in der Statusdatei."""
+        if self.control is None:
+            self.stop.wait(seconds)
+            return
+        steps = max(1, math.ceil(seconds / FAN_CONTROL_INTERVAL - 1e-9))
+        for _ in range(steps):
+            if self.stop.wait(seconds / steps):
+                return
+            watchdog_ping()
+            if self.control.tick():
+                self._write()
 
     def run(self, interval, rounds=None):
         count = 0
         try:
+            if self.control is not None:
+                self.control.start()
             while not self.stop.is_set():
                 self.tick()
                 count += 1
                 if rounds is not None and count >= rounds:
                     break
-                self.stop.wait(min(interval, UP_PENDING_INTERVAL) if self.monitor.pending else interval)
+                self._wait(min(interval, UP_PENDING_INTERVAL) if self.monitor.pending else interval)
         finally:
             self.stop.set()
+            if self.control is not None:
+                self.control.release()
             self.status.remove()
         return 0
 
@@ -1311,7 +1963,8 @@ def parse_args(argv):
         "temperatur_datei": None,
         "pulse": [],
     }
-    modes = {"--simulieren": "simulation", "--pruefen": "pruefen", "--konfig-pruefen": "konfig"}
+    modes = {"--simulieren": "simulation", "--pruefen": "pruefen", "--konfig-pruefen": "konfig",
+             "--luefter-kernel": "luefter-kernel"}
     items = list(argv)
     while items:
         arg = items.pop(0)
@@ -1319,7 +1972,7 @@ def parse_args(argv):
             options["mode"] = "hilfe"
         elif arg in modes:
             if options["mode"] not in ("dienst", modes[arg]):
-                raise UsageError("--simulieren, --pruefen und --konfig-pruefen schliessen sich aus")
+                raise UsageError("--simulieren, --pruefen, --konfig-pruefen und --luefter-kernel schliessen sich aus")
             options["mode"] = modes[arg]
         elif arg == "--konfig":
             options["konfig"] = _option_value(items, arg)
@@ -1359,6 +2012,7 @@ def wait_for_device(path, stop, seconds):
     while not os.path.exists(path):
         if time.monotonic() >= deadline or stop.is_set():
             return False
+        watchdog_ping()
         stop.wait(1)
     return True
 
@@ -1410,7 +2064,8 @@ def run_service(options, log):
     how = f"Register 0x{REG_DUTY_CYCLE:02x}" if register else "einzelnes Byte (Firmware ohne Register)"
     log.info(f"Argon ONE an 0x{ARGON_ADDRESS:02x} gefunden ({model}), Lüfter über {how}")
 
-    daemon = Daemon(fan, log, StatusFile(options["status"], log), options["konfig"], read_temperature)
+    daemon = Daemon(fan, log, StatusFile(options["status"], log), options["konfig"], read_temperature,
+                    wish=FanWish(system_path(FAN_WISH_PATH), log))
     daemon.stop = stop
     ButtonWatcher(stop, daemon.on_pulse, log).start()
     try:
@@ -1451,8 +2106,11 @@ def run_up_service(options, log, model, bus, stop):
                     "und schreibt nichts in den Messchip (entfernen: argon-uninstall)")
     monitor = BatteryMonitor(gauge, log, read_only=read_only, released=profile_released)
     fan = KernelFan(system_path("/sys"), log)
-    daemon = UpDaemon(monitor, fan, log, StatusFile(options["status"], log), read_temperature)
+    control = KernelFanControl(fan, FanWish(system_path(FAN_WISH_PATH), log), log, system_path(THERMAL_CLASS))
+    daemon = UpDaemon(monitor, fan, log, StatusFile(options["status"], log), read_temperature, control=control)
     daemon.stop = stop
+    # Pausen beim Laden des Akkuprofils regeln den Lüfter weiter (UpDaemon.pause)
+    gauge.sleep = daemon.pause
     return daemon.run(options["intervall"] or UP_INTERVAL, options["durchlaeufe"])
 
 
@@ -1473,7 +2131,7 @@ def run_simulation(options, log):
         source = read_temperature
     log.info("Simulation: kein I2C, kein GPIO")
     daemon = Daemon(SimulatedFan(log), log, StatusFile(options["status"], log), options["konfig"], source,
-                    simulate=True, stopping=lambda: False)
+                    simulate=True, stopping=lambda: False, wish=FanWish(system_path(FAN_WISH_PATH), log))
     daemon.stop = stop
     for width in options["pulse"]:
         daemon.on_pulse(width)
@@ -1555,6 +2213,7 @@ def run_check(options, out=sys.stdout):
             line(True, f"Power-Button: {BUTTON_LINE} = {path} ({label}), Zeile {offset}{used}")
 
     _check_config_line(options, line)
+    _check_fan_wish_line(line, ok=True, bad=False)
     return 0 if good else 1
 
 
@@ -1588,6 +2247,7 @@ def run_check_up(model, out=sys.stdout):
         if fan["upm"] is not None:
             parts.append(f"{fan['upm']} U/min")
         line("✓", "Lüfter (Kernel, pwm-fan): " + (" · ".join(parts) or "keine Werte"))
+        _check_fan_control(line)
     else:
         line("·", "Kein Kernel-Lüfter (pwm-fan) gefunden")
     temperature = read_temperature()
@@ -1601,6 +2261,62 @@ def run_check_up(model, out=sys.stdout):
     else:
         line("·", "Akkuprofil schreiben: nicht freigegeben, zenos-argon liest den Messchip nur (zen akku freigeben)")
     return 0 if good else 1
+
+
+def _check_fan_wish_line(line, ok="✓", bad="✗"):
+    """Lüfterwunsch, nur lesend. Gibt (modus, stufe) zurück."""
+    path = system_path(FAN_WISH_PATH)
+    mode, stage, problem = read_fan_wish(path)
+    if problem:
+        line(bad, f"Lüfterwunsch {path}: {problem}, es gilt «automatisch» (zen luefter)")
+    else:
+        line(ok, f"Lüfterwunsch: {describe_fan_wish(mode, stage)}")
+    return mode, stage
+
+
+def _check_fan_control(line):
+    """Argon ONE UP, nur lesend: Wunsch, Thermal-Zone des Lüfters, Regler und Trip-Punkte."""
+    mode, _stage = _check_fan_wish_line(line)
+    thermal = system_path(THERMAL_CLASS)
+    cooling = find_sysfs_device(thermal, "cooling_device", "type", "pwm-fan")
+    zone = fan_zone(thermal, cooling) if cooling else None
+    if zone is None:
+        line("·", "Keine Thermal-Zone zum Lüfter: nicht einstellbar, der Kernel regelt allein")
+        return
+    policy = _read_text(os.path.join(zone, "policy")) or "?"
+    problem = zone_problem(zone, cooling)
+    if problem:
+        line("·", f"{_zone_name(zone)} (Regler {policy}): nicht einstellbar, {problem}")
+    trips = read_trips(zone)
+    line("✓" if trips else "·", f"Trip-Punkte von {_zone_name(zone)}: " +
+         (describe_trips(trips) if trips else f"nicht lesbar, es gälten {describe_trips(FALLBACK_TRIPS)}"))
+    if policy == POLICY_USER and mode == "mindest":
+        line("✓", f"{_zone_name(zone)}: Regler {POLICY_USER}, zenos-argon hält die Mindeststufe")
+    elif policy == POLICY_USER:
+        line("✗", f"{_zone_name(zone)}: Regler {POLICY_USER}, obwohl «automatisch» gilt (sudo systemctl restart "
+                  "zenos-argon stellt step_wise wieder her)")
+    elif mode == "mindest" and not problem:
+        line("·", f"{_zone_name(zone)}: Regler {policy}; die Mindeststufe übernimmt der Dienst (läuft zenos-argon?)")
+    elif not problem:
+        line("✓", f"{_zone_name(zone)}: Regler {policy}, der Kernel regelt")
+
+
+def run_fan_reset(log):
+    """Sicherung für ExecStopPost (zenos-argon.service): Steht die Thermal-Zone des Kernel-Lüfters noch auf dem Regler
+    user_space (Absturz oder hartes Beenden), wieder step_wise. Schreibt sonst nichts; ohne Lüfter oder Zone Exit 0."""
+    thermal = system_path(THERMAL_CLASS)
+    cooling = find_sysfs_device(thermal, "cooling_device", "type", "pwm-fan")
+    zone = fan_zone(thermal, cooling) if cooling else None
+    if zone is None or _read_text(os.path.join(zone, "policy")) != POLICY_USER:
+        return 0
+    try:
+        write_sysfs(os.path.join(zone, "policy"), POLICY_KERNEL)
+    except OSError as err:
+        log.error(f"{_zone_name(zone)}: Regler {POLICY_KERNEL} liess sich nicht setzen ({err})")
+        return 1
+    log.warning(f"{_zone_name(zone)} stand nach dem Ende von zenos-argon noch auf {POLICY_USER}: wieder "
+                f"{POLICY_KERNEL}, der Kernel regelt den Lüfter")
+    return 0
 
 
 def _check_gauge(gauge, line):
@@ -1650,8 +2366,8 @@ def main(argv=None):
         options = parse_args(sys.argv[1:] if argv is None else argv)
     except UsageError as err:
         print(f"zenos-argon: {err}", file=sys.stderr)
-        print("Aufruf: zenos-argon [--simulieren | --pruefen | --konfig-pruefen] [Optionen] (--hilfe)",
-              file=sys.stderr)
+        print("Aufruf: zenos-argon [--simulieren | --pruefen | --konfig-pruefen | --luefter-kernel] [Optionen] "
+              "(--hilfe)", file=sys.stderr)
         return 2
     mode = options["mode"]
     if mode == "hilfe":
@@ -1662,6 +2378,8 @@ def main(argv=None):
     if mode == "pruefen":
         return run_check(options)
     log = Log()
+    if mode == "luefter-kernel":
+        return run_fan_reset(log)
     if mode == "simulation":
         return run_simulation(options, log)
     return run_service(options, log)

@@ -20,6 +20,14 @@ an; eine Version entspricht einem Tag `v…` im Repo.
   Akku-Messchip (Cellwise CW2217). Schläft der Chip, weckt er ihn und lädt Argons Akkuprofil, aber erst nach
   `zen akku freigeben` und nur wenn nötig; danach misst er alle 15 s. Den Lüfter regelt weiter der Kernel.
   `zen akku status`, `zenos-argon --pruefen` und `zen doctor` zeigen den Akku.
+- **Lüfter einstellen:** Im System-Menü klappt die Zeile «Lüfter» eine ruhige Wahl «Auto · 1 · 2 · 3 · 4» auf; ohne
+  Passwort, nur am Gerät. «Auto» ist der Standard wie bisher, eine Stufe ist das Minimum: Bei Wärme läuft der Lüfter
+  schneller, nie leiser als automatisch, ab 80 °C voll. Ein «aus» gibt es nicht. Die Zeile zeigt Stufe und Wunsch
+  («Stufe 2 · mind. 2», «aus · Auto»). Am Argon ONE UP stellt `zenos-argon` dafür den Regler der Thermal-Zone auf
+  `user_space` und gibt ihn bei «Auto», beim Beenden und nach Fehlern an den Kernel zurück (dazu eine Sicherung in der
+  Unit für einen Absturz und ein Watchdog, falls der Dienst hängt); am Argon ONE V3 hebt die Stufe die eigene Kurve
+  an. Der Wunsch bleibt über Neustarts (`/var/lib/zenos/luefter`). `zen luefter [status|auto|1|2|3|4]`, `zen doctor`
+  und `zenos-argon --pruefen` zeigen und setzen ihn. Neu per IPC: `zenos-ipc leiste menue luefter`.
 - **WLAN-Menü oben rechts:** Das System-Menü zeigt «WLAN» mit Schalter, das verbundene Netz und aufklappbar die
   Netze in Reichweite mit Signal und Schloss. Ein Klick verbindet ein bekanntes Netz, bei einem neuen erscheint ein
   Passwortfeld (Enter verbindet, Esc bricht ab); gespeicherte Netze lassen sich vergessen. Es ist nur eine

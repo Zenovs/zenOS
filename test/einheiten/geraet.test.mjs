@@ -1,5 +1,5 @@
-// Einheitentests für shell/dienste/geraet.js (Statusdatei von zenos-argon lesen, Anzeige von Akku und Lüfter,
-// Warnungen bei niedrigem Akku). Läuft ohne Abhängigkeiten: node --test test/einheiten/
+// Einheitentests für shell/dienste/geraet.js (Statusdatei von zenos-argon lesen, Anzeige von Akku und Lüfter samt
+// Lüfterwunsch, Warnungen bei niedrigem Akku). Läuft ohne Abhängigkeiten: node --test test/einheiten/
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -35,7 +35,8 @@ test("lesen: Argon ONE UP", () => {
   const d = roh(L.lesen(datei(UP), JETZT));
   assert.equal(d.frisch, true);
   assert.deepEqual(d.akku, { vorhanden: true, prozent: 87, laedt: true, zustand: "ok" });
-  assert.deepEqual(d.luefter, { vorhanden: true, prozent: -1, stufe: 2, stufen: 4, upm: 3120 });
+  // Älterer Dienst ohne Lüfterwunsch: nur Anzeige
+  assert.deepEqual(d.luefter, { vorhanden: true, prozent: -1, stufe: 2, stufen: 4, upm: 3120, modus: "", mindeststufe: 0, steuerbar: false });
 });
 
 test("lesen: Argon ONE V3 ohne Akku, Lüfter in Prozent", () => {
@@ -70,7 +71,7 @@ test("lesen: unplausible Felder werden unbekannt", () => {
     assert.deepEqual(d.akku, Object.assign({ vorhanden: true }, erwartet), JSON.stringify(akku));
   }
   const l = roh(L.lesen(datei({ luefter: { vorhanden: true, stufe: 5, stufen: 4, upm: -3 } }), JETZT)).luefter;
-  assert.deepEqual(l, { vorhanden: true, prozent: -1, stufe: -1, stufen: -1, upm: -1 });
+  assert.deepEqual(l, { vorhanden: true, prozent: -1, stufe: -1, stufen: -1, upm: -1, modus: "", mindeststufe: 0, steuerbar: false });
 });
 
 test("Anzeige des Akkus", () => {
@@ -103,6 +104,53 @@ test("Anzeige des Lüfters", () => {
   assert.equal(L.luefterWert(k(-1, 1800)), "1800 U/min");
   assert.equal(L.luefterWert({ vorhanden: true, prozent: 0, stufe: -1, stufen: -1, upm: -1 }), "aus");
   assert.equal(L.luefterWert({ vorhanden: false }), "");
+});
+
+const luefter = (teile) => roh(L.lesen(datei({ luefter: Object.assign({ vorhanden: true, stufe: 2, stufen: 4, upm: 3120 }, teile) }), JETZT)).luefter;
+
+test("lesen: Lüfterwunsch", () => {
+  assert.deepEqual(luefter({ modus: "auto", mindeststufe: null, steuerbar: true }),
+    { vorhanden: true, prozent: -1, stufe: 2, stufen: 4, upm: 3120, modus: "auto", mindeststufe: 0, steuerbar: true });
+  assert.deepEqual(luefter({ modus: "mindest", mindeststufe: 3, steuerbar: true }),
+    { vorhanden: true, prozent: -1, stufe: 2, stufen: 4, upm: 3120, modus: "mindest", mindeststufe: 3, steuerbar: true });
+  // nicht steuerbar (z. B. Zone mit passivem Trip-Punkt): Wunsch bekannt, aber nicht bedienbar
+  assert.equal(luefter({ modus: "mindest", mindeststufe: 2, steuerbar: false }).steuerbar, false);
+  // unplausibel: Wunsch unbekannt, nicht bedienbar
+  for (const teile of [{ modus: "mindest", mindeststufe: 5, steuerbar: true }, { modus: "mindest", mindeststufe: 0, steuerbar: true },
+    { modus: "mindest", mindeststufe: "2", steuerbar: true }, { modus: "mindest", steuerbar: true }, { modus: "leise", steuerbar: true },
+    { modus: "auto", steuerbar: "ja" }]) {
+    const l = luefter(teile);
+    assert.equal(l.steuerbar, false, JSON.stringify(teile));
+    assert.equal(L.luefterWahl(l), "", JSON.stringify(teile));
+  }
+  assert.equal(luefter({ modus: "leise", steuerbar: true }).modus, "");
+});
+
+test("Zeile «Lüfter»: Wert mit Wunsch, vom längsten zum kürzesten", () => {
+  assert.deepEqual(roh(L.luefterWerte(luefter({ modus: "mindest", mindeststufe: 2, steuerbar: true }))),
+    ["Stufe 2 von 4 · 3120 U/min · mind. 2", "Stufe 2 · 3120 U/min · mind. 2", "Stufe 2 · mind. 2"]);
+  assert.deepEqual(roh(L.luefterWerte(luefter({ stufe: 0, upm: 0, modus: "auto", steuerbar: true }))), ["aus · Auto"]);
+  assert.deepEqual(roh(L.luefterWerte(luefter({ stufe: 3, upm: -1, modus: "auto", steuerbar: true }))), ["Stufe 3 von 4 · Auto", "Stufe 3 · Auto"]);
+  // Argon ONE V3 (Prozent)
+  const v3 = roh(L.lesen(datei({ geraet: "argon-one-v3", akku: { vorhanden: false }, luefter: { vorhanden: true, prozent: 55, modus: "mindest", mindeststufe: 1, steuerbar: true } }), JETZT)).luefter;
+  assert.deepEqual(roh(L.luefterWerte(v3)), ["55 % · mind. 1"]);
+  assert.equal(L.luefterWahl(v3), "1");
+  // nicht steuerbar oder älterer Dienst: ohne Zusatz, wie bisher
+  assert.deepEqual(roh(L.luefterWerte(luefter({ modus: "mindest", mindeststufe: 2, steuerbar: false })))[0], "Stufe 2 von 4 · 3120 U/min");
+  assert.deepEqual(roh(L.luefterWerte(luefter({})))[0], "Stufe 2 von 4 · 3120 U/min");
+  assert.deepEqual(roh(L.luefterWerte({ vorhanden: false })), []);
+});
+
+test("Wahl «Auto · 1 · 2 · 3 · 4» und Hinweis", () => {
+  assert.equal(L.luefterWahl(luefter({ modus: "auto", steuerbar: true })), "auto");
+  assert.equal(L.luefterWahl(luefter({ modus: "mindest", mindeststufe: 4, steuerbar: true })), "4");
+  assert.equal(L.luefterWahl(luefter({ modus: "mindest", mindeststufe: 4, steuerbar: false })), "");
+  assert.equal(L.luefterWahl(L.leer().luefter), "");
+  assert.equal(L.luefterWahl(null), "");
+  assert.equal(L.luefterHinweis("auto"), "Folgt der Temperatur.");
+  assert.equal(L.luefterHinweis("2"), "Mindestens Stufe 2, bei Wärme schneller.");
+  assert.equal(L.luefterHinweis(""), "");
+  assert.equal(L.luefterHinweis("5"), "");
 });
 
 // Ablauf: Akku-Werte nacheinander, gibt die gemeldeten Stufen zurück

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!--
+  zenOS: Lüfter im System-Menü (pkexec mit scripts/bin/zenos-luefter auto|1|2|3|4).
+  80-argon legt die Datei nach /usr/share/polkit-1/actions/ (root, 0644).
+
+  - Eine Aktion für den Helfer (exec.path), ohne exec.argv1: pkexec ordnet ihr jeden Aufruf des Helfers zu. Der
+    Helfer nimmt nur «auto», «1» bis «4» und «status» an und schreibt nur den Wunsch nach /var/lib/zenos/luefter.
+  - Ohne Passwort, aber nur in der aktiven Sitzung am Gerät (allow_active). Aus SSH oder einer inaktiven Sitzung
+    nie: dort gilt «zen luefter» mit sudo.
+  - Begründung: harmlos. Eine Mindeststufe macht den Lüfter höchstens lauter, nie leiser als automatisch; die
+    Leitplanken (80 °C, Temperatur nicht lesbar, Rückgabe an den Kernel) stehen im Code von zenos-argon.
+-->
+<policyconfig>
+  <vendor>zenOS</vendor>
+
+  <action id="org.zenos.luefter.setzen">
+    <description>Lüfter einstellen</description>
+    <message>Lüfter einstellen (automatisch oder Mindeststufe).</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/opt/zenos/scripts/bin/zenos-luefter</annotate>
+  </action>
+</policyconfig>

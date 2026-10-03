@@ -164,11 +164,28 @@ schliesst. Beim Sperren schliessen alle Menüs, und während der Sperre bleiben 
 - Ohne NetworkManager: die Netzzeile wie bisher, mit WLAN-Gerät darunter 12 px `gedaempft` «WLAN wählen: im
   Terminal «zen netzwerk umstellen», dann neu starten.»
 
-Im System-Menü folgt nach 1Password und einer Trennlinie das Gerät, nur zur Anzeige: Akku («87 % · lädt»,
-«100 % · Netzteil», «9 %», «nicht freigegeben»), Lüfter («aus» oder «Stufe 2 von 4 · 3120 U/min») und
-CPU-Temperatur («41 °C»). Zeilen ohne Wert fehlen, ohne Akku und Lüfter bleibt nur die Temperatur. Bei niedrigem
-Akku steht sein Symbol in `warnung`. Werte reichen höchstens bis kurz vor den Titel und werden sonst in der Mitte
-gekürzt.
+Im System-Menü folgt nach 1Password und einer Trennlinie das Gerät: Akku («87 % · lädt», «100 % · Netzteil», «9 %»,
+«nicht freigegeben»), Lüfter und CPU-Temperatur («41 °C»). Zeilen ohne Wert fehlen, ohne Akku und Lüfter bleibt nur
+die Temperatur. Bei niedrigem Akku steht sein Symbol in `warnung`. Werte reichen höchstens bis kurz vor den Titel und
+werden sonst in der Mitte gekürzt.
+
+**Lüfter im System-Menü** (`LuefterAbschnitt`): Die Zeile zeigt Stufe, Drehzahl und Wunsch in Geist Mono, von
+lang nach kurz der erste Text, der passt: «Stufe 2 von 4 · 3120 U/min · mind. 2», «Stufe 2 · 3120 U/min · mind. 2»,
+«Stufe 2 · mind. 2»; ausgeschaltet «aus · Auto», beim Argon ONE V3 «55 % · Auto». Kann zenos-argon den Wunsch umsetzen,
+ist die Zeile ein Eintrag wie die übrigen (Zeigen und Fokus mit `flaeche2`) mit dem Pfeil wie bei «Netze in
+Reichweite»; sonst bleibt sie reine Anzeige ohne Zusatz.
+
+- Klick, Enter oder Leertaste klappen darunter die Wahl auf (ohne Animation, die Karte wächst einfach): fünf
+  gleich breite Segmente «Auto · 1 · 2 · 3 · 4», bündig mit den Titeln, 32 px hoch, Fläche `flaeche2` mit Radius 10;
+  das gewählte Segment hebt sich mit `flaeche` ab, Text 13 px, gewählt in `text`, sonst `gedaempft`. Zeigen hinterlegt
+  ein Segment mit `flaeche` zu 45 % (120 ms).
+- Tastatur: Pfeil runter bzw. Enter auf der Zeile führt in die Wahl, Pfeile links/rechts (Pos1/Ende) wandern, der
+  Fokusrahmen (2 px Akzent) zeigt das Segment; Enter oder Leertaste wählt. Pfeil hoch/runter und Esc wie im Menü.
+- Darunter eine Zeile 12 px in `gedaempft`: «Folgt der Temperatur.» bzw. «Mindestens Stufe 2, bei Wärme schneller.»,
+  während des Einstellens «Wird eingestellt …». Die neue Wahl ist sofort hervorgehoben und gilt, bis zenos-argon sie
+  in `geraet.json` bestätigt (höchstens etwa 2 s, beim V3 5 s). Fehler und eine ausbleibende Bestätigung erscheinen
+  ruhig als Hinweis (Warnung), die Wahl springt zurück. Kein Passwort (polkit, `docs/sicherheit.md`), während der
+  Sperre nie.
 
 Solange die Firewall aus ist, steht im System-Menü unter «Einstellungen» der Eintrag «Firewall» mit dem Wert «aus»
 und dem offenen Schloss, ohne Farbe; er öffnet die Einstellungen (System). Ist sie an, fehlt er.

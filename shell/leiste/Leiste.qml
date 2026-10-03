@@ -21,6 +21,8 @@ Scope {
     property real menueX: 0
     // System-Menü mit aufgeklappter WLAN-Liste öffnen (zenos-ipc leiste menue wlan)
     property bool menueWlanOffen: false
+    // System-Menü mit aufgeklappter Wahl des Lüfters öffnen (zenos-ipc leiste menue luefter)
+    property bool menueLuefterOffen: false
 
     // NetworkManager läuft (geprüft beim Start und beim Öffnen des System-Menüs, bis er einmal lief). Erst dann
     // entsteht WlanQuelle: Quickshell wählt sein Netz-Backend beim ersten Zugriff und behält es bis zum Neustart.
@@ -63,6 +65,7 @@ Scope {
     function menueSchliessen(): void {
         menue = "";
         menueWlanOffen = false;
+        menueLuefterOffen = false;
     }
 
     // Nur der Zustand des Dienstes (Argumentliste, keine Shell); Exit 0 = läuft
@@ -199,6 +202,7 @@ Scope {
                         wlanQuelle: root.wlan
                         wlanNmLaeuft: root.nmLaeuft
                         wlanOffen: root.menueWlanOffen
+                        luefterOffen: root.menueLuefterOffen
                         onSchliessen: root.menueSchliessen()
                     }
                 }
@@ -247,22 +251,23 @@ Scope {
         }
     }
 
-    // zenos-ipc leiste menue system|raster|wlan · zenos-ipc leiste schliessen
-    // (für Tests und eigene Tastenkürzel; öffnet auf dem ersten Bildschirm; «wlan» ist das System-Menü mit
-    // aufgeklappter WLAN-Liste)
+    // zenos-ipc leiste menue system|raster|wlan|luefter · zenos-ipc leiste schliessen
+    // (für Tests und eigene Tastenkürzel; öffnet auf dem ersten Bildschirm; «wlan» bzw. «luefter» ist das System-Menü
+    // mit aufgeklappter WLAN-Liste bzw. Wahl des Lüfters)
     IpcHandler {
         target: "leiste"
 
         function menue(name: string): void {
-            if (name !== "system" && name !== "raster" && name !== "wlan")
+            if (["system", "raster", "wlan", "luefter"].indexOf(name) < 0)
                 return;
             const instanz = leisten.instances.length > 0 ? leisten.instances[0] : null;
             if (!instanz)
                 return;
-            if (name === "wlan") {
-                // neu aufbauen, damit die Liste aufgeklappt beginnt
+            if (name === "wlan" || name === "luefter") {
+                // neu aufbauen, damit die Liste bzw. Wahl aufgeklappt beginnt
                 root.menueSchliessen();
-                root.menueWlanOffen = true;
+                root.menueWlanOffen = name === "wlan";
+                root.menueLuefterOffen = name === "luefter";
                 name = "system";
             }
             instanz.menueOeffnen(name);

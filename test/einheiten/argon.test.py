@@ -465,7 +465,8 @@ class Statusdatei(unittest.TestCase):
             self.assertEqual(daten["version"], 1)
             self.assertEqual(daten["geraet"], "argon-one-v3")
             self.assertEqual(daten["temperatur"], {"cpu": 46.6})
-            self.assertEqual(daten["luefter"], {"vorhanden": True, "prozent": 30})
+            self.assertEqual(daten["luefter"], {"vorhanden": True, "prozent": 30, "modus": "auto", "mindeststufe": None,
+                                                "steuerbar": False})
             self.assertEqual(daten["akku"], {"vorhanden": False})
             self.assertRegex(daten["zeit"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d$")
             self.assertEqual(stat.S_IMODE(os.stat(pfad).st_mode), 0o644)
@@ -473,8 +474,7 @@ class Statusdatei(unittest.TestCase):
             status.write(A.argon_v3_report(None, None))
             with open(pfad, encoding="utf-8") as f:
                 daten = json.load(f)
-            self.assertEqual((daten["temperatur"], daten["luefter"]),
-                             ({"cpu": None}, {"vorhanden": True, "prozent": None}))
+            self.assertEqual((daten["temperatur"], daten["luefter"]["prozent"]), ({"cpu": None}, None))
             self.assertEqual(os.listdir(os.path.dirname(pfad)), ["geraet.json"])
             status.remove()
             self.assertFalse(os.path.exists(pfad))

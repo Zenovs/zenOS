@@ -11,7 +11,8 @@
 # I2C-Bus 1), entscheidet der Dienst selbst; sonst endet er mit einer Meldung. Dazu der Hook
 # /usr/lib/systemd/system-shutdown/zenos-argon, der beim Ausschalten das Abschaltsignal an die Platine des V3
 # sendet. Firmware und /boot/firmware/config.txt fasst zenOS nie an: Fehlt der I2C-Bus, gibt es nur einen
-# Hinweis (Rückfrage-Thema).
+# Hinweis (Rückfrage-Thema). Dazu die polkit-Aktion für die Zeile «Lüfter» im System-Menü (pkexec mit
+# scripts/bin/zenos-luefter, ohne Passwort, nur in der aktiven Sitzung am Gerät).
 
 modul_system() {
   local einheit=zenos-argon.service zeile
@@ -38,6 +39,11 @@ modul_system() {
   # nicht neu startet.
   datei_installieren "$ZENOS_CODE/system/systemd/system-shutdown/zenos-argon" \
     /usr/lib/systemd/system-shutdown/zenos-argon 0755 root:root
+
+  # Lüfter im System-Menü: polkit-Aktion für pkexec mit scripts/bin/zenos-luefter (pkexec kommt aus
+  # pakete/sicherheit.txt). Auch im Image und auf Geräten ohne Argon: Sie erlaubt nur, den Wunsch zu schreiben.
+  datei_installieren "$ZENOS_CODE/system/polkit/org.zenos.luefter.policy" \
+    /usr/share/polkit-1/actions/org.zenos.luefter.policy
 
   _argon_i2c_hinweis
   _argon_akku_hinweis

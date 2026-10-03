@@ -95,6 +95,7 @@ modul_benutzer() {  # optional; als Benutzer, ohne sudo, nie im --image-Modus
 | `zen bootsplash [status\|aktivieren\|deaktivieren]` | Bootsplash | Plymouth-Stand anzeigen; `aktivieren` schaltet nach der Eingabe «aktivieren» ein, `deaktivieren` nimmt es zurück (`docs/module/bootsplash.md`) |
 | `zen netzwerk [status\|umstellen\|zurueck]` | Netz | Netz auf NetworkManager umstellen (WLAN-Menü) nach Plan und Eingabe «umstellen», wirksam nach dem Neustart; `zurueck` stellt die Sicherung wieder her (`docs/module/netzwerk.md`) |
 | `zen akku [status\|freigeben\|sperren]` | M13 | Akku des Argon ONE UP anzeigen; `freigeben` erlaubt zenos-argon nach der Eingabe «freigeben», Argons Akkuprofil in den Messchip zu schreiben, `sperren` nimmt es zurück |
+| `zen luefter [status\|auto\|1\|2\|3\|4]` | M13 | Lüfter anzeigen (ohne sudo) oder einstellen: automatisch oder Mindeststufe, mit sudo über `bin/zenos-luefter`; dasselbe im System-Menü |
 
 - `zen <befehl>` sourct `zen.d/<befehl>.sh` und ruft `befehl_<befehl>` auf (Bindestriche werden zu
   Unterstrichen). Unbekannter Befehl: Hilfe und Exit 2.

@@ -7,7 +7,8 @@ import qs.komponenten
 
 // System-Menü unter dem System-Knopf der Leiste: Netz mit WLAN (WlanAbschnitt: Netz wählen, verbinden,
 // vergessen, WLAN ein/aus über NetworkManager), Lautstärke mit Regler und Stumm, 1Password, dann das Gerät
-// (Akku, Lüfter, CPU-Temperatur; nur Anzeige), dann Sperren, Einstellungen, Abmelden, Neustart und Ausschalten.
+// (Akku und CPU-Temperatur als Anzeige; Lüfter mit aufklappbarer Wahl «Auto · 1 · 2 · 3 · 4», LuefterAbschnitt),
+// dann Sperren, Einstellungen, Abmelden, Neustart und Ausschalten.
 Menuekarte {
     id: root
 
@@ -16,6 +17,8 @@ Menuekarte {
     property bool wlanNmLaeuft: false
     // Liste der WLANs gleich aufgeklappt (zenos-ipc leiste menue wlan)
     property bool wlanOffen: false
+    // Wahl des Lüfters gleich aufgeklappt (zenos-ipc leiste menue luefter)
+    property bool luefterOffen: false
 
     breite: 300
 
@@ -136,7 +139,7 @@ Menuekarte {
         wert: System.einsPasswortLaeuft ? "läuft" : System.einsPasswortInstalliert ? "nicht gestartet" : "nicht installiert"
     }
 
-    // --- Gerät: Akku, Lüfter, CPU-Temperatur (nur Anzeige; Werte von zenos-argon bzw. aus /sys) ---
+    // --- Gerät: Akku, Lüfter, CPU-Temperatur (Werte von zenos-argon bzw. aus /sys; nur der Lüfter ist einstellbar) ---
 
     Abschnitt {
         visible: akkuZeile.visible || luefterZeile.visible || temperaturZeile.visible
@@ -153,13 +156,10 @@ Menuekarte {
         wert: Geraet.akkuWert
     }
 
-    Statuszeile {
+    LuefterAbschnitt {
         id: luefterZeile
 
-        visible: Geraet.luefterWert !== ""
-        symbol: "luefter"
-        titel: "Lüfter"
-        wert: Geraet.luefterWert
+        offen: root.luefterOffen
     }
 
     Statuszeile {

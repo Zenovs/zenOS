@@ -98,7 +98,8 @@ erscheint erst nach dem Neustart, und eine SSH-Verbindung bleibt während der In
 | `Oberflaeche` | Zustand der Oberfläche (was offen ist, `gesperrt`), Hinweise, Sperr-Anforderung |
 | `Aktionen` | Prozessstarts mit Argumentlisten: Apps, Terminal, Dateien, Ablage, Werkzeuge, Abmelden, Neustart, Ausschalten |
 | `System` | Temperatur, Netz, Ton (PipeWire), 1Password |
-| `Geraet` | Akku und Lüfter aus `/run/zenos/geraet.json` (`zenos-argon`), Mitteilung bei niedrigem Akku |
+| `Geraet` | Akku und Lüfter aus `/run/zenos/geraet.json` (`zenos-argon`) samt Lüfterwunsch, Mitteilung bei niedrigem Akku |
+| `Luefter` | Lüfter einstellen («auto» oder Mindeststufe 1–4) über `pkexec zenos-luefter`, Bestätigung über `Geraet` |
 | `Mitteilungen` | Mitteilungsdienst (`NotificationServer`), Bündelung, Zentrale |
 | `Konfig` | Modi, Zustände, Raster, Bildschirme, Web-Apps lesen; schreiben über `zenos-konfig` |
 | `Modi` | aktiver Modus, Wechsel (Akzent, Raster, Apps, Chrome-Profil) |
@@ -152,7 +153,8 @@ Die Tastenkürzel von labwc rufen dieselben Ziele auf (Liste in `docs/module/m9.
 | `zenos-bildschirmfoto`, `zenos-pipette` | Werkzeuge des Befehlsfelds |
 | `zenos-chrome`, `zenos-webapp` | Chrome im Profil des Modus, Web-Apps |
 | `zenos-apps` | proprietäre Apps installieren (`zen apps`) |
-| `zenos-argon` | Argon ONE: Lüfter und Power-Button (V3), Akku-Messchip (ONE UP), Werte für die Leiste |
+| `zenos-argon` | Argon ONE: Lüfter und Power-Button (V3), Akku-Messchip (ONE UP), Mindeststufe für den Lüfter, Werte für die Leiste |
+| `zenos-luefter` | Lüfterwunsch schreiben («auto» oder Mindeststufe 1–4; root: über pkexec oder sudo, `zen luefter`) |
 | `zenos-netzwerk` | Netz von netplan/systemd-networkd auf NetworkManager umstellen und zurück (`zen netzwerk`) |
 | `zenos-firewall` | Firewall ein- und ausschalten (root: über pkexec, sudo oder `install.sh`), bewussten Zustand merken |
 
@@ -239,7 +241,10 @@ Die Regeln aus dem Manifest stehen im Code, nicht in der Konfiguration, und lass
   Akku-Messchip CW2217 (lädt bei Bedarf Argons Akkuprofil hinein, erst nach `zen akku freigeben`, siehe
   `docs/sicherheit.md`) und zeigt Lüfter
   und Temperatur des Kernels an. Beide schreiben `/run/zenos/geraet.json`; die Oberfläche (`Geraet`) zeigt Akku
-  und Lüfter in Leiste und System-Menü und meldet niedrigen Akku. Einzelheiten in `docs/module/m13.md`.
+  und Lüfter in Leiste und System-Menü und meldet niedrigen Akku. Den Lüfter stellt Zeno im System-Menü oder mit
+  `zen luefter` auf «auto» oder eine Mindeststufe 1–4: Der Helfer `zenos-luefter` (pkexec bzw. sudo) schreibt nur
+  den Wunsch, `zenos-argon` setzt ihn um (beim ONE UP über den Regler `user_space` der Thermal-Zone, nie weniger als
+  automatisch). Einzelheiten in `docs/module/m13.md`.
 
 ## Entscheidung: Logik für Modi und Zustände (C5)
 
@@ -272,8 +277,9 @@ Die Logik läuft in Quickshell selbst, ohne eigenen Hintergrunddienst.
 | Lüfterkurve (optional) | `/etc/xdg/zenos/argon.json` | nie |
 | Freigabe Akkuprofil (ONE UP) | `/etc/xdg/zenos/argon-akkuprofil` (`zen akku freigeben`) | nie |
 | Gerätewerte (Akku, Lüfter) | `/run/zenos/geraet.json` (flüchtig, Ordner gehört `zenos-argon`) | nie |
+| Lüfterwunsch | `/var/lib/zenos/luefter` (`modus=auto\|mindest`, `stufe=1…4`, `seit=…`; root, 0644; fehlt = auto) | nie |
 | Firewall, bewusster Zustand | `/var/lib/zenos/firewall` (`zustand=an\|aus`, `seit=…`; root, 0644; fehlt = Standard an) | nie |
-| polkit-Aktionen | `/usr/share/polkit-1/actions/org.zenos.firewall.policy` | ja (Kopie von `system/polkit/`) |
+| polkit-Aktionen | `/usr/share/polkit-1/actions/org.zenos.firewall.policy`, `org.zenos.luefter.policy` | ja (Kopie von `system/polkit/`) |
 | Quickshell | `/usr/local/bin/quickshell`, Stempel `/usr/local/share/zenos/quickshell.version` | nein, Quellbau |
 | Schriften | `/usr/local/share/fonts/zenos/` | ja (`assets/fonts/`) |
 | App-Icon `zenos` | `~/.local/share/icons/hicolor/<n>x<n>/apps/zenos.png` | ja (`assets/zeichen/png/`) |

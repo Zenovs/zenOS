@@ -497,6 +497,31 @@ systemctl --user start zenos-shell.service
 - [ ] Bootsplash: `zen doctor` zeigt «Bootsplash vorbereitet, nicht aktiv», beim Start erscheint noch keiner. Er bleibt
   aus, bis du entscheidest (siehe G).
 
+**Lüfter einstellen (Argon ONE UP, auch Argon ONE V3)**
+- [ ] System-Menü: Die Zeile «Lüfter» zeigt z. B. «aus · Auto» und rechts einen Pfeil. Ein Klick klappt darunter
+  «Auto · 1 · 2 · 3 · 4» auf, «Auto» ist hervorgehoben, darunter «Folgt der Temperatur.». Hell und dunkel ruhig, nichts
+  blinkt.
+- [ ] «2» antippen: kein Passwort. «Wird eingestellt …», nach höchstens 2 Sekunden «… · mind. 2» in der Zeile, der
+  Lüfter läuft hörbar an. Per SSH: `cat /sys/class/thermal/thermal_zone0/policy` zeigt `user_space`, `zen luefter`
+  zeigt «Mindeststufe 2», `journalctl -u zenos-argon` «Lüfter: Mindeststufe 2, zenos-argon regelt (…)».
+- [ ] Tastatur: Menü öffnen, mit Pfeil runter bis zur Wahl, links/rechts zeigt der Fokusrahmen das Segment, Enter
+  wählt.
+- [ ] Unter Last (viermal `yes > /dev/null &`) steigt die Stufe über 2 hinaus, wie sie es automatisch täte (ab
+  60 / 67,5 / 75 °C Stufe 2 / 3 / 4). Nach `pkill yes` sinkt sie wieder, aber nie unter 2.
+- [ ] «Auto» antippen: Nach höchstens 2 Sekunden «… · Auto», `policy` wieder `step_wise`, die Stufe wie vorher
+  automatisch. Hast du die Stufe unter Last gewählt, steht der Lüfter kurz auf der Stufe von damals und wird dann
+  mit der Temperatur leiser.
+- [ ] Neustart mit Mindeststufe 1: Danach gilt sie wieder (`zen luefter`, System-Menü).
+- [ ] Per SSH mit Mindeststufe 2: `sudo kill -9 $(systemctl show -p MainPID --value zenos-argon)`. Gleich danach zeigt
+  `policy` wieder `step_wise` (Sicherung beim Beenden), nach 10 Sekunden läuft der Dienst neu und hält wieder
+  Stufe 2. `journalctl -u zenos-argon` nennt beides.
+- [ ] Per SSH mit Mindeststufe 2, der Dienst hängt:
+  `sudo kill -STOP $(systemctl show -p MainPID --value zenos-argon)`. Nach etwa 30 Sekunden zeigt
+  `journalctl -u zenos-argon` «Watchdog timeout», `policy` steht wieder auf `step_wise`, 10 Sekunden später hält
+  der neue Lauf wieder Stufe 2.
+- [ ] `zen luefter 3` (mit sudo) und `zen luefter auto` wirken wie das Menü. `zen doctor` zeigt im Abschnitt «Argon
+  ONE» den Lüfterwunsch und den Regler ohne Warnung.
+
 **Flüssigkeit**
 - [ ] Befehlsfeld, Hell/Dunkel, Fensterwechsel (`Alt + Tab` und App-Leiste) und Einrasten laufen flüssig (60 fps).
   Nichts ruckelt, nichts blinkt.

@@ -753,9 +753,11 @@ START_RUNDGANG=(
   "befehlsfeld status → offen"
   "befehlsfeld ansicht → apps"
   "befehlsfeld schliessen"
-  # System-Menü, auch mit aufgeklappter WLAN-Liste (ohne NetworkManager: Anzeige und Hinweis)
+  # System-Menü, auch mit aufgeklappter WLAN-Liste (ohne NetworkManager: Anzeige und Hinweis) und Wahl des Lüfters
+  # (ohne zenos-argon: keine Lüfterzeile)
   "leiste menue system"
   "leiste menue wlan"
+  "leiste menue luefter"
   "leiste schliessen"
   "mitteilungen zentrale"
   "mitteilungen zentrale"

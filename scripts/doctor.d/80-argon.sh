@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 80-argon: Argon ONE – Dienst, Abschaltsignal, Gerät (Pi 5 mit V3 oder Compute Module 5 mit ONE UP), I2C-Bus,
-# Argon an 0x1a bzw. Akku-Messchip an 0x64 (nur lesend), Werte für die Leiste (Akku, Lüfter), Kurve
+# Argon an 0x1a bzw. Akku-Messchip an 0x64 (nur lesend), Werte für die Leiste (Akku, Lüfter), Kurve, Lüfterwunsch
+# und Regler der Thermal-Zone (zen luefter)
 # shellcheck shell=bash
 
 pruefe_argon() {
@@ -26,6 +27,7 @@ pruefe_argon() {
   fi
   _argon_dienst "$i2c"
   [[ "$geraet" == up ]] || _argon_kurve
+  _argon_luefter "$geraet"
   _argon_originalskript
 }
 
@@ -186,13 +188,15 @@ _argon_werte() {
   zeile=$(jq -r 'select(.version == 1) | [
       .geraet,
       (.temperatur.cpu // "?" | if type == "number" then round else . end),
-      (.luefter | if .vorhanden != true then "kein Lüfter"
+      (.luefter | (if .vorhanden != true then "kein Lüfter"
                   elif .prozent != null then "Lüfter \(.prozent) %"
                   elif .stufe == 0 then "Lüfter aus"
                   elif .stufe != null then "Lüfter Stufe \(.stufe) von \(.stufen)"
                     + (if .upm != null then " · \(.upm) U/min" else "" end)
                   elif .upm != null then "Lüfter \(.upm) U/min"
-                  else "Lüfter ohne Werte" end),
+                  else "Lüfter ohne Werte" end)
+                + (if .vorhanden == true and .steuerbar == true then
+                     (if .modus == "mindest" then " · mind. \(.mindeststufe)" else " · auto" end) else "" end)),
       (.akku | if .vorhanden != true then "" elif .prozent != null
                then "Akku \(.prozent) %" + (if .laedt == true then ", lädt" elif .laedt == false then ", Akkubetrieb"
                                               else "" end)
@@ -209,7 +213,7 @@ _argon_werte() {
     return 0
   fi
   case "$luefter" in
-    "Lüfter ohne Werte") warnung "Leiste bekommt $temperatur °C, der Lüfter antwortet aber nicht (journalctl -u zenos-argon)" ;;
+    "Lüfter ohne Werte"*) warnung "Leiste bekommt $temperatur °C, der Lüfter antwortet aber nicht (journalctl -u zenos-argon)" ;;
     *) ok "Leiste bekommt $temperatur °C · $luefter (${geraet:-?}, vor $alter s)" ;;
   esac
   [[ "$geraet" == argon-one-up ]] || return 0
@@ -219,6 +223,64 @@ _argon_werte() {
     freigabe) hinweis "Akku: Der Messchip misst nicht, und das Akkuprofil schreiben ist nicht freigegeben (zen akku freigeben)" ;;
     *) warnung "Akku nicht lesbar (${zustand:-unbekannt}; journalctl -u zenos-argon)" ;;
   esac
+}
+
+# Thermal-Zone des Kernel-Lüfters: Verweis cdevN auf die cooling_device «pwm-fan», sonst thermal_zone0
+_argon_luefter_zone() {
+  local kuehler="" d z c
+  for d in /sys/class/thermal/cooling_device*; do
+    if [[ "$(cat -- "$d/type" 2> /dev/null)" == pwm-fan ]]; then
+      kuehler=$(readlink -f -- "$d")
+      break
+    fi
+  done
+  [[ -n "$kuehler" ]] || return 1
+  for z in /sys/class/thermal/thermal_zone*; do
+    for c in "$z"/cdev*; do
+      if [[ -L "$c" && "$(readlink -f -- "$c")" == "$kuehler" ]]; then
+        printf '%s' "$z"
+        return 0
+      fi
+    done
+  done
+  [[ -d /sys/class/thermal/thermal_zone0 ]] || return 1
+  printf '%s' /sys/class/thermal/thermal_zone0
+}
+
+# Lüfterwunsch (zen luefter) und, beim ONE UP, der Regler der Thermal-Zone (nur lesend). Warnung, wenn die Zone auf
+# user_space steht, obwohl «automatisch» gilt oder zenos-argon nicht läuft: Dann regelt niemand den Lüfter.
+_argon_luefter() {
+  local geraet=$1 helfer=/opt/zenos/scripts/bin/zenos-luefter wunsch="" zone policy dienst=0 name
+  if [[ -x "$helfer" ]]; then
+    wunsch=$("$helfer" status 2> /dev/null) || wunsch=""
+    wunsch=${wunsch#Lüfter: }
+  fi
+  case "$wunsch" in
+    "") hinweis "Lüfterwunsch nicht lesbar ($helfer fehlt? install.sh ausführen)" ;;
+    *ungültig*) warnung "Lüfterwunsch in /var/lib/zenos/luefter ungültig, es gilt «automatisch» (neu setzen: zen luefter auto|1|2|3|4)" ;;
+    *) ok "Lüfterwunsch: $wunsch" ;;
+  esac
+  [[ "$geraet" == up ]] || return 0
+  if ! zone=$(_argon_luefter_zone); then
+    hinweis "Kein Kernel-Lüfter (pwm-fan) mit Thermal-Zone gefunden"
+    return 0
+  fi
+  name=${zone##*/}
+  policy=$(cat -- "$zone/policy" 2> /dev/null) || policy=""
+  if systemctl --quiet is-active zenos-argon.service 2> /dev/null; then dienst=1; fi
+  if [[ "$policy" == user_space ]]; then
+    if (( ! dienst )); then
+      warnung "$name steht auf dem Regler user_space, aber zenos-argon läuft nicht: Niemand regelt den Lüfter (sudo systemctl restart zenos-argon)"
+    elif [[ "$wunsch" != Mindeststufe* ]]; then
+      warnung "$name steht auf dem Regler user_space, obwohl «automatisch» gilt (sudo systemctl restart zenos-argon)"
+    else
+      ok "$name: Regler user_space, zenos-argon hält die ${wunsch%% (*}"
+    fi
+  elif [[ "$wunsch" == Mindeststufe* ]] && (( dienst )); then
+    warnung "$name: Regler ${policy:-unbekannt}, die ${wunsch%% (*} wirkt nicht (journalctl -u zenos-argon)"
+  else
+    ok "$name: Regler ${policy:-unbekannt}, der Kernel regelt den Lüfter"
+  fi
 }
 
 _argon_kurve() {

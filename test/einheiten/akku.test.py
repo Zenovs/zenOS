@@ -551,7 +551,9 @@ class Testwurzel(unittest.TestCase):
                 self.assertEqual(A.run_up_service(optionen, stille(), CM5, bus, Warten()), 0)
             daten = status.geschrieben[0]
             self.assertEqual(daten["akku"], {"vorhanden": True, "prozent": 9, "laedt": False, "zustand": "ok"})
-            self.assertEqual(daten["luefter"], {"vorhanden": True, "stufe": 2, "stufen": 4, "upm": 3120})
+            # Ohne Regler in der Zone (Attrappe ohne policy) nicht einstellbar, der Kernel regelt allein
+            self.assertEqual(daten["luefter"], {"vorhanden": True, "stufe": 2, "stufen": 4, "upm": 3120, "modus": "auto",
+                                                "mindeststufe": None, "steuerbar": False})
             self.assertEqual(daten["temperatur"], {"cpu": 41.2})
             self.assertEqual(self.protokoll(wurzel), [])
 

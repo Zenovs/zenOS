@@ -1,8 +1,10 @@
 # zenOS: Argon ONE (scripts/bin/zenos-argon). Argon ONE V3 am Raspberry Pi 5: Lüfterkurve und Power-Button.
-# Argon ONE UP am Compute Module 5: Akku-Messchip CW2217 (lädt bei Bedarf Argons Akkuprofil), Lüfter und
-# Temperatur nur lesen. Schreibt /run/zenos/geraet.json für die Leiste. Ohne passendes Gerät, I2C-Bus 1 oder
-# Argon endet der Dienst mit einer Meldung und Exit 0 (kein Neustart). Auf amd64 startet er gar nicht.
-# Konfiguration der Lüfterkurve (optional, nur V3): /etc/xdg/zenos/argon.json, siehe docs/module/m13.md.
+# Argon ONE UP am Compute Module 5: Akku-Messchip CW2217 (lädt bei Bedarf Argons Akkuprofil), Temperatur und
+# Kernel-Lüfter, mit einer Mindeststufe (zen luefter, System-Menü) auch dessen Regler. Schreibt
+# /run/zenos/geraet.json für die Leiste. Ohne passendes Gerät, I2C-Bus 1 oder Argon endet der Dienst mit einer
+# Meldung und Exit 0 (kein Neustart). Auf amd64 startet er gar nicht.
+# Konfiguration der Lüfterkurve (optional, nur V3): /etc/xdg/zenos/argon.json; Lüfterwunsch /var/lib/zenos/luefter
+# (scripts/bin/zenos-luefter). Siehe docs/module/m13.md.
 [Unit]
 Description=zenOS Argon ONE (Lüfter, Power-Button, Akku)
 Documentation=file:///opt/zenos/docs/module/m13.md
@@ -14,8 +16,16 @@ StartLimitBurst=5
 [Service]
 Type=simple
 ExecStart=/usr/bin/python3 -I /opt/zenos/scripts/bin/zenos-argon
+# Sicherung, falls zenos-argon hart endet (Absturz, SIGKILL): Steht die Thermal-Zone des Kernel-Lüfters noch auf dem
+# Regler user_space, wieder step_wise. Schreibt sonst nichts. Läuft nach jedem Ende, auch vor einem Neustart.
+ExecStopPost=/usr/bin/python3 -I /opt/zenos/scripts/bin/zenos-argon --luefter-kernel
 Restart=on-failure
 RestartSec=10
+# Hängt der Dienst (er meldet sich sonst höchstens alle 2 s, beim V3 alle 5 s, beim Laden des Akkuprofils in jeder
+# Pause), beendet systemd ihn nach 30 s mit SIGABRT: ExecStopPost gibt den Lüfter dem Kernel zurück, dann Neustart.
+# Sonst stünde eine Mindeststufe ohne Blick auf die Temperatur.
+WatchdogSec=30
+NotifyAccess=main
 # Beim Beenden setzt der Dienst den Lüfter noch (1 s Pause wie im Original); beim ONE UP bricht er das Warten
 # auf den Messchip ab
 TimeoutStopSec=15
@@ -24,9 +34,10 @@ RuntimeDirectoryMode=0755
 UMask=0022
 SyslogIdentifier=zenos-argon
 
-# Härtung: nur I2C- und GPIO-Geräte, kein Netz, System nur lesbar (auch /sys: Lüfter und Temperatur werden nur
-# gelesen), geschrieben wird nur /run/zenos. CAP_SYS_BOOT braucht logind, damit «systemctl reboot/poweroff» vom
-# Power-Button ohne Rückfrage durchgeht.
+# Härtung: nur I2C- und GPIO-Geräte, kein Netz, System nur lesbar. Geschrieben wird nur /run/zenos und unter /sys
+# nur die Thermal-Zonen und Kühler (Regler und Stufe des Kernel-Lüfters, nur mit einer Mindeststufe; sysfs-Dateien
+# gehören root, dafür braucht es keine Capability). CAP_SYS_BOOT braucht logind, damit «systemctl reboot/poweroff»
+# vom Power-Button ohne Rückfrage durchgeht.
 CapabilityBoundingSet=CAP_SYS_BOOT
 NoNewPrivileges=yes
 DevicePolicy=closed
@@ -37,6 +48,8 @@ ProtectHome=yes
 PrivateTmp=yes
 PrivateNetwork=yes
 ProtectKernelTunables=yes
+# Ausnahme von ProtectKernelTunables (sonst ist /sys nur lesbar); «-»: fehlt der Ordner (Container), kein Fehler
+ReadWritePaths=-/sys/devices/virtual/thermal
 ProtectKernelModules=yes
 ProtectKernelLogs=yes
 ProtectControlGroups=yes

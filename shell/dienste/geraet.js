@@ -6,8 +6,10 @@
 //   { version: 1, zeit: ISO-8601, geraet: "argon-one-v3" | "argon-one-up",
 //     akku: { vorhanden, prozent (int|null), laedt (bool|null),
 //             zustand: "ok" | "unbekannt" | "fehler" | "freigabe" (misst nicht, Freigabe fehlt: zen akku freigeben) },
-//     luefter: { vorhanden, prozent } (V3) oder { vorhanden, stufe, stufen, upm } (Kernel),
+//     luefter: { vorhanden, prozent } (V3) oder { vorhanden, stufe, stufen, upm } (Kernel), seit Oktober 2026 dazu
+//              modus ("auto" | "mindest"), mindeststufe (1–4 | null), steuerbar (zenos-argon kann den Wunsch umsetzen),
 //     temperatur: { cpu } }
+// Fehlen modus, mindeststufe und steuerbar (älterer Dienst), bleibt die Zeile «Lüfter» reine Anzeige.
 
 // Der Dienst schreibt alle 15 s (beim V3 alle 5 s). Ältere Werte gelten als unbekannt (Dienst hängt oder ist aus).
 var MAX_ALTER_MS = 60000;
@@ -26,7 +28,7 @@ function leer() {
         frisch: false,
         geraet: "",
         akku: { vorhanden: false, prozent: -1, laedt: null, zustand: "unbekannt" },
-        luefter: { vorhanden: false, prozent: -1, stufe: -1, stufen: -1, upm: -1 }
+        luefter: { vorhanden: false, prozent: -1, stufe: -1, stufen: -1, upm: -1, modus: "", mindeststufe: 0, steuerbar: false }
     };
 }
 
@@ -68,12 +70,20 @@ function lesen(text, jetztMs) {
     if (l && typeof l === "object" && l.vorhanden === true) {
         var stufen = _ganz(l.stufen, 1, 20);
         var stufe = stufen > 0 ? _ganz(l.stufe, 0, stufen) : -1;
+        // Wunsch: «mindest» nur mit gültiger Stufe; sonst unbekannt (dann nicht bedienbar)
+        var modus = l.modus === "auto" || l.modus === "mindest" ? l.modus : "";
+        var mindeststufe = modus === "mindest" ? _ganz(l.mindeststufe, 1, 4) : -1;
+        if (modus === "mindest" && mindeststufe < 1)
+            modus = "";
         ergebnis.luefter = {
             vorhanden: true,
             prozent: _ganz(l.prozent, 0, 100),
             stufe: stufe,
             stufen: stufe >= 0 ? stufen : -1,
-            upm: _ganz(l.upm, 0, 30000)
+            upm: _ganz(l.upm, 0, 30000),
+            modus: modus,
+            mindeststufe: mindeststufe > 0 ? mindeststufe : 0,
+            steuerbar: modus !== "" && l.steuerbar === true
         };
     }
     return ergebnis;
@@ -137,6 +147,48 @@ function luefterWert(luefter) {
     if (luefter.upm >= 0)
         teile.push(luefter.upm + " U/min");
     return teile.join(" · ");
+}
+
+// Zeile «Lüfter» im System-Menü mit dem Wunsch, vom längsten zum kürzesten Text (die Zeile nimmt den ersten, der
+// passt): «Stufe 2 von 4 · 3120 U/min · mind. 2», «Stufe 2 · 3120 U/min · mind. 2», «Stufe 2 · mind. 2»; «aus · Auto»,
+// «55 % · Auto» (Argon ONE V3). Den Wunsch nur, wenn zenos-argon ihn umsetzen kann (steuerbar), sonst wie luefterWert.
+function luefterWerte(luefter) {
+    var basis = luefterWert(luefter);
+    if (basis === "")
+        return [];
+    var zusatz = "";
+    if (luefter.steuerbar === true)
+        zusatz = luefter.modus === "mindest" ? "mind. " + luefter.mindeststufe : "Auto";
+    var mit = function (text) {
+        return zusatz !== "" ? text + " · " + zusatz : text;
+    };
+    var werte = [mit(basis)];
+    if (luefter.prozent < 0 && luefter.stufe > 0) {
+        if (luefter.upm >= 0)
+            werte.push(mit("Stufe " + luefter.stufe + " · " + luefter.upm + " U/min"));
+        werte.push(mit("Stufe " + luefter.stufe));
+    }
+    return werte.filter(function (w, i) {
+        return werte.indexOf(w) === i;
+    });
+}
+
+// Gewählter Wunsch für die Wahl «Auto · 1 · 2 · 3 · 4»: "auto", "1" … "4" oder "" (nicht steuerbar, unbekannt)
+function luefterWahl(luefter) {
+    if (!luefter || luefter.vorhanden !== true || luefter.steuerbar !== true)
+        return "";
+    if (luefter.modus === "mindest" && luefter.mindeststufe >= 1 && luefter.mindeststufe <= 4)
+        return String(luefter.mindeststufe);
+    return luefter.modus === "auto" ? "auto" : "";
+}
+
+// Hinweis unter der Wahl (gedämpft, ruhig): was die gewählte Einstellung tut
+function luefterHinweis(wahl) {
+    if (wahl === "auto")
+        return "Folgt der Temperatur.";
+    if (["1", "2", "3", "4"].indexOf(wahl) >= 0)
+        return "Mindestens Stufe " + wahl + ", bei Wärme schneller.";
+    return "";
 }
 
 // Warnung bei niedrigem Akku. gewarnt: Liste der schon gemeldeten Stufen (z. B. [10]).

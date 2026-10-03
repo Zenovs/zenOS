@@ -1,0 +1,154 @@
+#!/bin/bash
+# zenos-luefter auto|1|2|3|4|status – Wunsch für den Lüfter (Argon ONE). Setzen nur als root: über pkexec (Lüfter
+# im System-Menü, polkit-Aktion in system/polkit/org.zenos.luefter.policy) oder über sudo («zen luefter»).
+#
+#   auto      der Kernel (Argon ONE UP) bzw. die Kurve von zenos-argon (Argon ONE V3) regelt allein (Standard)
+#   1 … 4     Mindeststufe: Der Lüfter läuft mindestens auf dieser Stufe, bei Wärme schneller, nie langsamer als
+#             automatisch (die Leitplanken stehen im Code von scripts/bin/zenos-argon)
+#   status    den gespeicherten Wunsch zeigen (ohne Rechte)
+#
+# Schreibt nur /var/lib/zenos/luefter (root, 0644, atomar): «modus=auto» oder «modus=mindest» mit «stufe=N», dazu
+# «seit=<Zeitpunkt>». zenos-argon liest die Datei in jedem Takt: Der Wunsch wirkt nach wenigen Sekunden, ohne
+# Neustart, und bleibt über Neustarts.
+#
+# Sicherheit: Vom Aufrufer kommen nur das eine Argument (nur diese festen Wörter) und PKEXEC_UID bzw. SUDO_UID (nur
+# fürs Journal, als Zahl geprüft); der PATH ist fest (pkexec räumt die Umgebung ohnehin auf). Keine Shell-
+# Zeichenketten, keine Eingaben an Programme. Es läuft immer nur ein Wechsel zugleich (flock). Jeder Wechsel steht
+# im Journal (journalctl -t zenos-luefter).
+#
+# Exit: 0 erledigt (auch: war schon so), 1 Fehler, 2 falscher Aufruf. 126 (abgebrochen) und 127 (nicht erlaubt)
+# vergibt pkexec selbst.
+
+set -euo pipefail
+umask 022
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+unset IFS
+
+_name=zenos-luefter
+_wunsch=/var/lib/zenos/luefter
+
+_fehler() { printf '%s: %s\n' "$_name" "$*" >&2; }
+
+if (( $# != 1 )); then
+  _fehler "Aufruf: zenos-luefter auto|1|2|3|4|status"
+  exit 2
+fi
+case "$1" in
+  auto) _modus=auto _stufe="" ;;
+  1 | 2 | 3 | 4) _modus=mindest _stufe=$1 ;;
+  status) _modus=status _stufe="" ;;
+  *)
+    _fehler "unbekannte Wahl (erlaubt: auto, 1, 2, 3, 4, status)"
+    exit 2
+    ;;
+esac
+
+# Gespeicherter Wunsch als «auto», «mindest N» oder «ungueltig» (gleiche Regeln wie zenos-argon: die letzte Zeile
+# gilt, Kommentare und andere Schlüssel zählen nicht). Fehlt die Datei: «auto».
+_lesen() {
+  local zeile modus="" stufe="" schluessel wert
+  if [[ ! -e "$_wunsch" ]]; then
+    printf 'auto\n'
+    return 0
+  fi
+  if [[ ! -f "$_wunsch" || ! -r "$_wunsch" ]]; then
+    printf 'ungueltig\n'
+    return 0
+  fi
+  while IFS= read -r zeile || [[ -n "$zeile" ]]; do
+    zeile=${zeile#"${zeile%%[![:space:]]*}"}
+    zeile=${zeile%"${zeile##*[![:space:]]}"}
+    [[ -z "$zeile" || "$zeile" == '#'* ]] && continue
+    if [[ "$zeile" != *=* ]]; then
+      printf 'ungueltig\n'
+      return 0
+    fi
+    schluessel=${zeile%%=*}
+    wert=${zeile#*=}
+    schluessel=${schluessel%"${schluessel##*[![:space:]]}"}
+    wert=${wert#"${wert%%[![:space:]]*}"}
+    case "$schluessel" in
+      modus) modus=$wert ;;
+      stufe) stufe=$wert ;;
+    esac
+  done < <(head -c 4096 -- "$_wunsch")
+  case "$modus:$stufe" in
+    auto:*) printf 'auto\n' ;;
+    mindest:1 | mindest:2 | mindest:3 | mindest:4) printf 'mindest %s\n' "$stufe" ;;
+    *) printf 'ungueltig\n' ;;
+  esac
+}
+
+_text() { # auto | mindest N | ungueltig
+  case "$1" in
+    auto) printf 'automatisch' ;;
+    mindest*) printf 'Mindeststufe %s' "${1#mindest }" ;;
+    *) printf 'automatisch (%s ist ungültig)' "$_wunsch" ;;
+  esac
+}
+
+if [[ "$_modus" == status ]]; then
+  _jetzt=$(_lesen)
+  _seit=$(sed -n 's/^seit=\([0-9][0-9T:+-]\{9,31\}\)[[:space:]]*$/\1/p' -- "$_wunsch" 2>/dev/null | tail -n 1) || _seit=""
+  printf 'Lüfter: %s%s\n' "$(_text "$_jetzt")" "${_seit:+ (seit ${_seit%%T*})}"
+  exit 0
+fi
+
+if (( EUID != 0 )); then
+  _fehler "Setzen läuft nur als root (über pkexec oder sudo; zen luefter $1)"
+  exit 2
+fi
+
+# Wer hat gewechselt (nur fürs Journal; pkexec und sudo setzen die Variablen selbst)
+_weg() {
+  if [[ "${PKEXEC_UID:-}" =~ ^[0-9]+$ ]]; then
+    printf 'System-Menü über pkexec, uid %s' "$PKEXEC_UID"
+  elif [[ "${SUDO_UID:-}" =~ ^[0-9]+$ ]]; then
+    printf 'sudo, uid %s' "$SUDO_UID"
+  else
+    printf 'root'
+  fi
+}
+
+_journal() { logger -t "$_name" -- "$*" 2>/dev/null || true; }
+
+# Immer nur ein Wechsel: System-Menü und zen luefter könnten sich sonst überholen. /run gehört root.
+exec 9> /run/zenos-luefter.lock
+if ! flock -w 10 9; then
+  _fehler "Ein anderer Wechsel läuft noch – abgebrochen"
+  exit 1
+fi
+
+_ziel="$_modus${_stufe:+ $_stufe}"
+_vorher=$(_lesen)
+if [[ "$_vorher" == "$_ziel" ]]; then
+  printf 'Lüfter: schon %s.\n' "$(_text "$_ziel")"
+  exit 0
+fi
+
+# Atomar schreiben: Ordner und Datei gehören root, für alle lesbar (zenos-argon, Oberfläche, zen luefter)
+_ordner=${_wunsch%/*}
+if ! install -d -m 0755 -o root -g root -- "$_ordner"; then
+  _fehler "$_ordner lässt sich nicht anlegen"
+  exit 1
+fi
+_tmp=$(mktemp -- "$_ordner/.luefter.XXXXXX") || { _fehler "$_ordner ist nicht beschreibbar"; exit 1; }
+_inhalt() {
+  printf '# zenOS: Wunsch für den Lüfter (scripts/bin/zenos-luefter). Nicht von Hand ändern: zen luefter.\n'
+  printf 'modus=%s\n' "$_modus"
+  if [[ -n "$_stufe" ]]; then printf 'stufe=%s\n' "$_stufe"; fi
+  printf 'seit=%s\n' "$(date -Iseconds)"
+}
+if ! { _inhalt > "$_tmp" && chmod 0644 -- "$_tmp" && mv -f -- "$_tmp" "$_wunsch"; }; then
+  rm -f -- "$_tmp"
+  _fehler "$_wunsch lässt sich nicht schreiben"
+  exit 1
+fi
+
+_journal "Lüfter: $(_text "$_ziel"), vorher $(_text "$_vorher") ($(_weg))"
+if [[ "$_modus" == auto ]]; then
+  printf 'Lüfter: automatisch. zenos-argon gibt die Regelung in wenigen Sekunden zurück.\n'
+else
+  printf 'Lüfter: Mindeststufe %s. zenos-argon übernimmt sie in wenigen Sekunden.\n' "$_stufe"
+fi

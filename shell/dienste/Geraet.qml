@@ -8,7 +8,8 @@ import Quickshell.Io
 import qs.dienste
 import "geraet.js" as Logik
 
-// Gerätezustand aus /run/zenos/geraet.json (zenos-argon, Systemdienst): Akku und Lüfter des Argon ONE.
+// Gerätezustand aus /run/zenos/geraet.json (zenos-argon, Systemdienst): Akku und Lüfter des Argon ONE, dazu der
+// Lüfterwunsch, den zenos-argon umsetzt (einstellen: Luefter).
 // Fehlt die Datei, ist sie kaputt oder älter als 60 s, gilt alles als unbekannt; ein Akku, der in dieser Sitzung
 // schon da war, bleibt dann gedämpft in der Leiste stehen (statt zu verschwinden), im Menü «unbekannt».
 // Bei niedrigem Akku (10 % und 5 %, nur beim Entladen, je einmal pro Unterschreiten) eine Mitteilung über den eigenen
@@ -52,6 +53,12 @@ Singleton {
     readonly property bool luefterVorhanden: _daten.luefter.vorhanden
     // «aus», «Stufe 2 von 4 · 3120 U/min» oder «55 %»
     readonly property string luefterWert: Logik.luefterWert(_daten.luefter)
+    // Zeile «Lüfter» im System-Menü mit dem Wunsch, vom längsten zum kürzesten («… · Auto», «… · mind. 2»)
+    readonly property var luefterWerte: Logik.luefterWerte(_daten.luefter)
+    // zenos-argon kann den Lüfterwunsch umsetzen: Die Zeile «Lüfter» klappt die Wahl auf (Luefter.setzen)
+    readonly property bool luefterSteuerbar: _daten.luefter.steuerbar
+    // Wunsch, den zenos-argon meldet: "auto", "1" … "4" oder "" (nicht steuerbar, unbekannt)
+    readonly property string luefterWahl: Logik.luefterWahl(_daten.luefter)
 
     // Sofort neu einlesen (z. B. beim Öffnen des System-Menüs)
     function aktualisieren(): void {

@@ -9,7 +9,7 @@ Modul (`import qs.<ordner>`).
 | `shell.qml` | Einstieg der Sitzung: lädt jede Oberfläche einzeln über `LazyLoader`, die Sperre zuerst |
 | `greeter.qml`, `greeter/` | Login für greetd; `greeter/notfall/` ist ein schlichter Notfall-Login ohne `qs.*`-Module |
 | `theme/` | `tokens.json` (einzige Quelle für Werte), `Theme.qml` (Singleton), `ThemaIpc.qml` (IPC `thema`) |
-| `dienste/` | Singletons ohne Oberfläche: Pfade, Einstellungen, Erscheinung, Oberflaeche, Aktionen, System, Geraet, Mitteilungen, Konfig, Modi, Zustaende, Freigabe, Leitplanken, Raster, Firewall; `geraet.js` (Logik für Akku und Lüfter, auch mit node getestet) |
+| `dienste/` | Singletons ohne Oberfläche: Pfade, Einstellungen, Erscheinung, Oberflaeche, Aktionen, System, Geraet, Mitteilungen, Konfig, Modi, Zustaende, Freigabe, Leitplanken, Raster, Firewall, Luefter; `geraet.js` (Logik für Akku und Lüfter, auch mit node getestet) |
 | `komponenten/` | gemeinsame Bausteine (Symbol, Chip, Knopf, Eingabe, Toast …), `Hinweise.qml` (IPC `hinweis`) |
 | `leiste/` | Leiste, System- und Raster-Menü; WLAN im System-Menü (`WlanQuelle` spricht NetworkManager über `Quickshell.Networking`, nur hier und erst, wenn NetworkManager läuft; `wlan.js` testet auch node) |
 | `heute/` | Hintergrund «Heute» |
