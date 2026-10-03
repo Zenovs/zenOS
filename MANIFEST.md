@@ -42,7 +42,8 @@ Diese Regeln kann kein Modus, kein Zustand und keine Einstellung aushebeln:
 
 ## Was zenOS bewusst nicht ist
 
-- Kein eigener Kernel, kein eigener Browser, kein eigener Dateimanager, kein eigenes WLAN-Menü.
+- Kein eigener Kernel, kein eigener Browser, kein eigener Dateimanager, kein eigener Netzwerk-Stack. Das WLAN-Menü
+  oben rechts bedient nur den NetworkManager von Ubuntu.
 - Keine Geschmacksoptionen für andere Menschen.
 - Kein Gemeinschaftsprojekt: keine Issues, keine Pull Requests.
 
