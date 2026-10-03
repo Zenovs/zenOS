@@ -211,6 +211,56 @@ class AblageTest(unittest.TestCase):
         self.assertTrue(os.path.isfile(self.pfad("Bilder", "Screenshots", "alt.png")))
         self.assertIn("mv ~/Bilder/Screenshots/* ~/Ablage/Screenshots/", ausgabe)
 
+    XDG_VORGABE = (
+        "# This file is written by xdg-user-dirs-update\n"
+        "# If you want to change or add directories, just edit the line you're\n"
+        "# interested in. All local changes will be retained on the next run.\n"
+        "# \n"
+        'XDG_DESKTOP_DIR="$HOME/Desktop"\n'
+        'XDG_DOWNLOAD_DIR="$HOME/Downloads"\n'
+        'XDG_TEMPLATES_DIR="$HOME/Templates"\n'
+        'XDG_PUBLICSHARE_DIR="$HOME/Public"\n'
+        'XDG_DOCUMENTS_DIR="$HOME/Documents"\n'
+        'XDG_MUSIC_DIR="$HOME/Music"\n'
+        'XDG_PICTURES_DIR="$HOME/Pictures"\n'
+        'XDG_VIDEOS_DIR="$HOME/Videos"\n'
+    )
+    XDG_ORDNER = ["Desktop", "Downloads", "Templates", "Public", "Documents", "Music", "Pictures", "Videos"]
+
+    def _xdg_vorgabe_anlegen(self, inhalt=None):
+        os.makedirs(self.pfad(".config"), exist_ok=True)
+        with open(self.pfad(".config", "user-dirs.dirs"), "w", encoding="utf-8") as f:
+            f.write(inhalt if inhalt is not None else self.XDG_VORGABE)
+        for name in self.XDG_ORDNER:
+            os.makedirs(self.pfad(name))
+
+    def test_vorgabe_von_xdg_user_dirs_wird_ersetzt(self):
+        self._xdg_vorgabe_anlegen()
+        with open(self.pfad("Downloads", "rechnung.pdf"), "w", encoding="utf-8") as f:
+            f.write("pdf")
+        aenderungen, warnungen, ausgabe = self.benutzerteil()
+        self.assertEqual(warnungen, 0, ausgabe)
+        werte = eintraege(self.pfad(".config", "user-dirs.dirs"))
+        self.assertEqual(werte["DOWNLOAD"], "$HOME/Ablage")
+        with open(self.pfad(".config", "user-dirs.dirs.vor-zenos"), encoding="utf-8") as f:
+            self.assertEqual(f.read(), self.XDG_VORGABE)
+        # Leere Vorgabe-Ordner sind weg, Downloads mit Inhalt bleibt, mit Hinweis
+        self.assertEqual(sorted(n for n in os.listdir(self.home) if not n.startswith(".")), ["Ablage", "Downloads"])
+        self.assertTrue(os.path.isfile(self.pfad("Downloads", "rechnung.pdf")))
+        self.assertIn("mv ~/Downloads/* ~/Ablage/", ausgabe)
+        self.assertEqual(self.benutzerteil()[:2], (0, 0))
+
+    def test_geaenderte_xdg_datei_bleibt(self):
+        eigen = self.XDG_VORGABE.replace('"$HOME/Documents"', '"$HOME/Projekte"')
+        self._xdg_vorgabe_anlegen(eigen)
+        aenderungen, warnungen, ausgabe = self.benutzerteil()
+        with open(self.pfad(".config", "user-dirs.dirs"), encoding="utf-8") as f:
+            self.assertEqual(f.read(), eigen)
+        self.assertFalse(os.path.exists(self.pfad(".config", "user-dirs.dirs.vor-zenos")))
+        for name in self.XDG_ORDNER:
+            self.assertTrue(os.path.isdir(self.pfad(name)), name)
+        self.assertIn("user-dirs.dirs stammt nicht von zenOS und bleibt unverändert", ausgabe)
+
     def test_alte_fassung_von_zenos_wird_erneuert(self):
         os.makedirs(self.pfad(".config"))
         with open(self.pfad(".config", "user-dirs.dirs"), "w", encoding="utf-8") as f:

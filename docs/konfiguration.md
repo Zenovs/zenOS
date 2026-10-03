@@ -222,6 +222,9 @@ Damit Browser und Apps dort speichern, zeigen die XDG-Benutzerordner in `~/.conf
   Freigabe-Dienste ins Netz stellen.
 - `~/.config/user-dirs.conf` mit `enabled=False`: Kommt das Paket xdg-user-dirs einmal mit einer anderen App dazu,
   setzt `xdg-user-dirs-update` bei der Anmeldung nichts zurück und legt keine Ordner (Desktop, Downloads …) an.
+- Hat xdg-user-dirs schon vorher seine Vorgabe geschrieben (Kopfzeile von `xdg-user-dirs-update`, nur die üblichen
+  Ordner), ersetzt zenOS die Datei (Sicherung `user-dirs.dirs.vor-zenos`) und entfernt die leeren Ordner Desktop,
+  Documents, Downloads …; Ordner mit Dateien bleiben, das Protokoll nennt den `mv`-Befehl.
 - Beide Dateien schreibt zenOS nur, solange ihre erste Zeile `# zenOS: Benutzerordner zeigen auf ~/Ablage …` lautet.
   Eigene Fassung: diese Zeile entfernen, dann bleibt die Datei, wie sie ist (im Log steht ein Hinweis). Ein Verweis
   (Dotfiles) gilt ebenfalls als eigene Fassung.

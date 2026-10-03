@@ -31,6 +31,7 @@ modul_benutzer() {
   local uca=$ZENOS_CODE/system/thunar/uca.xml
   _ablage_ordner
   _ablage_screenshots
+  _ablage_xdg_ersetzen
   _ablage_eigene_datei "$ZENOS_HOME/.config/user-dirs.dirs" "$(_ablage_marke)" < <(_ablage_user_dirs)
   _ablage_eigene_datei "$ZENOS_HOME/.config/user-dirs.conf" "$(_ablage_marke)" <<EOF
 $(_ablage_marke)
@@ -108,6 +109,57 @@ _ablage_user_dirs() {
     # shellcheck disable=SC2016
     printf 'XDG_%s_DIR="$HOME/%s"\n' "$name" "$ziel"
   done
+}
+
+# xdg-user-dirs (kommt mit GLib und Thunar) legt bei der ersten Anmeldung Desktop, Downloads, Documents … an und
+# schreibt user-dirs.dirs mit seiner Kopfzeile. Steht darin unverändert nur diese Vorgabe (jeder Eintrag ein
+# Vorgabe-Ordner direkt im Home), hat niemand die Datei bewusst eingerichtet: Dann ersetzt zenOS sie durch die
+# Ablage-Fassung (Sicherung user-dirs.dirs.vor-zenos) und entfernt die leeren Vorgabe-Ordner. Ordner mit Inhalt
+# bleiben, mit einem Hinweis, wie man ihn holt. Eine geänderte Datei (eigener Ordner, absoluter Pfad, andere
+# Kopfzeile) bleibt unangetastet.
+_ABLAGE_XDG_KOPF='# This file is written by xdg-user-dirs-update'
+
+# Gibt die Vorgabe-Ordner aus DATEI aus (eine Zeile je Name) und endet mit 0, wenn DATEI unverändert von
+# xdg-user-dirs-update stammt; sonst 1 ohne Ausgabe.
+_ablage_xdg_vorgabe() {
+  local datei=$1 erste="" zeile name
+  # shellcheck disable=SC2016
+  local muster='^XDG_[A-Z]+_DIR="[$]HOME/([^/"]+)"$'
+  local -a namen=()
+  [[ -f "$datei" && ! -L "$datei" ]] || return 1
+  IFS= read -r erste < "$datei" || return 1
+  [[ "$erste" == "$_ABLAGE_XDG_KOPF" ]] || return 1
+  while IFS= read -r zeile || [[ -n "$zeile" ]]; do
+    [[ -z "${zeile//[[:space:]]/}" || "$zeile" == \#* ]] && continue
+    [[ "$zeile" =~ $muster ]] || return 1
+    name=${BASH_REMATCH[1]}
+    case "$name" in
+      Desktop | Downloads | Templates | Public | Documents | Music | Pictures | Videos) ;;
+      Schreibtisch | Vorlagen | Öffentlich | Dokumente | Musik | Bilder) ;;
+      *) return 1 ;;
+    esac
+    namen+=("$name")
+  done < "$datei"
+  (( ${#namen[@]} > 0 )) || return 1
+  printf '%s\n' "${namen[@]}"
+}
+
+_ablage_xdg_ersetzen() {
+  local dirs=$ZENOS_HOME/.config/user-dirs.dirs vorgabe name ordner
+  [[ -d "$ZENOS_HOME/Ablage" ]] || return 0
+  vorgabe=$(_ablage_xdg_vorgabe "$dirs") || return 0
+  if [[ ! -e "$dirs.vor-zenos" ]]; then cp -p -- "$dirs" "$dirs.vor-zenos"; fi
+  rm -f -- "$dirs"
+  aenderung "$dirs von xdg-user-dirs ersetzt (Ordner zeigen auf ~/Ablage; Sicherung $dirs.vor-zenos)"
+  while IFS= read -r name; do
+    ordner=$ZENOS_HOME/$name
+    [[ -d "$ordner" && ! -L "$ordner" ]] || continue
+    if rmdir -- "$ordner" 2> /dev/null; then
+      aenderung "leeren Ordner $ordner entfernt (Vorgabe von xdg-user-dirs)"
+    else
+      log_info "Hinweis: In $ordner liegen Dateien, er bleibt. In die Ablage holen mit: mv ~/$name/* ~/Ablage/"
+    fi
+  done <<< "$vorgabe"
 }
 
 # Schreibt ZIEL mit dem Inhalt von stdin, wenn es fehlt oder seine erste Zeile MARKE ist (von zenOS); sonst bleibt es,

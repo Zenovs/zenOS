@@ -39,6 +39,9 @@ an; eine Version entspricht einem Tag `v…` im Repo.
   Ordner-Symbol rechts neben dem Raster («4er») und die Aktion «Ablage» im Befehlsfeld öffnen ihn im Dateimanager.
   Downloads, Dokumente, Bilder, Musik und Videos landen dort (`~/.config/user-dirs.dirs`); Ordner wie Downloads oder
   Dokumente legt zenOS nicht an.
+- **Vorgabe-Ordner von xdg-user-dirs aufgeräumt:** Hat Ubuntus xdg-user-dirs bei der ersten Anmeldung Desktop,
+  Downloads, Documents … angelegt, richtet zenOS die Benutzerordner trotzdem auf die Ablage und entfernt die leeren
+  davon; Ordner mit Dateien bleiben.
 - **Bildschirmfotos in `~/Ablage/Screenshots`** (vorher `~/Bilder/Screenshots`). Ein leerer alter Ordner
   verschwindet, einer mit Bildern bleibt, und `install.sh` sagt, wie man sie holt.
 - **Dateimanager Thunar** (von Ubuntu, im Image): öffnet Ordner aus dem Befehlsfeld und die Ablage, folgt hell und

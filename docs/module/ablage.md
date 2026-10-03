@@ -90,6 +90,13 @@ fehlender Symbole.
   Anmeldung `xdg-user-dirs-update` (Benutzereinheit vor `graphical-session-pre.target`). Im Container geprüft: ohne
   `user-dirs.dirs` legt es acht englische Ordner an (Desktop, Documents, Downloads …); mit der Datei von zenOS bleibt
   alles, solange die Ablage da ist; mit `enabled=False` bleibt es auch, wenn die Ablage gerade fehlt.
+- **Vorgabe von xdg-user-dirs ersetzen** (am Gerät gefunden, 03.10.2026): Auf Zenos Laptop war xdg-user-dirs schon
+  da (kommt mit GLib) und hatte bei der ersten Anmeldung `user-dirs.dirs` mit seiner Kopfzeile geschrieben und die
+  acht englischen Ordner angelegt; zenOS liess die Datei als «nicht von zenOS» stehen, Downloads landeten nicht in
+  der Ablage. Jetzt gilt: Kopfzeile `# This file is written by xdg-user-dirs-update` und nur Vorgabe-Ordner direkt
+  im Home (englisch oder deutsch) → unverändert, also ersetzen (Sicherung `user-dirs.dirs.vor-zenos`), leere
+  Vorgabe-Ordner entfernen, Ordner mit Inhalt bleiben (einmal ein Hinweis mit `mv`). Ein eigener Eintrag oder ein
+  absoluter Pfad gilt als bewusst eingerichtet und bleibt.
 - **Marke statt Inhaltsvergleich:** zenOS erkennt seine Dateien an der ersten Zeile. So bleibt eine eigene Fassung
   (oder ein Verweis aus Dotfiles) unangetastet, und ein Update kann die eigene Fassung von zenOS erneuern.
 - **Papierkorb ohne gvfs:** Entf verschiebt auch ohne gvfs in den Papierkorb (GLib, `~/.local/share/Trash`; im
