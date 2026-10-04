@@ -1,0 +1,159 @@
+#!/usr/bin/python3
+"""zenos-sicherheitsquelle: Lässt unattended-upgrades die Ubuntu-Sicherheitsquelle zu?
+
+Aufruf:
+  zenos-sicherheitsquelle            prüft und gibt eine Zeile aus
+  zenos-sicherheitsquelle --hilfe    diese Hilfe
+
+Geprüft wird mit der Logik von unattended-upgrades selbst: /usr/bin/unattended-upgrade wird als Modul geladen (sein
+Hauptprogramm läuft dabei nicht), get_allowed_origins() liefert die erlaubten Quellen aus der apt-Konfiguration, mit
+${distro_id} und ${distro_codename} so ersetzt, wie es unattended-upgrade selbst tut (aus «lsb_release»), und
+is_allowed_origin() entscheidet für jede Paketliste der Quelle «Ubuntu <codename>-security» aus dem apt-Cache. So
+fällt auch auf, wenn eine andere Kennung in /etc/os-release (ID, NAME) ${distro_id} verändert und die Vorgabe aus
+50unattended-upgrades dann keine Ubuntu-Quelle mehr erlaubt (Schutz: /etc/apt/apt.conf.d/51zenos-ubuntu-quellen).
+
+Der Ubuntu-Codename kommt nicht aus unattended-upgrades (sonst prüfte er sich selbst), sondern aus UBUNTU_CODENAME in
+os-release (dieselbe Datei, die lsb_release liest: $LSB_OS_RELEASE, sonst /etc/os-release, sonst
+/usr/lib/os-release), bei ID=ubuntu ersatzweise VERSION_CODENAME. Fehlt beides, aus den Paketlisten, falls dort genau
+eine Ubuntu-Sicherheitsquelle steht.
+
+Nur lesend, ohne Root-Rechte, ohne Netz. Als root baut apt seinen Cache nur im Speicher (schreibt nichts nach
+/var/cache/apt), und Python legt keinen Bytecode neben /usr/bin/unattended-upgrade ab.
+
+Vorab prüfen, ob eine andere os-release die Sicherheitsupdates abschnitte (lsb_release wertet LSB_OS_RELEASE aus):
+  LSB_OS_RELEASE=/pfad/zur/os-release zenos-sicherheitsquelle
+Die apt-Konfiguration lässt sich wie bei apt selbst mit APT_CONFIG umlenken (nur für Tests).
+
+Exit: 0 erlaubt · 1 nicht erlaubt · 2 nicht prüfbar (unattended-upgrades oder python3-apt fehlt, keine Paketliste
+der Sicherheitsquelle, kein Codename, falscher Aufruf).
+"""
+
+import contextlib
+import importlib.machinery
+import importlib.util
+import io
+import logging
+import os
+import sys
+
+UU_PROGRAM = "/usr/bin/unattended-upgrade"
+OS_RELEASE = ("/etc/os-release", "/usr/lib/os-release")
+NAME = "zenos-sicherheitsquelle"
+
+
+def os_release_path():
+    """Die Datei, die lsb_release liest (Ubuntu 26.04: LSB_OS_RELEASE vor /etc/os-release vor /usr/lib/os-release)."""
+    requested = os.environ.get("LSB_OS_RELEASE")
+    if requested and os.path.isfile(requested):
+        return requested
+    for path in OS_RELEASE:
+        if os.path.isfile(path):
+            return path
+    return ""
+
+
+def read_os_release(path):
+    values = {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                value = value.strip()
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                    value = value[1:-1]
+                values[key.strip()] = value
+    except (OSError, UnicodeDecodeError):
+        return {}
+    return values
+
+
+def ubuntu_codename():
+    path = os_release_path()
+    values = read_os_release(path) if path else {}
+    codename = values.get("UBUNTU_CODENAME", "")
+    if not codename and values.get("ID", "").lower() == "ubuntu":
+        codename = values.get("VERSION_CODENAME", "")
+    return codename
+
+
+def first_line(error):
+    """Erste Zeile der Fehlermeldung (die Ausgabe bleibt eine Zeile), sonst der Name der Ausnahme."""
+    text = str(error).strip()
+    return text.splitlines()[0] if text else type(error).__name__
+
+
+def load_unattended_upgrade():
+    """Lädt /usr/bin/unattended-upgrade als Modul. Beim Laden liest python-apt die apt-Konfiguration (import apt)
+    und unattended-upgrade ruft dreimal lsb_release auf (Argumentlisten, keine Shell); sein main() läuft nicht."""
+    loader = importlib.machinery.SourceFileLoader("zenos_unattended_upgrade", UU_PROGRAM)
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        loader.exec_module(module)
+    return module
+
+
+def main(argv):
+    if argv in (["-h"], ["--hilfe"], ["--help"]):
+        print(__doc__.strip())
+        return 0
+    if argv:
+        print(f"{NAME}: unbekannte Argumente: {' '.join(argv)} (--hilfe)", file=sys.stderr)
+        return 2
+
+    # Kein Bytecode-Cache unter /usr/bin/__pycache__ (als root könnte Python ihn sonst anlegen)
+    sys.dont_write_bytecode = True
+    # Meldungen von unattended-upgrades (logging) nicht auf stderr: Ausgabe ist genau eine Zeile
+    logging.getLogger().addHandler(logging.NullHandler())
+
+    if not os.path.isfile(UU_PROGRAM):
+        print(f"nicht prüfbar: unattended-upgrades fehlt ({UU_PROGRAM})")
+        return 2
+    try:
+        import apt_pkg  # noqa: PLC0415 – python3-apt (Abhängigkeit von unattended-upgrades), erst hier geladen
+        uu = load_unattended_upgrade()
+        if os.geteuid() == 0:
+            # Cache nur im Speicher: als root schriebe apt sonst pkgcache.bin neu, wenn er veraltet ist
+            apt_pkg.config.set("Dir::Cache::pkgcache", "")
+            apt_pkg.config.set("Dir::Cache::srcpkgcache", "")
+        allowed = uu.get_allowed_origins()
+        cache = apt_pkg.Cache(progress=None)
+        files = list(cache.file_list)
+    except Exception as e:  # noqa: BLE001 – jeder Fehler hier heisst: nicht prüfbar
+        print(f"nicht prüfbar: {first_line(e)}")
+        return 2
+
+    ubuntu_files = [pf for pf in files if pf.origin == "Ubuntu"]
+    codename = ubuntu_codename()
+    if not codename:
+        archives = sorted({pf.archive for pf in ubuntu_files if pf.archive.endswith("-security")})
+        if len(archives) == 1:
+            codename = archives[0][: -len("-security")]
+    if not codename:
+        print("nicht prüfbar: Ubuntu-Codename unbekannt (UBUNTU_CODENAME fehlt in os-release)")
+        return 2
+
+    target = f"{codename}-security"
+    sources = [pf for pf in ubuntu_files if pf.archive == target]
+    if not sources:
+        print(f"nicht prüfbar: keine Paketliste für Ubuntu {target} (apt update?)")
+        return 2
+
+    identity = f"distro_id={uu.get_distro_id() or '?'}, distro_codename={uu.get_distro_codename() or '?'}"
+    try:
+        permitted = any(uu.is_allowed_origin(pf, allowed) for pf in sources)
+    except Exception as e:  # noqa: BLE001 – z. B. ein ungültiges Muster in Origins-Pattern
+        print(f"nicht prüfbar: {first_line(e)}")
+        return 2
+    if permitted:
+        print(f"erlaubt: Ubuntu {target} ({identity})")
+        return 0
+    print(f"nicht erlaubt: Ubuntu {target} ({identity}; erlaubt sind: {', '.join(allowed) or 'keine'})")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

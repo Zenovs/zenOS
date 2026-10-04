@@ -5,6 +5,26 @@ Grundsatz 1: Sicherheit ist Standard und geht vor Design und Bequemlichkeit. Sie
 ## Unterbau
 
 - Nur LTS-Versionen von Ubuntu. Sicherheitsupdates laufen automatisch (`unattended-upgrades`).
+  - **Ubuntu-Quellen fest erlaubt:** Die Vorgabe des Pakets (`50unattended-upgrades`) nennt die Ubuntu-Quellen nur
+    über `${distro_id}`, etwa `${distro_id}:${distro_codename}-security`. `${distro_id}` kommt aus `lsb_release -is`,
+    also aus ID und NAME in `/etc/os-release`. Meldet os-release einmal eine andere Kennung als Ubuntu (etwa «zenOS»), erlaubte
+    unattended-upgrades keine Ubuntu-Quelle mehr, spielte kein einziges Sicherheitsupdate ein und meldete trotzdem
+    Erfolg (im Container nachgestellt: 0 statt 8 Pakete, darunter openssl). Deshalb erlaubt
+    `/etc/apt/apt.conf.d/51zenos-ubuntu-quellen` (Quelle `system/apt/`) die vier Ubuntu-Quellen der Vorgabe mit dem
+    festen Origin «Ubuntu», unabhängig von os-release. Die Datei bleibt auch bei `zen rollback` auf einen älteren
+    Stand liegen (install.sh entfernt keine Dateien, die es nicht kennt). Dazu `DevRelease "false"`: zenOS läuft nur
+    auf veröffentlichten LTS-Versionen, und mit einer anderen Kennung warnte jeder Lauf, weil distro-info sie nicht
+    kennt.
+  - **Prüfung mit der Logik von unattended-upgrades:** `scripts/bin/zenos-sicherheitsquelle` lädt
+    `/usr/bin/unattended-upgrade` als Modul und fragt dessen eigene Funktionen, ob die Paketlisten von «Ubuntu
+    <codename>-security» erlaubt sind (nur lesend, ohne Root-Rechte). `zen doctor` meldet «nicht erlaubt» als Fehler.
+    Eine andere os-release lässt sich vorab prüfen, bevor sie gilt:
+    `LSB_OS_RELEASE=<datei> /opt/zenos/scripts/bin/zenos-sicherheitsquelle`.
+  - **Schutz vor autoremove:** Pakete, die zenOS braucht, aber Ubuntu schon über ein Metapaket mitgebracht hat (ufw,
+    unattended-upgrades, jq, polkitd …), führt apt als «automatisch installiert». Fiele das Metapaket weg, entfernte
+    `apt autoremove` sie mit. install.sh markiert deshalb alle Pakete aus `scripts/pakete/*.txt` (ausser den
+    Build-Abhängigkeiten von Quickshell) als manuell installiert; `zen doctor` warnt, wenn ufw oder
+    unattended-upgrades wieder «automatisch» sind.
 - Ubuntu Server holt ab Werk Nachrichten, ohne dass jemand etwas tut. zenOS schaltet beide ab, auf dem Weg, den
   Ubuntu dafür vorsieht (`scripts/module/70-sicherheit.sh`, `zen doctor` prüft es):
   - **motd-news** (Paket `motd-news-config`): Ein Timer ruft zweimal täglich `motd.ubuntu.com` auf und schickt im

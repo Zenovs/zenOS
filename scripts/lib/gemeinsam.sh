@@ -36,6 +36,8 @@
 #   datei_entfernen ZIEL                 als root; entfernt Datei oder Symlink, falls vorhanden
 #   benutzer_datei_entfernen ZIEL        dasselbe als Benutzer
 #   paket_installiert PAKET              wahr, wenn das Paket installiert ist
+#   pakete_manuell_markieren PAKET…      markiert installierte Pakete, die apt als «automatisch installiert» führt,
+#                                        als manuell (Schutz vor autoremove, siehe unten); meldet nur Änderungen
 #   apt_quellen_geaendert                nach neuen Paketquellen: nächstes pakete_sicherstellen macht apt-get update
 #   apt_warten [SEKUNDEN=1200]           wartet, solange ein anderer Paketvorgang läuft (apt-daily,
 #                                        unattended-upgrades, apt in einem anderen Terminal); meldet sich
@@ -485,6 +487,35 @@ pakete_sicherstellen() {
     log_warnung "Nach der Installation nicht als installiert erkannt (virtuelles Paket? echten Namen eintragen): ${unklar[*]}"
   fi
   aenderung "Pakete installiert: ${fehlend[*]}"
+}
+
+# pakete_sicherstellen installiert nur, was fehlt. Was schon da war, weil ein anderes Paket es mitgebracht hat (im
+# Image von Ubuntu etwa ufw und unattended-upgrades über das Metapaket ubuntu-server), führt apt weiter als
+# «automatisch installiert». Fällt das andere Paket weg, entfernte «apt autoremove» es mit. Deshalb hier als manuell
+# markieren, nur die Pakete, die installiert und «automatisch» sind (apt-mark showauto liest ohne Root-Rechte).
+pakete_manuell_markieren() {
+  _zenos_nur_system pakete_manuell_markieren
+  local paket rc=0
+  local -a pakete=() auto=()
+  for paket in "$@"; do
+    [[ -n "$paket" ]] || continue
+    [[ "$paket" =~ ^[a-z0-9][a-z0-9+.-]+(:[a-z0-9]+)?$ ]] || abbruch "Ungültiger Paketname: $paket"
+    pakete+=("$paket")
+  done
+  (( ${#pakete[@]} > 0 )) || return 0
+  mapfile -t auto < <(apt-mark showauto "${pakete[@]}" 2>/dev/null)
+  (( ${#auto[@]} > 0 )) || return 0
+
+  # apt-mark selbst nimmt keine Sperre (im Container geprüft). Ein gleichzeitig laufendes apt-get (unattended-upgrades)
+  # schreibt /var/lib/apt/extended_states aber am Ende mit seinem eigenen Stand und höbe die Markierung womöglich
+  # wieder auf; deshalb einen laufenden Paketvorgang abwarten. Geht es doch schief, holt es der nächste Lauf nach.
+  apt_warten || true
+  $SUDO apt-mark manual "${auto[@]}" >/dev/null || rc=$?
+  if (( rc != 0 )); then
+    log_warnung "apt-mark manual ist fehlgeschlagen (Exit $rc), bleiben automatisch installiert: ${auto[*]}"
+    return 0
+  fi
+  aenderung "Als manuell installiert markiert (Schutz vor apt autoremove): ${auto[*]}"
 }
 
 # --- Dateien als root ------------------------------------------------------

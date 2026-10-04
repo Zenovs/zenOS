@@ -3,8 +3,10 @@
 # shellcheck shell=bash
 #
 # - unattended-upgrades: system/apt/20auto-upgrades (inhaltsgleich mit der Vorlage des Pakets, damit ucf bei
-#   Paket-Updates nie nachfragt) und system/apt/52zenos-unattended (Herstellerquellen, keine automatischen
-#   Neustarts, keine Mail).
+#   Paket-Updates nie nachfragt), system/apt/51zenos-ubuntu-quellen (Ubuntu-Quellen fest mit dem Origin «Ubuntu»,
+#   unabhängig von ID/NAME in /etc/os-release) und system/apt/52zenos-unattended (Herstellerquellen, keine
+#   automatischen Neustarts, keine Mail). 51 ist bewusst eine eigene Datei: install.sh entfernt nie Dateien, die es
+#   nicht kennt, also lässt ein «zen rollback» auf einen Stand ohne 51 sie stehen (52 setzt er auf den alten Inhalt).
 # - Richtlinien für Chrome (/etc/opt/chrome/policies/managed/) und VS Code (/etc/vscode/policy.json, Telemetrie
 #   aus), auch ohne die Apps: Sie greifen, sobald sie installiert sind. Läuft auch im Image-Modus (die
 #   Richtlinien sind nur Konfiguration, keine proprietäre Software).
@@ -54,6 +56,7 @@ _sicherheit_apt_wert() {
 
 _sicherheit_updates() {
   datei_installieren "$ZENOS_CODE/system/apt/20auto-upgrades" /etc/apt/apt.conf.d/20auto-upgrades
+  datei_installieren "$ZENOS_CODE/system/apt/51zenos-ubuntu-quellen" /etc/apt/apt.conf.d/51zenos-ubuntu-quellen
   datei_installieren "$ZENOS_CODE/system/apt/52zenos-unattended" /etc/apt/apt.conf.d/52zenos-unattended
   # Die Timer bringt apt mit; sie lösen das tägliche Update und unattended-upgrade aus.
   dienst_aktivieren apt-daily.timer

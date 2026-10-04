@@ -94,6 +94,14 @@ an; eine Version entspricht einem Tag `v…` im Repo.
 - **Alt+Tab grösser und mit App-Symbolen:** Der Fensterwechsler ist so breit wie das Befehlsfeld (720 statt 600 px),
   jede Zeile beginnt mit dem App-Symbol in 40 px (vorher so gross wie die Schrift), Name und Titel in 16 px, mehr
   Abstand. Der Titel fehlt, wenn er nur die App-Kennung wiederholt. Das Verhalten bleibt.
+- **Ubuntu-Sicherheitsupdates hängen nicht mehr am Namen des Systems:** `/etc/apt/apt.conf.d/51zenos-ubuntu-quellen`
+  erlaubt unattended-upgrades die Ubuntu-Quellen mit festem Origin «Ubuntu». Bisher kam das nur über `${distro_id}`
+  aus `/etc/os-release`; eine andere Kennung dort hätte alle Sicherheitsupdates still abgeschnitten. Heute ändert sich
+  dadurch nichts, es ist die Vorbereitung für eine eigene Systemkennung. `zen doctor` prüft mit der Logik von
+  unattended-upgrades selbst, ob Ubuntu-Sicherheitsupdates erlaubt sind (neu: `zenos-sicherheitsquelle`).
+- **zenOS-Pakete als manuell installiert markiert:** Was Ubuntu schon über ein Metapaket mitgebracht hatte (ufw,
+  unattended-upgrades, jq, polkitd …), entfernt `apt autoremove` nicht mehr, wenn das Metapaket wegfällt.
+  `zen doctor` warnt, wenn ufw oder unattended-upgrades wieder als automatisch installiert gelten.
 
 ## 0.1.0-rc2 – 2026-09-28
 

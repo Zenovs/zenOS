@@ -7,13 +7,22 @@
 # läuft also erst nach dem Neustart. Fehlt ein Paket in
 # den Paketquellen (z. B. nicht für diese Architektur), wird es mit einer Warnung übersprungen, statt die
 # ganze Installation aufzuhalten.
+# Danach sind alle Pakete dieser Listen als manuell installiert markiert (pakete_manuell_markieren): Was schon als
+# Abhängigkeit eines Ubuntu-Metapakets da war (ufw, unattended-upgrades, jq …), entfernte «apt autoremove» sonst,
+# sobald das Metapaket wegfällt. Die Build-Abhängigkeiten von Quickshell (quickshell-bau.txt) bleiben, wie sie sind.
 
 modul_system() {
-  local paket
-  local -a pakete=() fehlend=() verfuegbar=() unbekannt=()
+  local -a pakete=()
   mapfile -t pakete < <(_pakete_liste "$ZENOS_CODE/scripts/pakete")
   (( ${#pakete[@]} > 0 )) || { log_warnung "Keine Paketlisten unter $ZENOS_CODE/scripts/pakete gefunden"; return 0; }
 
+  _pakete_installieren "${pakete[@]}"
+  pakete_manuell_markieren "${pakete[@]}"
+}
+
+_pakete_installieren() {
+  local paket
+  local -a pakete=("$@") fehlend=() verfuegbar=() unbekannt=()
   for paket in "${pakete[@]}"; do
     paket_installiert "$paket" || fehlend+=("$paket")
   done

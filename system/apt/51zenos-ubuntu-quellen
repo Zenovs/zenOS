@@ -1,0 +1,27 @@
+// zenOS: Ubuntu-Quellen für unattended-upgrades, fest mit dem Origin «Ubuntu».
+// Quelle im Repo: system/apt/51zenos-ubuntu-quellen, installiert von scripts/module/70-sicherheit.sh.
+// Änderungen direkt in /etc/apt/apt.conf.d/ überschreibt der nächste Lauf von install.sh.
+
+// 50unattended-upgrades erlaubt nur «${distro_id}:…». unattended-upgrade nimmt ${distro_id} aus «lsb_release -is»,
+// und das liest ID und NAME aus /etc/os-release. Meldet os-release einmal zenOS statt Ubuntu, erlaubte die Vorgabe
+// nur noch «o=zenOS,…», keine Ubuntu-Quelle mehr – und unattended-upgrade meldete trotzdem Erfolg. Diese Einträge
+// gelten unabhängig davon. ${distro_codename} ist VERSION_CODENAME aus os-release (der Ubuntu-Codename, z. B.
+// resolute). Solange os-release Ubuntu meldet, stehen die vier Einträge doppelt in der Liste; das schadet nicht.
+// Dieselben vier wie in 50unattended-upgrades: Release (für neue Abhängigkeiten), Sicherheit und die beiden
+// ESM-Sicherheitsquellen von Ubuntu Pro (wirken nur, wenn Pro eingerichtet ist).
+//
+// Eigene Datei, nicht in 52zenos-unattended: Ein «zen rollback» auf einen älteren Stand schreibt 52 auf dessen Inhalt
+// zurück, kennt diese Datei aber nicht und lässt sie stehen.
+Unattended-Upgrade::Allowed-Origins {
+	"Ubuntu:${distro_codename}";
+	"Ubuntu:${distro_codename}-security";
+	"UbuntuESMApps:${distro_codename}-apps-security";
+	"UbuntuESM:${distro_codename}-infra-security";
+};
+
+// zenOS läuft nur auf veröffentlichten LTS-Versionen. «auto» (Vorgabe aus 50unattended-upgrades) fragt bei jedem Lauf
+// distro-info, ob dies eine Entwicklungsversion ist; mit einer anderen Kennung als Ubuntu gibt es dafür keine Tabelle
+// (/usr/share/distro-info/zenos.csv), und jeder Lauf warnte «Could not figure out development release». Mit «false»
+// fällt die Abfrage weg. Für ein veröffentlichtes Ubuntu ändert sich nichts: Die Entwicklungsversion ist dort immer
+// eine andere als die eigene.
+Unattended-Upgrade::DevRelease "false";

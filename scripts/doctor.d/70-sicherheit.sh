@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 70-sicherheit: automatische Updates, Chrome- und VS Code-Richtlinie, Ubuntu-Nachrichten, gitleaks und Hook, Firewall
+# 70-sicherheit: automatische Updates (auch: Ubuntu-Sicherheitsquelle erlaubt), ufw und unattended-upgrades manuell
+# installiert, Chrome- und VS Code-Richtlinie, Ubuntu-Nachrichten, gitleaks und Hook, Firewall
 # shellcheck shell=bash
 #
 # Die sudo-Regel aus dem Bau prüft schon 00-basis. Die Firewall ist standardmässig an; ist sie aus, warnt doctor
@@ -9,6 +10,7 @@
 pruefe_sicherheit() {
   abschnitt "Sicherheit"
   _sicherheit_updates
+  _sicherheit_markierung
   _sicherheit_chrome
   _sicherheit_vscode
   _sicherheit_nachrichten
@@ -36,6 +38,7 @@ _sicherheit_updates() {
     datei=$(grep -l 'APT::Periodic::Enable' /etc/apt/apt.conf.d/* 2>/dev/null | head -n 1)
     warnung "APT::Periodic::Enable ist 0${datei:+ ($datei)} – die automatischen Updates laufen nicht"
   fi
+  _sicherheit_quelle
 
   datei=/etc/apt/apt.conf.d/52zenos-unattended
   if [[ ! -f "$datei" ]]; then
@@ -62,6 +65,52 @@ _sicherheit_updates() {
     anzahl=""
     if [[ -r /run/reboot-required.pkgs ]]; then anzahl=$(sort -u /run/reboot-required.pkgs | grep -c .); fi
     hinweis "Nach Updates steht ein Neustart an${anzahl:+ (Pakete: $anzahl)} – automatische Neustarts sind aus"
+  fi
+}
+
+# Erlaubt unattended-upgrades die Ubuntu-Sicherheitsquelle? zenos-sicherheitsquelle prüft das mit der Logik von
+# unattended-upgrades selbst (Exit 0 erlaubt, 1 nicht erlaubt, 2 nicht prüfbar, etwa vor dem ersten apt update).
+# 51zenos-ubuntu-quellen hält die Ubuntu-Quellen erlaubt, auch wenn /etc/os-release einmal nicht mehr Ubuntu meldet;
+# heute wirkt noch die Vorgabe aus 50unattended-upgrades, deshalb ist eine fehlende oder abweichende Datei nur eine
+# Warnung.
+_sicherheit_quelle() {
+  local programm=/opt/zenos/scripts/bin/zenos-sicherheitsquelle datei=/etc/apt/apt.conf.d/51zenos-ubuntu-quellen
+  local ausgabe rc=0
+  if [[ ! -f "$datei" ]]; then
+    warnung "$datei fehlt – Ubuntu-Sicherheitsupdates hängen an der Kennung in /etc/os-release (install.sh)"
+  elif [[ -r /opt/zenos/system/apt/51zenos-ubuntu-quellen ]] && ! cmp -s "$datei" /opt/zenos/system/apt/51zenos-ubuntu-quellen; then
+    warnung "$datei weicht vom Stand in /opt/zenos ab (install.sh stellt ihn wieder her)"
+  fi
+
+  if [[ ! -x "$programm" ]]; then
+    warnung "$programm fehlt – Sicherheitsquelle nicht geprüft (install.sh)"
+    return 0
+  fi
+  ausgabe=$("$programm" 2>/dev/null) || rc=$?
+  ausgabe=$(head -n 1 <<< "$ausgabe")
+  case "$rc" in
+    0) ok "Ubuntu-Sicherheitsquelle erlaubt: ${ausgabe#erlaubt: }" ;;
+    1)
+      # Ohne die Liste der erlaubten Quellen (steht in der vollen Ausgabe des Programms)
+      ausgabe=${ausgabe#nicht erlaubt: }
+      [[ "$ausgabe" != *"; erlaubt sind:"* ]] || ausgabe="${ausgabe%%; erlaubt sind:*})"
+      fehler "Keine Ubuntu-Sicherheitsupdates: unattended-upgrades erlaubt $ausgabe nicht (install.sh; Einzelheiten: $programm)"
+      ;;
+    2) hinweis "Sicherheitsquelle nicht prüfbar: ${ausgabe#nicht prüfbar: }" ;;
+    *) warnung "zenos-sicherheitsquelle ist gescheitert (Exit $rc)" ;;
+  esac
+}
+
+# zenOS-Pakete, die beim Wegfallen eines Ubuntu-Metapakets nicht mit «apt autoremove» verschwinden dürfen. install.sh
+# markiert alle Pakete aus scripts/pakete/*.txt als manuell installiert (20-pakete); geprüft werden die zwei, ohne die
+# es keine Firewall und keine automatischen Sicherheitsupdates gibt.
+_sicherheit_markierung() {
+  local -a auto=()
+  mapfile -t auto < <(apt-mark showauto ufw unattended-upgrades 2>/dev/null)
+  if (( ${#auto[@]} > 0 )); then
+    warnung "Als automatisch installiert markiert: ${auto[*]} – apt autoremove entfernte sie mit, wenn ein Ubuntu-Metapaket wegfällt (install.sh markiert sie als manuell)"
+  elif paket_installiert ufw && paket_installiert unattended-upgrades; then
+    ok "ufw und unattended-upgrades als manuell installiert markiert (bleiben bei apt autoremove)"
   fi
 }
 
