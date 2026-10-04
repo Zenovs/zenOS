@@ -10,9 +10,10 @@
 # - Richtlinien für Chrome (/etc/opt/chrome/policies/managed/) und VS Code (/etc/vscode/policy.json, Telemetrie
 #   aus), auch ohne die Apps: Sie greifen, sobald sie installiert sind. Läuft auch im Image-Modus (die
 #   Richtlinien sind nur Konfiguration, keine proprietäre Software).
-# - Ubuntu-Nachrichten: motd-news (ENABLED=0 in /etc/default/motd-news) und apt-news von ubuntu-pro-client
-#   (pro config set apt_news=false) abschalten, je nur, wenn vorhanden. Beide holen ohne Aktion des Benutzers
-#   Inhalte von motd.ubuntu.com, motd-news schickt dabei Version, Kernel, Architektur und cloud_id mit.
+# - Ubuntu-Nachrichten: motd-news (motd-news.timer und .service maskiert, 50-motd-news per dpkg-statoverride
+#   stillgelegt; /etc/default/motd-news bleibt unberührt) und apt-news von ubuntu-pro-client (pro config set
+#   apt_news=false, nur wenn vorhanden) abschalten. Beide holen ohne Aktion des Benutzers Inhalte von
+#   motd.ubuntu.com, motd-news schickt dabei Version, Kernel, Architektur und cloud_id mit.
 # - ufw: standardmässig an. Zuerst die Regeln (eingehend verweigern, ausgehend erlauben, SSH aus den lokalen
 #   Netzen mit «limit»), dann einschalten über scripts/bin/zenos-firewall standard – ausser der Benutzer hat
 #   sie bewusst ausgeschaltet (/var/lib/zenos/firewall: zustand=aus, geschrieben vom Schalter in den
@@ -98,36 +99,44 @@ _sicherheit_vscode() {
   datei_installieren "$quelle" /etc/vscode/policy.json 0644 root:root
 }
 
-# Wert von ENABLED in /etc/default/motd-news, wie ihn 50-motd-news liest (letzte Zuweisung gilt)
-_sicherheit_motd_wert() { # DATEI
-  sed -n 's/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}ENABLED=//p' "$1" 2>/dev/null |
-    tail -n 1 | sed 's/[[:space:]]*#.*$//' | tr -d '"'"'"'[:space:]'
+# Einheit maskieren (auch eine, die es noch nicht gibt: Sie bleibt aus, wenn ein Paket sie später bringt). Mit
+# laufendem systemd ausser im Image-Modus auch gleich anhalten.
+_sicherheit_maskieren() { # EINHEIT
+  local einheit=$1 zustand
+  zustand=$(systemctl is-enabled "$einheit" 2>/dev/null) || true
+  case "$zustand" in masked | masked-runtime) return 0 ;; esac
+  if [[ "$ZENOS_SYSTEMD" == 1 && "$ZENOS_IMAGE" != 1 ]]; then
+    $SUDO systemctl mask --now --quiet "$einheit"
+  else
+    $SUDO systemctl mask --quiet "$einheit"
+  fi
+  aenderung "Einheit maskiert: $einheit"
 }
 
-# Ubuntu-Nachrichten abschalten, jeweils auf dem Weg, den Ubuntu dafür vorsieht (rückgängig machen: siehe
-# docs/sicherheit.md, «Unterbau»).
-_sicherheit_nachrichten() {
-  local datei=/etc/default/motd-news wert ausgabe
+# Skript aus /etc/update-motd.d stilllegen: dpkg-statoverride mit Modus 0644 (run-parts und pam_motd überspringen es,
+# und dpkg setzt den Modus auch bei Paket-Updates). Nur wenn es das Skript gibt und noch kein statoverride besteht.
+_sicherheit_stilllegen() { # DATEI
+  local datei=$1
+  [[ -f "$datei" && ! -L "$datei" ]] || return 0
+  dpkg-statoverride --list "$datei" >/dev/null 2>&1 && return 0
+  apt_warten || true
+  $SUDO dpkg-statoverride --update --add root root 0644 "$datei"
+  aenderung "$datei stillgelegt (dpkg-statoverride root root 0644)"
+}
 
-  # motd-news: Der Timer ruft zweimal täglich 50-motd-news --force auf; mit ENABLED≠1 endet das Skript sofort.
-  # Die Datei gehört dem Paket motd-news-config (Conffile). Fehlt sie, ist motd-news schon aus – dann nichts
-  # anlegen, sonst fragte dpkg bei einer späteren Installation des Pakets nach.
-  if [[ -f "$datei" ]]; then
-    wert=$(_sicherheit_motd_wert "$datei")
-    if [[ "$wert" != 0 ]]; then
-      if grep -Eq '^[[:space:]]*(export[[:space:]]+)?ENABLED=' "$datei"; then
-        sed -E 's/^[[:space:]]*(export[[:space:]]+)?ENABLED=.*/ENABLED=0/' "$datei" |
-          datei_schreiben "$datei" 0644 root:root
-      else
-        { cat -- "$datei"; printf 'ENABLED=0\n'; } | datei_schreiben "$datei" 0644 root:root
-      fi
-      if [[ "$(_sicherheit_motd_wert "$datei")" == 0 ]]; then
-        log_info "motd-news abgeschaltet (vorher ENABLED=${wert:-leer})"
-      else
-        log_warnung "motd-news liess sich nicht abschalten ($datei)"
-      fi
-    fi
-  fi
+# Ubuntu-Nachrichten abschalten, ohne Conffiles von Paketen zu ändern (rückgängig machen: siehe docs/sicherheit.md,
+# «Unterbau»).
+_sicherheit_nachrichten() {
+  local wert ausgabe
+
+  # motd-news: Der Timer ruft zweimal täglich «50-motd-news --force» auf und schickt dabei Version, Kernel,
+  # Architektur und cloud_id an motd.ubuntu.com. Timer und Dienst werden maskiert, das Skript per statoverride
+  # stillgelegt (pam_motd zeigt sonst bei jeder Anmeldung den zwischengespeicherten Text). /etc/default/motd-news
+  # (Conffile von motd-news-config) bleibt unberührt: Ein geändertes Conffile hielte unattended-upgrades bei einem
+  # Paket-Update an. Ein «ENABLED=0», das ältere zenOS-Stände dort gesetzt haben, bleibt stehen (schadet nicht).
+  _sicherheit_maskieren motd-news.timer
+  _sicherheit_maskieren motd-news.service
+  _sicherheit_stilllegen /etc/update-motd.d/50-motd-news
 
   # apt-news: ubuntu-pro-client holt bei apt update höchstens einmal täglich motd.ubuntu.com/aptnews.json.
   if befehl_vorhanden pro; then

@@ -5,11 +5,11 @@
   </picture>
 </h1>
 
-Ein ruhiges, persönliches Desktop-System für den Raspberry Pi 5. Basiert auf Ubuntu.
+zenOS ist eine eigenständige Linux®-Distribution für den Raspberry Pi 5: ein ruhiger, persönlicher Desktop mit eigener Oberfläche, eigenem Befehlsfeld und eigenem Fenster-Raster. zenOS basiert auf Ubuntu 26.04 LTS. Pakete und Sicherheitsupdates kommen direkt aus dem Ubuntu-Archiv.
 
 > Gebaut von Zeno ([@Zenovs](https://github.com/Zenovs)) zusammen mit Claude von Anthropic, mit Claude Code.
 
-*English: zenOS is a calm, personal desktop for the Raspberry Pi 5, based on Ubuntu. Built by one person for one person, together with Claude. Documentation is in German.*
+*English: zenOS is an independent Linux® distribution for the Raspberry Pi 5 – a calm, personal desktop. It is based on Ubuntu 26.04 LTS; packages and security updates come straight from the Ubuntu archive. zenOS is not affiliated with or endorsed by Canonical. Built by one person for one person, together with Claude. Documentation is in German.*
 
 ## Was zenOS ist
 
@@ -20,7 +20,7 @@ zenOS ist kein eigener Kernel. Unter der Haube läuft Ubuntu LTS, darauf ein sch
 - **Befehlsfeld:** Apps, Web-Apps, Rechner, Dateien, Werkzeuge und Einstellungen an einer Stelle, geöffnet mit `Super + Leertaste`.
 - **Raster:** Fenster rasten per Tastendruck ein, bis zum 4er-Grid, passend zum Bildschirm-Setup.
 - **Ein Terminal, das man versteht:** `Ctrl+C` kopiert, wenn Text markiert ist, sonst bricht es ab. Befehle erscheinen als Blöcke, Erklärungen gibt es offline.
-- **Sicher ab Werk:** Der Sperrbildschirm zeigt keine Inhalte, bei Bildschirmfreigabe bleibt Privates verborgen, und es gibt keine Telemetrie.
+- **Sicher ab Werk:** Der Sperrbildschirm zeigt keine Inhalte, bei Bildschirmfreigabe bleibt Privates verborgen, und es gibt keine Telemetrie. Sicherheitsupdates für das Grundsystem kommen automatisch von Ubuntu; Programme aus «universe» (etwa labwc, greetd, kitty und fish) bekommen verlässliche Sicherheitsfixes nur mit Ubuntu Pro.
 
 Die Grundsätze stehen im [Manifest](MANIFEST.md).
 
@@ -85,6 +85,8 @@ Passt's dir, nimm's. Passt's dir nicht, bau dein eigenes.
 
 ## Rechtliches
 
-zenOS ist ein unabhängiges Projekt, basiert auf Ubuntu und ist nicht mit Canonical verbunden. Ubuntu ist eine Marke von Canonical Ltd.
+zenOS ist ein unabhängiges Projekt. Es basiert auf Ubuntu, ist aber nicht mit Canonical verbunden und wird von Canonical weder unterstützt noch geprüft. Das System weist sich als zenOS aus; «basiert auf Ubuntu» steht in der Systemkennung, in `zen version` und bei der Anmeldung.
 
-Der Code von zenOS steht unter der [MIT-Lizenz](LICENSE). Enthaltene Pakete und Schriften behalten ihre eigenen Lizenzen.
+Der Code von zenOS steht unter der [MIT-Lizenz](LICENSE). Das Image enthält Pakete aus Ubuntu unter ihren eigenen Lizenzen und unfreie, weitergebbare Firmware von Raspberry Pi, Broadcom und Cypress; die Lizenztexte liegen im System unter `/usr/share/doc/*/copyright`. Schriften und Quickshell behalten ihre eigenen Lizenzen. Den Quellcode von zenOS gibt es in diesem Repo, den der Ubuntu-Pakete im Ubuntu-Archiv (`apt source <paket>`).
+
+Ubuntu and Canonical are registered trademarks of Canonical Ltd. Linux® is the registered trademark of Linus Torvalds in the U.S. and other countries. Raspberry Pi is a trademark of Raspberry Pi Ltd.

@@ -20,19 +20,30 @@ Grundsatz 1: Sicherheit ist Standard und geht vor Design und Bequemlichkeit. Sie
     <codename>-security» erlaubt sind (nur lesend, ohne Root-Rechte). `zen doctor` meldet «nicht erlaubt» als Fehler.
     Eine andere os-release lässt sich vorab prüfen, bevor sie gilt:
     `LSB_OS_RELEASE=<datei> /opt/zenos/scripts/bin/zenos-sicherheitsquelle`.
+  - **Systemkennung zenOS nur mit Nachweis:** Seit `72-kennung` meldet os-release `ID=zenos`. Vor jeder Umstellung
+    prüft install.sh die neue os-release mit `zenos-sicherheitsquelle`; ohne Nachweis bleibt die Kennung Ubuntu, und
+    liesse unattended-upgrades die Ubuntu-Sicherheitsquelle mit zenOS einmal nicht mehr zu, stellt install.sh auf
+    Ubuntu zurück. `image/bauen.sh` baut kein Image ohne diesen Nachweis. Ein apt-Hook übernimmt nach jedem apt-Lauf
+    die Codenamen von Ubuntu (`docs/module/kennung.md`). Das Programm dafür führt root aus (auch im Hook); es liegt
+    deshalb als root-eigene Kopie unter `/usr/local/sbin`, und `zen doctor` prüft, dass niemand sonst es ändern kann.
   - **Schutz vor autoremove:** Pakete, die zenOS braucht, aber Ubuntu schon über ein Metapaket mitgebracht hat (ufw,
     unattended-upgrades, jq, polkitd …), führt apt als «automatisch installiert». Fiele das Metapaket weg, entfernte
     `apt autoremove` sie mit. install.sh markiert deshalb alle Pakete aus `scripts/pakete/*.txt` (ausser den
     Build-Abhängigkeiten von Quickshell) als manuell installiert; `zen doctor` warnt, wenn ufw oder
     unattended-upgrades wieder «automatisch» sind.
-- Ubuntu Server holt ab Werk Nachrichten, ohne dass jemand etwas tut. zenOS schaltet beide ab, auf dem Weg, den
-  Ubuntu dafür vorsieht (`scripts/module/70-sicherheit.sh`, `zen doctor` prüft es):
-  - **motd-news** (Paket `motd-news-config`): Ein Timer ruft zweimal täglich `motd.ubuntu.com` auf und schickt im
-    User-Agent Ubuntu-Version, Kernel, Architektur und `cloud_id` mit. zenOS setzt `ENABLED=0` in
-    `/etc/default/motd-news`, nur wenn die Datei da ist. Der Timer bleibt, das Skript endet dann sofort.
+- Ubuntu Server holt ab Werk Nachrichten, ohne dass jemand etwas tut. zenOS schaltet beide ab, ohne Conffiles von
+  Paketen zu ändern (`scripts/module/70-sicherheit.sh`, `zen doctor` prüft es):
+  - **motd-news** (Quelle base-files, Einstellung in `motd-news-config`): Ein Timer ruft zweimal täglich
+    `motd.ubuntu.com` auf und schickt im User-Agent Ubuntu-Version, Kernel, Architektur und `cloud_id` mit. zenOS
+    maskiert `motd-news.timer` und `motd-news.service` und legt `/etc/update-motd.d/50-motd-news` mit
+    `dpkg-statoverride … root root 0644` still. `/etc/default/motd-news` bleibt unberührt (ein geändertes Conffile
+    hielte unattended-upgrades bei einem Update an); ein früher gesetztes `ENABLED=0` bleibt stehen.
   - **apt-news** (`ubuntu-pro-client`): holt bei `apt update` höchstens einmal täglich
     `motd.ubuntu.com/aptnews.json`. zenOS setzt `pro config set apt_news=false`, nur wenn der Client installiert ist.
-  - Rückgängig: `ENABLED=1` in `/etc/default/motd-news` bzw. `sudo pro config set apt_news=true`. `install.sh`
+  - Rückgängig: `sudo systemctl unmask motd-news.timer motd-news.service`,
+    `sudo dpkg-statoverride --remove /etc/update-motd.d/50-motd-news` mit
+    `sudo chmod 755 /etc/update-motd.d/50-motd-news` (und `ENABLED=1`, falls dort 0 steht) bzw.
+    `sudo pro config set apt_news=true`. `install.sh`
     schaltet beides beim nächsten Lauf wieder ab; dauerhaft nur, wenn `_sicherheit_nachrichten` aus
     `modul_system` in `scripts/module/70-sicherheit.sh` entfernt wird.
   - Es bleiben die Verbindungen, die Updates holen: apt und `unattended-upgrades` und

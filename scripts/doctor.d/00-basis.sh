@@ -10,20 +10,16 @@ pruefe_basis() {
 
 _basis_system() {
   abschnitt "System"
-  local id="" version="" name="" arch modell frei_kb frei
-  if [[ -r /etc/os-release ]]; then
-    # shellcheck disable=SC1091
-    id=$(. /etc/os-release && printf '%s' "${ID:-}")
-    # shellcheck disable=SC1091
-    version=$(. /etc/os-release && printf '%s' "${VERSION_ID:-}")
-    # shellcheck disable=SC1091
-    name=$(. /etc/os-release && printf '%s' "${PRETTY_NAME:-}")
-  fi
+  # Ubuntu 26.04 als Kennung oder als Basis der Kennung zenOS (Regel in system_unterstuetzt, lib/gemeinsam.sh)
+  local name basis arch modell frei_kb frei
+  name=$(os_release_wert PRETTY_NAME)
+  basis=$(os_release_wert PRETTY_NAME "$(basis_os_release)")
+  [[ "$basis" != "$name" ]] || basis=""
   arch=$(dpkg --print-architecture 2>/dev/null || uname -m)
-  if [[ "$id" == ubuntu && "$version" == 26.04 ]]; then
-    ok "$name · $arch"
+  if system_unterstuetzt; then
+    ok "${name:-?}${basis:+ · Basis $basis} · $arch"
   else
-    warnung "Gebaut für Ubuntu 26.04, gefunden: ${name:-unbekannt} · $arch"
+    warnung "Gebaut für Ubuntu 26.04, gefunden: ${name:-unbekannt}${basis:+ (Basis $basis)} · $arch"
   fi
   case "$arch" in
     arm64 | amd64) ;;

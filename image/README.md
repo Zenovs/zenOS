@@ -29,6 +29,11 @@ Ubuntu 26.04 LTS Server-Image für den Raspberry Pi. Zielbild: `docs/image-und-r
    landet nicht im Image. Ins Image kommt nur der Commit, nicht der Arbeitsstand.
 5. **chroot.** `ZENOS_KANAL=dev /opt/zenos/scripts/install.sh --image` mit leerer Umgebung (`env -i`), damit
    nichts aus der CI ins Image gelangt. Das Install-Log liegt danach als `<arbeit>/install.log` daneben.
+   Danach «Kennung und Sicherheitsquelle prüfen» im chroot: Umlenkung von `/usr/lib/os-release`, `ID=zenos`,
+   `lsb_release -cs` gleich dem Codenamen aus `os-release.ubuntu`, `51zenos-ubuntu-quellen`,
+   `zenos-sicherheitsquelle` mit Exit 0, `zenos-kennung pruefen` und kein Ubuntu in `PRETTY_NAME`. Fehlt eines,
+   bricht der Bau ab (kein Image ohne nachgewiesene Ubuntu-Sicherheitsupdates). Weicht `ZENOS_VERSION` von der
+   Version im Dateinamen ab (`--version`), gibt es eine Warnung. Mit `--nur-mechanik` entfällt der Schritt.
 6. **Aufräumen im Image.** `apt-get clean`, `policy-rc.d` weg, SSH-Hostschlüssel löschen, `machine-id`
    leeren, `random-seed` löschen, Logs leeren (rotierte löschen, `/var/log/zenos/install.log` löschen),
    Verlauf und Caches von root, `/opt/zenos` sauber (sonst Warnung und Zurücksetzen), `fstrim` (gelöschte

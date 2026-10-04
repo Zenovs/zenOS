@@ -15,7 +15,9 @@ Bau im Einzelnen läuft (Optionen, lokal im Container, Aufräumen), steht in `im
    die Prüfsumme der Datei.
 4. **Anpassen:** das Image vergrössern, als Loop-Gerät einhängen, `/opt/zenos` als Checkout des Tags anlegen und
    per `chroot` `ZENOS_KANAL=dev /opt/zenos/scripts/install.sh --image` ausführen. Das Image enthält nur freie
-   Pakete und zenOS; Quickshell wird dabei gebaut.
+   Pakete und zenOS; Quickshell wird dabei gebaut. Danach prüft `bauen.sh` im chroot die Kennung zenOS und die
+   Ubuntu-Sicherheitsquelle (Umlenkung von os-release, `ID=zenos`, Codename wie Ubuntu, `51zenos-ubuntu-quellen`,
+   `zenos-sicherheitsquelle` Exit 0, `zenos-kennung pruefen`, kein Ubuntu in `PRETTY_NAME`) und bricht sonst ab.
 5. **Aufräumen:**
    - Paket-Cache und Logs löschen.
    - SSH-Hostschlüssel und `machine-id` entfernen; beide werden beim ersten Start neu erzeugt.
@@ -91,7 +93,32 @@ Chrome, VS Code, 1Password und coremail sind nicht im Image; Chrome, VS Code und
 
 ## Name und Marke
 
-Das Image heisst zenOS und trägt kein Ubuntu-Logo. zenOS wird als «basiert auf Ubuntu» beschrieben. Vor dem ersten Release die aktuelle Markenrichtlinie von Canonical prüfen.
+Geprüft am 04.10.2026 gegen die IPR-Policy von Canonical (Fassung vom 15.07.2015, an dem Tag neu abgerufen und
+unverändert). Sie verlangt bei einer veränderten Weitergabe ohne Genehmigung, die Marken zu entfernen und zu ersetzen:
+Name, Logo, Systemkennung und Begrüssung. Bis `v0.1.0-rc2` stimmte das nicht: Das Image meldete sich als Ubuntu
+(`ID=ubuntu`, `LOGO=ubuntu-logo`, «Welcome to Ubuntu» bei der Anmeldung, «Ubuntu 26.04.1 LTS» an der Konsole), und die
+Ubuntu-Logos lagen als Dateien von base-files im Image.
+
+Seit der Systemkennung (`docs/module/kennung.md`, Modul `72-kennung`) gilt:
+
+- **Ersetzt:** Name und Kennung (`/usr/lib/os-release` mit `NAME="zenOS"`, `ID=zenos`, `LOGO=zenos`), die Konsole
+  (`/etc/issue`), `/etc/legal` und der Kopf der Begrüssung (`00-zenos` statt `00-header` und `10-help-text`, ohne
+  Werbung für Ubuntu Pro). Das Logo ist die Bildmarke von zenOS. `image/bauen.sh` bricht ab, wenn das Image danach
+  noch Ubuntu im Namen trägt oder die Ubuntu-Sicherheitsquelle nicht nachgewiesen ist.
+- **Bleibt, weil sachlich wahr:** «basiert auf Ubuntu 26.04 LTS» (in `VERSION`, `ID_LIKE="ubuntu debian"`,
+  `UBUNTU_CODENAME`, `zen version`, Begrüssung, `/etc/legal`, README), `/etc/lsb-release` (beschreibt die Basis),
+  Paketquellen und Schlüssel von Ubuntu, Paketnamen und -versionen, die Kennung des Kernels und von OpenSSH sowie alle
+  Lizenz- und Urheberhinweise («Canonical Ltd.» in `/usr/share/doc/*/copyright`). Die Logo-Dateien von base-files
+  unter `/usr/share/pixmaps/` bleiben liegen, nichts verweist mehr auf sie. Kein Ubuntu-Paket wird umbenannt oder neu
+  gebaut.
+- **Nie:** «offiziell», «Ubuntu-Edition» oder ein Name auf -buntu, Ubuntu im Produktnamen oder Logo, das Logo von
+  Raspberry Pi, «Linux» im Namen (zenOS ist eine Linux®-Distribution, heisst aber nicht «zenOS Linux»).
+- **Markenhinweise** (README, später Website und Versionshinweise): «Ubuntu and Canonical are registered trademarks
+  of Canonical Ltd. Linux® is the registered trademark of Linus Torvalds in the U.S. and other countries. Raspberry Pi
+  is a trademark of Raspberry Pi Ltd.»
+
+Offen vor einer Weitergabe an andere: die schriftliche Anfrage bei Canonical, eine Ähnlichkeitsrecherche zum Namen
+zenOS und der Quellcode zu jedem Release auf derselben Release-Seite.
 
 ## Bürorechner
 

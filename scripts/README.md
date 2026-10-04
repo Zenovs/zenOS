@@ -86,7 +86,7 @@ modul_benutzer() {  # optional; als Benutzer, ohne sudo, nie im --image-Modus
 | `zen update` | M1 | neuen Stand vom Kanal holen und installieren |
 | `zen rollback <tag>` | M1 | zu einem getaggten Stand zurück und installieren |
 | `zen doctor [--kurz]` | M1 | Prüfbericht ohne Geheimnisse, Exit 1 bei Fehlern |
-| `zen version` | M1 | zenOS-Version, Kanal, Commit, Quickshell, labwc, Ubuntu, Architektur |
+| `zen version` | M1 | zenOS-Version, Basis (Ubuntu), Kanal, Commit, Quickshell, labwc, Architektur |
 | `zen benutzer [--ruhig]` | M1 | nur die Benutzerteile einrichten (`install.sh --nur-benutzer`) |
 | `zen hilfe [befehl]` | M1 | Übersicht oder Hilfe zu einem Befehl |
 | `zen lock` | M7 | Sitzung sperren, auch per SSH (Notfall-Sperre, falls die Oberfläche nicht antwortet) |

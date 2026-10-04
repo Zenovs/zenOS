@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# hilfe: version – zenOS-Version, Kanal, Commit, Quickshell, labwc, Ubuntu, Architektur
+# hilfe: version – zenOS-Version, Basis (Ubuntu), Kanal, Commit, Quickshell, labwc, Architektur
+# Die Basis kommt aus der os-release von Ubuntu (/usr/lib/os-release.ubuntu, solange die Kennung zenOS gilt).
 # shellcheck shell=bash
 
 befehl_version() {
-  local zenos="nicht installiert" kanal commit zweig qs labwc ubuntu arch
+  local zenos="nicht installiert" kanal commit zweig qs labwc basis arch
 
   if zen_git rev-parse --git-dir >/dev/null 2>&1; then
     zenos=$(zenos_version "$ZENOS_CODE")
@@ -31,20 +32,16 @@ befehl_version() {
     labwc=$(labwc --version 2>/dev/null | awk 'NR == 1 { print $2 }') || labwc="?"
   fi
 
-  ubuntu="?"
-  if [[ -r /etc/os-release ]]; then
-    # shellcheck disable=SC1091
-    ubuntu=$(. /etc/os-release && printf '%s' "${PRETTY_NAME:-?}")
-  fi
+  basis=$(os_release_wert PRETTY_NAME "$(basis_os_release)")
   arch=$(dpkg --print-architecture 2>/dev/null || uname -m)
 
   printf '%-12s %s\n' \
     zenOS "$zenos" \
+    Basis "${basis:-?}" \
     Kanal "$kanal" \
     Commit "$commit" \
     Quickshell "$qs" \
     labwc "$labwc" \
-    System "$ubuntu" \
     Architektur "$arch"
 }
 

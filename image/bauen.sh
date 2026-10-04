@@ -6,7 +6,8 @@
 # Ablauf: Ubuntu 26.04 Server (preinstalled, arm64+raspi) laden, die GPG-Signatur von SHA256SUMS und die
 # Prüfsumme kontrollieren, entpacken, vergrössern, Boot- und Root-Partition über Loop-Geräte einhängen,
 # /opt/zenos als Git-Checkout des gewünschten Stands anlegen, im chroot
-# «ZENOS_KANAL=dev /opt/zenos/scripts/install.sh --image» ausführen, aufräumen, verkleinern, mit xz packen
+# «ZENOS_KANAL=dev /opt/zenos/scripts/install.sh --image» ausführen, die Kennung zenOS und die Ubuntu-Sicherheitsquelle
+# prüfen (sonst Abbruch), aufräumen, verkleinern, mit xz packen
 # und SHA256SUMS schreiben. Ergebnis: <ausgabe>/zenos-<version>-pi5-arm64.img.xz und <ausgabe>/SHA256SUMS.
 # Läuft als root auf arm64-Linux (GitHub-Runner ubuntu-24.04-arm oder lokal). Mehr in image/README.md.
 
@@ -670,6 +671,33 @@ run_mechanics() {
   info "git im chroot: /opt/zenos auf $describe"
 }
 
+# Nach install.sh: Kennung zenOS und Sicherheitsquelle. Kein Image ohne nachgewiesene Ubuntu-Sicherheitsupdates
+# (docs/module/kennung.md). Die Paketlisten liegen nach dem apt-get update von install.sh im chroot vor.
+check_identity() {
+  local r=$ROOT_MNT os_file="$ROOT_MNT/usr/lib/os-release" ubuntu_file="$ROOT_MNT/usr/lib/os-release.ubuntu"
+  local target codename lsb pretty output rc=0
+  target=$(in_chroot dpkg-divert --truename /usr/lib/os-release)
+  [[ "$target" == /usr/lib/os-release.ubuntu ]] || die "Umlenkung von /usr/lib/os-release fehlt (72-kennung, Install-Log)"
+  [[ -f "$ubuntu_file" ]] || die "/usr/lib/os-release.ubuntu fehlt"
+  grep -qx 'ID=zenos' -- "$os_file" || die "/usr/lib/os-release meldet nicht ID=zenos"
+  codename=$(sed -n 's/^VERSION_CODENAME=//p' -- "$ubuntu_file" | tr -d '"')
+  lsb=$(in_chroot lsb_release -cs 2>/dev/null) || true
+  [[ -n "$codename" && "$lsb" == "$codename" ]] || die "lsb_release -cs meldet «$lsb» statt des Ubuntu-Codenamens «$codename»"
+  pretty=$(sed -n 's/^PRETTY_NAME=//p' -- "$os_file" | tr -d '"')
+  [[ -n "$pretty" && "$pretty" != *[Uu]buntu* ]] || die "PRETTY_NAME «$pretty» ist leer oder nennt Ubuntu"
+  [[ -f "$r/etc/apt/apt.conf.d/51zenos-ubuntu-quellen" ]] || die "/etc/apt/apt.conf.d/51zenos-ubuntu-quellen fehlt"
+  output=$(in_chroot /opt/zenos/scripts/bin/zenos-sicherheitsquelle 2>&1) || rc=$?
+  (( rc == 0 )) || die "Ubuntu-Sicherheitsquelle nicht nachgewiesen (zenos-sicherheitsquelle Exit $rc): $output"
+  rc=0
+  output=$(in_chroot /usr/local/sbin/zenos-kennung pruefen 2>&1) || rc=$?
+  (( rc == 0 )) || die "zenos-kennung pruefen (Exit $rc): ${output//$'\n'/; }"
+  info "Kennung: $pretty · Basis $(sed -n 's/^PRETTY_NAME=//p' -- "$ubuntu_file" | tr -d '"') · Codename $lsb"
+  info "Sicherheitsquelle: $(in_chroot /opt/zenos/scripts/bin/zenos-sicherheitsquelle 2>&1)"
+  if ! grep -qx "ZENOS_VERSION=\"$opt_version\"" -- "$os_file"; then
+    warn "ZENOS_VERSION in os-release ($(sed -n 's/^ZENOS_VERSION=//p' -- "$os_file")) ist nicht die Version im Dateinamen ($opt_version)"
+  fi
+}
+
 # --- Aufräumen im Image ----------------------------------------------------
 
 clean_image() {
@@ -951,6 +979,8 @@ if (( opt_mechanics )); then
 else
   step "install.sh --image im chroot"
   run_install
+  step "Kennung und Sicherheitsquelle prüfen"
+  check_identity
 fi
 
 step "Aufräumen im Image"

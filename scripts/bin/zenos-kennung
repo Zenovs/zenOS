@@ -1,0 +1,675 @@
+#!/usr/bin/python3 -I
+"""zenos-kennung: Das System weist sich als zenOS aus (ID=zenos, ID_LIKE="ubuntu debian") statt als Ubuntu, und zurück.
+
+Aufruf:
+  zenos-kennung einrichten   Kennung zenOS einrichten oder nachziehen (root, idempotent)
+  zenos-kennung erneuern     nur /usr/lib/os-release aus der Ubuntu-Fassung neu schreiben, falls nötig (root; der
+                             apt-Hook /etc/apt/apt.conf.d/60zenos-kennung ruft das nach jedem dpkg-Lauf von apt auf)
+  zenos-kennung ubuntu       zurück zur Kennung von Ubuntu und dabei bleiben (root; install.sh stellt nicht wieder um,
+                             bis «zenos-kennung einrichten» läuft). Mit --ohne-merker darf install.sh wieder umstellen.
+  zenos-kennung pruefen      ist alles eingerichtet und aktuell? (ohne Root-Rechte, nur lesend)
+  zenos-kennung erzeugen [--ubuntu DATEI] [--version V]
+                             die os-release für zenOS ausgeben (ohne Root-Rechte, schreibt nichts)
+  zenos-kennung --hilfe      diese Hilfe
+  --wurzel ORDNER            vor dem Unterbefehl: alles unter ORDNER statt unter / (nur für Tests; dpkg-divert und
+                             dpkg-statoverride bekommen --root ORDNER)
+
+Was «einrichten» tut (Begründungen: docs/module/kennung.md):
+- /usr/lib/os-release, /etc/issue und /etc/legal: zuerst eine Kopie der Ubuntu-Fassung als <datei>.ubuntu, dann
+  «dpkg-divert --local --no-rename --divert <datei>.ubuntu --add <datei>», danach wird die zenOS-Fassung atomar
+  geschrieben (temporäre Datei, rename). dpkg schreibt Updates von base-files damit nach <datei>.ubuntu. Nie --rename:
+  Die Datei fehlt so keinen Augenblick. /etc/os-release bleibt Ubuntus Verweis auf ../usr/lib/os-release.
+- os-release: NAME/PRETTY_NAME zenOS mit der Version aus /usr/local/share/zenos/version (schreibt install.sh),
+  VERSION_ID, VERSION_CODENAME und UBUNTU_CODENAME immer aus os-release.ubuntu, die Codenamen ohne Anführungszeichen
+  (update-notifier liest UBUNTU_CODENAME mit einem regulären Ausdruck bis zum Zeilenende). Kein anderes Feld enthält
+  den Text UBUNTU_CODENAME, Ubuntu steht nie in NAME oder PRETTY_NAME, NAME klein ist gleich ID (sonst meldet
+  lsb_release «Zenos»), kein BUG_REPORT_URL und kein SUPPORT_URL.
+- Begrüssung (motd): 00-header, 10-help-text, 91-contract-ua-esm-status und 91-release-upgrade per
+  «dpkg-statoverride --update --add root root 0644» stilllegen (nur vorhandene), /var/lib/update-notifier/
+  hide-esm-in-motd anlegen (nur mit update-notifier), dafür /etc/update-motd.d/00-zenos. 50-motd-news legt
+  scripts/module/70-sicherheit.sh still (es ruft das Netz auf).
+- Verweise zenos.info/zenos.mirrors (python-apt) und zenos.csv (distro-info) auf die Ubuntu-Dateien, nur wenn es
+  diese gibt: ohne sie bricht add-apt-repository ab.
+- Verweigert ohne /etc/apt/apt.conf.d/51zenos-ubuntu-quellen: Ohne diese Datei erlaubte unattended-upgrades mit der
+  Kennung zenOS keine Ubuntu-Sicherheitsquelle mehr. Die gründliche Vorab-Prüfung macht install.sh
+  (scripts/module/72-kennung.sh mit zenos-sicherheitsquelle).
+
+Sicherheit: Läuft als root (sudo, install.sh, apt-Hook), deshalb liegt die ausgeführte Kopie root-eigen unter
+/usr/local/sbin. Keine Shell, Prozesse nur mit Argumentlisten und festem PATH, Python isoliert (-I). Die Ubuntu-Datei
+wird gelesen, nicht ausgeführt; Version und Codenamen werden gegen enge Muster geprüft. «einrichten» und «ubuntu»
+halten die Sperre /var/lib/dpkg/lock-frontend wie apt (dpkg-divert und dpkg-statoverride sperren selbst nicht),
+«erneuern» nie (apt hält sie dann schon).
+
+Exit: 0 erledigt bzw. (pruefen) alles eingerichtet · 1 Fehler bzw. (pruefen) Abweichung · 2 falscher Aufruf ·
+3 (pruefen) bewusst Ubuntu («zenos-kennung ubuntu»).
+"""
+
+import datetime
+import errno
+import fcntl
+import os
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import time
+
+NAME = "zenos-kennung"
+
+OS_RELEASE = "/usr/lib/os-release"
+ISSUE = "/etc/issue"
+LEGAL = "/etc/legal"
+SUFFIX = ".ubuntu"
+VERSION_FILE = "/usr/local/share/zenos/version"
+MARKER = "/var/lib/zenos/kennung"
+SECURITY_SOURCES = "/etc/apt/apt.conf.d/51zenos-ubuntu-quellen"
+DPKG_LOCK = "/var/lib/dpkg/lock-frontend"
+MOTD_DIR = "/etc/update-motd.d"
+MOTD_OFF = ("00-header", "10-help-text", "91-contract-ua-esm-status", "91-release-upgrade")
+MOTD_SCRIPTS = tuple(os.path.join(MOTD_DIR, name) for name in MOTD_OFF)
+MOTD_ZENOS = "/etc/update-motd.d/00-zenos"
+HIDE_ESM = "/var/lib/update-notifier/hide-esm-in-motd"
+UPDATES_HELPER = "/usr/lib/update-notifier/update-motd-updates-available"
+COMPAT_LINKS = (
+    ("/usr/share/python-apt/templates/zenos.info", "ubuntu.info"),
+    ("/usr/share/python-apt/templates/zenos.mirrors", "ubuntu.mirrors"),
+    ("/usr/share/distro-info/zenos.csv", "ubuntu.csv"),
+)
+HOME_URL = "https://github.com/Zenovs/zenOS"
+DOCUMENTATION_URL = "https://github.com/Zenovs/zenOS/tree/main/docs"
+OVERRIDE = ("root", "root", "644")
+LOCK_TIMEOUT = 300  # Sekunden
+
+# agetty setzt für \S den PRETTY_NAME aus os-release ein: Die Datei bleibt bei einer neuen Version gleich.
+ISSUE_TEXT = "\\S \\n \\l\n\n"
+
+LEGAL_TEXT = """
+zenOS besteht aus freier Software und wenigen unfreien, frei weitergebbaren
+Firmware-Dateien. Die genauen Lizenzbedingungen jedes Programms stehen in
+/usr/share/doc/*/copyright, die von zenOS selbst in /opt/zenos/LICENSE.
+
+zenOS basiert auf Ubuntu und ist ein unabhängiges Projekt. Es ist nicht mit
+Canonical verbunden und wird von Canonical weder unterstützt noch geprüft.
+
+zenOS kommt OHNE JEDE GEWÄHRLEISTUNG, soweit das anwendbare Recht dies zulässt.
+
+"""
+
+MOTD_TEXT = """#!/bin/sh
+# shellcheck disable=SC1091
+# zenOS: Kopf der Begrüssung bei der Anmeldung (ersetzt 00-header und 10-help-text von Ubuntu).
+# Geschrieben von zenos-kennung, «zenos-kennung ubuntu» entfernt die Datei wieder.
+name=$(. /usr/lib/os-release 2>/dev/null && printf '%s' "${PRETTY_NAME:-}")
+basis=$(. /usr/lib/os-release.ubuntu 2>/dev/null && printf '%s' "${PRETTY_NAME:-}")
+printf '%s · Basis %s · Kernel %s\\n' "${name:-zenOS}" "${basis:-Ubuntu}" "$(uname -r)"
+printf 'Hilfe: zen hilfe · Zustand: zen doctor\\n'
+"""
+MOTD_MARK = "# zenOS: Kopf der Begrüssung"
+
+VERSION_PATTERN = re.compile(r"[0-9A-Za-z][0-9A-Za-z.+~_-]{0,63}")
+CODENAME_PATTERN = re.compile(r"[a-z0-9][a-z0-9.+-]{0,31}")
+VERSION_ID_PATTERN = re.compile(r"[0-9A-Za-z][0-9A-Za-z.+~_-]{0,31}")
+KEY_PATTERN = re.compile(r"[A-Z][A-Z0-9_]*")
+
+
+class Error(Exception):
+    """Fehler mit einer Meldung für den Menschen (Exit 1)."""
+
+
+# --- os-release lesen und erzeugen ------------------------------------------------------------------------------
+
+
+def _unquote(raw):
+    """Wert einer os-release-Zeile wie die Shell: "…" mit \\-Escapes, '…' wörtlich, sonst ohne Leerzeichen."""
+    raw = raw.strip()
+    if len(raw) >= 2 and raw[0] == raw[-1] == "'":
+        return raw[1:-1]
+    if len(raw) >= 2 and raw[0] == raw[-1] == '"':
+        out, i, inner = [], 0, raw[1:-1]
+        while i < len(inner):
+            c = inner[i]
+            if c == "\\" and i + 1 < len(inner) and inner[i + 1] in '\\"$`':
+                out.append(inner[i + 1])
+                i += 2
+                continue
+            out.append(c)
+            i += 1
+        return "".join(out)
+    if any(c in raw for c in " \t\"'`$\\"):
+        return None
+    return raw
+
+
+def parse_os_release(text):
+    """Schlüssel und Werte einer os-release (Kommentare, Leerzeilen und unlesbare Zeilen zählen nicht)."""
+    values = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, raw = line.split("=", 1)
+        if not KEY_PATTERN.fullmatch(key):
+            continue
+        value = _unquote(raw)
+        if value is not None:
+            values[key] = value
+    return values
+
+
+def _quote(value):
+    """In doppelten Anführungszeichen, mit \\ vor \\, ", $ und ` (os-release(5))."""
+    return '"' + re.sub(r'([\\"$`])', r"\\\1", value) + '"'
+
+
+def normalize_version(raw):
+    """«v0.1.0-rc2-18-gabc1234-dirty» (git describe) → «0.1.0-rc2-18-gabc1234»; leer, wenn unbrauchbar."""
+    version = (raw or "").strip().splitlines()[0].strip() if (raw or "").strip() else ""
+    if version.startswith("v") and len(version) > 1 and version[1].isdigit():
+        version = version[1:]
+    if version.endswith("-dirty"):
+        version = version[: -len("-dirty")]
+    if not VERSION_PATTERN.fullmatch(version) or version == "unbekannt" or "ubuntu" in version.lower():
+        return ""
+    return version
+
+
+def generate(ubuntu, version):
+    """os-release für zenOS aus den Werten der Ubuntu-Fassung und der zenOS-Version (leer: ohne Version)."""
+    if ubuntu.get("ID") != "ubuntu":
+        raise Error(f"die Vorlage ist nicht die os-release von Ubuntu (ID={ubuntu.get('ID') or 'fehlt'})")
+    version_id = ubuntu.get("VERSION_ID", "")
+    codename = ubuntu.get("VERSION_CODENAME", "")
+    ubuntu_codename = ubuntu.get("UBUNTU_CODENAME") or codename
+    if not VERSION_ID_PATTERN.fullmatch(version_id):
+        raise Error(f"VERSION_ID der Ubuntu-Fassung fehlt oder ist ungewöhnlich: {version_id!r}")
+    for key, value in (("VERSION_CODENAME", codename), ("UBUNTU_CODENAME", ubuntu_codename)):
+        if not CODENAME_PATTERN.fullmatch(value):
+            raise Error(f"{key} der Ubuntu-Fassung fehlt oder ist ungewöhnlich: {value!r}")
+    base = ubuntu.get("PRETTY_NAME") or " ".join(p for p in ("Ubuntu", ubuntu.get("VERSION") or version_id) if p)
+    base = " ".join(base.split())
+    version = normalize_version(version)
+
+    lines = [
+        f"PRETTY_NAME={_quote('zenOS ' + version if version else 'zenOS')}",
+        'NAME="zenOS"',
+        f"VERSION={_quote((version + ' ' if version else '') + '(basiert auf ' + base + ')')}",
+        f"VERSION_ID={_quote(version_id)}",
+        f"VERSION_CODENAME={codename}",
+        "ID=zenos",
+        'ID_LIKE="ubuntu debian"',
+        f"HOME_URL={_quote(HOME_URL)}",
+        f"DOCUMENTATION_URL={_quote(DOCUMENTATION_URL)}",
+        f"UBUNTU_CODENAME={ubuntu_codename}",
+        "LOGO=zenos",
+    ]
+    if version:
+        lines.append(f"ZENOS_VERSION={_quote(version)}")
+    text = "\n".join(lines) + "\n"
+    # Schutz vor Überraschungen aus der Ubuntu-Fassung: update-notifier sucht UBUNTU_CODENAME ohne Anker
+    if text.count("UBUNTU_CODENAME") != 1:
+        raise Error("der Text UBUNTU_CODENAME käme mehr als einmal vor (update-notifier läse den falschen Wert)")
+    return text
+
+
+def is_zenos_os_release(text):
+    return parse_os_release(text).get("ID") == "zenos"
+
+
+# --- Pfade, Dateien, dpkg ---------------------------------------------------------------------------------------
+
+
+class System:
+    """Zugriff auf das System, wahlweise unter einer Testwurzel (--wurzel)."""
+
+    def __init__(self, root="/"):
+        self.root = os.path.abspath(root)
+
+    def path(self, path):
+        return path if self.root == "/" else os.path.join(self.root, path.lstrip("/"))
+
+    # Prozesse: immer Argumentlisten, fester PATH, ohne Eingabe
+    def run(self, args, check=True):
+        env = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C.UTF-8"}
+        if getattr(self, "_locked", False):
+            env["DPKG_FRONTEND_LOCKED"] = "1"
+        result = subprocess.run(args, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False)
+        if check and result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip().splitlines()
+            raise Error(f"{' '.join(args[:2])} ist gescheitert (Exit {result.returncode}): "
+                        f"{detail[-1] if detail else 'ohne Meldung'}")
+        return result
+
+    def dpkg(self, tool, *args, check=True):
+        root = [] if self.root == "/" else ["--root", self.root]
+        return self.run([tool, *root, *args], check=check)
+
+    def diversion(self, path):
+        """(«LOCAL» oder Paket, Ziel) der Umlenkung von path, oder None."""
+        owner = self.dpkg("dpkg-divert", "--listpackage", path).stdout.strip()
+        if not owner:
+            return None
+        target = self.dpkg("dpkg-divert", "--truename", path).stdout.strip()
+        return owner, target
+
+    def statoverride(self, path):
+        """(Besitzer, Gruppe, Modus) des statoverride für path, oder None."""
+        result = self.dpkg("dpkg-statoverride", "--list", path, check=False)
+        fields = result.stdout.split()
+        if result.returncode != 0 or len(fields) < 4:
+            return None
+        return fields[0], fields[1], fields[2].lstrip("0") or "0"
+
+    def read(self, path):
+        try:
+            with open(self.path(path), encoding="utf-8") as f:
+                return f.read()
+        except FileNotFoundError:
+            return None
+        except (OSError, UnicodeDecodeError) as e:
+            raise Error(f"{path} nicht lesbar: {e}") from e
+
+    def exists(self, path):
+        return os.path.lexists(self.path(path))
+
+    def write(self, path, text, mode=0o644):
+        """Atomar: temporäre Datei im selben Ordner, dann rename. Meldet, ob sich etwas geändert hat."""
+        real = self.path(path)
+        if os.path.isfile(real) and not os.path.islink(real) and stat.S_IMODE(os.stat(real).st_mode) == mode:
+            if self.read(path) == text:
+                return False
+        tmp = real + ".zenos-neu"
+        if os.path.lexists(tmp):
+            os.unlink(tmp)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(text)
+                f.flush()
+                os.fchmod(f.fileno(), mode)
+                os.fsync(f.fileno())
+            os.replace(tmp, real)
+        except BaseException:
+            if os.path.lexists(tmp):
+                os.unlink(tmp)
+            raise
+        return True
+
+    def changed(self, text):
+        print(f"geändert: {text}", flush=True)
+
+    # Sperre wie apt: lock-frontend, wartet höchstens LOCK_TIMEOUT Sekunden
+    def lock(self):
+        path = self.path(DPKG_LOCK)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o640)
+        deadline = time.monotonic() + LOCK_TIMEOUT
+        said = False
+        while True:
+            try:
+                fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError as e:
+                if e.errno not in (errno.EACCES, errno.EAGAIN):
+                    os.close(fd)
+                    raise Error(f"Sperre {DPKG_LOCK} nicht nutzbar: {e}") from e
+                if time.monotonic() >= deadline:
+                    os.close(fd)
+                    raise Error(f"ein anderer Paketvorgang hält {DPKG_LOCK} seit {LOCK_TIMEOUT} s (apt, "
+                                "unattended-upgrades); später noch einmal") from e
+                if not said:
+                    print("Warte auf einen anderen Paketvorgang (dpkg-Sperre) …", flush=True)
+                    said = True
+                time.sleep(1)
+        self._lock_fd = fd
+        self._locked = True
+
+    def unlock(self):
+        if getattr(self, "_locked", False):
+            os.close(self._lock_fd)
+            self._locked = False
+
+
+# --- Bausteine ---------------------------------------------------------------------------------------------------
+
+
+def read_version(system):
+    text = system.read(VERSION_FILE)
+    return normalize_version(text or "")
+
+
+def ubuntu_source(system):
+    """Pfad (im System) der os-release von Ubuntu: die umgelenkte Fassung, sonst die eigentliche Datei."""
+    diversion = system.diversion(OS_RELEASE)
+    if diversion:
+        if diversion != ("LOCAL", OS_RELEASE + SUFFIX):
+            raise Error(f"{OS_RELEASE} ist anders umgelenkt ({diversion[0]} → {diversion[1]}); zenos-kennung lässt "
+                        "das unberührt")
+        return OS_RELEASE + SUFFIX
+    current = system.read(OS_RELEASE)
+    if current is not None and parse_os_release(current).get("ID") == "ubuntu":
+        return OS_RELEASE
+    saved = system.read(OS_RELEASE + SUFFIX)
+    if saved is not None and parse_os_release(saved).get("ID") == "ubuntu":
+        return OS_RELEASE + SUFFIX
+    raise Error(f"keine os-release von Ubuntu gefunden ({OS_RELEASE}, {OS_RELEASE + SUFFIX})")
+
+
+def wanted_os_release(system, source=None, version=None):
+    source = source or ubuntu_source(system)
+    text = system.read(source)
+    if text is None:
+        raise Error(f"{source} fehlt")
+    return generate(parse_os_release(text), read_version(system) if version is None else version)
+
+
+def is_ours(path, text):
+    """Hat path den Inhalt, den zenos-kennung schreibt (os-release: Kennung zenos)?"""
+    if text is None:
+        return False
+    if path == OS_RELEASE:
+        return is_zenos_os_release(text)
+    return text == {ISSUE: ISSUE_TEXT, LEGAL: LEGAL_TEXT}[path]
+
+
+def divert(system, path, content):
+    """Ubuntu-Fassung nach path.ubuntu umlenken (einmal) und die zenOS-Fassung schreiben."""
+    saved = path + SUFFIX
+    diversion = system.diversion(path)
+    if diversion and diversion != ("LOCAL", saved):
+        raise Error(f"{path} ist anders umgelenkt ({diversion[0]} → {diversion[1]}); zenos-kennung lässt das unberührt")
+    if not diversion:
+        current = system.read(path)
+        if current is None:
+            print(f"{path} fehlt, bleibt ohne zenOS-Fassung", flush=True)
+            return
+        if is_ours(path, current):
+            # Rest eines unterbrochenen Rückwegs: path hat schon den zenOS-Inhalt, die Ubuntu-Fassung liegt daneben
+            if not os.path.isfile(system.path(saved)):
+                raise Error(f"{path} hat schon den zenOS-Inhalt, aber {saved} fehlt (sudo apt install --reinstall "
+                            "base-files, dann noch einmal)")
+        else:
+            if system.exists(saved):
+                os.unlink(system.path(saved))
+            shutil.copy2(system.path(path), system.path(saved), follow_symlinks=False)
+        system.dpkg("dpkg-divert", "--local", "--no-rename", "--divert", saved, "--add", path)
+        system.changed(f"Umlenkung {path} → {saved}")
+    if system.write(path, content):
+        system.changed(path)
+
+
+def restore(system, path):
+    """Umlenkung entfernen und die Ubuntu-Fassung zurück an ihren Platz. False, wenn sie fehlt."""
+    saved = path + SUFFIX
+    diversion = system.diversion(path)
+    if diversion and diversion != ("LOCAL", saved):
+        print(f"{path} ist anders umgelenkt ({diversion[0]} → {diversion[1]}), bleibt", flush=True)
+        return True
+    if diversion:
+        system.dpkg("dpkg-divert", "--local", "--no-rename", "--remove", path)
+        if not os.path.isfile(system.path(saved)):
+            print(f"{saved} fehlt: {path} behält die zenOS-Fassung (sudo apt install --reinstall base-files)",
+                  file=sys.stderr, flush=True)
+            system.changed(f"Umlenkung von {path} entfernt")
+            return False
+        os.replace(system.path(saved), system.path(path))
+        system.changed(f"Umlenkung von {path} entfernt, Ubuntu-Fassung zurück")
+    elif os.path.isfile(system.path(saved)) and is_ours(path, system.read(path)):
+        os.replace(system.path(saved), system.path(path))
+        system.changed(f"Ubuntu-Fassung von {path} zurück")
+    return True
+
+
+def compat_links(system):
+    """(Verweis, Ziel) für die Verweise, deren Ziel es gibt."""
+    links = []
+    for link, target in COMPAT_LINKS:
+        if os.path.isfile(system.path(os.path.join(os.path.dirname(link), target))):
+            links.append((link, target))
+    return links
+
+
+def refresh_updates_text(system):
+    """Text von 90-updates-available neu schreiben lassen (update-notifier liest hide-esm-in-motd nur dabei).
+    Nur am echten System, Fehler zählen nicht (der nächste apt-Lauf holt es nach)."""
+    if system.root != "/" or not os.access(UPDATES_HELPER, os.X_OK):
+        return
+    try:
+        system.run([UPDATES_HELPER, "--force"], check=False)
+    except OSError:
+        pass
+
+
+def read_marker(system):
+    text = system.read(MARKER) or ""
+    values = dict(line.split("=", 1) for line in text.splitlines() if "=" in line)
+    return values if values.get("kennung") == "ubuntu" else None
+
+
+# --- Unterbefehle ------------------------------------------------------------------------------------------------
+
+
+def need_root():
+    if os.geteuid() != 0:
+        raise Error("braucht Root-Rechte (sudo zenos-kennung …)")
+
+
+def cmd_einrichten(system):
+    need_root()
+    if not os.path.isfile(system.path(SECURITY_SOURCES)):
+        raise Error(f"{SECURITY_SOURCES} fehlt: Mit der Kennung zenOS erlaubte unattended-upgrades sonst keine "
+                    "Ubuntu-Sicherheitsquelle mehr (install.sh legt die Datei an)")
+    # Zuerst erzeugen: Ist die Ubuntu-Fassung unbrauchbar, ändert sich gar nichts
+    os_release = wanted_os_release(system)
+    system.lock()
+    try:
+        divert(system, OS_RELEASE, os_release)
+        divert(system, ISSUE, ISSUE_TEXT)
+        divert(system, LEGAL, LEGAL_TEXT)
+
+        for script in MOTD_SCRIPTS:
+            real = system.path(script)
+            if not os.path.isfile(real) or os.path.islink(real):
+                continue
+            override = system.statoverride(script)
+            if override is None:
+                system.dpkg("dpkg-statoverride", "--update", "--add", *OVERRIDE[:2], "0" + OVERRIDE[2], script)
+                system.changed(f"{script} stillgelegt (dpkg-statoverride root root 0644)")
+            elif override != OVERRIDE:
+                print(f"{script}: eigener statoverride ({' '.join(override)}), bleibt", flush=True)
+        if system.write(MOTD_ZENOS, MOTD_TEXT, 0o755):
+            system.changed(MOTD_ZENOS)
+        if os.path.isdir(system.path(os.path.dirname(HIDE_ESM))) and not system.exists(HIDE_ESM):
+            system.write(HIDE_ESM, "")
+            system.changed(f"{HIDE_ESM} (keine Werbung für Ubuntu Pro in der Begrüssung)")
+            refresh_updates_text(system)
+
+        for link, target in compat_links(system):
+            real = system.path(link)
+            if os.path.islink(real) and os.readlink(real) == target:
+                continue
+            if os.path.lexists(real) and not os.path.islink(real):
+                print(f"{link} gibt es schon als Datei, bleibt", flush=True)
+                continue
+            if os.path.islink(real):
+                os.unlink(real)
+            os.symlink(target, real)
+            system.changed(f"{link} → {target}")
+
+        if system.exists(MARKER):
+            os.unlink(system.path(MARKER))
+            system.changed(f"{MARKER} entfernt (Kennung zenOS gilt wieder)")
+    finally:
+        system.unlock()
+    return 0
+
+
+def cmd_erneuern(system):
+    need_root()
+    if read_marker(system):
+        return 0
+    diversion = system.diversion(OS_RELEASE)
+    if diversion != ("LOCAL", OS_RELEASE + SUFFIX):
+        return 0
+    text = wanted_os_release(system, OS_RELEASE + SUFFIX)
+    if system.write(OS_RELEASE, text):
+        values = parse_os_release(text)
+        system.changed(f"{OS_RELEASE} ({values.get('PRETTY_NAME')}, {values.get('VERSION')})")
+    return 0
+
+
+def cmd_ubuntu(system, keep_marker=True):
+    need_root()
+    complete = True
+    system.lock()
+    try:
+        for path in (OS_RELEASE, ISSUE, LEGAL):
+            complete = restore(system, path) and complete
+
+        for script in MOTD_SCRIPTS:
+            if system.statoverride(script) != OVERRIDE:
+                continue
+            system.dpkg("dpkg-statoverride", "--remove", script)
+            real = system.path(script)
+            if os.path.isfile(real) and not os.path.islink(real):
+                os.chmod(real, 0o755)
+            system.changed(f"{script} wieder aktiv")
+        text = system.read(MOTD_ZENOS)
+        if text is not None and MOTD_MARK in text:
+            os.unlink(system.path(MOTD_ZENOS))
+            system.changed(f"{MOTD_ZENOS} entfernt")
+        if system.exists(HIDE_ESM):
+            os.unlink(system.path(HIDE_ESM))
+            system.changed(f"{HIDE_ESM} entfernt")
+            refresh_updates_text(system)
+        for link, target in COMPAT_LINKS:
+            real = system.path(link)
+            if os.path.islink(real) and os.readlink(real) == target:
+                os.unlink(real)
+                system.changed(f"{link} entfernt")
+
+        if keep_marker and not read_marker(system):
+            now = datetime.datetime.now().astimezone().replace(microsecond=0).isoformat()
+            os.makedirs(system.path(os.path.dirname(MARKER)), exist_ok=True)
+            system.write(MARKER, f"kennung=ubuntu\nseit={now}\n")
+            system.changed(f"{MARKER}: bleibt Ubuntu, bis «zenos-kennung einrichten» läuft")
+    finally:
+        system.unlock()
+    return 0 if complete else 1
+
+
+def problems(system):
+    """Abweichungen vom eingerichteten Stand, je eine Zeile."""
+    found = []
+    try:
+        wanted = wanted_os_release(system)
+    except Error as e:
+        return [f"os-release: {e}"]
+    for path, content in ((OS_RELEASE, wanted), (ISSUE, ISSUE_TEXT), (LEGAL, LEGAL_TEXT)):
+        diversion = system.diversion(path)
+        if diversion != ("LOCAL", path + SUFFIX):
+            if system.exists(path):
+                found.append(f"Umlenkung fehlt: {path} → {path + SUFFIX}")
+            continue
+        if not os.path.isfile(system.path(path + SUFFIX)):
+            found.append(f"Ubuntu-Fassung fehlt: {path + SUFFIX}")
+        if system.read(path) != content:
+            found.append(f"veraltet: {path}" if path == OS_RELEASE else f"anders als von zenOS geschrieben: {path}")
+    for script in MOTD_SCRIPTS:
+        real = system.path(script)
+        if os.path.isfile(real) and not os.path.islink(real):
+            override = system.statoverride(script)
+            if override is None:
+                found.append(f"nicht stillgelegt: {script}")
+            elif override == OVERRIDE and stat.S_IMODE(os.stat(real).st_mode) & 0o111:
+                found.append(f"ausführbar trotz statoverride: {script}")
+    real = system.path(MOTD_ZENOS)
+    if system.read(MOTD_ZENOS) != MOTD_TEXT or stat.S_IMODE(os.stat(real).st_mode) != 0o755:
+        found.append(f"fehlt oder anders: {MOTD_ZENOS}")
+    if os.path.isdir(system.path(os.path.dirname(HIDE_ESM))) and not system.exists(HIDE_ESM):
+        found.append(f"fehlt: {HIDE_ESM}")
+    for link, target in compat_links(system):
+        real = system.path(link)
+        if not (os.path.islink(real) and os.readlink(real) == target):
+            found.append(f"Verweis fehlt: {link} → {target}")
+    return found
+
+
+def cmd_pruefen(system):
+    marker = read_marker(system)
+    if marker:
+        print(f"bewusst Ubuntu seit {marker.get('seit', 'unbekannt')} (zurück zu zenOS: sudo zenos-kennung einrichten)")
+        return 3
+    found = problems(system)
+    if found:
+        for line in found:
+            print(line)
+        return 1
+    values = parse_os_release(system.read(OS_RELEASE) or "")
+    base = parse_os_release(system.read(OS_RELEASE + SUFFIX) or "").get("PRETTY_NAME", "Ubuntu")
+    print(f"eingerichtet: {values.get('PRETTY_NAME', 'zenOS')} · Basis {base}")
+    return 0
+
+
+def cmd_erzeugen(system, args):
+    source = version = None
+    while args:
+        option = args.pop(0)
+        if option in ("--ubuntu", "--version") and args:
+            value = args.pop(0)
+            if option == "--ubuntu":
+                source = value
+            else:
+                version = value
+        else:
+            print(f"{NAME}: erzeugen [--ubuntu DATEI] [--version V]", file=sys.stderr)
+            return 2
+    if source is not None:
+        try:
+            with open(source, encoding="utf-8") as f:
+                text = f.read()
+        except (OSError, UnicodeDecodeError) as e:
+            raise Error(f"{source} nicht lesbar: {e}") from e
+        sys.stdout.write(generate(parse_os_release(text), read_version(system) if version is None else version))
+    else:
+        sys.stdout.write(wanted_os_release(system, version=version))
+    return 0
+
+
+def main(argv):
+    args = list(argv)
+    root = "/"
+    if len(args) >= 2 and args[0] == "--wurzel":
+        root = args[1]
+        args = args[2:]
+        if not os.path.isdir(root):
+            print(f"{NAME}: --wurzel {root}: kein Ordner", file=sys.stderr)
+            return 2
+    if not args or args[0] in ("-h", "--hilfe", "--help"):
+        print(__doc__.strip(), file=sys.stdout if args else sys.stderr)
+        return 0 if args else 2
+    command, rest = args[0], args[1:]
+    system = System(root)
+    try:
+        if command == "erzeugen":
+            return cmd_erzeugen(system, rest)
+        if command == "ubuntu" and rest in ([], ["--ohne-merker"]):
+            return cmd_ubuntu(system, keep_marker=not rest)
+        if rest:
+            print(f"{NAME}: unbekannte Argumente: {' '.join(rest)} (--hilfe)", file=sys.stderr)
+            return 2
+        handlers = {"einrichten": cmd_einrichten, "erneuern": cmd_erneuern, "pruefen": cmd_pruefen}
+        if command not in handlers:
+            print(f"{NAME}: unbekannter Unterbefehl «{command}» (--hilfe)", file=sys.stderr)
+            return 2
+        return handlers[command](system)
+    except Error as e:
+        print(f"{NAME}: {e}", file=sys.stderr)
+        return 1
+    except OSError as e:
+        print(f"{NAME}: {e.filename or ''}: {e.strerror or e}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

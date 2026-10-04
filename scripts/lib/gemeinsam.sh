@@ -45,6 +45,11 @@
 #   apt_ausfuehren ARG…                  apt-get als root, nicht-interaktiv, nach apt_warten; scheitert apt an
 #                                        einer Sperre eines anderen Vorgangs, noch einmal (siehe unten)
 #   zenos_version [PFAD]                 «git describe --tags --always --dirty» des Checkouts (Standard ZENOS_CODE)
+#   os_release_wert SCHLUESSEL [DATEI]   Wert aus einer os-release (Standard /etc/os-release), leer, wenn er fehlt
+#   basis_os_release                     Pfad der os-release von Ubuntu: /usr/lib/os-release.ubuntu, solange
+#                                        zenos-kennung die Kennung zenOS eingerichtet hat, sonst /etc/os-release
+#   system_unterstuetzt                  wahr bei Ubuntu 26.04 als Kennung oder als Basis (ID=zenos mit «ubuntu» in
+#                                        ID_LIKE, Version aus basis_os_release)
 #   git_code ARG…                        lesendes git in ZENOS_CODE als Benutzer (safe.directory)
 #   aufraeumen_bei_ende BEFEHL [ARG…]    führt den Befehl am Ende von install.sh aus (auch bei Abbruch);
 #                                        nur externe Befehle, Modulfunktionen sind dann schon entfernt
@@ -768,4 +773,33 @@ git_code() { git -c safe.directory="$ZENOS_CODE" -C "$ZENOS_CODE" "$@"; }
 zenos_version() {
   local pfad=${1:-$ZENOS_CODE}
   git -c safe.directory="$pfad" -C "$pfad" describe --tags --always --dirty 2>/dev/null || printf 'unbekannt\n'
+}
+
+# --- os-release ------------------------------------------------------------
+
+# Gelesen wie von lsb_release und den Skripten von Ubuntu: die Datei in einer Subshell einlesen (sie gehört root).
+os_release_wert() { # SCHLUESSEL [DATEI]
+  local schluessel=$1 datei=${2:-/etc/os-release}
+  [[ "$schluessel" =~ ^[A-Z][A-Z0-9_]*$ ]] || return 1
+  [[ -r "$datei" ]] || return 0
+  # Vorher leeren: Ein gleichnamiger Wert aus der Umgebung gälte sonst, wenn die Datei den Schlüssel nicht hat
+  # shellcheck disable=SC1090
+  (set +u; unset "$schluessel" 2>/dev/null; . "$datei" 2>/dev/null && printf '%s' "${!schluessel:-}")
+}
+
+basis_os_release() {
+  if [[ -r /usr/lib/os-release.ubuntu && "$(os_release_wert ID)" != ubuntu ]]; then
+    printf '/usr/lib/os-release.ubuntu'
+  else
+    printf '/etc/os-release'
+  fi
+}
+
+system_unterstuetzt() {
+  local id id_like basis
+  id=$(os_release_wert ID)
+  id_like=" $(os_release_wert ID_LIKE) "
+  basis=$(basis_os_release)
+  [[ "$id" == ubuntu || ( "$id" == zenos && "$id_like" == *" ubuntu "* ) ]] || return 1
+  [[ "$(os_release_wert ID "$basis")" == ubuntu && "$(os_release_wert VERSION_ID "$basis")" == 26.04 ]]
 }

@@ -5,21 +5,18 @@
 modul_system() {
   befehl_vorhanden apt-get || abbruch "apt-get fehlt: zenOS braucht Ubuntu (getestet: 26.04 LTS)"
 
-  local id="" version="" name="" arch
-  if [[ -r /etc/os-release ]]; then
-    # shellcheck disable=SC1091
-    id=$(. /etc/os-release && printf '%s' "${ID:-}")
-    # shellcheck disable=SC1091
-    version=$(. /etc/os-release && printf '%s' "${VERSION_ID:-}")
-    # shellcheck disable=SC1091
-    name=$(. /etc/os-release && printf '%s' "${PRETTY_NAME:-}")
-  fi
+  # Gültig ist Ubuntu 26.04 als Kennung oder, mit der Kennung zenOS (72-kennung), als Basis: ID=zenos mit «ubuntu» in
+  # ID_LIKE, Version und Name aus der umgelenkten Ubuntu-Fassung /usr/lib/os-release.ubuntu.
+  local name basis arch
+  name=$(os_release_wert PRETTY_NAME)
+  basis=$(os_release_wert PRETTY_NAME "$(basis_os_release)")
+  [[ "$basis" != "$name" ]] || basis=""
   arch=$(dpkg --print-architecture)
 
-  if [[ "$id" == ubuntu && "$version" == 26.04 ]]; then
-    log_info "${name:-Ubuntu 26.04} · $arch"
+  if system_unterstuetzt; then
+    log_info "${name:-Ubuntu 26.04}${basis:+ · Basis $basis} · $arch"
   else
-    log_warnung "zenOS ist für Ubuntu 26.04 gebaut, gefunden: ${name:-unbekannt}. Die Installation läuft trotzdem weiter."
+    log_warnung "zenOS ist für Ubuntu 26.04 gebaut, gefunden: ${name:-unbekannt}${basis:+ (Basis $basis)}. Die Installation läuft trotzdem weiter."
   fi
   case "$arch" in
     arm64 | amd64) ;;

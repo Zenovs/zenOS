@@ -26,6 +26,7 @@ was davon erst «Danach» kommt oder noch ohne Wirkung ist.
 | Akku und Lüfter | Argon ONE UP: Akku in der Leiste; Akku, Lüfter und CPU-Temperatur im System-Menü; Mitteilung bei 10 % (ruhig) und 5 % (dringend, sofort), kein automatisches Herunterfahren; der Messchip misst erst nach `zen akku freigeben` | nach 0.1, unveröffentlicht |
 | Lüfter einstellen | im System-Menü (Zeile «Lüfter»: «Auto · 1 · 2 · 3 · 4», ohne Passwort) oder mit `zen luefter`: automatisch oder eine Mindeststufe; bei Wärme immer schneller, nie leiser als automatisch, ab 80 °C voll; bleibt über Neustarts | nach 0.1, unveröffentlicht |
 | Firewall | standardmässig an: eingehend gesperrt, nur SSH aus lokalen Netzen; ausschalten nur bewusst, im Schalter der Einstellungen mit Passwort (polkit-Dialog) oder mit `zen firewall deaktivieren` | nach 0.1, unveröffentlicht (in 0.1 nur vorbereitet und aus) |
+| Systemkennung | Das System heisst zenOS (`ID=zenos`, «basiert auf Ubuntu 26.04 LTS»): Textkonsole, Begrüssung bei der Anmeldung ohne Ubuntu-Werbung, `hostnamectl`, `lsb_release`; Einstellungen → System und `zen version` zeigen eine eigene Zeile «Basis Ubuntu …». Nur mit nachgewiesenen Ubuntu-Sicherheitsupdates; zurück mit `sudo zenos-kennung ubuntu` | nach 0.1, unveröffentlicht |
 | Terminal | kitty + fish; Ctrl+C kopiert oder bricht ab; Befehlsblöcke; `?` erklärt; Warnung bei gefährlichen Befehlen | ✓ |
 | Erster Start | Name, Ort (optional), Erscheinungsbild, erster Modus; installiert proprietäre Apps | ✓ (Apps nach Zustimmung; Ort fürs Wetter noch ohne Wirkung) |
 

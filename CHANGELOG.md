@@ -7,6 +7,17 @@ an; eine Version entspricht einem Tag `v…` im Repo.
 
 ### Neu
 
+- **Systemkennung zenOS:** Das System weist sich als zenOS aus (`ID=zenos`, `ID_LIKE="ubuntu debian"`), wie Pop!_OS,
+  Mint und elementary: an der Textkonsole («zenOS 0.1.0-… <rechner> tty1»), bei `hostnamectl` und `lsb_release`, mit
+  eigenem Logo (`LOGO=zenos`) und einer ruhigen Begrüssung bei der Anmeldung («zenOS … · Basis Ubuntu 26.04.1 LTS ·
+  Kernel …») ohne die Hinweise und die Werbung von Ubuntu. «Basiert auf Ubuntu» bleibt überall sachlich stehen, alle
+  Lizenz- und Urheberhinweise ebenso. Umgestellt wird nur, wenn unattended-upgrades die Ubuntu-Sicherheitsquelle
+  auch mit der neuen Kennung nachweislich zulässt; sonst bleibt (oder wird) die Kennung Ubuntu, mit Warnung. Nach
+  jedem apt-Lauf übernimmt die Kennung den Stand von Ubuntu (neue Punktversion, Codename). Kein Ubuntu-Paket wird
+  geändert, nur umgelenkt (`dpkg-divert`, `dpkg-statoverride`). Zurück zu Ubuntu, und dabei bleiben:
+  `sudo zenos-kennung ubuntu`; wieder zenOS: `sudo zenos-kennung einrichten`. `zen doctor` hat einen Abschnitt
+  «Systemkennung», das Image wird ohne nachgewiesene Sicherheitsquelle nicht gebaut. Vor einem Release-Upgrade:
+  `sudo zenos-kennung ubuntu`, danach `sudo zenos-kennung einrichten` (`docs/module/kennung.md`).
 - **App-Übersicht:** Ein Klick auf das Zeichen oben links öffnet das Befehlsfeld mit allen installierten Apps
   (Web-Apps eingeschlossen) als Raster aus Kacheln, alphabetisch. Die Karte gleitet vom Zeichen her auf, die
   Kacheln blenden diagonal ein, alles in 200 ms. Pfeiltasten wählen, Enter oder ein Klick startet, Tippen sucht wie
@@ -74,6 +85,15 @@ an; eine Version entspricht einem Tag `v…` im Repo.
 
 ### Geändert
 
+- **`zen version`** zeigt statt «System …» eine Zeile «Basis Ubuntu 26.04.1 LTS» (aus der os-release von Ubuntu);
+  Einstellungen → System ebenso.
+- **motd-news ohne Eingriff ins Conffile:** Statt `ENABLED=0` in `/etc/default/motd-news` maskiert zenOS
+  `motd-news.timer` und `motd-news.service` und legt `50-motd-news` per `dpkg-statoverride` still. Ein geändertes
+  Conffile hielte unattended-upgrades bei einem Update des Pakets an. Ein schon gesetztes `ENABLED=0` bleibt stehen.
+- **README:** zenOS heisst dort «eigenständige Linux®-Distribution, basiert auf Ubuntu 26.04 LTS», dazu ehrlich, dass
+  Programme aus «universe» verlässliche Sicherheitsfixes nur mit Ubuntu Pro bekommen, und die Markenhinweise von
+  Canonical, der Linux Foundation und Raspberry Pi. `docs/image-und-releases.md` («Name und Marke») behauptete, das
+  Image trage kein Ubuntu-Logo; das stimmte nicht und ist korrigiert.
 - **Manifest:** «kein eigenes WLAN-Menü» heisst jetzt «kein eigener Netzwerk-Stack»; das WLAN-Menü oben rechts
   bedient nur den NetworkManager von Ubuntu.
 - **Netzsymbol in der Leiste** mit Signalstufe: ein bis drei Bögen, die fehlenden blass.

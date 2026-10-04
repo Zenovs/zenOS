@@ -72,13 +72,15 @@ _sicherheit_updates() {
 
 # Erlaubt unattended-upgrades die Ubuntu-Sicherheitsquelle? zenos-sicherheitsquelle prüft das mit der Logik von
 # unattended-upgrades selbst (Exit 0 erlaubt, 1 nicht erlaubt, 2 nicht prüfbar, etwa vor dem ersten apt update).
-# 51zenos-ubuntu-quellen hält die Ubuntu-Quellen erlaubt, auch wenn /etc/os-release einmal nicht mehr Ubuntu meldet;
-# heute wirkt noch die Vorgabe aus 50unattended-upgrades, deshalb ist eine fehlende oder abweichende Datei nur eine
-# Warnung.
+# 51zenos-ubuntu-quellen hält die Ubuntu-Quellen erlaubt, auch wenn /etc/os-release nicht Ubuntu meldet. Mit der
+# Kennung von Ubuntu wirkt noch die Vorgabe aus 50unattended-upgrades, dann ist eine fehlende Datei nur eine Warnung;
+# mit der Kennung zenOS (72-kennung) ein Fehler.
 _sicherheit_quelle() {
   local programm=/opt/zenos/scripts/bin/zenos-sicherheitsquelle datei=/etc/apt/apt.conf.d/51zenos-ubuntu-quellen
   local ausgabe rc=0
-  if [[ ! -f "$datei" ]]; then
+  if [[ ! -f "$datei" && "$(os_release_wert ID)" == zenos ]]; then
+    fehler "$datei fehlt – mit der Kennung zenOS kommen so keine Ubuntu-Sicherheitsupdates (install.sh)"
+  elif [[ ! -f "$datei" ]]; then
     warnung "$datei fehlt – Ubuntu-Sicherheitsupdates hängen an der Kennung in /etc/os-release (install.sh)"
   elif [[ -r /opt/zenos/system/apt/51zenos-ubuntu-quellen ]] && ! cmp -s "$datei" /opt/zenos/system/apt/51zenos-ubuntu-quellen; then
     warnung "$datei weicht vom Stand in /opt/zenos ab (install.sh stellt ihn wieder her)"
@@ -249,16 +251,23 @@ PY
 }
 
 # Ubuntu-Nachrichten, die ohne Aktion des Benutzers motd.ubuntu.com abrufen
+# motd-news: install.sh maskiert Timer und Dienst und legt 50-motd-news per statoverride still. Ältere Stände setzten
+# stattdessen ENABLED=0 in /etc/default/motd-news; das bleibt stehen und hält das Skript ebenfalls an.
 _sicherheit_nachrichten() {
-  local datei=/etc/default/motd-news wert
+  local datei=/etc/default/motd-news skript=/etc/update-motd.d/50-motd-news wert=""
   if [[ -f "$datei" ]]; then
     wert=$(sed -n 's/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}ENABLED=//p' "$datei" 2>/dev/null |
       tail -n 1 | sed 's/[[:space:]]*#.*$//' | tr -d '"'"'"'[:space:]')
-    if [[ "$wert" == 1 ]]; then
-      warnung "motd-news ist eingeschaltet und ruft zweimal täglich motd.ubuntu.com auf (install.sh schaltet es ab)"
-    else
-      ok "motd-news aus"
-    fi
+  fi
+  if [[ "$(systemctl is-enabled motd-news.timer 2>/dev/null)" == masked ]]; then
+    ok "motd-news aus (Timer maskiert)"
+  elif [[ "$wert" == 1 ]]; then
+    warnung "motd-news ist eingeschaltet und ruft zweimal täglich motd.ubuntu.com auf (install.sh schaltet es ab)"
+  elif [[ -f "$datei" || -f "$skript" ]]; then
+    hinweis "motd-news nur über ENABLED in $datei aus, der Timer läuft noch (install.sh maskiert ihn)"
+  fi
+  if [[ -f "$skript" && ! -L "$skript" ]] && ! dpkg-statoverride --list "$skript" >/dev/null 2>&1; then
+    hinweis "$skript läuft noch bei jeder Anmeldung (zeigt Zwischengespeichertes; install.sh legt es still)"
   fi
   if command -v pro >/dev/null 2>&1; then
     wert=$(pro config show apt_news 2>/dev/null | awk '$1 == "apt_news" { print $2 }')

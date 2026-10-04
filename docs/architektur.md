@@ -2,8 +2,9 @@
 
 zenOS ist eine Sitzung auf Ubuntu Server: ein Fenstermanager (labwc), eine selbst gebaute Oberfläche (Quickshell)
 und ein Installer, der beides einrichtet. Diese Seite beschreibt den Stand von Version 0.1. Einzelheiten und
-Entscheidungen jedes Bausteins stehen in `docs/module/m1.md` bis `docs/module/m14.md`, dazu `bootsplash.md` und
-`ablage.md`.
+Entscheidungen jedes Bausteins stehen in `docs/module/m1.md` bis `docs/module/m14.md`, dazu `bootsplash.md`,
+`ablage.md`, `netzwerk.md` und `kennung.md`. Das System weist sich als zenOS aus (`ID=zenos`, `ID_LIKE="ubuntu debian"`)
+und bleibt dabei ein Ubuntu mit dessen Paketen und Sicherheitsupdates (`docs/module/kennung.md`).
 
 ## Schichten
 
@@ -157,7 +158,8 @@ Die Tastenkürzel von labwc rufen dieselben Ziele auf (Liste in `docs/module/m9.
 | `zenos-luefter` | Lüfterwunsch schreiben («auto» oder Mindeststufe 1–4; root: über pkexec oder sudo, `zen luefter`) |
 | `zenos-netzwerk` | Netz von netplan/systemd-networkd auf NetworkManager umstellen und zurück (`zen netzwerk`) |
 | `zenos-firewall` | Firewall ein- und ausschalten (root: über pkexec, sudo oder `install.sh`), bewussten Zustand merken |
-| `zenos-sicherheitsquelle` | prüft mit unattended-upgrades selbst, ob die Ubuntu-Sicherheitsquelle erlaubt ist (nur lesend, für `zen doctor`) |
+| `zenos-sicherheitsquelle` | prüft mit unattended-upgrades selbst, ob die Ubuntu-Sicherheitsquelle erlaubt ist (nur lesend, für `zen doctor` und die Vorab-Prüfung von `72-kennung`) |
+| `zenos-kennung` | Systemkennung zenOS: os-release, Konsole, `/etc/legal` und Begrüssung per dpkg-divert und dpkg-statoverride einrichten, nachziehen (apt-Hook), prüfen und zurück zu Ubuntu (root; ausgeführt wird die Kopie unter `/usr/local/sbin`) |
 
 ### Portale und Bildschirmfreigabe
 
@@ -282,6 +284,9 @@ Die Logik läuft in Quickshell selbst, ohne eigenen Hintergrunddienst.
 | Firewall, bewusster Zustand | `/var/lib/zenos/firewall` (`zustand=an\|aus`, `seit=…`; root, 0644; fehlt = Standard an) | nie |
 | polkit-Aktionen | `/usr/share/polkit-1/actions/org.zenos.firewall.policy`, `org.zenos.luefter.policy` | ja (Kopie von `system/polkit/`) |
 | Quickshell | `/usr/local/bin/quickshell`, Stempel `/usr/local/share/zenos/quickshell.version` | nein, Quellbau |
+| Systemkennung | `/usr/lib/os-release`, `/etc/issue`, `/etc/legal` (umgelenkt, Ubuntu-Fassung jeweils als `<datei>.ubuntu`), `/etc/update-motd.d/00-zenos`, statoverrides für Ubuntus motd-Skripte, Verweise `zenos.info`/`zenos.mirrors`/`zenos.csv`, Version `/usr/local/share/zenos/version`, Merker `/var/lib/zenos/kennung` (nur nach `zenos-kennung ubuntu`) | nein, von `zenos-kennung` |
+| `zenos-kennung` und Hook | `/usr/local/sbin/zenos-kennung` (Kopie, root, 0755), `/etc/apt/apt.conf.d/60zenos-kennung` | ja (Kopien) |
+| Logo `zenos` | `/usr/local/share/icons/hicolor/scalable/apps/zenos.svg` | ja (`assets/zeichen/zenos-app-icon.svg`) |
 | Schriften | `/usr/local/share/fonts/zenos/` | ja (`assets/fonts/`) |
 | App-Icon `zenos` | `~/.local/share/icons/hicolor/<n>x<n>/apps/zenos.png` | ja (`assets/zeichen/png/`) |
 | Bootsplash-Theme | `/usr/share/plymouth/themes/zenos/` (eingeschaltet erst mit `zen bootsplash aktivieren`) | ja (`system/plymouth/zenos/`) |
@@ -292,7 +297,7 @@ Die Logik läuft in Quickshell selbst, ohne eigenen Hintergrunddienst.
 | Netz: Sicherung, Land, Treiber | `/var/lib/zenos/netplan-vorher/<zeit>/` (0700), `/etc/xdg/zenos/wlan-land`, `/etc/modprobe.d/zenos-brcmfmac.conf`, `/etc/cloud/cloud.cfg.d/99-zenos-netzwerk.cfg` | nie (Vorlagen: `system/modprobe/`, `system/cloud/`) |
 | Login, Portale | `/etc/greetd/config.toml`, `/etc/xdg/xdg-desktop-portal/labwc-portals.conf`, `/etc/xdg/xdg-desktop-portal-wlr/config` | ja (Kopien) |
 | Standard-Apps, ausgeblendete Starter | `/etc/xdg/labwc-mimeapps.list` (Ordner: Thunar), `/usr/local/share/applications/thunar-{bulk-rename,settings}.desktop` (`Hidden=true`) | ja (Kopien) |
-| Richtlinien | `/etc/opt/chrome/policies/managed/zenos.json`, `/etc/vscode/policy.json`, `/etc/apt/apt.conf.d/52zenos-unattended` | ja (Kopien) |
+| Richtlinien | `/etc/opt/chrome/policies/managed/zenos.json`, `/etc/vscode/policy.json`, `/etc/apt/apt.conf.d/51zenos-ubuntu-quellen`, `52zenos-unattended` | ja (Kopien) |
 | Install-Log | `/var/log/zenos/install.log`, Rückfall `~/.local/state/zenos/install.log` | nie |
 | Einstellungen | `~/.config/zenos/einstellungen.json` | nie |
 | Modi | `~/.config/zenos/modi/*.json` | nie |
@@ -320,7 +325,7 @@ Systemteile, dann alle Benutzerteile.
 
 | Modul | Aufgabe |
 |---|---|
-| `00-vorbereitung` | System prüfen (Ubuntu 26.04, arm64/amd64, Platz), Werkzeuge des Installers |
+| `00-vorbereitung` | System prüfen (Ubuntu 26.04 als Kennung oder als Basis von zenOS, arm64/amd64, Platz), Werkzeuge des Installers |
 | `10-code` | `/opt/zenos` auf den Stand der Quelle bringen (atomar), Kanal festlegen |
 | `20-pakete` | alle Paketlisten aus `scripts/pakete/` in einem apt-Lauf |
 | `22-aufraeumen` | snapd und landscape-common entfernen (nur automatisch installierte, snapd nicht bei eigenen Snaps), snapd per apt-Pin fernhalten |
@@ -335,7 +340,8 @@ Systemteile, dann alle Benutzerteile.
 | `55-zustaende` | Freigabe-Portal, Vorlagen der Zustände |
 | `60-terminal` | kitty, fish, tldr-Seiten |
 | `65-oberflaeche` | automatische Sperre, Notfall-Sperre, Hilfsprogramme |
-| `70-sicherheit` | Sicherheitsupdates, Richtlinien, Ubuntu-Nachrichten aus, Firewall (standardmässig an) und polkit-Aktionen, gitleaks-Hook |
+| `70-sicherheit` | Sicherheitsupdates, Richtlinien, Ubuntu-Nachrichten aus (motd-news maskiert und stillgelegt), Firewall (standardmässig an) und polkit-Aktionen, gitleaks-Hook |
+| `72-kennung` | Systemkennung zenOS (`zenos-kennung`, apt-Hook, Version, Logo), nur nach der Vorab-Prüfung der Ubuntu-Sicherheitsquelle |
 | `75-apps` | Werkzeuge für `zen apps`, Starter für Chrome und Web-Apps |
 | `80-argon` | Argon-Dienst (V3 und ONE UP) und Shutdown-Hook |
 | `90-benutzer` | Oberfläche verknüpfen, Ordner für persönliche Daten |
@@ -372,7 +378,7 @@ Mac (Claude Code, Tests im Container) ── push ──▶ GitHub dev ──▶
 - **`zen rollback <tag>`:** `/opt/zenos` losgelöst auf den Tag, dann `install.sh`. Das nächste `zen update` kehrt
   auf den Kanal zurück.
 - **`zen doctor`:** Prüfbericht ohne Geheimnisse und ohne Persönliches, Exit 1 bei Fehlern. `zen version` zeigt
-  zenOS-, Quickshell-, labwc- und Ubuntu-Version.
+  zenOS-Version, die Basis (Ubuntu), Quickshell und labwc.
 - Systemänderungen laufen immer über `install.sh`. Das Skript darf beliebig oft laufen.
 
 ## Plattformen

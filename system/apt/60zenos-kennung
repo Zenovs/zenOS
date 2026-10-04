@@ -1,0 +1,13 @@
+// zenOS: Systemkennung nach jedem dpkg-Lauf von apt nachziehen.
+// Quelle im Repo: system/apt/60zenos-kennung, installiert von scripts/module/72-kennung.sh.
+// Änderungen direkt in /etc/apt/apt.conf.d/ überschreibt der nächste Lauf von install.sh.
+
+// /usr/lib/os-release ist per dpkg-divert umgelenkt: base-files schreibt die Ubuntu-Fassung nach os-release.ubuntu.
+// «zenos-kennung erneuern» übernimmt daraus VERSION_ID, VERSION_CODENAME und UBUNTU_CODENAME (etwa nach einer neuen
+// Punktversion oder einem Release-Upgrade), damit unattended-upgrades, update-notifier und pro den Stand von Ubuntu
+// sehen. Gilt auch für unattended-upgrades (dessen dpkg-Läufe gehen über dieselbe Konfiguration).
+// Ein Fehler darf apt nie aufhalten: ohne das Programm nichts, jeder Fehler endet mit «true». zen doctor und jeder
+// Lauf von install.sh prüfen das Ergebnis; «dpkg -i» ohne apt deckt der Hook nicht ab.
+// Das Programm liegt root-eigen unter /usr/local/sbin (Kopie aus /opt/zenos/scripts/bin/zenos-kennung) und bleibt
+// dort auch bei einem «zen rollback» auf einen Stand ohne Kennung.
+DPkg::Post-Invoke { "[ ! -x /usr/local/sbin/zenos-kennung ] || /usr/local/sbin/zenos-kennung erneuern >/dev/null 2>&1 || true"; };
