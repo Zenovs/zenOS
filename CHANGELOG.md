@@ -103,6 +103,17 @@ an; eine Version entspricht einem Tag `v…` im Repo.
   unattended-upgrades, jq, polkitd …), entfernt `apt autoremove` nicht mehr, wenn das Metapaket wegfällt.
   `zen doctor` warnt, wenn ufw oder unattended-upgrades wieder als automatisch installiert gelten.
 
+### Entfernt
+
+- **snapd und landscape-common:** snapd ist Store-Software, die von selbst ins Netz geht; landscape-common trägt nur
+  die Marke Landscape. `zen update` entfernt beide mit `apt-get purge` (neues Modul `22-aufraeumen`), aber nur, wenn
+  apt sie als automatisch installiert führt und ein Probelauf zeigt, dass nichts anderes mitginge (kein
+  ubuntu-*-Metapaket, kein zenOS-Paket). Sind eigene Snaps installiert, bleibt snapd mit einer Warnung samt Weg;
+  `~/snap` bleibt immer unberührt. `/etc/apt/preferences.d/zenos-ohne-snapd` hält snapd danach fern, auch als
+  Empfehlung von ubuntu-server. Kein `autoremove`: Die früheren Abhängigkeiten von landscape-common (bc,
+  python3-twisted …) bleiben, bis man selbst `sudo apt autoremove` aufruft. `zen doctor` prüft beides und den Pin.
+  Rückweg: Pin löschen, `sudo apt install snapd landscape-common` (dann bleiben sie).
+
 ## 0.1.0-rc2 – 2026-09-28
 
 Alles seit `v0.1.0-rc1`: die neue Bildmarke, ein vorbereiteter Bootsplash und die Behebungen aus der Abnahme in einer

@@ -34,7 +34,7 @@ was davon erst «Danach» kommt oder noch ohne Wirkung ist.
 | App | Rolle | 0.1 |
 |---|---|---|
 | Chrome | Standardbrowser, abgesichert über Richtlinien | ✓ (nach Zustimmung) |
-| Firefox | zweiter Browser | noch nicht installiert |
+| Firefox | zweiter Browser | noch nicht installiert (später aus Mozillas APT-Quelle, nicht als Snap; `docs/module/m11.md`) |
 | Thunar | Dateimanager (von Ubuntu, im Image), öffnet Ordner und die Ablage | ✓ (nach 0.1, unveröffentlicht) |
 | coremail | Standard-Mailprogramm | ✓ (nach Zustimmung, arm64-Release; noch nicht Standard für `mailto:`, weil sich coremail dafür noch nicht anmeldet – zenOS trägt es ein, sobald es das tut) |
 | VS Code | Editor | ✓ (nach Zustimmung, Telemetrie per Richtlinie aus) |

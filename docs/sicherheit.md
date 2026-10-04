@@ -35,12 +35,18 @@ Grundsatz 1: Sicherheit ist Standard und geht vor Design und Bequemlichkeit. Sie
   - Rückgängig: `ENABLED=1` in `/etc/default/motd-news` bzw. `sudo pro config set apt_news=true`. `install.sh`
     schaltet beides beim nächsten Lauf wieder ab; dauerhaft nur, wenn `_sicherheit_nachrichten` aus
     `modul_system` in `scripts/module/70-sicherheit.sh` entfernt wird.
-  - Es bleiben die Verbindungen, die Updates holen: apt und `unattended-upgrades`, snapd (falls installiert) und
-    `esm-cache` von `ubuntu-pro-client`. Dieser fragt bei `apt update` `contracts.canonical.com` nach verfügbaren
+  - Es bleiben die Verbindungen, die Updates holen: apt und `unattended-upgrades` und
+    `esm-cache` von `ubuntu-pro-client` (snapd nur, solange eigene Snaps es halten, siehe unten). Dieser fragt bei `apt update` `contracts.canonical.com` nach verfügbaren
     Diensten (mit Architektur, Serie, Kernel und Virtualisierung, das Ergebnis wird zwischengespeichert) und lädt
     Paketlisten von `esm.ubuntu.com`. Ob er auch abgeschaltet werden soll, ist offen (`docs/module/m11.md`).
   - `apport` sammelt Absturzberichte nur lokal; gesendet wird erst mit `ubuntu-bug` (whoopsie gehört nicht zu
     Ubuntu Server).
+- **Ohne snapd und landscape-common** (Regel 8, `scripts/module/22-aufraeumen.sh`): snapd ist Store-Software, die von
+  selbst ins Netz geht, deshalb entfernt zenOS es samt landscape-common (nur die Marke Landscape, ohne Funktion) und
+  sperrt snapd mit `/etc/apt/preferences.d/zenos-ohne-snapd` (Priorität -10), damit apt es nie als Empfehlung
+  zurückbringt. Entfernt wird nur, was apt als automatisch installiert führt, und nie mehr als diese beiden samt ihren
+  eigenen Teilen (vorher ein Probelauf). Sind eigene Snaps installiert, bleibt snapd mit einer Warnung; `~/snap` fasst
+  zenOS nie an. Einzelheiten und Rückweg in `docs/module/m11.md`.
 - Die Firewall (`ufw`) ist standardmässig an. Ausschalten geht nur bewusst und nur mit Passwort (siehe
   «Firewall» unten). SSH nur mit Schlüssel ist das Ziel; zenOS ändert die SSH-Konfiguration nicht.
 - Festplattenverschlüsselung: auf dem Bürorechner Pflicht. Auf dem Pi ist sie das Ziel; in 0.1 noch nicht umgesetzt (offen).

@@ -323,6 +323,7 @@ Systemteile, dann alle Benutzerteile.
 | `00-vorbereitung` | System prüfen (Ubuntu 26.04, arm64/amd64, Platz), Werkzeuge des Installers |
 | `10-code` | `/opt/zenos` auf den Stand der Quelle bringen (atomar), Kanal festlegen |
 | `20-pakete` | alle Paketlisten aus `scripts/pakete/` in einem apt-Lauf |
+| `22-aufraeumen` | snapd und landscape-common entfernen (nur automatisch installierte, snapd nicht bei eigenen Snaps), snapd per apt-Pin fernhalten |
 | `25-quickshell` | Quickshell bauen, nur wenn der Stempel fehlt oder abweicht |
 | `30-schriften` | Geist, Geist Mono, Instrument Serif |
 | `35-netzwerk` | NetworkManager fürs WLAN-Menü bereitlegen (umgestellt wird mit `zen netzwerk umstellen`), WLAN-Land, wait-online |

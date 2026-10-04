@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 70-sicherheit: automatische Updates (auch: Ubuntu-Sicherheitsquelle erlaubt), ufw und unattended-upgrades manuell
-# installiert, Chrome- und VS Code-Richtlinie, Ubuntu-Nachrichten, gitleaks und Hook, Firewall
+# installiert, Chrome- und VS Code-Richtlinie, Ubuntu-Nachrichten, ohne snapd und landscape-common, gitleaks und Hook,
+# Firewall
 # shellcheck shell=bash
 #
 # Die sudo-Regel aus dem Bau prüft schon 00-basis. Die Firewall ist standardmässig an; ist sie aus, warnt doctor
@@ -14,6 +15,7 @@ pruefe_sicherheit() {
   _sicherheit_chrome
   _sicherheit_vscode
   _sicherheit_nachrichten
+  _sicherheit_ohne_snapd
   _sicherheit_gitleaks
   _sicherheit_firewall
 }
@@ -266,6 +268,64 @@ _sicherheit_nachrichten() {
       *) hinweis "apt-news: Einstellung nicht lesbar (pro config show apt_news)" ;;
     esac
   fi
+}
+
+# snapd und landscape-common entfernt, snapd per apt-Pin gesperrt (scripts/module/22-aufraeumen.sh). Bleibt eines,
+# weil es bewusst installiert ist (manuell markiert) oder snapd wegen eigener Snaps, ist das ein Hinweis. Solange
+# snapd installiert ist, darf der Pin nicht liegen: Er hielte snapd ohne Updates fest.
+_sicherheit_ohne_snapd() {
+  local quelle=/opt/zenos/system/apt/zenos-ohne-snapd pin eigene
+  local -a namen=()
+  # shellcheck source=../lib/aufraeumen.sh
+  source "$ZEN_SKRIPTE/lib/aufraeumen.sh" || { fehler "lib/aufraeumen.sh nicht ladbar"; return 0; }
+  pin=$_AUFRAEUMEN_PIN
+
+  if paket_installiert landscape-common; then
+    if [[ -n "$(apt-mark showmanual landscape-common 2>/dev/null)" ]]; then
+      hinweis "landscape-common bleibt: bewusst installiert (als manuell markiert)"
+    else
+      warnung "landscape-common ist noch installiert (zen update entfernt es)"
+    fi
+  fi
+
+  if paket_installiert snapd; then
+    if [[ -n "$(apt-mark showmanual snapd 2>/dev/null)" ]]; then
+      hinweis "snapd bleibt: bewusst installiert (als manuell markiert; entfernen: sudo apt-mark auto snapd, dann zen update)"
+    else
+      eigene=$(_sicherheit_eigene_snaps)
+      if [[ -n "$eigene" ]]; then
+        mapfile -t namen <<< "$eigene"
+        hinweis "snapd bleibt wegen eigener Snaps: $(_aufraeumen_liste "${namen[@]}") (Daten aus ~/snap sichern, sudo snap remove <name>, dann zen update)"
+      else
+        warnung "snapd ist noch installiert (zen update entfernt es)"
+      fi
+    fi
+    if [[ -e "$pin" ]]; then
+      warnung "$pin liegt, obwohl snapd installiert ist – snapd bekommt so keine Updates (install.sh entfernt den Pin)"
+    fi
+    return 0
+  fi
+
+  if [[ ! -f "$pin" ]]; then
+    warnung "$pin fehlt – apt könnte snapd als Empfehlung wieder installieren (install.sh)"
+  elif [[ -r "$quelle" ]] && ! cmp -s "$pin" "$quelle"; then
+    warnung "$pin weicht vom Stand in /opt/zenos ab (install.sh stellt ihn wieder her)"
+  elif paket_installiert landscape-common; then
+    ok "Ohne snapd (per apt-Pin gesperrt)"
+  else
+    ok "Ohne snapd und landscape-common (snapd per apt-Pin gesperrt)"
+  fi
+}
+
+# Eigene Snaps ohne Root-Rechte: die Snap-Dateien unter /var/lib/snapd/snaps (für alle lesbar) und, nur wenn snapd
+# läuft, «snap list» (sonst startete der Aufruf snapd über snapd.socket)
+_sicherheit_eigene_snaps() {
+  {
+    find /var/lib/snapd/snaps -maxdepth 1 ! -type d -name '*.snap' -printf '%f\n' 2>/dev/null | _aufraeumen_snap_dateien
+    if systemctl --quiet is-active snapd.service 2>/dev/null; then
+      LC_ALL=C timeout 30 snap list 2>/dev/null | _aufraeumen_snap_liste
+    fi
+  } | _aufraeumen_eigene
 }
 
 _sicherheit_gitleaks() {

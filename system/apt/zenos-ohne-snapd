@@ -1,0 +1,9 @@
+# zenOS: snapd nicht wieder installieren.
+# Quelle im Repo: system/apt/zenos-ohne-snapd, installiert von scripts/module/22-aufraeumen.sh, solange snapd fehlt.
+#
+# snapd ist Store-Software, die von selbst ins Netz geht; zenOS braucht sie nicht (CLAUDE.md, Regel 8). Mit einer
+# negativen Priorität installiert apt snapd nie, auch nicht als Empfehlung von ubuntu-server bei einem Update.
+# Rückweg (docs/module/m11.md): diese Datei löschen, dann «sudo apt install snapd».
+Package: snapd
+Pin: release *
+Pin-Priority: -10
