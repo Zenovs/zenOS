@@ -535,7 +535,41 @@ systemctl --user start zenos-shell.service
 Der Pi zeigt nach dem Flashen nichts an, nur die LEDs leuchten: meist ist der Bootloader zu alt (siehe «Vorab» in B).
 
 `install.sh` oder `zen update` bricht mit «apt-get install ist fehlgeschlagen» oder «Failed to fetch» ab: Das Netz
-oder der Paketserver war kurz weg. Denselben Befehl noch einmal starten, Erledigtes bleibt.
+oder der Paketserver war kurz weg. Denselben Befehl noch einmal starten, Erledigtes bleibt. Steht dabei, dass dpkg
+«mittendrin unterbrochen» wurde (oder meldet `zen doctor` das), zuerst reparieren, danach noch einmal:
+
+```
+sudo dpkg --configure -a
+```
+
+`zen doctor` meldet «Letzte Installation … ist nicht zu Ende gelaufen» (Strom weg oder Absturz während einer
+Installation): `zen update` noch einmal laufen lassen.
+
+`zen update` bricht ab, etwa mit «git fetch ist fehlgeschlagen», oder `zen` startet gar nicht mehr: Der Notweg geht
+ohne `zen`, per SSH. Bis `v0.1.0-rc3` brach `zen update` auch ab, wenn auf GitHub ein Tag verschoben wurde (so bei
+`v0.1.0-rc1`); der Notweg holt deshalb nur den Branch, ohne Tags. Heisst dein Kanal in `/etc/xdg/zenos/kanal` nicht
+`dev`, ersetze `dev` in den ersten beiden Befehlen. Erst den neuen Stand holen:
+
+```
+sudo git -C /opt/zenos fetch --no-tags origin dev
+```
+
+Dann `/opt/zenos` darauf umstellen:
+
+```
+sudo git -C /opt/zenos checkout --force -B dev origin/dev
+```
+
+Dann installieren (fragt nach dem sudo-Passwort):
+
+```
+/opt/zenos/scripts/install.sh
+```
+
+Danach geht `zen update` wieder. Ein verschobener Tag erscheint dort nur noch als Warnung und bleibt beim Stand,
+den der Pi kennt; die Warnung nennt den Befehl, mit dem du den Stand von GitHub übernimmst. Meldet `zen update`
+«Nur … MB frei», zuerst Platz schaffen; meldet es «Ein anderes Update oder Rollback läuft gerade», wartet es auf das
+andere (läuft es in einer vergessenen tmux-Sitzung? `tmux ls`).
 
 Das Passwort wird im zenOS-Login abgelehnt, per SSH geht es: Die Tastaturbelegung stimmt nicht. Per SSH neu wählen,
 danach neu starten:
@@ -575,10 +609,11 @@ starten (geht ohne Netz):
 zen netzwerk zurueck
 ```
 
-Nach einem Update geht etwas nicht mehr: zurück zum letzten guten Stand.
+Nach einem Update geht etwas nicht mehr: zurück zum letzten guten Stand, zum Beispiel `v0.1.0-rc3`. Ein Tag, den
+es nicht gibt, zeigt die vorhandenen.
 
 ```
-zen rollback v0.1.0-rc2
+zen rollback v0.1.0-rc3
 ```
 
 Die Textkonsole erreichst du immer mit `Ctrl + Alt + F2`, zurück zum zenOS-Login mit `Ctrl + Alt + F7`. Solange SSH

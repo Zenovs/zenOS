@@ -11,6 +11,7 @@
 #   zen_git ARG…        lesendes git in /opt/zenos als Benutzer
 #   zen_git_root ARG…   schreibendes git in /opt/zenos als root
 #   zen_fehler TEXT     Meldung «zen: TEXT» auf stderr (Rückgabe 0; danach selbst return/exit)
+#   zen_warnung TEXT    Meldung «zen: Warnung: TEXT» auf stderr; der Befehl läuft weiter
 #   zen_hinweis TEXT    Meldung auf stdout
 
 set -euo pipefail
@@ -28,6 +29,7 @@ source "$ZEN_SKRIPTE/lib/gemeinsam.sh"
 zen_git() { git -c safe.directory="$ZENOS_CODE" -C "$ZENOS_CODE" "$@"; }
 zen_git_root() { $SUDO git -c advice.detachedHead=false -C "$ZENOS_CODE" "$@"; }
 zen_fehler() { printf 'zen: %s\n' "$*" >&2; }
+zen_warnung() { printf 'zen: Warnung: %s\n' "$*" >&2; }
 zen_hinweis() { printf '%s\n' "$*"; }
 
 _zen_hilfe_kurz() {

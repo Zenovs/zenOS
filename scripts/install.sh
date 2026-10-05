@@ -102,6 +102,8 @@ _ende() {
   local rc=$?
   set +e
   trap - ERR
+  # Die Ende-Zeile muss ins Log, auch wenn das Terminal gerade wegfällt (SSH getrennt, Leser der Ausgabe beendet)
+  trap '' HUP PIPE
   _zenos_aufraeumen
   if [[ -n "$_SUDO_WACH_PID" ]]; then kill "$_SUDO_WACH_PID" 2>/dev/null; fi
   local aenderungen warnungen
@@ -127,9 +129,14 @@ _ende() {
   exit "$rc"
 }
 
+# Jedes Signal, das den Lauf beendet, endet als «abbruch (Exit 128+N)» im Log. Ohne eigenen Trap stünde ein Abbruch
+# durch SIGHUP (SSH-Verbindung weg, ohne tmux) oder SIGPIPE als «ok» dort. Ein SIGKILL oder Stromausfall hinterlässt
+# «== Beginn» ohne «== Ende»; das meldet zen doctor.
 trap _ende EXIT
 trap '_fehler_melden "$LINENO" "$BASH_COMMAND"' ERR
+trap 'exit 129' HUP
 trap 'exit 130' INT
+trap 'exit 141' PIPE
 trap 'exit 143' TERM
 
 # --- Sperre: nie zwei Läufe gleichzeitig -----------------------------------
@@ -241,7 +248,10 @@ _log_vorbereiten() {
 
   printf '\n== Beginn %s · %s · zenOS-Installation\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$_MODUS" >> "$_LOG"
   if (( ! _RUHIG )); then
-    printf 'zenOS-Installation · %s · Quelle %s\n' "$_MODUS" "${ZENOS_QUELLE/#"$HOME"/\~}" >&3
+    # HOME fehlt womöglich (systemd-Dienst ohne User=); dann bleibt die Quelle ungekürzt
+    local quelle=$ZENOS_QUELLE
+    if [[ -n "${HOME:-}" && "$HOME" != / && "$quelle" == "$HOME"/* ]]; then quelle=\~/${quelle#"$HOME"/}; fi
+    printf 'zenOS-Installation · %s · Quelle %s\n' "$_MODUS" "$quelle" >&3
   fi
   local t
   for t in "${vorab[@]}"; do aenderung "$t"; done

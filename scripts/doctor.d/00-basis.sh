@@ -182,8 +182,15 @@ _basis_installation() {
   if [[ ! -r "$log" ]]; then
     hinweis "Install-Log nicht lesbar"
   else
-    zeile=$(grep -E '^== Ende .* · (normal|image) · ' "$log" | tail -n 1)
-    if [[ -z "$zeile" ]]; then
+    zeile=$(_basis_letzter_lauf "$log" 'normal|image')
+    if [[ "$zeile" == "offen "* ]]; then
+      datum=${zeile#offen }
+      if _basis_install_laeuft; then
+        hinweis "Eine Installation läuft gerade (seit $datum)"
+      else
+        warnung "Letzte Installation vom $datum ist nicht zu Ende gelaufen (Strom weg, Absturz oder hart beendet). Noch einmal laufen lassen, etwa mit zen update (siehe $log)"
+      fi
+    elif [[ -z "$zeile" ]]; then
       hinweis "Noch kein vollständiger Installationslauf im Log"
     else
       datum=$(awk '{ print $3, substr($4, 1, 5) }' <<< "$zeile")
@@ -193,8 +200,10 @@ _basis_installation() {
         ok "Letzte Installation am $datum · ${zeile##* · ok · }"
       fi
     fi
-    zeile=$(grep -E '^== Ende .* · benutzer · ' "$log" | tail -n 1)
-    if [[ "$zeile" == *" · abbruch"* ]]; then
+    zeile=$(_basis_letzter_lauf "$log" benutzer)
+    if [[ "$zeile" == "offen "* ]] && ! _basis_install_laeuft; then
+      warnung "Letzte Einrichtung der Benutzerteile vom ${zeile#offen } ist nicht zu Ende gelaufen (siehe $log)"
+    elif [[ "$zeile" == *" · abbruch"* ]]; then
       warnung "Letzte Einrichtung der Benutzerteile abgebrochen (siehe $log)"
     fi
   fi
@@ -212,4 +221,25 @@ _basis_installation() {
   else
     warnung "Ordner $HOME/.config/zenos fehlt (zen benutzer)"
   fi
+}
+
+# Letzter Lauf eines Modus im Install-Log: dessen «== Ende …»-Zeile, «offen <datum> <zeit>», wenn nach dem letzten
+# «== Beginn» keine Ende-Zeile mehr kam (SIGKILL, Stromausfall oder er läuft noch), oder nichts. install.sh schreibt
+# beide Zeilen unter seiner Sperre, Läufe folgen also nacheinander.
+#   «== Beginn 2026-10-05 08:13:00 · normal · zenOS-Installation»
+#   «== Ende 2026-10-05 08:20:41 · normal · ok · 3 Änderungen · 0 Warnungen»
+_basis_letzter_lauf() { # LOG MODI (etwa «normal|image»)
+  awk -v modi="^(${2})\$" '
+    $1 == "==" && $2 == "Beginn" && $6 ~ modi { offen = $3 " " substr($4, 1, 5); next }
+    $1 == "==" && $2 == "Ende" && $6 ~ modi { offen = ""; ende = $0; next }
+    END { if (offen != "") print "offen " offen; else if (ende != "") print ende }
+  ' "$1" 2>/dev/null
+}
+
+# Wahr, wenn gerade ein install.sh läuft (seine Sperre ist belegt). Lesend geöffnet, wie install.sh eine fremde
+# Sperrdatei öffnet; ist sie frei, gibt die Subshell sie gleich wieder frei.
+_basis_install_laeuft() {
+  local sperre=/run/lock/zenos-install.lock
+  [[ -f "$sperre" ]] && command -v flock >/dev/null 2>&1 || return 1
+  ( exec 9<"$sperre" && ! flock -n 9 ) 2>/dev/null
 }

@@ -44,6 +44,9 @@
 #                                        dabei einmal. 1, wenn die Frist abgelaufen ist. Nie im Image-Modus.
 #   apt_ausfuehren ARG…                  apt-get als root, nicht-interaktiv, nach apt_warten; scheitert apt an
 #                                        einer Sperre eines anderen Vorgangs, noch einmal (siehe unten)
+#   apt_belegt                           wahr, wenn gerade ein Paketvorgang läuft; gibt dann aus, wer
+#   dpkg_unterbrochen [ORDNER]           wahr, wenn ein dpkg-Lauf mittendrin abgebrochen ist (Journal in
+#                                        /var/lib/dpkg/updates); Abhilfe «sudo dpkg --configure -a»
 #   zenos_version [PFAD]                 «git describe --tags --always --dirty» des Checkouts (Standard ZENOS_CODE)
 #   os_release_wert SCHLUESSEL [DATEI]   Wert aus einer os-release (Standard /etc/os-release), leer, wenn er fehlt
 #   basis_os_release                     Pfad der os-release von Ubuntu: /usr/lib/os-release.ubuntu, solange
@@ -338,6 +341,22 @@ _zenos_apt_belegt() {
   printf '\n'
 }
 
+apt_belegt() { _zenos_apt_belegt; }
+
+# Bricht dpkg mittendrin ab (Strom weg, SIGKILL), bleibt sein Journal in /var/lib/dpkg/updates: Dateien mit reinen
+# Ziffern als Namen. Daran erkennt apt «dpkg was interrupted» und verweigert jede weitere Installation, bis
+# «dpkg --configure -a» gelaufen ist. unattended-upgrades repariert das nicht selbst (mvo5/unattended-upgrades #413),
+# die Sicherheitsupdates blieben dauerhaft aus. Während dpkg läuft, sind solche Dateien normal (apt_belegt).
+# Der Ordner ist für alle lesbar.
+dpkg_unterbrochen() { # [ORDNER=/var/lib/dpkg/updates]
+  local ordner=${1:-/var/lib/dpkg/updates} datei
+  [[ -d "$ordner" ]] || return 1
+  for datei in "$ordner"/*; do
+    [[ "${datei##*/}" =~ ^[0-9]+$ ]] && return 0
+  done
+  return 1
+}
+
 _zenos_dauer() { # SEKUNDEN → «N s» bzw. aufgerundet «N Minuten»
   local m=$(( ($1 + 59) / 60 ))
   if (( $1 < 60 )); then printf '%s s' "$1"; elif (( m == 1 )); then printf '1 Minute'; else printf '%s Minuten' "$m"; fi
@@ -451,10 +470,17 @@ _zenos_policy_altlast_entfernen() {
 }
 
 # Abbruch nach einem gescheiterten apt-get. Meist war das Netz oder der Paketserver kurz weg («Failed to
-# fetch», apt wiederholt Downloads schon selbst); ein neuer Lauf setzt fort, Erledigtes bleibt. Kein Pfad
+# fetch», apt wiederholt Downloads schon selbst); ein neuer Lauf setzt fort, Erledigtes bleibt. Hat ein früherer
+# dpkg-Lauf sein Journal hinterlassen, hilft ein neuer Lauf nicht: dann zuerst «dpkg --configure -a». Kein Pfad
 # in der Meldung: install.sh läuft auch über zen update. Auf stderr, damit sie auch mit --ruhig erscheint.
 _zenos_apt_abbruch() {
   log_fehler "$1"
+  if dpkg_unterbrochen && ! apt_belegt >/dev/null; then
+    printf '     %s\n' "Ein früherer Paketvorgang (dpkg) wurde mittendrin unterbrochen, deshalb installiert apt nichts mehr." \
+      "Zuerst reparieren: sudo dpkg --configure -a" \
+      "Danach denselben Befehl noch einmal starten (install.sh oder zen update)." >&2
+    exit 1
+  fi
   printf '     %s\n' "Meist war nur das Netz oder der Paketserver kurz weg. Endet die Installation damit, einfach" \
     "denselben Befehl noch einmal starten (install.sh oder zen update): Erledigtes bleibt, und «apt update»" \
     "oder «--fix-missing» braucht es nicht." >&2

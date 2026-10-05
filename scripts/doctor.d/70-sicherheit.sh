@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# 70-sicherheit: automatische Updates (auch: Ubuntu-Sicherheitsquelle erlaubt), ufw und unattended-upgrades manuell
-# installiert, Chrome- und VS Code-Richtlinie, Ubuntu-Nachrichten, ohne snapd und landscape-common, gitleaks und Hook,
-# Firewall
+# 70-sicherheit: automatische Updates (auch: Ubuntu-Sicherheitsquelle erlaubt, kein unterbrochener dpkg-Lauf), ufw und
+# unattended-upgrades manuell installiert, Chrome- und VS Code-Richtlinie, Ubuntu-Nachrichten, ohne snapd und
+# landscape-common, gitleaks und Hook, Firewall
 # shellcheck shell=bash
 #
 # Die sudo-Regel aus dem Bau prüft schon 00-basis. Die Firewall ist standardmässig an; ist sie aus, warnt doctor
@@ -11,6 +11,7 @@
 pruefe_sicherheit() {
   abschnitt "Sicherheit"
   _sicherheit_updates
+  _sicherheit_dpkg
   _sicherheit_markierung
   _sicherheit_chrome
   _sicherheit_vscode
@@ -152,6 +153,19 @@ _sicherheit_letzter_lauf() {
     else
       warnung "Seit $alter Tagen kein erfolgreicher Lauf von unattended-upgrades (journalctl -u apt-daily-upgrade, /var/log/unattended-upgrades/)"
     fi
+  fi
+}
+
+# Reste eines unterbrochenen dpkg-Laufs (dpkg_unterbrochen, lib/gemeinsam.sh): Bis «dpkg --configure -a» gelaufen ist,
+# installiert apt nichts, auch unattended-upgrades nicht. Läuft gerade ein Paketvorgang, sind sie normal.
+_sicherheit_dpkg() {
+  local wer
+  if ! dpkg_unterbrochen; then
+    ok "Kein unterbrochener dpkg-Lauf"
+  elif wer=$(apt_belegt); then
+    hinweis "Ein Paketvorgang läuft gerade ($wer)"
+  else
+    fehler "Ein dpkg-Lauf wurde mittendrin unterbrochen (Reste in /var/lib/dpkg/updates). Bis zur Reparatur installiert apt nichts, auch keine Sicherheitsupdates: sudo dpkg --configure -a"
   fi
 }
 

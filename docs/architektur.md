@@ -372,11 +372,18 @@ Mac (Claude Code, Tests im Container) ── push ──▶ GitHub dev ──▶
                                                                   und Bürorechner (nur getestete Stände)
 ```
 
-- **`zen update`:** `git fetch --tags --prune`, dann `reset --hard` auf `origin/<kanal>` und `clean`, danach
-  `install.sh`. Zeigt alt → neu. Der Kanal steht in `/etc/xdg/zenos/kanal`: `dev` auf dem Pi und im Image, bis
-  `main` Releases trägt. Lokale Änderungen in `/opt/zenos` gehen verloren.
-- **`zen rollback <tag>`:** `/opt/zenos` losgelöst auf den Tag, dann `install.sh`. Das nächste `zen update` kehrt
-  auf den Kanal zurück.
+- **`zen update`:** holt die Branches ohne Tags (`git fetch --no-tags --prune`), danach die Tags getrennt und ohne
+  `--force`, dann `reset --hard` auf `origin/<kanal>` und `clean`, danach `install.sh`. Zeigt alt → neu. Der Kanal
+  steht in `/etc/xdg/zenos/kanal`: `dev` auf dem Pi und im Image, bis `main` Releases trägt. Lokale Änderungen in
+  `/opt/zenos` gehen verloren. Ein auf origin verschobener Tag bleibt beim Stand, den das Gerät kennt, und erscheint
+  nur als Warnung (bis `v0.1.0-rc3` brach `zen update` daran ab).
+- **`zen rollback <tag>`:** holt neue Tags (ebenso ohne `--force`), setzt `/opt/zenos` losgelöst auf den Tag, dann
+  `install.sh`. Das nächste `zen update` kehrt auf den Kanal zurück.
+- **Schutz bei beiden** (`scripts/lib/wechsel.sh`): eine eigene Sperre `/run/lock/zenos-kanal.lock` von vor dem
+  Holen bis zum Ende von `install.sh` (nie zwei Wechsel gleichzeitig); der Wechsel selbst wartet, bis kein anderes
+  `install.sh` mehr läuft (dessen Sperre `/run/lock/zenos-install.lock`); ein `git fetch` hat 180 s Zeit; mit
+  weniger als 1 GiB frei unter `/opt/zenos` bricht der Wechsel ab, bevor er etwas ändert. Den Notweg ohne `zen`
+  beschreibt `ANLEITUNG.md`, Abschnitt F.
 - **`zen doctor`:** Prüfbericht ohne Geheimnisse und ohne Persönliches, Exit 1 bei Fehlern. `zen version` zeigt
   zenOS-Version, die Basis (Ubuntu), Quickshell und labwc.
 - Systemänderungen laufen immer über `install.sh`. Das Skript darf beliebig oft laufen.

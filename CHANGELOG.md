@@ -149,6 +149,24 @@ an; eine Version entspricht einem Tag `v…` im Repo.
   python3-twisted …) bleiben, bis man selbst `sudo apt autoremove` aufruft. `zen doctor` prüft beides und den Pin.
   Rückweg: Pin löschen, `sudo apt install snapd landscape-common` (dann bleiben sie).
 
+### Behoben
+
+- **`zen update` bricht nicht mehr an einem verschobenen Tag ab:** Wurde ein Tag auf GitHub auf einen anderen Commit
+  gesetzt (so bei `v0.1.0-rc1`), scheiterte `zen update` mit «git fetch ist fehlgeschlagen», ohne Grund. Jetzt holt
+  es den Branch ohne Tags und die Tags getrennt, ohne `--force`: Ein verschobener Tag bleibt beim Stand, den das
+  Gerät kennt, und erscheint nur als Warnung mit Grund. Wer noch einen Stand bis `v0.1.0-rc3` hat, kommt über den
+  Notweg in `ANLEITUNG.md` (Abschnitt F) einmal darüber.
+- **`zen update` und `zen rollback` robuster:** eigene Sperre (`/run/lock/zenos-kanal.lock`), damit nie zwei Wechsel
+  gleichzeitig `/opt/zenos` umschreiben; der Wechsel wartet, bis ein laufendes `install.sh` fertig ist; `git fetch`
+  hat 180 s Zeit und fragt nie nach Zugangsdaten; mit weniger als 1 GB frei bricht der Wechsel ab, bevor er etwas
+  ändert (bei voller Platte schrieb `git checkout` Dateien nur halb).
+- **`install.sh`:** läuft als root auch ohne `HOME` durch (etwa aus einem systemd-Dienst). Ein Abbruch durch SIGHUP
+  (SSH weg, ohne tmux) oder SIGPIPE steht im Log als «abbruch» statt «ok».
+- **`zen doctor`:** meldet eine Installation, die nach «== Beginn» nie ans Ende kam (Stromausfall, SIGKILL), und einen
+  mittendrin unterbrochenen dpkg-Lauf (Reste in `/var/lib/dpkg/updates`), nach dem apt und unattended-upgrades
+  nichts mehr installieren, mit dem Rat `sudo dpkg --configure -a`. Scheitert apt in `install.sh` daran, nennt die
+  Meldung denselben Rat statt «Netz kurz weg».
+
 ## 0.1.0-rc2 – 2026-09-28
 
 Alles seit `v0.1.0-rc1`: die neue Bildmarke, ein vorbereiteter Bootsplash und die Behebungen aus der Abnahme in einer

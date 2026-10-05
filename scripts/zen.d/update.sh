@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 # hilfe: update – neuen Stand vom Kanal holen und installieren
-# Holt in /opt/zenos «git fetch --tags --prune» von origin, setzt den Checkout hart auf
-# origin/<kanal> (Kanal aus /etc/xdg/zenos/kanal, Standard dev), räumt unversionierte Dateien weg
-# und führt danach /opt/zenos/scripts/install.sh aus. Lokale Änderungen in /opt/zenos gehen verloren;
-# ein Rollback-Stand endet damit wieder auf dem Kanal.
+# Holt in /opt/zenos den Branch des Kanals von origin (Kanal aus /etc/xdg/zenos/kanal, Standard dev), danach die
+# Tags. Ein Tag, der auf origin verschoben wurde, bleibt hier beim alten Stand (nur eine Warnung). Setzt den
+# Checkout hart auf origin/<kanal>, räumt unversionierte Dateien weg und führt danach /opt/zenos/scripts/install.sh
+# aus. Lokale Änderungen in /opt/zenos gehen verloren; ein Rollback-Stand endet damit wieder auf dem Kanal.
+# Bricht ab, ohne etwas zu ändern, wenn weniger als 1 GB frei ist oder origin nicht antwortet (Zeitlimit 180 s).
+# Nie zwei Updates oder Rollbacks gleichzeitig; ein laufendes install.sh wartet der Wechsel ab.
+# Notweg, falls zen update selbst nicht mehr geht: ANLEITUNG.md, Abschnitt F.
 # shellcheck shell=bash
+
+# shellcheck source=../lib/wechsel.sh
+source "$ZEN_SKRIPTE/lib/wechsel.sh"
 
 befehl_update() {
   if (( $# > 0 )); then
@@ -15,6 +21,8 @@ befehl_update() {
 
   local kanal alt alt_commit neu neu_commit
   kanal=$(_update_kanal) || return 1
+  _wechsel_sperren || return 1
+  _wechsel_platz "$ZENOS_CODE" || return 1
   alt=$(zenos_version "$ZENOS_CODE")
   alt_commit=$(zen_git rev-parse --short HEAD 2>/dev/null) || alt_commit="?"
 
@@ -23,14 +31,22 @@ befehl_update() {
   fi
 
   zen_hinweis "Hole Stand von origin (Kanal $kanal) …"
-  zen_git_root fetch --quiet --tags --prune origin || { zen_fehler "git fetch ist fehlgeschlagen"; return 1; }
+  _wechsel_branch_holen || return 1
   if ! zen_git rev-parse --verify --quiet "refs/remotes/origin/$kanal^{commit}" >/dev/null; then
     zen_fehler "Den Kanal «$kanal» gibt es auf origin nicht (siehe /etc/xdg/zenos/kanal)"
     return 1
   fi
-  zen_git_root checkout --quiet --force -B "$kanal" "refs/remotes/origin/$kanal"
-  zen_git_root reset --quiet --hard "refs/remotes/origin/$kanal"
-  zen_git_root clean --quiet -fd
+  _wechsel_tags_holen
+
+  _wechsel_install_warten || return 1
+  if ! zen_git_root checkout --quiet --force -B "$kanal" "refs/remotes/origin/$kanal" ||
+    ! zen_git_root reset --quiet --hard "refs/remotes/origin/$kanal" ||
+    ! zen_git_root clean --quiet -fd; then
+    _wechsel_install_freigeben
+    zen_fehler "Der Wechsel auf origin/$kanal ist gescheitert, $ZENOS_CODE ist womöglich nur halb umgestellt. Notweg: ANLEITUNG.md, Abschnitt F («zen update bricht ab»)."
+    return 1
+  fi
+  _wechsel_install_freigeben
 
   neu=$(zenos_version "$ZENOS_CODE")
   neu_commit=$(zen_git rev-parse --short HEAD)
@@ -40,7 +56,8 @@ befehl_update() {
     zen_hinweis "$alt ($alt_commit) → $neu ($neu_commit)"
   fi
   zen_hinweis ""
-  "$ZENOS_CODE/scripts/install.sh"
+  # Ohne die Sperren-Deskriptoren: Die Kanal-Sperre hält zen selbst bis zum Ende, install.sh nimmt seine eigene
+  "$ZENOS_CODE/scripts/install.sh" 7<&- 8<&-
 }
 
 _update_bereit() {

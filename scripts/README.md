@@ -6,6 +6,7 @@
 | `lib/gemeinsam.sh` | Hilfsfunktionen für install.sh, Module und zen (API im Kopf der Datei) |
 | `lib/firewall.sh` | gemeinsame Teile der Firewall für `zen firewall`, `zen doctor` und `bin/zenos-firewall` |
 | `lib/aufraeumen.sh` | gemeinsame Teile für `module/22-aufraeumen.sh` und `zen doctor` (snapd, landscape-common) |
+| `lib/wechsel.sh` | gemeinsame Teile von `zen update` und `zen rollback`: Sperren, Platzprüfung, Holen von origin |
 | `module/NN-name.sh` | Installationsschritte, laufen in Namensreihenfolge |
 | `pakete/<modul>.txt` | apt-Pakete je Modul (ein Paket pro Zeile, `#` Kommentar) |
 | `zen` | Werkzeug `zen`, `/usr/local/bin/zen` verweist darauf |
@@ -30,7 +31,10 @@
 - `--ruhig`: im Terminal nur Warnungen und Fehler, alles andere ins Log.
 - Log: `/var/log/zenos/install.log` (gehört dem Benutzer, Gruppe `adm`, 0640). Kann `--nur-benutzer`
   dort nicht schreiben (frisches Image), landet das Log in `~/.local/state/zenos/install.log`. Jeder
-  Lauf endet im Log mit einer Zeile `== Ende <datum> · <modus> · ok|abbruch · N Änderungen · N Warnungen`.
+  Lauf endet im Log mit einer Zeile `== Ende <datum> · <modus> · ok|abbruch · N Änderungen · N Warnungen`;
+  auch ein Abbruch durch ein Signal (HUP, INT, PIPE, TERM) steht dort als `abbruch (Exit 128+N)`. Fehlt nach
+  `== Beginn` die Ende-Zeile (SIGKILL, Stromausfall), meldet `zen doctor` das.
+- Ohne `HOME` (etwa in einem systemd-Dienst ohne `User=`) läuft install.sh als root ebenso durch.
 - Am Ende: `zenOS <version> installiert · N Änderungen`. Der zweite Lauf meldet `0 Änderungen`.
 - Zwei Durchgänge: erst alle `modul_system`, dann alle `modul_benutzer`. Danach `systemctl daemon-reload`,
   falls sich Units geändert haben.
@@ -103,12 +107,16 @@ modul_benutzer() {  # optional; als Benutzer, ohne sudo, nie im --image-Modus
 - Jede `zen.d`-Datei beginnt mit `# hilfe: <befehl> [argumente] – <kurz>`; weitere Kommentarzeilen direkt
   darunter erscheinen bei `zen hilfe <befehl>`.
 - Den Unterbefehlen stehen `lib/gemeinsam.sh` sowie `zen_git` (lesend in /opt/zenos), `zen_git_root`
-  (schreibend als root), `zen_fehler`, `zen_hinweis`, `$SUDO` und `$ZENOS_CODE` (immer `/opt/zenos`) zur
-  Verfügung.
-- `zen update`: `git fetch --tags --prune` in /opt/zenos, Checkout hart auf `origin/<kanal>` (Kanal aus
-  `/etc/xdg/zenos/kanal`, Standard `dev`), `clean -fd`, dann install.sh. Zeigt alt → neu.
-- `zen rollback <tag>`: Tags holen, `checkout --detach <tag>`, install.sh. Das nächste `zen update` kehrt
-  auf den Kanal zurück.
+  (schreibend als root), `zen_fehler`, `zen_warnung`, `zen_hinweis`, `$SUDO` und `$ZENOS_CODE` (immer
+  `/opt/zenos`) zur Verfügung.
+- `zen update`: in /opt/zenos die Branches ohne Tags holen (`git fetch --no-tags --prune`), dann die Tags getrennt
+  und ohne `--force` (ein auf origin verschobener Tag bleibt, mit Warnung), Checkout hart auf `origin/<kanal>`
+  (Kanal aus `/etc/xdg/zenos/kanal`, Standard `dev`), `clean -fd`, dann install.sh. Zeigt alt → neu.
+- `zen rollback <tag>`: neue Tags holen (ohne `--force`), `checkout --detach <tag>`, install.sh. Das nächste
+  `zen update` kehrt auf den Kanal zurück.
+- Beide (`lib/wechsel.sh`): Sperre `/run/lock/zenos-kanal.lock` bis zum Ende von install.sh, Wechsel erst, wenn
+  kein anderes install.sh läuft (`/run/lock/zenos-install.lock`, höchstens 15 Minuten Warten), `git fetch` mit
+  Zeitlimit 180 s und ohne Rückfragen, Abbruch ohne Änderung bei weniger als 1 GiB frei unter /opt/zenos.
 
 ## zen doctor
 
