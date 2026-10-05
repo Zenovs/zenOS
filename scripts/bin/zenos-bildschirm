@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+# zenos-bildschirm – alle Bildschirme aus- und einschalten (wlr-output-power-management über wlopm).
+#
+#   zenos-bildschirm aus      sperrt zuerst (zen lock) und schaltet erst dann aus, wenn die Sperre bestätigt
+#                             ist. Schlägt die Sperre fehl, bleibt der Bildschirm an.
+#   zenos-bildschirm an       schaltet alle Bildschirme ein (die Sperre bleibt, wie sie ist)
+#   zenos-bildschirm status   «an», «aus» oder «teils» (nur einige aus)
+#
+# Leitplanke (Code): Dunkel heisst gesperrt. Es gibt keinen Weg, den Bildschirm ohne Sperre auszuschalten.
+# Aufgerufen von zenos-idle (swayidle: timeout … resume) und später von der Oberfläche, immer mit
+# Argumentlisten. wlopm schaltet nur die Ausgabe ab: Der Ausgang bleibt im Layout, Fenster und Sperrflächen
+# bleiben (anders als wlr-randr --off). Die Oberfläche erfährt es über «zenos-ipc sperre bildschirm aus|an»
+# (die Sperre verwirft damit die Taste, die den Bildschirm weckt); antwortet sie nicht, geht es ohne.
+# Exit 0 erledigt · 1 fehlgeschlagen (Grund auf stderr und im Journal, logger -t zenos-bildschirm) ·
+# 2 falscher Aufruf · 3 keine grafische Sitzung
+
+set -uo pipefail
+
+selbst=$(readlink -f -- "${BASH_SOURCE[0]}")
+bin=$(dirname -- "$selbst")
+zen=$(dirname -- "$bin")/zen
+ipc=$bin/zenos-ipc
+
+meldung() { printf 'zenos-bildschirm: %s\n' "$*" >&2; }
+journal() {
+  meldung "$*"
+  logger -t zenos-bildschirm -- "$*" 2>/dev/null || true
+}
+
+# Sitzungsumgebung: aus der Umgebung, sonst aus der systemd-Benutzerinstanz (per SSH) oder der erste
+# Wayland-Socket im Laufzeitordner (wie zen lock)
+anzeige_setzen() {
+  local name pfad
+  local -a kandidaten=()
+  export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$EUID}
+  # Der übliche Fall (swayidle, Oberfläche): WAYLAND_DISPLAY stimmt, ohne Umweg über systemd
+  if [[ -n "${WAYLAND_DISPLAY:-}" ]] && _anzeige_pruefen "$WAYLAND_DISPLAY"; then return 0; fi
+  name=$(systemctl --user show-environment 2>/dev/null | sed -n 's/^WAYLAND_DISPLAY=//p' | head -n 1) || name=""
+  [[ -z "$name" ]] || kandidaten+=("$name")
+  for pfad in "$XDG_RUNTIME_DIR"/wayland-[0-9]*; do
+    [[ "$pfad" == *.lock ]] || kandidaten+=("${pfad##*/}")
+  done
+  for name in "${kandidaten[@]}"; do
+    if _anzeige_pruefen "$name"; then return 0; fi
+  done
+  return 1
+}
+
+_anzeige_pruefen() { # NAME: 0 und WAYLAND_DISPLAY gesetzt, wenn der Socket da ist
+  local pfad=$1
+  [[ "$pfad" == /* ]] || pfad=$XDG_RUNTIME_DIR/$1
+  [[ -S "$pfad" ]] || return 1
+  export WAYLAND_DISPLAY=$1
+}
+
+# Meldung an die Oberfläche (Sperre), ohne darauf zu warten, ob sie antwortet
+oberflaeche_melden() { # aus|an
+  [[ -x "$ipc" ]] || return 0
+  timeout 2 "$ipc" sperre bildschirm "$1" >/dev/null 2>&1 || true
+}
+
+# wlopm --json --on|--off '*': 0 nur ohne gemeldete Fehler (wlopm endet auch bei Fehlern mit 0)
+schalten() { # --on|--off
+  local ausgabe
+  ausgabe=$(timeout 5 wlopm --json "$1" '*' 2>&1) || { journal "wlopm $1 fehlgeschlagen: ${ausgabe:-ohne Ausgabe}"; return 1; }
+  if ! python3 -c '
+import json, sys
+try:
+    daten = json.loads(sys.argv[1])
+except ValueError:
+    sys.exit(1)
+sys.exit(0 if isinstance(daten, dict) and daten.get("errors") == [] else 1)
+' "$ausgabe"; then
+    journal "wlopm $1 meldet: ${ausgabe//$'\n'/ }"
+    return 1
+  fi
+}
+
+# «an», «aus» oder «teils» aus «wlopm --json»
+status() {
+  local ausgabe
+  ausgabe=$(timeout 5 wlopm --json 2>/dev/null) || return 1
+  python3 -c '
+import json, sys
+try:
+    daten = json.loads(sys.argv[1])
+except ValueError:
+    sys.exit(1)
+if not isinstance(daten, list) or not daten:
+    sys.exit(1)
+modi = {e.get("power-mode") for e in daten if isinstance(e, dict)}
+if not modi or not modi <= {"on", "off"}:
+    sys.exit(1)
+print("aus" if modi == {"off"} else "an" if modi == {"on"} else "teils")
+' "$ausgabe"
+}
+
+befehl_aus() {
+  local rc=0
+  if [[ ! -x "$zen" ]]; then
+    journal "zen fehlt ($zen): nicht gesperrt, der Bildschirm bleibt an"
+    return 1
+  fi
+  # Erst sperren. zen lock kehrt erst zurück, wenn die Sperre steht (Oberfläche oder Notfall-Sperre).
+  "$zen" lock >/dev/null 2>&1 || rc=$?
+  if (( rc != 0 )); then
+    journal "Sperren fehlgeschlagen (zen lock, Exit $rc): der Bildschirm bleibt an"
+    return 1
+  fi
+  if ! command -v wlopm >/dev/null 2>&1; then
+    journal "wlopm fehlt (Paket wlopm): gesperrt, der Bildschirm bleibt an"
+    return 1
+  fi
+  oberflaeche_melden aus
+  if ! schalten --off; then
+    oberflaeche_melden an
+    return 1
+  fi
+}
+
+befehl_an() {
+  if ! command -v wlopm >/dev/null 2>&1; then
+    journal "wlopm fehlt (Paket wlopm)"
+    return 1
+  fi
+  schalten --on || return 1
+  oberflaeche_melden an
+}
+
+befehl_status() {
+  command -v wlopm >/dev/null 2>&1 || { meldung "wlopm fehlt (Paket wlopm)"; return 1; }
+  status || { meldung "wlopm antwortet nicht (keine Sitzung oder kein Bildschirm)"; return 1; }
+}
+
+if (( $# != 1 )); then
+  meldung "Aufruf: zenos-bildschirm aus|an|status"
+  exit 2
+fi
+case "$1" in
+  aus | an | status) ;;
+  -h | --hilfe | --help) sed -n '2,15p' "$selbst" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  *) meldung "unbekannter Befehl «$1» (erlaubt: aus, an, status)"; exit 2 ;;
+esac
+if (( EUID == 0 )); then
+  meldung "läuft als normaler Benutzer in der Sitzung, nicht als root"
+  exit 2
+fi
+if ! anzeige_setzen; then
+  meldung "keine grafische Sitzung gefunden"
+  exit 3
+fi
+"befehl_$1"

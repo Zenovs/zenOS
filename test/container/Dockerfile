@@ -29,12 +29,13 @@ RUN set -e; \
 # Die Liste ist bewusst grösser als nötig, damit Modul-Tests schnell sind;
 # install.sh muss trotzdem alles selbst sicherstellen.
 # Dazu Testwerkzeuge: expect und tmux (interaktive Abläufe wie zen firewall), wtype (Tastatureingaben in
-# die Sitzung, z. B. Passwort in die Sperre), foot (zweites Terminal), nodejs (Einheitentests, pruefen.sh),
-# rsync (wie auf Ubuntu Server; Beispiel im Test von «?»).
+# die Sitzung, z. B. Passwort in die Sperre), wlrctl (Zeiger bewegen, z. B. einen dunklen Bildschirm wecken),
+# foot (zweites Terminal), nodejs (Einheitentests, pruefen.sh), rsync (wie auf Ubuntu Server; Beispiel im
+# Test von «?»).
 RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
       labwc kitty fish greetd pipewire wireplumber pipewire-pulse \
       xdg-desktop-portal xdg-desktop-portal-wlr xdg-desktop-portal-gtk \
-      grim slurp wl-clipboard swayidle kanshi wlr-randr hyprpicker xwayland \
+      grim slurp wl-clipboard swayidle wlopm kanshi wlr-randr hyprpicker xwayland \
       python3 python3-jsonschema python3-gi jq adwaita-icon-theme fonts-dejavu-core \
       libnotify-bin xdg-utils gsettings-desktop-schemas dconf-cli dconf-service libglib2.0-bin \
       qt6-wayland qt6-svg-plugins qt6-gtk-platformtheme qt6-xdgdesktopportal-platformtheme \
@@ -50,7 +51,7 @@ RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
       eza bat zoxide fzf tealdeer \
       unattended-upgrades ufw i2c-tools python3-smbus python3-libgpiod \
       shellcheck gitleaks qt6-declarative-dev-tools \
-      expect tmux wtype foot nodejs rsync \
+      expect tmux wtype wlrctl foot nodejs rsync \
     && rm -rf /var/lib/apt/lists/*
 
 # Quickshell v0.3.1, vorgebaut (gleicher Stand wie scripts/module/25-quickshell.sh)

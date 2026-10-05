@@ -37,10 +37,40 @@ modul_benutzer() {
   local laufzeit=${XDG_RUNTIME_DIR:-/run/user/$EUID}
   [[ "$ZENOS_SYSTEMD" == 1 && -S "$laufzeit/bus" ]] || return 0
   XDG_RUNTIME_DIR=$laufzeit systemctl --user --quiet is-active zenos-sitzung.target 2>/dev/null || return 0
-  XDG_RUNTIME_DIR=$laufzeit systemctl --user --quiet is-active zenos-idle.service 2>/dev/null && return 0
+  if XDG_RUNTIME_DIR=$laufzeit systemctl --user --quiet is-active zenos-idle.service 2>/dev/null; then
+    _oberflaeche_idle_neu_laden "$laufzeit"
+    return 0
+  fi
   if XDG_RUNTIME_DIR=$laufzeit systemctl --user start zenos-idle.service 2>/dev/null; then
     aenderung "Automatische Sperre gestartet (zenos-idle.service)"
   else
     log_warnung "zenos-idle.service liess sich nicht starten (systemctl --user status zenos-idle)"
+  fi
+}
+
+# Läuft zenos-idle mit einem älteren Stand (zen update), neu starten, damit die neue Leerlauf-Logik ohne
+# neues Anmelden gilt – aber nur, wenn die Sitzung gesperrt ist: Ein Neustart beginnt die Leerlaufzeit von
+# vorn und schöbe die automatische Sperre sonst hinaus. Ungesperrt übernimmt zenos-idle den neuen Stand selbst
+# bei der nächsten Sperre (ein Stand von vor der Bildschirm-Abschaltung erst nach dem nächsten Anmelden).
+# Kein Zähler: Ein Neustart ändert nichts am System (wie 55-zustaende).
+_oberflaeche_idle_neu_laden() {
+  local laufzeit=$1 einheit=zenos-idle.service start datei code neuer=0
+  start=$(XDG_RUNTIME_DIR=$laufzeit systemctl --user show --timestamp=unix -p ExecMainStartTimestamp --value \
+    "$einheit" 2>/dev/null) || return 0
+  start=${start#@}
+  [[ "$start" =~ ^[0-9]+$ ]] || return 0
+  for datei in "$ZENOS_CODE/scripts/bin/zenos-idle" "$ZENOS_CODE/scripts/bin/zenos-bildschirm"; do
+    code=$(stat -c %Y -- "$datei" 2>/dev/null) || continue
+    if [[ "$code" =~ ^[0-9]+$ ]] && (( code > start )); then neuer=1; fi
+  done
+  (( neuer )) || return 0
+  if [[ ! -e "$laufzeit/zenos/gesperrt" ]]; then
+    log_info "Automatische Sperre geändert; zenos-idle übernimmt den neuen Stand bei der nächsten Sperre."
+    return 0
+  fi
+  if XDG_RUNTIME_DIR=$laufzeit systemctl --user try-restart "$einheit" 2>/dev/null; then
+    log_info "Automatische Sperre neu gestartet (neuer Stand von zenos-idle, gesperrt)"
+  else
+    log_warnung "$einheit liess sich nicht neu starten (systemctl --user status zenos-idle)"
   fi
 }

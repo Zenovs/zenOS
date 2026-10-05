@@ -1,40 +1,80 @@
 #!/usr/bin/env bash
-# zenos-idle – automatische Sperre bei Inaktivität und vor dem Standby (swayidle).
+# zenos-idle – automatische Sperre bei Inaktivität und vor dem Standby, danach Bildschirm aus (swayidle).
 #
 #   zenos-idle            läuft als Benutzerdienst zenos-idle.service: startet swayidle und startet es neu,
-#                         sobald sich sperreNachMinuten in ~/.config/zenos/einstellungen.json ändert
-#                         (geprüft alle 10 s, gelesen nur bei geänderter Datei)
+#                         sobald sich die wirksamen Werte in ~/.config/zenos/einstellungen.json ändern
+#                         (geprüft alle 10 s, gelesen nur bei geänderter Datei). SIGUSR1 löst sofort aus:
+#                         sperren, dann Bildschirm aus; die nächste Eingabe schaltet ihn wieder an.
 #   zenos-idle minuten    wirksame Sperrzeit in Minuten
-#   zenos-idle pruefen    «<minuten> <standard|einstellung|begrenzt|ungueltig>» (für zen doctor)
+#   zenos-idle pruefen    «<minuten> <standard|einstellung|begrenzt|ungueltig>» (für zen doctor, Format fest)
+#   zenos-idle energie    wirksame Werte, je Zeile «<name> <minuten> <art>» für sperre und bildschirm
 #
-# Leitplanke (Code): Die Sperrzeit liegt immer zwischen 1 und 15 Minuten (Standard 5). Die automatische
-# Sperre lässt sich nicht abschalten. Gesperrt wird immer über «zen lock»: bei Inaktivität (timeout),
-# vor dem Standby (before-sleep; swayidle -w wartet, bis gesperrt ist) und auf Anforderung von logind
-# (lock, z. B. «loginctl lock-session»).
+# Leitplanken (Code, gespiegelt aus shell/modi/zustandslogik.js, test/einheiten/idle.test.py gleicht ab):
+# Die Sperrzeit liegt immer zwischen 1 und 15 Minuten (Standard 5), die automatische Sperre lässt sich nicht
+# abschalten. Gesperrt wird immer über «zen lock»: bei Inaktivität (timeout), vor dem Standby (before-sleep;
+# swayidle -w wartet, bis gesperrt ist) und auf Anforderung von logind (lock, z. B. «loginctl lock-session»).
+# Der Bildschirm geht 1–10 Minuten nach der Sperre aus (bildschirmAusNachSperre, Standard 1), nie davor:
+# zenos-bildschirm sperrt immer zuerst (dunkel heisst gesperrt). Jede Eingabe schaltet ihn wieder an (resume),
+# die Sperre bleibt. Nichts hier verzögert die Sperre: Neu gestartet wird nur bei geänderten Werten oder,
+# nach einem Update, erst gesperrt.
 
 set -euo pipefail
 
-readonly STANDARD=5 MINIMUM=1 MAXIMUM=15 PRUEFINTERVALL=10
+readonly STANDARD=5 MINIMUM=1 MAXIMUM=15
+readonly BILDSCHIRM_STANDARD=1 BILDSCHIRM_MINIMUM=1 BILDSCHIRM_MAXIMUM=10
+# Prüfintervall in Sekunden; ZENOS_IDLE_INTERVALL nur für die Einheitentests (1–60)
+PRUEFINTERVALL=10
+if [[ "${ZENOS_IDLE_INTERVALL:-}" =~ ^[1-9][0-9]?$ ]] && (( ZENOS_IDLE_INTERVALL <= 60 )); then
+  PRUEFINTERVALL=$ZENOS_IDLE_INTERVALL
+fi
+readonly PRUEFINTERVALL
 
 selbst=$(readlink -f -- "${BASH_SOURCE[0]}")
-zen=$(dirname -- "$(dirname -- "$selbst")")/zen
+bin=$(dirname -- "$selbst")
+zen=$(dirname -- "$bin")/zen
+bildschirm=$bin/zenos-bildschirm
 einstellungen=$HOME/.config/zenos/einstellungen.json
+laufzeit=${XDG_RUNTIME_DIR:-/run/user/$EUID}
 
 meldung() { printf 'zenos-idle: %s\n' "$*" >&2; }
 
-# Gibt «<minuten> <art>» aus. Zahlen (auch als Text) werden gerundet und auf 1–15 begrenzt,
-# alles andere ergibt den Standard.
+# Gibt je Wert eine Zeile «<name> <minuten> <art>» aus (sperre, bildschirm). Fehlt die Datei oder der
+# Schlüssel: Standard. Zahlen werden gerundet und begrenzt, alles andere ergibt den Standard («ungueltig»).
+# sperre nimmt wie bisher alles, was float() als Zahl liest (auch mit Komma); bildschirm nur Ziffern mit Punkt
+# oder Komma, genau wie shell/dienste/energie.js.
 auswerten() {
-  python3 - "$einstellungen" "$STANDARD" "$MINIMUM" "$MAXIMUM" <<'PY'
+  python3 - "$einstellungen" "$STANDARD" "$MINIMUM" "$MAXIMUM" \
+    "$BILDSCHIRM_STANDARD" "$BILDSCHIRM_MINIMUM" "$BILDSCHIRM_MAXIMUM" <<'PY'
 import json
 import math
+import re
 import sys
 
-datei, standard, minimum, maximum = sys.argv[1], *map(int, sys.argv[2:5])
+datei = sys.argv[1]
+WERTE = [
+    ("sperre", "sperreNachMinuten", *map(int, sys.argv[2:5]), False),
+    ("bildschirm", "bildschirmAusNachSperre", *map(int, sys.argv[5:8]), True),
+]
+ZAHL_TEXT = re.compile(r"[+-]?(?:[0-9]+(?:[.,][0-9]*)?|[.,][0-9]+)")
 
 
-def ausgabe(minuten, art):
-    print(minuten, art)
+def zahl(wert, streng):
+    if isinstance(wert, (int, float)) and not isinstance(wert, bool):
+        return float(wert)
+    if isinstance(wert, str):
+        text = wert.strip()
+        if streng and not ZAHL_TEXT.fullmatch(text):
+            return None
+        try:
+            return float(text.replace(",", ".", 1 if streng else -1))
+        except ValueError:
+            return None
+    return None
+
+
+def ausgabe(arten):
+    for (name, _, standard, *_), (minuten, art) in zip(WERTE, arten):
+        print(name, standard if minuten is None else minuten, art)
     sys.exit(0)
 
 
@@ -42,44 +82,61 @@ try:
     with open(datei, encoding="utf-8") as f:
         daten = json.load(f)
 except FileNotFoundError:
-    ausgabe(standard, "standard")
+    ausgabe([(None, "standard")] * len(WERTE))
 except (OSError, ValueError):
-    ausgabe(standard, "ungueltig")
+    ausgabe([(None, "ungueltig")] * len(WERTE))
 
-if not isinstance(daten, dict) or "sperreNachMinuten" not in daten:
-    ausgabe(standard, "standard")
-wert = daten["sperreNachMinuten"]
-zahl = None
-if isinstance(wert, (int, float)) and not isinstance(wert, bool):
-    zahl = float(wert)
-elif isinstance(wert, str):
-    try:
-        zahl = float(wert.strip().replace(",", "."))
-    except ValueError:
-        zahl = None
-if zahl is None or not math.isfinite(zahl):
-    ausgabe(standard, "ungueltig")
-gerundet = math.floor(zahl + 0.5)
-begrenzt = min(maximum, max(minimum, gerundet))
-ausgabe(begrenzt, "einstellung" if begrenzt == gerundet else "begrenzt")
+arten = []
+for _, schluessel, standard, minimum, maximum, streng in WERTE:
+    if not isinstance(daten, dict) or schluessel not in daten:
+        arten.append((None, "standard"))
+        continue
+    n = zahl(daten[schluessel], streng)
+    if n is None or not math.isfinite(n):
+        arten.append((None, "ungueltig"))
+        continue
+    gerundet = math.floor(n + 0.5)
+    begrenzt = min(maximum, max(minimum, gerundet))
+    arten.append((begrenzt, "einstellung" if begrenzt == gerundet else "begrenzt"))
+ausgabe(arten)
 PY
 }
 
+# Setzt sperre_min und bildschirm_min (bei jedem Fehler die Standardwerte)
+werte_lesen() {
+  local name wert zeilen
+  sperre_min=$STANDARD
+  bildschirm_min=$BILDSCHIRM_STANDARD
+  zeilen=$(auswerten 2>/dev/null) || zeilen=""
+  while read -r name wert _; do
+    [[ "$wert" =~ ^[0-9]+$ ]] || continue
+    if [[ "$name" == sperre ]] && (( wert >= MINIMUM && wert <= MAXIMUM )); then
+      sperre_min=$wert
+    elif [[ "$name" == bildschirm ]] && (( wert >= BILDSCHIRM_MINIMUM && wert <= BILDSCHIRM_MAXIMUM )); then
+      bildschirm_min=$wert
+    fi
+  done <<< "$zeilen"
+}
+
 minuten() {
-  local wert
-  wert=$(auswerten 2>/dev/null) || wert=""
-  wert=${wert%% *}
-  if [[ "$wert" =~ ^[0-9]+$ ]] && (( wert >= MINIMUM && wert <= MAXIMUM )); then
-    printf '%s\n' "$wert"
-  else
-    printf '%s\n' "$STANDARD"
-  fi
+  werte_lesen
+  printf '%s\n' "$sperre_min"
+}
+
+# Format für zen doctor (65-sperre liest «<minuten> <art>» mit read -r): bleibt, wie es ist
+pruefen() {
+  local zeilen
+  zeilen=$(auswerten) || return 1
+  sed -n 's/^sperre //p' <<< "$zeilen"
 }
 
 # Stand der Einstellungsdatei (ändert sich bei jedem Schreiben, auch beim atomaren Ersetzen)
 stand() { stat -c '%i %s %Y' -- "$einstellungen" 2>/dev/null || printf 'fehlt\n'; }
 
-# Befehl für swayidle (swayidle führt ihn über sh aus, deshalb nur ein geprüfter fester Pfad)
+# Stand des eigenen Codes (zen update ersetzt die Dateien)
+code_stand() { stat -L -c '%i %s %Y' -- "$selbst" "$bildschirm" 2>/dev/null | tr '\n' ' ' || true; }
+
+# Befehle für swayidle. swayidle führt sie über sh aus, deshalb nur geprüfte feste Pfade und feste Wörter.
 sperrbefehl() {
   if [[ -x "$zen" && "$zen" =~ ^[A-Za-z0-9/._-]+$ ]]; then
     printf '%s lock\n' "$zen"
@@ -90,35 +147,79 @@ sperrbefehl() {
   fi
 }
 
+bildschirmbefehl() { # aus|an
+  [[ "$1" == aus || "$1" == an ]] || return 1
+  [[ -x "$bildschirm" && "$bildschirm" =~ ^[A-Za-z0-9/._-]+$ ]] || return 1
+  printf '%s %s\n' "$bildschirm" "$1"
+}
+
+gesperrt() { [[ -e "$laufzeit/zenos/gesperrt" ]]; }
+
 laufen() {
   command -v swayidle >/dev/null 2>&1 || { meldung "swayidle fehlt"; exit 1; }
   [[ -n "${WAYLAND_DISPLAY:-}" ]] || { meldung "WAYLAND_DISPLAY fehlt (keine grafische Sitzung)"; exit 1; }
-  local sperre minuten jetzt alt neu rc
+  local sperre aus="" an="" wirksam jetzt alt neu rc code
+  local -a argumente
   sperre=$(sperrbefehl) || { meldung "zen fehlt"; exit 1; }
+  if aus=$(bildschirmbefehl aus) && an=$(bildschirmbefehl an); then
+    :
+  else
+    aus="" an=""
+    meldung "zenos-bildschirm fehlt: nur die Sperre, der Bildschirm bleibt an"
+  fi
+  code=$(code_stand)
 
   swayidle_pid=""
-  # Beim Beenden (systemctl stop, Ende der Sitzung) swayidle mitnehmen und ohne Fehler enden
+  # Beim Beenden (systemctl stop, Ende der Sitzung) swayidle mitnehmen und ohne Fehler enden. SIGTERM lässt
+  # swayidle noch die offenen resume-Befehle ausführen: Ein dunkler Bildschirm geht dabei wieder an.
   trap 'if [[ -n "$swayidle_pid" ]]; then kill "$swayidle_pid" 2>/dev/null || true; fi; exit 0' TERM INT HUP
+  # SIGUSR1 (sofort sperren und Bildschirm aus) an swayidle weiterreichen: Es löst alle Timeouts sofort aus
+  # und wartet mit resume auf die nächste Eingabe
+  trap 'if [[ -n "$swayidle_pid" ]] && kill -USR1 "$swayidle_pid" 2>/dev/null; then printf "Sofort: sperren und Bildschirm aus\n"; fi' USR1
+
+  # Beim Start ist der Bildschirm immer an: Endete ein früheres swayidle hart (SIGKILL, Absturz), lief sein
+  # resume nicht, und der Bildschirm bliebe sonst dunkel
+  if [[ -n "$an" ]]; then
+    "$bildschirm" an >/dev/null 2>&1 || meldung "Bildschirm einschalten fehlgeschlagen (zenos-bildschirm an)"
+  fi
 
   while true; do
-    minuten=$(minuten)
     alt=$(stand)
-    printf 'Automatische Sperre nach %s Min.\n' "$minuten"
-    swayidle -w \
-      timeout "$((minuten * 60))" "$sperre" \
-      before-sleep "$sperre" \
-      lock "$sperre" &
+    werte_lesen
+    wirksam="$sperre_min $bildschirm_min"
+    argumente=()
+    if [[ -n "$aus" ]]; then
+      printf 'Automatische Sperre nach %s Min., Bildschirm aus %s Min. danach\n' "$sperre_min" "$bildschirm_min"
+      # Der Bildschirm zuerst, die Sperre zuletzt: swayidle stellt jeden Timeout vorne in seine Liste, SIGUSR1
+      # löst sie in dieser Reihenfolge aus, also erst sperren, dann Bildschirm aus (zenos-bildschirm aus
+      # sperrt ohnehin selbst zuerst)
+      argumente+=(timeout "$(((sperre_min + bildschirm_min) * 60))" "$aus" resume "$an")
+    else
+      printf 'Automatische Sperre nach %s Min.\n' "$sperre_min"
+    fi
+    argumente+=(before-sleep "$sperre" lock "$sperre" timeout "$((sperre_min * 60))" "$sperre")
+    swayidle -w "${argumente[@]}" &
     swayidle_pid=$!
 
     while kill -0 "$swayidle_pid" 2>/dev/null; do
       sleep "$PRUEFINTERVALL" &
       wait $! || true
+      # Neuer Stand nach zen update: erst übernehmen, wenn gesperrt ist (ein Neustart beginnt die Leerlaufzeit
+      # von vorn und schöbe die Sperre sonst hinaus) und solange der Bildschirm an ist (er bliebe sonst nicht
+      # dunkel). systemd startet den Dienst neu (Restart=always).
+      if [[ "$(code_stand)" != "$code" ]] && gesperrt && [[ "$("$bildschirm" status 2>/dev/null)" != aus ]]; then
+        printf 'Neuer Stand von zenos-idle, starte neu (gesperrt)\n'
+        kill "$swayidle_pid" 2>/dev/null || true
+        wait "$swayidle_pid" 2>/dev/null || true
+        exit 0
+      fi
       neu=$(stand)
       [[ "$neu" != "$alt" ]] || continue
       alt=$neu
-      jetzt=$(minuten)
-      [[ "$jetzt" != "$minuten" ]] || continue
-      printf 'Sperrzeit geändert: %s → %s Min.\n' "$minuten" "$jetzt"
+      werte_lesen
+      jetzt="$sperre_min $bildschirm_min"
+      [[ "$jetzt" != "$wirksam" ]] || continue
+      printf 'Einstellungen geändert: Sperre nach %s Min., Bildschirm aus %s Min. danach\n' "$sperre_min" "$bildschirm_min"
       kill "$swayidle_pid" 2>/dev/null || true
       wait "$swayidle_pid" 2>/dev/null || true
       continue 2
@@ -135,7 +236,8 @@ laufen() {
 case "${1:-}" in
   "") laufen ;;
   minuten) minuten ;;
-  pruefen) auswerten ;;
-  -h | --hilfe | --help) sed -n '2,13p' "$selbst" | sed 's/^# \{0,1\}//' ;;
-  *) meldung "unbekannter Befehl «$1» (erlaubt: minuten, pruefen)"; exit 2 ;;
+  pruefen) pruefen ;;
+  energie) auswerten ;;
+  -h | --hilfe | --help) sed -n '2,19p' "$selbst" | sed 's/^# \{0,1\}//' ;;
+  *) meldung "unbekannter Befehl «$1» (erlaubt: minuten, pruefen, energie)"; exit 2 ;;
 esac

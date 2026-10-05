@@ -7,3 +7,6 @@ swayidle
 swaylock
 # pgrep für zen lock und zenos-1password-sperren
 procps
+# Bildschirm aus nach der Sperre (zenos-bildschirm; wlr-output-power-management, bietet labwc an). Nicht
+# wlr-randr --off: Das nimmt den Ausgang aus dem Layout, Fenster wandern, und die Oberfläche verliert ihn.
+wlopm
