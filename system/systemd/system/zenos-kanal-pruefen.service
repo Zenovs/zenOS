@@ -1,0 +1,47 @@
+# zenOS: das zuletzt geholte Bundle prüfen (zenos-kanal pruefen). Läuft als root, aber ohne Netz (PrivateNetwork)
+# und ohne Rechte über root hinaus. Schreiben darf es nur /var/lib/zenos/kanal (Stand, Hauptbuch, hoechste),
+# /etc/zenos/vertrauen (nur über einen gültigen Tag vertrauen/NNNN) und die Sperre in /run/lock. /opt/zenos liest es
+# nur: Installiert wird in dieser Fassung nichts. Gestartet nur von «sudo zen kanal pruefen».
+[Unit]
+Description=zenOS: Kanal prüfen (ohne Netz, installiert nichts)
+Documentation=file:///opt/zenos/docs/image-und-releases.md
+After=zenos-kanal-holen.service
+ConditionPathExists=/usr/local/libexec/zenos/zenos-kanal
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/zenos/zenos-kanal pruefen
+StateDirectory=zenos/kanal
+StateDirectoryMode=0755
+UMask=0022
+TimeoutStartSec=10min
+Nice=10
+SyslogIdentifier=zenos-kanal
+
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+ReadWritePaths=-/etc/zenos/vertrauen /run/lock
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateIPC=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources

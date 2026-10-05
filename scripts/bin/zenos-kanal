@@ -1,0 +1,1475 @@
+#!/usr/bin/python3 -I
+"""zenos-kanal: der signierte Update-Kanal von zenOS. Holt die Tags von origin, prüft sie gegen den
+Vertrauensanker des Geräts und schreibt den Stand. Diese Fassung installiert NICHTS: Sie liest /opt/zenos nur.
+
+Aufruf:
+  zenos-kanal status [--json|--kurz]   Kanal, Anker mit Fingerabdrücken und die letzte Prüfung (ohne root)
+  zenos-kanal pruefen                  prüft das zuletzt geholte Bundle ohne Netz und schreibt den Stand (root;
+                                       läuft als zenos-kanal-pruefen.service)
+  zenos-kanal anker                    zeigt den Vertrauensanker /etc/zenos/vertrauen
+  zenos-kanal anker ORDNER             setzt den Anker von Hand aus ORDNER (root, nur im Terminal: der Fingerabdruck
+                                       der Wurzel wird eingetippt, die Release-Schlüssel mit «ja» bestätigt)
+  zenos-kanal anker --pruefen ORDNER   prüft nur den Inhalt eines Ankers: vollständig (Exit 0), leer (1), ungültig (3)
+  zenos-kanal holen-intern             nur für zenos-kanal-holen.service: holt ohne Rechte von origin
+
+Holen (zenos-kanal-holen.service, DynamicUser, nur mit Netz und in einer Sandbox): «git fetch» von der https-Adresse
+von origin (aus /opt/zenos/.git/config) in einen eigenen Spiegel, erzwungen nach refs/kanal/tags/* und
+refs/kanal/heads/*. Ein auf origin verschobener oder gelöschter Tag bricht dabei nichts ab. Das Ergebnis geht als
+Bundle (uebergabe.bundle) an root; root öffnet das Repo des Holers nie.
+
+Prüfen (root, ohne Netz): Das Bundle kommt in ein Repo, das bei jedem Lauf neu entsteht (eigene config, keine Hooks).
+Jedes git läuft mit leerer Umgebung (nur PATH, HOME=/nonexistent, LC_ALL=C), ohne System- und Benutzer-config, ohne
+Ersatzobjekte, mit core.hooksPath=/dev/null, core.fsmonitor=false, protocol.allow=never, gpg.ssh.program=ssh-keygen
+und abgeschaltetem OpenPGP und X.509. Regeln:
+  1. Anker /etc/zenos/vertrauen (nie aus /opt/zenos): release, wurzel, widerrufen und serie, root-eigen, für andere
+     nicht schreibbar, streng im Format (nur Ed25519, Prinzipale zenos-release und zenos-wurzel). Fehlt etwas: «Anker
+     fehlt», nichts gilt als gültig. Die Widerrufsdatei muss es geben, sie darf leer sein.
+  2. Ein Tag gilt nur, wenn er annotiert ist, sein Kopf genau object, type, tag und tagger hat, das Feld «tag» dem
+     Ref-Namen gleicht, type «commit» ist, er genau eine SSH-Signatur (Namespace git) am Ende trägt, keine OpenPGP-
+     oder X.509-Signatur enthält und «git verify-tag <Objekt-ID>» ihn gegen den Anker für den Prinzipal annimmt.
+  3. Tags vertrauen/NNNN mit NNNN über der eigenen Serie kommen zuerst, aufsteigend: gültig gegen wurzel (Prinzipal
+     zenos-wurzel) und widerrufen. Massgeblich ist der Anker im Commit des Tags: Serie gleich NNNN, dieselbe Wurzel.
+     Übernommen werden release und widerrufen (als Vereinigung mit den alten) und die Serie. Die Wurzel ändert sich
+     nie über das Netz.
+  4. Releases vX.Y.Z (stabil) und zusätzlich vX.Y.Z-rcN (vorschau) gelten gegen release (Prinzipal zenos-release).
+  5. Hauptbuch gesehen.json (Name → Objekt): Zeigt ein Name, der schon gültig war, auf ein anderes, ebenfalls gültig
+     signiertes Objekt, ist der Kanal «blockiert». Ein ungültiges neues Objekt ist nur ein Hinweis, ebenso ein auf
+     origin gelöschter Tag.
+  6. Ziel ist die höchste gültige Version des Kanals über «hoechste» (kein Downgrade; rcN liegt vor der finalen
+     Version), ohne Versionen in gesperrt/. «hoechste» steigt mit dem installierten Stand: Jeder gültige Tag, dessen
+     Commit im Verlauf von /opt/zenos liegt, hebt es an. Fehlt «hoechste» und ist der installierte Stand keiner
+     signierten Version zuzuordnen, ist der Kanal «blockiert».
+  7. Kanal dev: nur Auskunft. Neuer Stand von origin/dev, ob der installierte Stand darin liegt und ob alle Commits
+     dazwischen mit einem Release-Schlüssel signiert sind; sonst nur von Hand mit «ja».
+
+Dateien: /etc/xdg/zenos/kanal (Kanal: stabil, vorschau, dev; main gilt als stabil), /etc/zenos/vertrauen (Anker),
+/var/lib/zenos/kanal/{stand.json, gesehen.json, hoechste, gesperrt/} (root, stand.json für alle lesbar),
+/var/lib/zenos-kanal-holen/{uebergabe.bundle, holen.json} (Holer).
+
+Exit: 0 in Ordnung (aktuell, bereit, dev) · 1 Fehler · 2 Aufruf · 3 blockiert oder Anker fehlt · 10 kein Kontakt
+(Netz) · 75 läuft schon (Sperre /run/lock/zenos-kanal.lock, auch von zen update gehalten).
+"""
+
+import base64
+import datetime
+import fcntl
+import hashlib
+import json
+import os
+import re
+import shutil
+import stat
+import struct
+import subprocess
+import sys
+import traceback
+
+NAME = "zenos-kanal"
+GIT = "/usr/bin/git"
+SSH_KEYGEN = "/usr/bin/ssh-keygen"
+SYSTEM_PATH = "/usr/bin:/bin"
+
+CODE_DIR = "/opt/zenos"
+CHANNEL_FILE = "/etc/xdg/zenos/kanal"
+ANCHOR_DIR = "/etc/zenos/vertrauen"
+STATE_DIR = "/var/lib/zenos/kanal"
+FETCH_DIR = "/var/lib/zenos-kanal-holen"
+LOCK_FILE = "/run/lock/zenos-kanal.lock"
+
+# Wem Anker, Zustand und Ordner darüber gehören dürfen, bis wohin die Ordner geprüft werden und welche Adressen der
+# Holer annimmt. Nur die Einheitentests setzen andere Werte (nach dem Laden als Modul); einen Schalter gibt es nicht.
+TRUSTED_UIDS = (0,)
+PATH_CHECK_TOP = "/"
+ALLOWED_SCHEMES = ("https",)
+
+FETCH_TIMEOUT = 600
+GIT_TIMEOUT = 300
+MAX_BUNDLE = 1 << 30
+MAX_SMALL_FILE = 1 << 16
+MAX_TAGS = 1000
+MAX_DEV_RANGE = 2000
+WAIT_STABLE = datetime.timedelta(hours=24)
+
+EXIT_OK = 0
+EXIT_ERROR = 1
+EXIT_USAGE = 2
+EXIT_BLOCKED = 3
+EXIT_NO_CONTACT = 10
+EXIT_BUSY = 75
+
+CHANNELS = ("stabil", "vorschau", "dev")
+ANCHOR_FILES = ("release", "wurzel", "widerrufen", "serie")
+KEY_PATTERN = r"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI[A-Za-z0-9+/]{43}"
+RELEASE_LINE = re.compile(r'zenos-release namespaces="git" (' + KEY_PATTERN + ")")
+ROOT_LINE = re.compile(r'zenos-wurzel namespaces="git" (' + KEY_PATTERN + ")")
+REVOKED_LINE = re.compile("(" + KEY_PATTERN + ")")
+SERIES_LINE = re.compile(r"[1-9][0-9]{0,3}")
+VERSION_RE = re.compile(r"v(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})(?:-rc([1-9][0-9]{0,8}))?")
+TRUST_RE = re.compile(r"vertrauen/([0-9]{4})")
+OID_RE = re.compile(r"[0-9a-f]{40}")
+TIME_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
+HTTPS_RE = re.compile(r"https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?/[A-Za-z0-9._~/+-]+")
+FILE_RE = re.compile(r"file:///[A-Za-z0-9._~/+-]+")
+SIG_BEGIN = "-----BEGIN SSH SIGNATURE-----"
+SIG_END = "-----END SSH SIGNATURE-----"
+REPO_CONFIG = "[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = true\n"
+
+RELEASE_PRINCIPAL = "zenos-release"
+ROOT_PRINCIPAL = "zenos-wurzel"
+
+
+class Failure(Exception):
+    """Fehler mit einer Meldung für Menschen."""
+
+
+# --- Allgemein -------------------------------------------------------------------------------------------------
+
+
+def now():
+    return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+
+
+def iso(t):
+    return t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def parse_iso(text):
+    if not isinstance(text, str) or not TIME_RE.fullmatch(text):
+        return None
+    try:
+        return datetime.datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+    except ValueError:
+        return None
+
+
+def local_time(text):
+    t = parse_iso(text)
+    return t.astimezone().strftime("%Y-%m-%d %H:%M") if t else "–"
+
+
+def short(text, length=60):
+    text = "".join(c if c.isprintable() else "?" for c in str(text))
+    return text if len(text) <= length else text[: length - 1] + "…"
+
+
+def first_line(text):
+    for line in str(text).splitlines():
+        line = line.strip()
+        if line:
+            return short(line, 160)
+    return ""
+
+
+def run(argv, cwd="/", env=None, timeout=GIT_TIMEOUT):
+    """Startet ein Programm mit Argumentliste (nie über eine Shell). Zeitlimit → Exit 124, fehlt es → 127."""
+    try:
+        return subprocess.run(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                              errors="replace", timeout=timeout, check=False)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(argv, 124, "", f"Zeitlimit von {timeout} s überschritten")
+    except OSError as e:
+        return subprocess.CompletedProcess(argv, 127, "", f"{argv[0]}: {e.strerror}")
+
+
+def git_env():
+    """Leere Umgebung für git: keine config ausser der Repo-config und der Befehlszeile, keine Ersatzobjekte."""
+    return {
+        "PATH": SYSTEM_PATH,
+        "HOME": "/nonexistent",
+        "LC_ALL": "C",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_ATTR_NOSYSTEM": "1",
+        "GIT_NO_REPLACE_OBJECTS": "1",
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_OPTIONAL_LOCKS": "0",
+    }
+
+
+def git_hardening():
+    return [
+        "-c", "core.hooksPath=/dev/null",
+        "-c", "core.fsmonitor=false",
+        "-c", f"gpg.ssh.program={SSH_KEYGEN}",
+        "-c", "gpg.openpgp.program=false",
+        "-c", "gpg.x509.program=false",
+        "-c", "protocol.allow=never",
+        "-c", "gc.auto=0",
+        "-c", "maintenance.auto=false",
+    ]
+
+
+def git(repo, *args, timeout=GIT_TIMEOUT):
+    argv = [GIT]
+    if repo:
+        argv += ["-C", repo]
+    return run(argv + git_hardening() + list(args), env=git_env(), timeout=timeout)
+
+
+def path_problem(path):
+    """Grund, warum PATH (und jeder Ordner darüber bis PATH_CHECK_TOP) nicht sicher ist, sonst None: kein Verweis,
+    Besitzer root, für Gruppe und andere nicht schreibbar."""
+    path = os.path.abspath(path)
+    top = os.path.abspath(PATH_CHECK_TOP)
+    while True:
+        try:
+            st = os.lstat(path)
+        except OSError as e:
+            return f"{path}: {e.strerror}"
+        if stat.S_ISLNK(st.st_mode):
+            return f"{path} ist ein Verweis"
+        if st.st_uid not in TRUSTED_UIDS:
+            return f"{path} gehört nicht root"
+        if st.st_mode & 0o022:
+            return f"{path} ist für andere schreibbar"
+        if path in (top, "/"):
+            return None
+        path = os.path.dirname(path)
+
+
+def read_small(path, trusted=False, limit=MAX_SMALL_FILE):
+    """Liest eine kleine reguläre Datei ohne Verweis zu folgen. trusted: Besitzer root, für andere nicht schreibbar.
+    FileNotFoundError, wenn sie fehlt; Failure bei allem anderen."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0))
+    except FileNotFoundError:
+        raise
+    except OSError as e:
+        raise Failure(f"{path}: {e.strerror}") from e
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise Failure(f"{path} ist keine Datei")
+        if trusted and st.st_uid not in TRUSTED_UIDS:
+            raise Failure(f"{path} gehört nicht root")
+        if trusted and st.st_mode & 0o022:
+            raise Failure(f"{path} ist für andere schreibbar")
+        data = os.read(fd, limit + 1)
+        if len(data) > limit:
+            raise Failure(f"{path} ist zu gross")
+    finally:
+        os.close(fd)
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise Failure(f"{path} ist kein UTF-8") from e
+
+
+def write_atomic(path, text, mode=0o644):
+    """Schreibt PATH atomar: PATH.neu im selben Ordner, fsync, rename, fsync des Ordners."""
+    folder = os.path.dirname(path)
+    tmp = os.path.join(folder, "." + os.path.basename(path) + ".neu")
+    try:
+        os.unlink(tmp)
+    except FileNotFoundError:
+        pass
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0), mode)
+    try:
+        data = text.encode("utf-8")
+        while data:
+            data = data[os.write(fd, data):]
+        os.fchmod(fd, mode)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.replace(tmp, path)
+    dfd = os.open(folder, os.O_RDONLY)
+    try:
+        os.fsync(dfd)
+    finally:
+        os.close(dfd)
+
+
+def write_json(path, data, mode=0o644):
+    write_atomic(path, json.dumps(data, ensure_ascii=False, indent=1) + "\n", mode)
+
+
+def load_json(path, trusted=False):
+    """JSON-Objekt aus PATH, None wenn es fehlt oder unlesbar ist."""
+    try:
+        data = json.loads(read_small(path, trusted=trusted, limit=4 << 20))
+    except (FileNotFoundError, Failure, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+# --- Versionen -------------------------------------------------------------------------------------------------
+
+
+def version_key(name):
+    """(X, Y, Z, final, rc) zum Vergleichen, None für andere Namen. vX.Y.Z-rcN liegt vor vX.Y.Z."""
+    m = VERSION_RE.fullmatch(name or "")
+    if not m:
+        return None
+    x, y, z, rc = m.groups()
+    if rc is None:
+        return (int(x), int(y), int(z), 1, 0)
+    return (int(x), int(y), int(z), 0, int(rc))
+
+
+def in_channel(name, channel):
+    m = VERSION_RE.fullmatch(name)
+    if not m:
+        return False
+    if channel == "stabil":
+        return m.group(4) is None
+    return True
+
+
+def highest(names):
+    names = [n for n in names if version_key(n)]
+    return max(names, key=version_key) if names else None
+
+
+# --- Anker -----------------------------------------------------------------------------------------------------
+
+
+class AnchorError(Exception):
+    def __init__(self, reason, empty=False):
+        super().__init__(reason)
+        self.reason = reason
+        self.empty = empty
+
+
+class Anchor:
+    def __init__(self, release, root, revoked, series):
+        self.release = release
+        self.root = root
+        self.revoked = revoked
+        self.series = series
+
+    def summary(self):
+        return {
+            "serie": self.series,
+            "wurzel": fingerprint(self.root),
+            "release": [fingerprint(k) for k in self.release],
+            "widerrufen": [fingerprint(k) for k in self.revoked],
+        }
+
+
+def content_lines(text):
+    """Zeilen ohne Kommentare (#) und ohne leere Zeilen, sonst unverändert."""
+    return [z for z in text.split("\n") if z.strip() and not z.lstrip().startswith("#")]
+
+
+def key_blob(key):
+    """Bytes eines «ssh-ed25519 AAAA…»-Schlüssels, geprüft: Typ ssh-ed25519 und 32 Byte Schlüssel."""
+    try:
+        blob = base64.b64decode(key.split(" ", 1)[1], validate=True)
+    except (IndexError, ValueError) as e:
+        raise AnchorError(f"Schlüssel unlesbar: {short(key, 40)}") from e
+    if len(blob) != 51 or blob[:15] != b"\x00\x00\x00\x0bssh-ed25519" or blob[15:19] != b"\x00\x00\x00\x20":
+        raise AnchorError(f"Schlüssel unlesbar: {short(key, 40)}")
+    return blob
+
+
+def fingerprint(key):
+    """SHA256-Fingerabdruck wie bei ssh-keygen -l."""
+    blob = base64.b64decode(key.split(" ", 1)[1])
+    return "SHA256:" + base64.b64encode(hashlib.sha256(blob).digest()).decode("ascii").rstrip("=")
+
+
+def parse_anchor(texts):
+    """Anker aus den Texten der vier Dateien (None: Datei fehlt). AnchorError mit empty=True, wenn keine Datei einen
+    Eintrag hat."""
+    lines = {n: content_lines(texts[n]) for n in ANCHOR_FILES if texts.get(n) is not None}
+    if not any(lines.values()):
+        raise AnchorError("ohne Schlüssel und ohne Serie", empty=True)
+    for name in ANCHOR_FILES:
+        if texts.get(name) is None:
+            raise AnchorError(f"{name} fehlt")
+    release, roots, revoked = [], [], []
+    for target, name, pattern in ((release, "release", RELEASE_LINE), (roots, "wurzel", ROOT_LINE),
+                                  (revoked, "widerrufen", REVOKED_LINE)):
+        for line in lines[name]:
+            m = pattern.fullmatch(line)
+            if not m:
+                raise AnchorError(f"{name} hat eine ungültige Zeile: {short(line, 50)}")
+            key_blob(m.group(1))
+            target.append(m.group(1))
+    if not release:
+        raise AnchorError("release enthält keinen Schlüssel")
+    if len(set(roots)) != 1 or len(roots) != 1:
+        raise AnchorError("wurzel muss genau einen Schlüssel enthalten")
+    if len(lines["serie"]) != 1 or not SERIES_LINE.fullmatch(lines["serie"][0]):
+        raise AnchorError("serie enthält keine Zahl von 1 bis 9999")
+    root = roots[0]
+    release = sorted(set(release))
+    revoked = sorted(set(revoked))
+    if root in release:
+        raise AnchorError("Wurzel- und Release-Schlüssel müssen verschieden sein")
+    if set(release) & set(revoked):
+        raise AnchorError("ein Release-Schlüssel steht auch in widerrufen")
+    if root in revoked:
+        raise AnchorError("der Wurzel-Schlüssel steht in widerrufen")
+    return Anchor(release, root, revoked, int(lines["serie"][0]))
+
+
+def read_anchor_dir(folder, trusted):
+    """Texte der vier Dateien aus FOLDER (None: fehlt). trusted: Besitz und Rechte wie für den Anker des Geräts."""
+    if trusted:
+        problem = path_problem(folder)
+        if problem:
+            raise AnchorError(f"Rechte: {problem}")
+    texts = {}
+    for name in ANCHOR_FILES:
+        try:
+            texts[name] = read_small(os.path.join(folder, name), trusted=trusted)
+        except FileNotFoundError:
+            texts[name] = None
+        except Failure as e:
+            raise AnchorError(f"Rechte: {e}" if trusted else str(e)) from e
+    return texts
+
+
+def load_device_anchor():
+    if not os.path.lexists(ANCHOR_DIR):
+        raise AnchorError(f"{ANCHOR_DIR} fehlt", empty=True)
+    return parse_anchor(read_anchor_dir(ANCHOR_DIR, trusted=True))
+
+
+def signer_files(anchor, folder):
+    """Schreibt den geprüften Anker in der Form für git nach FOLDER: release, wurzel, widerrufen."""
+    os.makedirs(folder, mode=0o700, exist_ok=True)
+    files = {
+        "release": "".join(f'{RELEASE_PRINCIPAL} namespaces="git" {k}\n' for k in anchor.release),
+        "wurzel": f'{ROOT_PRINCIPAL} namespaces="git" {anchor.root}\n',
+        "widerrufen": "".join(f"{k}\n" for k in anchor.revoked),
+    }
+    paths = {}
+    for name, text in files.items():
+        paths[name] = os.path.join(folder, name)
+        write_atomic(paths[name], text, 0o600)
+    return paths
+
+
+def anchor_texts(anchor, origin):
+    head = f"# zenOS-Vertrauensanker – geschrieben von zenos-kanal ({origin}). Format: docs/image-und-releases.md.\n"
+    return {
+        "release": head + "".join(f'{RELEASE_PRINCIPAL} namespaces="git" {k}\n' for k in anchor.release),
+        "wurzel": head + f'{ROOT_PRINCIPAL} namespaces="git" {anchor.root}\n',
+        "widerrufen": head + "".join(f"{k}\n" for k in anchor.revoked),
+        "serie": head + f"{anchor.series}\n",
+    }
+
+
+def write_device_anchor(anchor, origin, with_root=False):
+    """Schreibt den Anker des Geräts, jede Datei atomar, die Serie zuletzt."""
+    os.makedirs(ANCHOR_DIR, mode=0o755, exist_ok=True)
+    texts = anchor_texts(anchor, origin)
+    names = ["widerrufen", "release", "serie"]
+    if with_root:
+        names.insert(0, "wurzel")
+    for name in names:
+        write_atomic(os.path.join(ANCHOR_DIR, name), texts[name], 0o644)
+
+
+# --- Tags ------------------------------------------------------------------------------------------------------
+
+
+def signature_key(raw):
+    """(«ssh-ed25519 AAAA…» oder Typ, Namespace) aus der SSH-Signatur am Ende des Tags, None wenn unlesbar."""
+    start = raw.find(SIG_BEGIN)
+    end = raw.find(SIG_END, start)
+    if start < 0 or end < 0:
+        return None
+    try:
+        blob = base64.b64decode("".join(raw[start + len(SIG_BEGIN):end].split()), validate=True)
+    except ValueError:
+        return None
+
+    def string(pos):
+        if pos + 4 > len(blob):
+            raise ValueError
+        (n,) = struct.unpack(">I", blob[pos:pos + 4])
+        if pos + 4 + n > len(blob):
+            raise ValueError
+        return blob[pos + 4:pos + 4 + n], pos + 4 + n
+
+    try:
+        # SSHSIG, Version (uint32), Schlüssel, Namespace, … (PROTOCOL.sshsig von OpenSSH)
+        if blob[:6] != b"SSHSIG" or blob[6:10] != b"\x00\x00\x00\x01":
+            return None
+        public, pos = string(10)
+        namespace, pos = string(pos)
+        kind, _ = string_of(public)
+    except ValueError:
+        return None
+    if kind == b"ssh-ed25519":
+        key = "ssh-ed25519 " + base64.b64encode(public).decode("ascii")
+    else:
+        key = kind.decode("ascii", "replace")
+    return key, namespace.decode("ascii", "replace")
+
+
+def string_of(blob):
+    """Erster SSH-String aus BLOB → (Bytes, Rest)."""
+    if len(blob) < 4:
+        raise ValueError
+    (n,) = struct.unpack(">I", blob[:4])
+    if 4 + n > len(blob):
+        raise ValueError
+    return blob[4:4 + n], blob[4 + n:]
+
+
+class TagCheck:
+    def __init__(self, name, oid, ok=False, reason="", commit=None, key=None):
+        self.name = name
+        self.oid = oid
+        self.ok = ok
+        self.reason = reason
+        self.commit = commit
+        self.key = key
+
+
+def inspect_tag(repo, name, oid, objtype):
+    """Formprüfung ohne Anker: TagCheck mit reason (abgelehnt) oder ohne (Signatur noch zu prüfen)."""
+    result = TagCheck(name, oid)
+    if objtype != "tag":
+        result.reason = "kein annotierter Tag"
+        return result
+    r = git(repo, "cat-file", "tag", oid)
+    if r.returncode != 0:
+        result.reason = "Tag-Objekt nicht lesbar"
+        return result
+    raw = r.stdout
+    head, sep, _ = raw.partition("\n\n")
+    fields = [z.split(" ", 1) for z in head.split("\n")]
+    if not sep or [f[0] for f in fields] != ["object", "type", "tag", "tagger"] or any(len(f) != 2 for f in fields):
+        result.reason = "Kopf des Tags unerwartet"
+        return result
+    values = {f[0]: f[1] for f in fields}
+    if values["tag"] != name:
+        result.reason = f"Feld «tag» ist «{short(values['tag'], 40)}», nicht «{name}»"
+        return result
+    if values["type"] != "commit":
+        result.reason = "zeigt nicht auf einen Commit"
+        return result
+    commit = values["object"]
+    if not OID_RE.fullmatch(commit) or git(repo, "cat-file", "-t", commit).stdout.strip() != "commit":
+        result.reason = "zeigt nicht auf einen Commit"
+        return result
+    result.commit = commit
+    if "-----BEGIN PGP" in raw:
+        result.reason = "OpenPGP-Signatur (nicht erlaubt)"
+        return result
+    if "-----BEGIN SIGNED MESSAGE-----" in raw:
+        result.reason = "X.509-Signatur (nicht erlaubt)"
+        return result
+    count = raw.count(SIG_BEGIN)
+    if count == 0:
+        result.reason = "unsigniert"
+        return result
+    if count != 1 or raw.count(SIG_END) != 1 or not raw.rstrip("\n").endswith(SIG_END):
+        result.reason = "mehr als eine Signatur"
+        return result
+    parsed = signature_key(raw)
+    if not parsed:
+        result.reason = "Signatur unlesbar"
+        return result
+    result.key, namespace = parsed
+    if not result.key.startswith("ssh-ed25519 "):
+        result.reason = f"Signatur mit {short(result.key, 30)} statt Ed25519"
+        return result
+    if namespace != "git":
+        result.reason = f"Signatur für «{short(namespace, 30)}» statt git"
+        return result
+    return result
+
+
+def check_tag(repo, name, oid, objtype, anchor, files, principal):
+    """Volle Prüfung gegen den Anker. principal: zenos-release (Releases) oder zenos-wurzel (vertrauen/NNNN)."""
+    result = inspect_tag(repo, name, oid, objtype)
+    if result.reason:
+        return result
+    allowed = anchor.release if principal == RELEASE_PRINCIPAL else [anchor.root]
+    signers = files["release"] if principal == RELEASE_PRINCIPAL else files["wurzel"]
+    if result.key in anchor.revoked:
+        result.reason = f"Schlüssel widerrufen ({fingerprint(result.key)})"
+        return result
+    if result.key not in allowed:
+        other = RELEASE_PRINCIPAL if principal == ROOT_PRINCIPAL else ROOT_PRINCIPAL
+        if result.key in (anchor.release if other == RELEASE_PRINCIPAL else [anchor.root]):
+            result.reason = f"mit dem falschen Schlüssel signiert ({other})"
+        else:
+            result.reason = f"fremder Schlüssel ({fingerprint(result.key)})"
+        return result
+    r = git(repo, "-c", f"gpg.ssh.allowedSignersFile={signers}", "-c", f"gpg.ssh.revocationFile={files['widerrufen']}",
+            "verify-tag", oid)
+    expected = f'Good "git" signature for {principal} with ED25519 key {fingerprint(result.key)}'
+    if r.returncode != 0 or expected not in r.stderr.splitlines():
+        result.reason = "Signatur ungültig"
+        return result
+    result.ok = True
+    return result
+
+
+# --- Holen (ohne Rechte) ---------------------------------------------------------------------------------------
+
+
+def url_allowed(url):
+    for scheme in ALLOWED_SCHEMES:
+        if scheme == "https" and HTTPS_RE.fullmatch(url) and ".." not in url:
+            return True
+        if scheme == "file" and FILE_RE.fullmatch(url):
+            return True
+    return False
+
+
+def origin_url():
+    r = run([GIT, *git_hardening(), "config", "--file", os.path.join(CODE_DIR, ".git", "config"), "--get",
+             "remote.origin.url"], env=git_env())
+    url = r.stdout.strip()
+    if r.returncode != 0 or not url:
+        raise Failure(f"keine Adresse für origin in {CODE_DIR}")
+    if not url_allowed(url):
+        raise Failure(f"Adresse von origin nicht erlaubt (nur {', '.join(ALLOWED_SCHEMES)}, ohne Zugangsdaten)")
+    return url
+
+
+def init_repo(path):
+    """Leeres blankes Repo ohne Vorlage (keine Hooks), config fest wie REPO_CONFIG."""
+    shutil.rmtree(path, ignore_errors=True)
+    r = git(None, "init", "--quiet", "--bare", "--template=", path)
+    if r.returncode != 0:
+        raise Failure(f"git init {path}: {first_line(r.stderr)}")
+    write_atomic(os.path.join(path, "config"), REPO_CONFIG, 0o644)
+
+
+def fetch_status_write(folder, data):
+    write_json(os.path.join(folder, "holen.json"), data)
+
+
+def cmd_fetch_internal(argv):
+    if argv:
+        print(f"{NAME} holen-intern: keine Argumente erwartet", file=sys.stderr)
+        return EXIT_USAGE
+    os.umask(0o022)
+    folder = FETCH_DIR
+    os.makedirs(folder, exist_ok=True)
+    before = load_json(os.path.join(folder, "holen.json")) or {}
+    status = {"version": 1, "versuch": iso(now()), "ok": False, "fehler": None,
+              "letzter_erfolg": before.get("letzter_erfolg") if parse_iso(before.get("letzter_erfolg")) else None,
+              "refs": None}
+    try:
+        url = origin_url()
+    except Failure as e:
+        status["fehler"] = str(e)
+        fetch_status_write(folder, status)
+        print(f"{NAME}: {e}", file=sys.stderr)
+        return EXIT_ERROR
+
+    mirror = os.path.join(folder, "spiegel.git")
+    try:
+        with open(os.path.join(mirror, "config"), encoding="utf-8") as f:
+            fresh = f.read() != REPO_CONFIG
+    except OSError:
+        fresh = True
+    if fresh:
+        init_repo(mirror)
+    protocols = []
+    for scheme in ALLOWED_SCHEMES:
+        protocols += ["-c", f"protocol.{scheme}.allow=always"]
+    r = git(mirror, *protocols, "-c", "transfer.fsckObjects=true", "-c", "fetch.fsckObjects=true",
+            "-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=60", "-c", "credential.helper=",
+            "fetch", "--quiet", "--no-tags", "--prune", "--no-write-fetch-head", "--no-recurse-submodules", url,
+            "+refs/tags/*:refs/kanal/tags/*", "+refs/heads/*:refs/kanal/heads/*", timeout=FETCH_TIMEOUT)
+    if r.returncode != 0:
+        # Beim nächsten Mal mit einem frischen Spiegel: ein halber oder kaputter bleibt nicht liegen
+        shutil.rmtree(mirror, ignore_errors=True)
+        status["fehler"] = first_line(r.stderr) or f"git fetch Exit {r.returncode}"
+        fetch_status_write(folder, status)
+        print(f"{NAME}: Holen von origin gescheitert: {status['fehler']}", file=sys.stderr)
+        return EXIT_NO_CONTACT
+
+    refs = [z for z in git(mirror, "for-each-ref", "--format=%(refname)", "refs/kanal/").stdout.split("\n") if z]
+    bundle = os.path.join(folder, "uebergabe.bundle")
+    tmp = bundle + ".neu"
+    for path in (tmp,) if refs else (tmp, bundle):
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+    if refs:
+        r = git(mirror, "bundle", "create", tmp, "--all")
+        if r.returncode != 0:
+            status["fehler"] = f"Bundle: {first_line(r.stderr)}"
+            fetch_status_write(folder, status)
+            print(f"{NAME}: {status['fehler']}", file=sys.stderr)
+            return EXIT_ERROR
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, bundle)
+    status.update(ok=True, letzter_erfolg=status["versuch"], refs=len(refs), leer=not refs)
+    fetch_status_write(folder, status)
+    print(f"{NAME}: geholt, {len(refs)} Refs")
+    return EXIT_OK
+
+
+# --- Prüfen (root, ohne Netz) ----------------------------------------------------------------------------------
+
+
+def take_lock():
+    """Sperre /run/lock/zenos-kanal.lock (dieselbe wie zen update). None, wenn sie belegt ist. Eine fremde Datei wird
+    nur lesend geöffnet (fs.protected_regular), flock geht auch so."""
+    flags = os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(LOCK_FILE, os.O_RDONLY | flags)
+    except FileNotFoundError:
+        try:
+            fd = os.open(LOCK_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL | flags, 0o644)
+        except FileExistsError:
+            fd = os.open(LOCK_FILE, os.O_RDONLY | flags)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        return None
+    return fd
+
+
+def read_channel():
+    """(Kanal, Hinweis) aus /etc/xdg/zenos/kanal; Failure bei einem unbekannten Wert."""
+    try:
+        text = read_small(CHANNEL_FILE)
+    except FileNotFoundError:
+        return "dev", f"{CHANNEL_FILE} fehlt, es gilt dev"
+    except Failure as e:
+        raise Failure(f"Kanal nicht lesbar: {e}") from e
+    raw = text.split("\n", 1)[0].strip()
+    if raw == "main":
+        return "stabil", "Kanal main gilt als stabil"
+    if raw == "":
+        return "dev", f"{CHANNEL_FILE} ist leer, es gilt dev"
+    if raw not in CHANNELS:
+        raise Failure(f"Kanal «{short(raw, 30)}» in {CHANNEL_FILE} ist unbekannt (erlaubt: stabil, vorschau, dev)")
+    return raw, None
+
+
+def read_fetch_status():
+    """Zeitpunkt des letzten erfolgreichen Holens und Fehler des letzten Versuchs, nur zur Anzeige (der Holer
+    schreibt die Datei, root glaubt ihr nichts weiter)."""
+    data = load_json(os.path.join(FETCH_DIR, "holen.json")) or {}
+    error = data.get("fehler")
+    return {
+        "letzter_kontakt": data.get("letzter_erfolg") if parse_iso(data.get("letzter_erfolg")) else None,
+        "fehler": short(error, 160) if isinstance(error, str) and error and data.get("ok") is not True else None,
+        "leer": data.get("leer") is True and data.get("ok") is True,
+    }
+
+
+def copy_bundle(target):
+    """Kopiert das Bundle des Holers nach TARGET (root-eigen). False, wenn es keines gibt."""
+    source = os.path.join(FETCH_DIR, "uebergabe.bundle")
+    try:
+        fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0))
+    except FileNotFoundError:
+        return False
+    except OSError as e:
+        raise Failure(f"Bundle nicht lesbar: {e.strerror}") from e
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+            raise Failure("Bundle ist keine einfache Datei")
+        if st.st_size > MAX_BUNDLE:
+            raise Failure("Bundle ist zu gross")
+        out = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        try:
+            total = 0
+            while True:
+                chunk = os.read(fd, 1 << 20)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_BUNDLE:
+                    raise Failure("Bundle ist zu gross")
+                while chunk:
+                    chunk = chunk[os.write(out, chunk):]
+        finally:
+            os.close(out)
+    finally:
+        os.close(fd)
+    return True
+
+
+def is_ancestor(repo, older, newer):
+    """True/False, None wenn git es nicht sagen kann."""
+    r = git(repo, "merge-base", "--is-ancestor", older, newer)
+    if r.returncode == 0:
+        return True
+    if r.returncode == 1:
+        return False
+    return None
+
+
+def has_commit(repo, oid):
+    return git(repo, "cat-file", "-e", f"{oid}^{{commit}}").returncode == 0
+
+
+def installed_commit():
+    if not os.path.isdir(os.path.join(CODE_DIR, ".git")):
+        return None
+    r = git(CODE_DIR, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+    oid = r.stdout.strip()
+    return oid if r.returncode == 0 and OID_RE.fullmatch(oid) else None
+
+
+def code_history_usable():
+    """Taugt /opt/zenos, um Vorfahren zu prüfen? Nicht flach und kein Teilklon (sonst fehlen Commits zu Recht)."""
+    r = git(CODE_DIR, "rev-parse", "--is-shallow-repository")
+    if r.returncode != 0 or r.stdout.strip() != "false":
+        return False
+    return git(CODE_DIR, "config", "--get", "extensions.partialclone").stdout.strip() == ""
+
+
+class Check:
+    """Ein Lauf von «pruefen». Schreibt den Anker (nur über gültige vertrauen/NNNN), gesehen.json, hoechste und
+    stand.json. Installiert nichts."""
+
+    def __init__(self):
+        self.t = now()
+        self.notes = []
+        self.rejected = []
+        self.ledger_changed = False
+        self.stand = {
+            "version": 1,
+            "kanal": None,
+            "zustand": None,
+            "grund": "",
+            "geprueft": iso(self.t),
+            "letzter_kontakt": None,
+            "holen_fehler": None,
+            "anker": None,
+            "anker_problem": None,
+            "installiert": None,
+            "hoechste": None,
+            "bereit": None,
+            "dev": None,
+            "gueltig": [],
+            "abgelehnt": self.rejected,
+            "hinweise": self.notes,
+        }
+
+    # -- Zustand auf der Platte --
+
+    def load_ledger(self):
+        data = load_json(os.path.join(STATE_DIR, "gesehen.json"), trusted=True)
+        if data is None:
+            if os.path.lexists(os.path.join(STATE_DIR, "gesehen.json")):
+                self.notes.append("gesehen.json war unlesbar und wird neu angelegt")
+            return {}
+        tags = data.get("tags")
+        ledger = {}
+        if isinstance(tags, dict):
+            for name, entry in tags.items():
+                if (isinstance(entry, dict) and isinstance(name, str) and OID_RE.fullmatch(str(entry.get("objekt")))
+                        and isinstance(entry.get("gueltig"), bool)):
+                    ledger[name] = {"objekt": entry["objekt"], "gueltig": entry["gueltig"],
+                                    "erstmals": entry.get("erstmals") if parse_iso(entry.get("erstmals")) else None}
+        return ledger
+
+    def load_floor(self):
+        try:
+            text = read_small(os.path.join(STATE_DIR, "hoechste"), trusted=True)
+        except FileNotFoundError:
+            return None
+        except Failure as e:
+            self.notes.append(f"hoechste nicht lesbar ({e}), wird neu bestimmt")
+            return None
+        lines = content_lines(text)
+        if len(lines) == 1 and version_key(lines[0].strip()):
+            return lines[0].strip()
+        self.notes.append("hoechste ist ungültig und wird neu bestimmt")
+        return None
+
+    def locked_versions(self):
+        folder = os.path.join(STATE_DIR, "gesperrt")
+        try:
+            return {n for n in os.listdir(folder) if version_key(n)}
+        except OSError:
+            return set()
+
+    # -- Ablauf --
+
+    def run(self):
+        os.makedirs(STATE_DIR, mode=0o755, exist_ok=True)
+        problem = path_problem(STATE_DIR)
+        if problem:
+            raise Failure(f"Zustand unsicher: {problem}")
+        contact = read_fetch_status()
+        self.stand["letzter_kontakt"] = contact["letzter_kontakt"]
+        self.stand["holen_fehler"] = contact["fehler"]
+
+        anchor = None
+        try:
+            anchor = load_device_anchor()
+            self.stand["anker"] = anchor.summary()
+        except AnchorError as e:
+            self.stand["anker_problem"] = e.reason
+
+        try:
+            channel, note = read_channel()
+        except Failure as e:
+            return self.finish("blockiert", str(e), EXIT_BLOCKED)
+        self.stand["kanal"] = channel
+        if note:
+            self.notes.append(note)
+
+        work = os.path.join(STATE_DIR, "arbeit")
+        shutil.rmtree(work, ignore_errors=True)
+        os.makedirs(work, mode=0o700)
+        os.chmod(work, 0o700)
+        self.repo = os.path.join(work, "repo.git")
+        init_repo(self.repo)
+        bundle = os.path.join(work, "eingang.bundle")
+        have_bundle = copy_bundle(bundle)
+        if have_bundle:
+            r = git(self.repo, "-c", "protocol.file.allow=always", "-c", "transfer.fsckObjects=true",
+                    "-c", "fetch.fsckObjects=true", "fetch", "--quiet", "--no-tags", "--no-write-fetch-head",
+                    "--no-recurse-submodules", bundle, "+refs/kanal/*:refs/eingang/*")
+            os.unlink(bundle)
+            if r.returncode != 0:
+                return self.finish("blockiert", f"Das Bundle des Holers ist unbrauchbar: {first_line(r.stderr)}",
+                                   EXIT_BLOCKED)
+
+        refs = self.read_refs()
+        installed = installed_commit()
+        self.installed = installed
+        self.stand["installiert"] = {"commit": installed, "version": None} if installed else None
+
+        if anchor is None:
+            self.without_anchor(refs)
+            return self.finish("anker_fehlt",
+                               f"{self.stand['anker_problem']}. Über den Kanal gilt nichts als gültig, es wird nichts "
+                               "installiert. «zen update» über dev geht weiter.", EXIT_BLOCKED)
+        if not have_bundle and not contact["leer"]:
+            text = "Noch nichts geholt."
+            if contact["fehler"]:
+                text = f"Kein Kontakt zu origin: {contact['fehler']}."
+            return self.finish("kein_kontakt", text, EXIT_NO_CONTACT)
+        return self.with_anchor(anchor, refs, channel, work)
+
+    def read_refs(self):
+        tags, heads = {}, {}
+        r = git(self.repo, "for-each-ref", "--format=%(refname)%09%(objectname)%09%(objecttype)", "refs/eingang/")
+        for line in r.stdout.split("\n"):
+            parts = line.split("\t")
+            if len(parts) != 3:
+                continue
+            ref, oid, kind = parts
+            if ref.startswith("refs/eingang/tags/"):
+                tags[ref[len("refs/eingang/tags/"):]] = (oid, kind)
+            elif ref.startswith("refs/eingang/heads/"):
+                heads[ref[len("refs/eingang/heads/"):]] = (oid, kind)
+        return {"tags": tags, "heads": heads}
+
+    def finish(self, state, reason, code):
+        self.stand["zustand"] = state
+        self.stand["grund"] = reason
+        return code
+
+    def reject(self, name, reason):
+        self.rejected.append({"tag": name, "grund": reason})
+
+    def without_anchor(self, refs):
+        """Ohne Anker: nur die Form der Releases zeigen; nichts gilt, das Hauptbuch bleibt unberührt."""
+        for name in sorted((n for n in refs["tags"] if version_key(n)), key=version_key):
+            oid, kind = refs["tags"][name]
+            result = inspect_tag(self.repo, name, oid, kind)
+            self.reject(name, result.reason or "signiert, aber nicht prüfbar (Anker fehlt)")
+        self.dev_info(refs, None, None)
+
+    def with_anchor(self, anchor, refs, channel, work):
+        files = signer_files(anchor, os.path.join(work, "anker"))
+        names = [n for n in refs["tags"] if version_key(n) or TRUST_RE.fullmatch(n)]
+        if len(names) > MAX_TAGS:
+            return self.finish("blockiert", f"Zu viele Tags auf origin ({len(names)}, höchstens {MAX_TAGS}).",
+                               EXIT_BLOCKED)
+        ledger = self.load_ledger()
+        alarm = None
+
+        # 1. Vertrauensanker: vertrauen/NNNN aufsteigend, vor allen Releases
+        for name in sorted((n for n in names if TRUST_RE.fullmatch(n)), key=lambda n: int(n.split("/")[1])):
+            oid, kind = refs["tags"][name]
+            number = int(name.split("/")[1])
+            known = ledger.get(name)
+            if number <= anchor.series and known and known["objekt"] == oid:
+                continue
+            result = check_tag(self.repo, name, oid, kind, anchor, files, ROOT_PRINCIPAL)
+            alarm = self.ledger_update(ledger, name, result)
+            if alarm:
+                break
+            if ledger[name]["objekt"] != oid:
+                self.notes.append(f"{name} zeigt auf origin jetzt auf ein ungültiges Objekt ({result.reason})")
+                continue
+            if number <= anchor.series:
+                continue
+            if not result.ok:
+                self.reject(name, result.reason)
+                continue
+            try:
+                new = self.trust_update(anchor, name, number, result.commit)
+            except AnchorError as e:
+                self.reject(name, e.reason)
+                continue
+            write_device_anchor(new, f"{name}, Commit {result.commit[:12]}")
+            anchor = new
+            files = signer_files(anchor, os.path.join(work, "anker"))
+            self.notes.append(f"Vertrauensanker Serie {number} aus {name} übernommen")
+        self.stand["anker"] = anchor.summary()
+        if alarm:
+            self.save_ledger(ledger)
+            return self.finish("blockiert", alarm, EXIT_BLOCKED)
+
+        # 2. Releases (alle Versionen fürs Hauptbuch, gewählt wird nur im Kanal)
+        valid = {}
+        for name in sorted((n for n in names if version_key(n)), key=version_key):
+            oid, kind = refs["tags"][name]
+            result = check_tag(self.repo, name, oid, kind, anchor, files, RELEASE_PRINCIPAL)
+            moved = self.ledger_update(ledger, name, result)
+            if moved:
+                alarm = alarm or moved
+                continue
+            shown = in_channel(name, channel) or channel == "dev"
+            if ledger[name]["objekt"] != oid:
+                # Vorher gültig, jetzt auf ein ungültiges Objekt verschoben: Der Name zählt nicht, bis er wieder stimmt
+                if shown:
+                    self.reject(name, f"auf origin verschoben, das neue Objekt ist ungültig ({result.reason})")
+                continue
+            if result.ok:
+                valid[name] = result.commit
+            elif shown:
+                self.reject(name, result.reason)
+        for name, entry in sorted(ledger.items()):
+            if entry["gueltig"] and name not in refs["tags"]:
+                self.notes.append(f"{name} gibt es auf origin nicht mehr")
+        self.save_ledger(ledger)
+        self.stand["gueltig"] = sorted((n for n in valid if in_channel(n, channel) or channel == "dev"),
+                                       key=version_key)
+        if alarm:
+            return self.finish("blockiert", alarm, EXIT_BLOCKED)
+
+        # 3. Installierter Stand, hoechste, Ziel
+        if self.installed:
+            exact = [n for n, c in valid.items() if c == self.installed]
+            self.stand["installiert"]["version"] = highest(exact)
+        floor, blocked = self.floor(valid)
+        self.stand["hoechste"] = floor
+        self.dev_info(refs, anchor, files)
+        if blocked:
+            return self.finish("blockiert", blocked, EXIT_BLOCKED)
+        if channel == "dev":
+            return self.finish("dev", self.dev_text(), EXIT_OK)
+
+        locked = self.locked_versions()
+        candidates = [n for n in valid if in_channel(n, channel) and n not in locked
+                      and (floor is None or version_key(n) > version_key(floor))]
+        target = highest(candidates)
+        if not target:
+            return self.finish("aktuell", f"Keine neuere gültig signierte Version im Kanal {channel}.", EXIT_OK)
+        first = parse_iso(ledger[target].get("erstmals")) or self.t
+        free = first + (WAIT_STABLE if channel == "stabil" else datetime.timedelta(0))
+        self.stand["bereit"] = {"version": target, "commit": valid[target], "objekt": refs["tags"][target][0],
+                                "erstmals": iso(first), "frei_ab": iso(free)}
+        text = f"{target} ist gültig signiert und neuer als der installierte Stand. Diese Fassung installiert nichts."
+        if free > self.t:
+            text += f" Automatisch frühestens ab {local_time(iso(free))} (24 h Wartezeit auf stabil)."
+        return self.finish("bereit", text, EXIT_OK)
+
+    def ledger_update(self, ledger, name, result):
+        """Trägt ein Ergebnis ins Hauptbuch ein. Gibt einen Alarmtext zurück, wenn ein schon gültiger Name jetzt auf
+        ein anderes, ebenfalls gültig signiertes Objekt zeigt."""
+        entry = ledger.get(name)
+        stamp = iso(self.t)
+        if entry is None:
+            ledger[name] = {"objekt": result.oid, "gueltig": result.ok, "erstmals": stamp if result.ok else None}
+            self.ledger_changed = True
+            return None
+        if entry["objekt"] == result.oid:
+            if result.ok and not entry["gueltig"]:
+                entry.update(gueltig=True, erstmals=stamp)
+                self.ledger_changed = True
+            return None
+        if entry["gueltig"]:
+            if result.ok:
+                return (f"ALARM: {name} zeigt jetzt auf ein anderes, ebenfalls gültig signiertes Objekt (vorher "
+                        f"{entry['objekt'][:12]}, jetzt {result.oid[:12]}). Ist ein Schlüssel in falschen Händen? "
+                        "Es gilt nichts mehr, bis das geklärt ist.")
+            # Das Hauptbuch behält das gültige Objekt; der Aufrufer sieht die Abweichung
+            return None
+        # vorher ungültig: das neue Objekt ersetzt es
+        ledger[name] = {"objekt": result.oid, "gueltig": result.ok, "erstmals": stamp if result.ok else None}
+        self.ledger_changed = True
+        if result.ok:
+            self.notes.append(f"{name} war vorher ungültig und ist jetzt gültig signiert")
+        return None
+
+    def save_ledger(self, ledger):
+        if self.ledger_changed:
+            write_json(os.path.join(STATE_DIR, "gesehen.json"), {"version": 1, "tags": ledger})
+
+    def trust_update(self, anchor, name, number, commit):
+        """Neuer Anker aus dem Commit eines gültigen vertrauen/NNNN; AnchorError, wenn er nicht passt."""
+        texts = {}
+        for file_name in ANCHOR_FILES:
+            r = git(self.repo, "cat-file", "blob", f"{commit}:system/vertrauen/{file_name}")
+            texts[file_name] = r.stdout if r.returncode == 0 else None
+        try:
+            new = parse_anchor(texts)
+        except AnchorError as e:
+            raise AnchorError(f"Anker im Commit unbrauchbar: {e.reason}") from e
+        if new.series != number:
+            raise AnchorError(f"Serie im Commit ist {new.series}, nicht {number}")
+        if new.root != anchor.root:
+            raise AnchorError("Anker im Commit hat eine andere Wurzel (die ändert sich nie über das Netz)")
+        revoked = sorted(set(anchor.revoked) | set(new.revoked))
+        if set(new.release) & set(revoked):
+            raise AnchorError("ein neuer Release-Schlüssel ist widerrufen")
+        return Anchor(new.release, anchor.root, revoked, number)
+
+    def floor(self, valid):
+        """(hoechste, Grund für «blockiert» oder None). Hebt hoechste an, wenn ein gültiger Tag im Verlauf des
+        installierten Stands liegt; senkt es nie."""
+        stored = self.load_floor()
+        derived, known = None, False
+        if self.installed and valid:
+            if has_commit(self.repo, self.installed):
+                repo, known = self.repo, True
+            elif code_history_usable():
+                repo, known = CODE_DIR, True
+            if known:
+                inside = []
+                for name, commit in valid.items():
+                    if repo == CODE_DIR and not has_commit(CODE_DIR, commit):
+                        continue  # fehlt im vollständigen Verlauf: also kein Vorfahre
+                    answer = is_ancestor(repo, commit, self.installed)
+                    if answer is None:
+                        known = False
+                        break
+                    if answer:
+                        inside.append(name)
+                derived = highest(inside) if known else None
+        floor = stored
+        if derived and (floor is None or version_key(derived) > version_key(floor)):
+            floor = derived
+        if floor != stored and floor:
+            write_atomic(os.path.join(STATE_DIR, "hoechste"), floor + "\n")
+            if stored is None:
+                self.notes.append(f"hoechste aus dem installierten Stand abgeleitet: {floor}")
+        if floor or not valid:
+            return floor, None
+        # Kein gespeicherter Wert und keiner ableitbar: nur in Ordnung, wenn der installierte Stand vor allen gültigen
+        # Versionen liegt (dann ist jede ein Schritt vorwärts)
+        if (self.installed and has_commit(self.repo, self.installed)
+                and all(is_ancestor(self.repo, self.installed, c) for c in valid.values())):
+            self.notes.append("installierter Stand liegt vor allen signierten Versionen")
+            return None, None
+        if not self.installed:
+            return None, ("hoechste fehlt, und der installierte Stand in /opt/zenos ist unbekannt. Ohne ihn lässt "
+                          "sich ein Downgrade nicht ausschliessen.")
+        return None, (f"hoechste fehlt, und der installierte Stand {self.installed[:12]} gehört zu keiner signierten "
+                      "Version. Ohne ihn lässt sich ein Downgrade nicht ausschliessen.")
+
+    def dev_info(self, refs, anchor, files):
+        tip = refs["heads"].get("dev")
+        if not tip or tip[1] != "commit":
+            return
+        tip = tip[0]
+        info = {"commit": tip, "neu": tip != self.installed, "vorfahre": None, "commits": None,
+                "signiert": False, "braucht_ja": True}
+        if self.installed and has_commit(self.repo, self.installed):
+            info["vorfahre"] = is_ancestor(self.repo, self.installed, tip)
+            if info["vorfahre"]:
+                count = git(self.repo, "rev-list", "--count", f"{self.installed}..{tip}").stdout.strip()
+                info["commits"] = int(count) if count.isdigit() else None
+        if anchor and info["vorfahre"] and info["commits"] is not None and info["commits"] <= MAX_DEV_RANGE:
+            if info["commits"] == 0:
+                info["signiert"] = True
+            else:
+                r = git(self.repo, "-c", f"gpg.ssh.allowedSignersFile={files['release']}",
+                        "-c", f"gpg.ssh.revocationFile={files['widerrufen']}", "log", "--format=%H %G?",
+                        f"{self.installed}..{tip}")
+                marks = [z.split(" ")[1] for z in r.stdout.split("\n") if " " in z]
+                info["signiert"] = r.returncode == 0 and len(marks) == info["commits"] and all(m == "G" for m in marks)
+        info["braucht_ja"] = not (info["vorfahre"] and info["signiert"])
+        self.stand["dev"] = info
+
+    def dev_text(self):
+        info = self.stand["dev"]
+        if not info:
+            return "Kanal dev: origin/dev fehlt im Bundle."
+        if not info["neu"]:
+            return "Kanal dev: installiert ist der Stand von origin/dev."
+        what = f"{info['commits']} Commits" if info["commits"] is not None else "Abstand unbekannt"
+        sign = "alle signiert" if info["signiert"] else "nicht alle signiert"
+        text = f"Kanal dev: neuer Stand {info['commit'][:12]} ({what}, {sign})."
+        if info["braucht_ja"]:
+            text += " Nur von Hand mit «ja»; automatisch kommt auf dev nichts."
+        return text
+
+
+def cmd_check(argv):
+    if argv:
+        print(f"{NAME} pruefen: keine Argumente erwartet", file=sys.stderr)
+        return EXIT_USAGE
+    if os.geteuid() not in TRUSTED_UIDS:
+        print(f"{NAME} pruefen: nur als root (sudo zen kanal pruefen)", file=sys.stderr)
+        return EXIT_USAGE
+    os.umask(0o022)
+    try:
+        lock = take_lock()
+    except OSError as e:
+        print(f"{NAME}: Sperre {LOCK_FILE} nicht nutzbar: {e.strerror}", file=sys.stderr)
+        return EXIT_ERROR
+    if lock is None:
+        print(f"{NAME}: Ein Update oder eine Prüfung läuft gerade (Sperre {LOCK_FILE}). Später noch einmal.",
+              file=sys.stderr)
+        return EXIT_BUSY
+    check = Check()
+    try:
+        try:
+            code = check.run()
+        except Failure as e:
+            code = check.finish("fehler", f"Prüfung abgebrochen: {e}", EXIT_ERROR)
+        except Exception as e:  # noqa: BLE001 – jeder Fehler endet als Zustand «fehler», nie als Freigabe
+            traceback.print_exc()
+            code = check.finish("fehler", f"Prüfung abgebrochen: {type(e).__name__}: {short(e, 120)}", EXIT_ERROR)
+        finally:
+            shutil.rmtree(os.path.join(STATE_DIR, "arbeit"), ignore_errors=True)
+        if os.path.isdir(STATE_DIR) and not path_problem(STATE_DIR):
+            write_json(os.path.join(STATE_DIR, "stand.json"), check.stand)
+    except OSError as e:
+        print(f"{NAME}: stand.json nicht geschrieben: {e.strerror}", file=sys.stderr)
+        code = code or EXIT_ERROR
+    finally:
+        os.close(lock)
+    print_check(check.stand)
+    return code
+
+
+def print_check(stand):
+    print(f"Kanal {stand.get('kanal') or '?'}: {stand.get('zustand')} – {stand.get('grund')}")
+    for entry in stand.get("abgelehnt") or []:
+        print(f"  abgelehnt: {entry['tag']}: {entry['grund']}")
+    for note in stand.get("hinweise") or []:
+        print(f"  Hinweis: {note}")
+
+
+# --- Status ----------------------------------------------------------------------------------------------------
+
+STATE_TEXT = {
+    "aktuell": "aktuell",
+    "bereit": "neue Version bereit",
+    "dev": "dev, nur von Hand",
+    "anker_fehlt": "Anker fehlt",
+    "blockiert": "blockiert",
+    "kein_kontakt": "kein Kontakt",
+    "fehler": "Fehler",
+}
+
+
+def anchor_lines():
+    """Zeilen zum Anker des Geräts mit Fingerabdrücken."""
+    try:
+        anchor = load_device_anchor()
+    except AnchorError as e:
+        hint = " (kommt mit install.sh, sobald system/vertrauen Schlüssel hat)" if e.empty else ""
+        return [f"{'Anker':<12}{ANCHOR_DIR} · fehlt: {e.reason}{hint}"], False
+    lines = [f"{'Anker':<12}{ANCHOR_DIR} · Serie {anchor.series} (Fingerabdrücke mit 1Password vergleichen)",
+             f"{'  Wurzel':<14}{fingerprint(anchor.root)}"]
+    for i, key in enumerate(anchor.release):
+        lines.append(f"{'  Release' if i == 0 else '':<14}{fingerprint(key)}")
+    if anchor.revoked:
+        for i, key in enumerate(anchor.revoked):
+            lines.append(f"{'  Widerrufen' if i == 0 else '':<14}{fingerprint(key)}")
+    else:
+        lines.append(f"{'  Widerrufen':<14}keine")
+    return lines, True
+
+
+def read_stand():
+    stand = load_json(os.path.join(STATE_DIR, "stand.json"))
+    return stand if stand and stand.get("version") == 1 else None
+
+
+def stand_outdated(stand):
+    """True, wenn sich der Anker seit der letzten Prüfung geändert hat (der Stand passt dann nicht mehr dazu)."""
+    try:
+        live = load_device_anchor().summary()
+    except AnchorError:
+        live = None
+    return stand.get("anker") != live and not (live is None and stand.get("zustand") == "anker_fehlt")
+
+
+def cmd_status(argv):
+    if argv not in ([], ["--json"], ["--kurz"]):
+        print(f"{NAME} status [--json|--kurz]", file=sys.stderr)
+        return EXIT_USAGE
+    stand = read_stand()
+    if argv == ["--json"]:
+        print(json.dumps(stand or {}, ensure_ascii=False, indent=1))
+        return EXIT_OK
+    if argv == ["--kurz"]:
+        if not stand:
+            print("ungeprueft noch nie geprüft")
+        elif stand_outdated(stand):
+            print("veraltet Der Anker hat sich seit der letzten Prüfung geändert (sudo zen kanal pruefen)")
+        else:
+            print(f"{stand.get('zustand')} {first_line(stand.get('grund', ''))}")
+        return EXIT_OK
+
+    lines = []
+    if stand:
+        lines.append(f"{'Kanal':<12}{stand.get('kanal') or '?'}")
+        lines.append(f"{'Zustand':<12}{STATE_TEXT.get(stand.get('zustand'), stand.get('zustand'))}: "
+                     f"{stand.get('grund')}")
+    else:
+        lines.append(f"{'Zustand':<12}noch nie geprüft (sudo zen kanal pruefen)")
+    lines += anchor_lines()[0]
+    if stand and stand_outdated(stand):
+        lines.append(f"{'':<12}Der Anker hat sich seit der letzten Prüfung geändert: sudo zen kanal pruefen")
+    if stand:
+        installed = stand.get("installiert") or {}
+        if installed.get("commit"):
+            version = installed.get("version") or "keine signierte Version"
+            lines.append(f"{'Installiert':<12}{installed['commit'][:12]} ({version})")
+        lines.append(f"{'Höchste':<12}{stand.get('hoechste') or '–'}")
+        ready = stand.get("bereit")
+        if ready:
+            lines.append(f"{'Bereit':<12}{ready.get('version')} ({str(ready.get('commit'))[:12]}), "
+                         f"automatisch ab {local_time(ready.get('frei_ab'))}")
+        dev = stand.get("dev")
+        if dev and stand.get("kanal") == "dev":
+            if not dev.get("neu"):
+                detail = "installiert"
+            elif dev.get("vorfahre") is None:
+                detail = "der installierte Stand ist auf origin unbekannt"
+            elif not dev.get("vorfahre"):
+                detail = "der installierte Stand liegt nicht darin"
+            else:
+                signed = "alle signiert" if dev.get("signiert") else "nicht alle signiert"
+                detail = f"{dev.get('commits')} Commits neuer, {signed}"
+            lines.append(f"{'origin/dev':<12}{str(dev.get('commit'))[:12]} ({detail})")
+        valid = stand.get("gueltig") or []
+        lines.append(f"{'Gültig':<12}{', '.join(valid[-5:]) if valid else 'keine'}")
+        contact = local_time(stand.get("letzter_kontakt")) if stand.get("letzter_kontakt") else "nie"
+        lines.append(f"{'Geprüft':<12}{local_time(stand.get('geprueft'))} · letzter Kontakt mit origin {contact}")
+        if stand.get("holen_fehler"):
+            lines.append(f"{'':<12}letzter Versuch: {stand['holen_fehler']}")
+        for i, entry in enumerate(stand.get("abgelehnt") or []):
+            lines.append(f"{'Abgelehnt' if i == 0 else '':<12}{entry.get('tag')}: {entry.get('grund')}")
+        for i, note in enumerate(stand.get("hinweise") or []):
+            lines.append(f"{'Hinweise' if i == 0 else '':<12}{note}")
+    print("\n".join(lines))
+    return EXIT_OK
+
+
+# --- Anker von Hand --------------------------------------------------------------------------------------------
+
+
+def interactive():
+    return sys.stdin.isatty()
+
+
+def ask(prompt):
+    try:
+        return input(prompt)
+    except EOFError:
+        return ""
+
+
+def cmd_anchor(argv):
+    if not argv:
+        lines, _ = anchor_lines()
+        print("\n".join(lines))
+        return EXIT_OK
+    if len(argv) == 2 and argv[0] == "--pruefen":
+        try:
+            anchor = parse_anchor(read_anchor_dir(argv[1], trusted=False))
+        except AnchorError as e:
+            print(f"leer: {e.reason}" if e.empty else f"ungültig: {e.reason}")
+            return 1 if e.empty else EXIT_BLOCKED
+        print(f"vollständig: Serie {anchor.series}, Wurzel {fingerprint(anchor.root)}, "
+              f"{len(anchor.release)} Release-Schlüssel, {len(anchor.revoked)} widerrufen")
+        return EXIT_OK
+    if len(argv) != 1 or argv[0].startswith("-"):
+        print(f"{NAME} anker [ORDNER | --pruefen ORDNER]", file=sys.stderr)
+        return EXIT_USAGE
+    return anchor_set(argv[0])
+
+
+def anchor_set(folder):
+    if os.geteuid() not in TRUSTED_UIDS:
+        print(f"{NAME} anker: nur als root (sudo zen kanal anker {folder})", file=sys.stderr)
+        return EXIT_USAGE
+    if not interactive():
+        print(f"{NAME} anker: nur im Terminal (der Fingerabdruck wird eingetippt)", file=sys.stderr)
+        return EXIT_USAGE
+    try:
+        new = parse_anchor(read_anchor_dir(folder, trusted=False))
+    except AnchorError as e:
+        print(f"{NAME} anker: {folder}: {e.reason}", file=sys.stderr)
+        return EXIT_BLOCKED
+    try:
+        old = load_device_anchor()
+    except AnchorError:
+        old = None
+    if old and old.root == new.root and new.series < old.series:
+        print(f"{NAME} anker: Serie {new.series} ist kleiner als die des Geräts ({old.series}) bei gleicher Wurzel. "
+              "Ältere Tags vertrauen/NNNN würden den Anker sonst zurückdrehen.", file=sys.stderr)
+        return EXIT_BLOCKED
+    if old and old.root == new.root:
+        revoked = sorted(set(old.revoked) | set(new.revoked))
+        if set(new.release) & set(revoked):
+            print(f"{NAME} anker: ein Release-Schlüssel ist auf dem Gerät widerrufen", file=sys.stderr)
+            return EXIT_BLOCKED
+        new = Anchor(new.release, new.root, revoked, new.series)
+
+    print(f"Neuer Vertrauensanker aus {folder}, Serie {new.series}:")
+    print(f"  Wurzel      {fingerprint(new.root)}")
+    for key in new.release:
+        print(f"  Release     {fingerprint(key)}")
+    for key in new.revoked:
+        print(f"  Widerrufen  {fingerprint(key)}")
+    if old:
+        print(f"Bisher: Serie {old.series}, Wurzel {fingerprint(old.root)}")
+    typed = ask("Fingerabdruck der Wurzel aus 1Password («zenOS Wurzel», SHA256:…) eintippen: ").strip()
+    if typed != fingerprint(new.root):
+        print(f"{NAME} anker: Der Fingerabdruck stimmt nicht. Nichts geändert.", file=sys.stderr)
+        return EXIT_BLOCKED
+    if ask("Stimmen die Release-Schlüssel mit «zenOS Release» in 1Password überein? Tippe «ja»: ").strip() != "ja":
+        print(f"{NAME} anker: Abgebrochen. Nichts geändert.", file=sys.stderr)
+        return EXIT_BLOCKED
+    lock = take_lock()
+    if lock is None:
+        print(f"{NAME}: Ein Update oder eine Prüfung läuft gerade. Später noch einmal.", file=sys.stderr)
+        return EXIT_BUSY
+    try:
+        problem = path_problem(os.path.dirname(ANCHOR_DIR))
+        if problem:
+            print(f"{NAME} anker: {problem}", file=sys.stderr)
+            return EXIT_BLOCKED
+        write_device_anchor(new, f"von Hand am {iso(now())}", with_root=True)
+    finally:
+        os.close(lock)
+    print(f"Anker gesetzt: Serie {new.series}. Prüfen mit: sudo zen kanal pruefen")
+    return EXIT_OK
+
+
+# --- Start -----------------------------------------------------------------------------------------------------
+
+
+def main(argv):
+    sys.dont_write_bytecode = True
+    if not argv or argv[0] in ("-h", "--hilfe", "--help"):
+        print(__doc__.strip())
+        return EXIT_OK if argv else EXIT_USAGE
+    commands = {"status": cmd_status, "pruefen": cmd_check, "anker": cmd_anchor, "holen-intern": cmd_fetch_internal}
+    command = commands.get(argv[0])
+    if not command:
+        print(f"{NAME}: unbekannter Befehl «{short(argv[0], 30)}» (--hilfe)", file=sys.stderr)
+        return EXIT_USAGE
+    return command(argv[1:])
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

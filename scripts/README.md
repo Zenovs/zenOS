@@ -16,6 +16,7 @@
 | `bin/zenos-*` | Hilfsprogramme (bash oder python3, ausführbar) |
 | `pruefen.sh` | Selbsttest des Repos (Linux, nicht auf dem Mac) |
 | `release-signieren.sh` | signiert ein Release oder einen Tag `vertrauen/NNNN` mit 1Password (Mac, bash 3.2) |
+| `bin/zenos-kanal` | signierter Kanal auf dem Gerät: holen (ohne Rechte), prüfen (root, ohne Netz), Status, Anker. Installiert nichts |
 
 ## install.sh
 
@@ -91,6 +92,7 @@ modul_benutzer() {  # optional; als Benutzer, ohne sudo, nie im --image-Modus
 |---|---|---|
 | `zen update` | M1 | neuen Stand vom Kanal holen und installieren |
 | `zen rollback <tag>` | M1 | zu einem getaggten Stand zurück und installieren |
+| `zen kanal [status\|pruefen\|anker]` | Kanal | signierter Kanal: Stand mit Fingerabdrücken; `sudo zen kanal pruefen` holt und prüft (installiert nichts); `sudo zen kanal anker ORDNER` setzt den Anker von Hand |
 | `zen doctor [--kurz]` | M1 | Prüfbericht ohne Geheimnisse, Exit 1 bei Fehlern |
 | `zen version` | M1 | zenOS-Version, Basis (Ubuntu), Kanal, Commit, Quickshell, labwc, Architektur |
 | `zen benutzer [--ruhig]` | M1 | nur die Benutzerteile einrichten (`install.sh --nur-benutzer`) |
@@ -145,6 +147,15 @@ Baum, HEAD auf origin, Tag neu und höher, CI per `gh` und den Anker, zeigt Comm
 zweiten «ja» nur den Tag. `--vertrauen` signiert die Serie aus `system/vertrauen/serie` als `vertrauen/NNNN` mit dem
 Wurzel-Schlüssel. Ablauf und Regeln: `docs/image-und-releases.md`, «Signierte Releases». Nur für Tests:
 `ZENOS_TEST_SIGNIERPROGRAMM` (z. B. `ssh-keygen` mit einem Wegwerf-Schlüssel im ssh-agent) statt op-ssh-sign.
+
+## zenos-kanal
+
+`bin/zenos-kanal` (Python 3, nur Standardbibliothek, `python3 -I`) läuft als root-eigene Kopie
+`/usr/local/libexec/zenos/zenos-kanal` (Modul `14-kanal`): `holen-intern` in `zenos-kanal-holen.service`
+(DynamicUser, Sandbox, nur Netz), `pruefen` in `zenos-kanal-pruefen.service` (root, PrivateNetwork), `status` und
+`anker` für alle. Prozesse nur mit Argumentlisten, jedes git mit leerer Umgebung und gehärteten Einstellungen. Den
+Anker legt `12-vertrauen` an, nur wenn er fehlt oder leer ist. Regeln, Zustände und Exit-Codes:
+`docs/image-und-releases.md`, «Auf dem Gerät: zenos-kanal». Tests: `test/einheiten/kanal.test.py`.
 
 ## pruefen.sh
 

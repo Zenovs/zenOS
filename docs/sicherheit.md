@@ -349,16 +349,23 @@ stehen in `docs/image-und-releases.md`, Abschnitt «Signierte Releases».
   (`zenos-release`, `zenos-wurzel`). Das erlaubt Manifest 0 ausdrücklich, und gitleaks lässt sie durch. Private
   Schlüssel liegen nie in einer Datei.
 - **Fail-closed:** Solange der Anker keine Schlüssel enthält, signiert `scripts/release-signieren.sh` nichts, und ein
-  Gerät soll über den Kanal nichts installieren («Anker fehlt»). Der Weg von Hand über `dev` bleibt. Die Prüfung auf den
-  Geräten kommt mit dem Kanal. Bis dahin prüft `zen update` keine Signatur.
+  Gerät meldet «Anker fehlt»: nichts gilt als gültig. Der Weg von Hand über `dev` bleibt. `zen update` prüft weiter
+  keine Signatur; die Prüfung auf dem Gerät (`sudo zen kanal pruefen`) installiert noch nichts.
+- **Prüfung auf dem Gerät** (`scripts/bin/zenos-kanal`): Holen und Prüfen sind getrennt. Ein flüchtiger Systembenutzer
+  ohne Rechte holt in einer Sandbox nur über https und gibt ein Bundle weiter; root öffnet dessen Repo nie. root prüft
+  ohne Netz in einem Repo, das jedes Mal neu entsteht, mit leerer Umgebung für git (keine fremde config, keine Hooks,
+  kein fsmonitor, OpenPGP und X.509 aus). Der Anker liegt root-eigen in `/etc/zenos/vertrauen` und wird nie aus
+  `/opt/zenos` gelesen. Ein Hauptbuch erkennt verschobene Tags, `hoechste` verhindert ein Downgrade. Selbst
+  nachgestellt: `git verify-tag` nimmt auch einen Tag mit zwei Signaturen oder unter falschem Namen an, und mit
+  OpenPGP prüft git gegen den Schlüsselbund von gpg statt gegen den Anker; der Kanal lehnt alle drei ab.
 - **Signieren nur bewusst:** `scripts/release-signieren.sh` läuft in einem eigenen Terminal-Tab ohne Claude Code. Es
   zeigt Commits und sensible Pfade gesondert (Firewall, Netz, Boot, Anmeldung, Vertrauen), signiert erst nach «ja» und
   prüft den Tag danach gegen den Anker. Gepusht wird nach einem zweiten «ja», und zwar nur der Tag. Danach 1Password
   sperren.
-- **Fallen, die das Skript und später das Gerät abfangen:** `git verify-tag` prüft den Tag-Namen nicht, und eine
-  fehlende Widerrufsdatei nimmt git ohne Fehler hin (beides selbst nachgestellt). OpenPGP-Signaturen prüft git laut
-  Recherche mit dem Schlüsselbund von gpg statt mit dem Anker (nicht selbst nachgestellt); deshalb ist OpenPGP beim
-  Prüfen abgeschaltet.
+- **Fallen, die das Skript und das Gerät abfangen:** `git verify-tag` prüft den Tag-Namen nicht, und eine fehlende
+  Widerrufsdatei nimmt git ohne Fehler hin (beides selbst nachgestellt). OpenPGP-Signaturen prüft git mit dem
+  Schlüsselbund von gpg statt mit dem Anker (selbst nachgestellt in `test/einheiten/kanal.test.py`); deshalb ist
+  OpenPGP beim Prüfen abgeschaltet.
 - **Grenzen:** Eine Signatur bestätigt die Herkunft, nicht den Inhalt. Geht der Wurzel-Schlüssel verloren, braucht
   jedes Gerät ein neues Image oder einen neuen Anker von Hand. GitHub-Regeln für Tags (`v*`, `vertrauen/*` nicht
   verschieben oder löschen) und Immutable Releases sind eine zweite Schicht, die Zeno auf GitHub einschaltet.

@@ -276,7 +276,9 @@ Die Logik läuft in Quickshell selbst, ohne eigenen Hintergrunddienst.
 | Verweise ins Repo | `~/.config/labwc/{autostart,environment,shutdown,menu.xml}`, `~/.config/kitty/kitty.conf`, `~/.config/fish/conf.d/zenos.fish` | ja |
 | Erzeugte Konfiguration | `~/.config/labwc/rc.xml` und `themerc-override`, `~/.config/kanshi/config`, `~/.config/kitty/*-theme.auto.conf` | nein, erzeugt |
 | `zen` | `/usr/local/bin/zen` verweist auf `/opt/zenos/scripts/zen` | ja |
-| Kanal für `zen update` | `/etc/xdg/zenos/kanal` (`dev` oder `main`) | nein, vom Installer |
+| Kanal für `zen update` | `/etc/xdg/zenos/kanal` (`dev` oder `main`; der signierte Kanal kennt `stabil`, `vorschau`, `dev`, `main` gilt als `stabil`) | nein, vom Installer |
+| Vertrauensanker | `/etc/zenos/vertrauen/{release,wurzel,widerrufen,serie}` (root, 0644; nur angelegt, wenn er fehlt oder leer ist; danach nur über `vertrauen/NNNN` oder `zen kanal anker`) | ja, beim ersten Mal (`system/vertrauen/`) |
+| Signierter Kanal | Programm `/usr/local/libexec/zenos/zenos-kanal` (Kopie, root, 0755), Units `zenos-kanal-holen.service` und `zenos-kanal-pruefen.service`, Stand `/var/lib/zenos/kanal/{stand.json,gesehen.json,hoechste}`, Bundle des Holers `/var/lib/zenos-kanal-holen/` | Programm und Units ja (Kopien), Stand nie |
 | Lüfterkurve (optional) | `/etc/xdg/zenos/argon.json` | nie |
 | Freigabe Akkuprofil (ONE UP) | `/etc/xdg/zenos/argon-akkuprofil` (`zen akku freigeben`) | nie |
 | Gerätewerte (Akku, Lüfter) | `/run/zenos/geraet.json` (flüchtig, Ordner gehört `zenos-argon`) | nie |
@@ -327,6 +329,8 @@ Systemteile, dann alle Benutzerteile.
 |---|---|
 | `00-vorbereitung` | System prüfen (Ubuntu 26.04 als Kennung oder als Basis von zenOS, arm64/amd64, Platz), Werkzeuge des Installers |
 | `10-code` | `/opt/zenos` auf den Stand der Quelle bringen (atomar), Kanal festlegen |
+| `12-vertrauen` | Vertrauensanker `/etc/zenos/vertrauen` aus `system/vertrauen/`, nur wenn er fehlt oder leer ist; sonst nur Besitz und Rechte |
+| `14-kanal` | signierter Kanal: `zenos-kanal` als root-eigene Kopie, Units zum Holen und Prüfen, `/var/lib/zenos/kanal`. Installiert nichts |
 | `20-pakete` | alle Paketlisten aus `scripts/pakete/` in einem apt-Lauf |
 | `22-aufraeumen` | snapd und landscape-common entfernen (nur automatisch installierte, snapd nicht bei eigenen Snaps), snapd per apt-Pin fernhalten |
 | `25-quickshell` | Quickshell bauen, nur wenn der Stempel fehlt oder abweicht |
@@ -384,6 +388,12 @@ Mac (Claude Code, Tests im Container) ── push ──▶ GitHub dev ──▶
   `install.sh` mehr läuft (dessen Sperre `/run/lock/zenos-install.lock`); ein `git fetch` hat 180 s Zeit; mit
   weniger als 1 GiB frei unter `/opt/zenos` bricht der Wechsel ab, bevor er etwas ändert. Den Notweg ohne `zen`
   beschreibt `ANLEITUNG.md`, Abschnitt F.
+- **`zen kanal`** (signierter Kanal, installiert in dieser Fassung nichts): `sudo zen kanal pruefen` holt Tags und
+  Branches ohne Rechte (`zenos-kanal-holen.service`, DynamicUser, Sandbox) als Bundle, prüft es als root ohne Netz
+  (`zenos-kanal-pruefen.service`) gegen den Anker `/etc/zenos/vertrauen` und schreibt
+  `/var/lib/zenos/kanal/stand.json`. `zen kanal status` zeigt Kanal, Zustand, Fingerabdrücke und abgelehnte Tags.
+  Regeln und Zustände: `docs/image-und-releases.md`, «Signierte Releases». `zen update` bleibt bis zur Installation
+  über den Kanal der Weg von Hand.
 - **`zen doctor`:** Prüfbericht ohne Geheimnisse und ohne Persönliches, Exit 1 bei Fehlern. `zen version` zeigt
   zenOS-Version, die Basis (Ubuntu), Quickshell und labwc.
 - Systemänderungen laufen immer über `install.sh`. Das Skript darf beliebig oft laufen.

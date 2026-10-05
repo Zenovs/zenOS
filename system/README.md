@@ -14,6 +14,8 @@ Verweis angelegt; was generiert wird, erzeugen die Programme unter `scripts/bin/
 | `systemd/system/zenos-wlan-land.service` | `/etc/systemd/system/` (`35-netzwerk`) | WLAN-Land mit `iw` setzen, nach `zen netzwerk umstellen` |
 | `systemd/system/zenos-netzwerk-erststart.service` | `/etc/systemd/system/` (aktiviert nur im Image) | erster Start eines Images: auf NetworkManager umstellen |
 | `systemd/system/systemd-networkd-wait-online.service.d/zenos-netzwerk.conf` | `/etc/systemd/system/…` | wait-online überspringen, solange NetworkManager das Netz verwaltet |
+| `systemd/system/zenos-kanal-holen.service` | `/etc/systemd/system/` (`14-kanal`, statisch) | signierter Kanal: Tags und Branches von origin holen, ohne Rechte (DynamicUser, Sandbox) |
+| `systemd/system/zenos-kanal-pruefen.service` | `/etc/systemd/system/` (`14-kanal`, statisch) | signierter Kanal: das Bundle als root ohne Netz prüfen, Stand schreiben, nichts installieren |
 | `modprobe/zenos-brcmfmac.conf` | `/etc/modprobe.d/` (von `zen netzwerk umstellen` bzw. im Image) | WPA3 im WLAN-Treiber des Raspberry Pi aus (`docs/module/netzwerk.md`) |
 | `cloud/99-zenos-netzwerk.cfg` | `/etc/cloud/cloud.cfg.d/` (von `zen netzwerk umstellen`, nie im Image) | cloud-init schreibt keine Netzwerk-Konfiguration mehr |
 | `doc/RECHTLICHES`, `doc/QUELLEN` | `/usr/local/share/doc/zenos/` (Modul `72-kennung`, neben `copyright` aus `LICENSE`) | Lizenzen, Markenhinweise und wo der Quellcode liegt; `/etc/legal` verweist darauf |
@@ -33,6 +35,6 @@ Verweis angelegt; was generiert wird, erzeugen die Programme unter `scripts/bin/
 | `apt/20auto-upgrades`, `apt/52zenos-unattended` | `/etc/apt/apt.conf.d/` | automatische Sicherheitsupdates |
 | `apt/zenos-ohne-snapd` | `/etc/apt/preferences.d/` (`22-aufraeumen`, nur solange snapd fehlt) | apt-Pin: snapd nie wieder installieren |
 | `plymouth/zenos/` | `/usr/share/plymouth/themes/zenos/` (`42-bootsplash`, nur `*.plymouth`, `*.script`, `bilder/`) | Bootsplash-Theme, abgelegt, nicht eingeschaltet (`docs/module/bootsplash.md`); `erzeugen.py` und `vorschau.sh` bleiben im Repo |
-| `vertrauen/release`, `wurzel`, `widerrufen`, `serie` | noch nirgends (mit dem Kanal: `/etc/zenos/vertrauen/`, nur wenn es fehlt; im Image) | Vertrauensanker: öffentliche Prüfschlüssel für signierte Releases, Prinzipale `zenos-release` und `zenos-wurzel`; noch ohne Schlüssel (`docs/image-und-releases.md`, «Signierte Releases») |
+| `vertrauen/release`, `wurzel`, `widerrufen`, `serie` | `/etc/zenos/vertrauen/` (`12-vertrauen`, nur wenn es fehlt oder leer ist; im Image) | Vertrauensanker: öffentliche Prüfschlüssel für signierte Releases, Prinzipale `zenos-release` und `zenos-wurzel`; noch ohne Schlüssel (`docs/image-und-releases.md`, «Signierte Releases») |
 
 Ein Ordner kommt nur mit seinem Modul dazu (Besitz und Einzelheiten in `docs/module/`).

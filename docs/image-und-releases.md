@@ -72,10 +72,11 @@ Bau im Einzelnen läuft (Optionen, lokal im Container, Aufräumen), steht in `im
 
 ## Signierte Releases
 
-**Stand:** Signieren ist eingerichtet, die Prüfung auf den Geräten folgt mit dem Kanal. Bis dahin ändert sich auf den
-Geräten nichts, `zen update` zieht weiter den Zweig `dev` ohne Signaturprüfung. Die echten Schlüssel fehlen noch,
-Zeno legt sie später an. Solange ist der Anker leer: `scripts/release-signieren.sh` signiert nichts, und der Kanal
-installiert nichts («Anker fehlt», fail-closed). Der heutige Weg von Hand über `dev` bleibt.
+**Stand:** Signieren ist eingerichtet. Auf den Geräten prüft `zenos-kanal` die Tags (`sudo zen kanal pruefen`,
+siehe «Auf dem Gerät»), installiert aber noch nichts; `zen update` zieht weiter den Zweig `dev` ohne
+Signaturprüfung. Die echten Schlüssel fehlen noch, Zeno legt sie später an. Solange ist der Anker leer:
+`scripts/release-signieren.sh` signiert nichts, und der Kanal meldet «Anker fehlt» (fail-closed). Der heutige Weg von
+Hand über `dev` bleibt.
 
 ### Schlüssel und Anker
 
@@ -156,7 +157,7 @@ Für einen neuen Release-Schlüssel oder einen Widerruf, etwa wenn der Release-S
 3. Erst danach Releases mit dem neuen Schlüssel signieren. Ein Release mit Serie 2 oder höher verlangt den
    passenden Tag `vertrauen/NNNN` auf origin.
 
-Was ein Gerät später prüft (für den Kanal):
+Was ein Gerät prüft (`zenos-kanal`, siehe «Auf dem Gerät»):
 
 - **Release-Tag:** annotiert, Feld `tag` gleich dem Ref-Namen, `type commit`, genau eine SSH-Signatur und kein
   OpenPGP, `verify-tag` auf die Objekt-ID gegen `release` und `widerrufen` des Geräts mit Prinzipal
@@ -169,6 +170,81 @@ Was ein Gerät später prüft (für den Kanal):
   Lesen da.
 - Die Wurzel ändert sich nie über das Netz. Ist sie verloren oder gestohlen, braucht jedes Gerät ein neues Image
   oder einen neuen Anker von Hand.
+
+### Auf dem Gerät: zenos-kanal (prüft, installiert nichts)
+
+`scripts/bin/zenos-kanal` (Python, nur Standardbibliothek, `python3 -I`) liegt als root-eigene Kopie unter
+`/usr/local/libexec/zenos/zenos-kanal` (Modul `14-kanal`). Die Units führen diese Kopie aus, nie `/opt/zenos`.
+
+| Befehl | Wer | Was |
+|---|---|---|
+| `zen kanal status` | alle | Kanal, Zustand, Anker mit Fingerabdrücken, installierter Stand, `hoechste`, gültige und abgelehnte Tags, letzter Kontakt |
+| `sudo zen kanal pruefen` | root | startet `zenos-kanal-holen.service`, dann `zenos-kanal-pruefen.service`, zeigt danach den Status. Installiert nichts |
+| `zen kanal anker` | alle | zeigt den Anker des Geräts |
+| `sudo zen kanal anker ORDNER` | root, nur im Terminal | setzt den Anker von Hand: Fingerabdruck der Wurzel eintippen, Release-Schlüssel mit «ja» bestätigen. Bei gleicher Wurzel nie mit kleinerer Serie, Widerrufe des Geräts bleiben |
+
+Ablauf:
+
+1. **Holen** (`zenos-kanal-holen.service`): als flüchtiger Systembenutzer (DynamicUser) in einer Sandbox, nur mit
+   Netz und dem eigenen Ordner `/var/lib/zenos-kanal-holen`. Die Adresse ist origin aus `/opt/zenos/.git/config`,
+   nur `https://` ohne Zugangsdaten. `git fetch --no-tags --prune` holt erzwungen `refs/tags/*` nach
+   `refs/kanal/tags/*` und `refs/heads/*` nach `refs/kanal/heads/*`, mit fsck, Zeitlimit 600 s. Ein verschobener
+   oder gelöschter Tag bricht nichts ab. Ergebnis: `uebergabe.bundle` und `holen.json` (Zeitpunkt, Fehler; nur zur
+   Anzeige).
+2. **Prüfen** (`zenos-kanal-pruefen.service`): root, ohne Netz (PrivateNetwork), schreiben nur nach
+   `/var/lib/zenos/kanal`, `/etc/zenos/vertrauen` und `/run/lock`. Die Sperre `/run/lock/zenos-kanal.lock` teilt es
+   mit `zen update`. Das Bundle wird kopiert (ohne Verweisen zu folgen, höchstens 1 GiB) und in ein Repo geholt, das
+   bei jedem Lauf neu entsteht (eigene config, keine Hooks). Jedes git läuft mit leerer Umgebung, ohne System- und
+   Benutzer-config, ohne Ersatzobjekte, mit `core.hooksPath=/dev/null`, `core.fsmonitor=false`,
+   `protocol.allow=never`, `gpg.ssh.program=/usr/bin/ssh-keygen`, OpenPGP und X.509 aus.
+3. **Regeln**, in dieser Reihenfolge:
+   - Anker: wie oben, root-eigen und für andere nicht schreibbar, auch jeder Ordner darüber. Sonst «Anker fehlt»,
+     und nichts gilt als gültig. Die Formprüfung der Tags läuft trotzdem (etwa «unsigniert»).
+   - Tag: annotiert; Kopf genau `object`, `type`, `tag`, `tagger`; Feld `tag` gleich dem Ref-Namen; `type commit`;
+     genau eine SSH-Signatur am Ende, mit Namespace `git` und Ed25519; keine OpenPGP- oder X.509-Signatur. Der
+     Schlüssel in der Signatur darf nicht widerrufen sein und muss zur Rolle passen. Dann `git verify-tag
+     <Objekt-ID>` gegen den Anker mit der erwarteten Zeile `Good "git" signature for <prinzipal> with ED25519 key
+     <fingerabdruck>`.
+   - `vertrauen/NNNN` zuerst, aufsteigend, nur mit NNNN über der eigenen Serie (siehe oben). Der neue Anker wird
+     Datei für Datei atomar geschrieben, die Serie zuletzt.
+   - Hauptbuch `gesehen.json` (Name → Objekt, gültig, erstmals gesehen): Zeigt ein schon gültiger Name auf ein
+     anderes, ebenfalls gültiges Objekt, ist der Kanal «blockiert» (ALARM), bis der Name wieder auf das alte Objekt
+     zeigt. Ein ungültiges neues Objekt lehnt nur diesen Namen ab, ein auf origin gelöschter Tag ist ein Hinweis und
+     kein Ziel mehr (Notbremse).
+   - `hoechste` (`/var/lib/zenos/kanal/hoechste`): Jeder gültige Tag, dessen Commit im Verlauf des installierten
+     Stands liegt, hebt es an; es sinkt nie. Den Verlauf liest es im eigenen Repo oder, für nicht gepushte Commits,
+     in `/opt/zenos` (nur lesend, nicht flach). Fehlt `hoechste` und gehört der installierte Stand zu keiner
+     signierten Version, ist der Kanal «blockiert», ausser der Stand liegt vor allen gültigen Versionen.
+   - Ziel: die höchste gültige Version des Kanals über `hoechste`, ohne Versionen in `/var/lib/zenos/kanal/gesperrt/`.
+     `stabil` nimmt nur `vX.Y.Z` und gibt sie erst 24 h nach dem ersten Sehen für die Automatik frei (`frei_ab`),
+     `vorschau` auch `vX.Y.Z-rcN` sofort.
+   - `dev`: nur Auskunft. Neuer Stand von `origin/dev`, ob der installierte Stand darin liegt und ob jeder Commit
+     dazwischen gültig mit einem Release-Schlüssel signiert ist (`%G?` gleich `G`; ein unsignierter Commit unter
+     einer signierten Spitze zählt). Sonst nur von Hand mit «ja».
+4. **Stand:** `/var/lib/zenos/kanal/stand.json` (0644, atomar): `kanal`, `zustand`, `grund`, `geprueft`,
+   `letzter_kontakt`, `holen_fehler`, `anker` (Serie und Fingerabdrücke), `anker_problem`, `installiert`,
+   `hoechste`, `bereit` (Version, Commit, Objekt, `erstmals`, `frei_ab`), `dev`, `gueltig`, `abgelehnt`, `hinweise`.
+
+| Zustand | Exit | Bedeutung |
+|---|---|---|
+| `aktuell` | 0 | keine neuere gültige Version |
+| `bereit` | 0 | eine neuere gültige Version gibt es (installiert wird in dieser Fassung nichts) |
+| `dev` | 0 | Kanal dev, nur Auskunft |
+| `anker_fehlt` | 3 | kein vollständiger Anker: nichts gilt |
+| `blockiert` | 3 | ALARM im Hauptbuch, unbekannter Kanal, `hoechste` nicht ableitbar, Bundle unbrauchbar, mehr als 1000 Tags |
+| `kein_kontakt` | 10 | noch nie geholt |
+| `fehler` | 1 | Prüfung abgebrochen |
+| (keiner) | 75 | Sperre belegt (ein `zen update` läuft), `stand.json` bleibt |
+
+Am Gerät nach dem Einrichten (je ein Befehl): `zen kanal status` (Fingerabdrücke mit 1Password vergleichen),
+`sudo zen kanal pruefen`. Solange der Anker leer ist, steht dort «Anker fehlt» und `v0.1.0-rc1` bis `rc3` als
+«unsigniert».
+
+Rückweg: Weil nichts installiert wird und `zen update` unverändert bleibt, genügt es, den Commit zurückzunehmen und
+`zen update` laufen zu lassen. Liegen bleiben `/etc/zenos/vertrauen`, `/var/lib/zenos/kanal`,
+`/usr/local/libexec/zenos/zenos-kanal` und die beiden Units; sie sind statisch (kein Timer, nicht aktiviert) und
+stören nicht. Im Testcontainer nachgestellt: install.sh des vorigen Stands läuft durch, danach wieder vorwärts mit
+0 Änderungen im zweiten Lauf.
 
 ### Einmalig einrichten (Zeno)
 
@@ -196,6 +272,19 @@ Mit Wegwerf-Schlüsseln, im Container (git 2.53, OpenSSH 10.2) und auf dem Mac (
 - Die Tests `test/einheiten/release-signieren.test.py` spielen das Skript ganz durch: Release, Vertrauens-Tag,
   Abbruch und Ablehnung, falscher oder fehlender Schlüssel, rote CI, verschobener Tag, Downgrade, Anker ohne Serie
   geändert, Wurzel geändert.
+- `git verify-tag` nimmt auch einen Tag mit zwei SSH-Signaturen an. `zenos-kanal` verlangt deshalb genau eine.
+- `%G?` ist bei einer gültigen Signatur eines Schlüssels, der nicht im Anker steht, `U`, nicht `G`; bei einem
+  widerrufenen `B`. Für dev zählt nur `G`.
+- Ein Bundle lässt sich nur mit `protocol.file.allow=always` holen (sonst «transport 'file' not allowed»). Ein
+  explizit verlangter Branch, den es auf origin nicht gibt, lässt `git fetch` scheitern; der Holer holt deshalb
+  `refs/heads/*`.
+- Die Tests `test/einheiten/kanal.test.py` spielen Holen und Prüfen mit Wegwerf-Schlüsseln durch: unsigniert,
+  leichter Tag, fremder Schlüssel, Wurzel statt Release, Tag-Name falsch, Tag auf einen Baum, zwei Signaturen,
+  OpenPGP mit importiertem Schlüssel (git nimmt ihn mit gpg an, der Kanal nie), widerrufen, verschoben (gültig:
+  ALARM; ungültig: abgelehnt), gelöscht, Downgrade, `hoechste` abgeleitet und nicht ableitbar, `vertrauen/NNNN`
+  (Wechsel, mit dem Release-Schlüssel, falsche oder kleinere Serie, andere Wurzel, Widerruf bleibt), leerer Anker
+  wie im Repo, fehlende Widerrufsdatei, Rechte, Verweise, fremde git-config und Hooks, dev mit unsigniertem
+  Zwischencommit, Sperre, Wartezeit.
 
 ### Grenzen
 

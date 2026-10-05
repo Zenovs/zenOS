@@ -451,6 +451,10 @@ systemctl --user start zenos-shell.service
   danach vollständig da.
 - [ ] `zen rollback v0.1.0-rc2` geht auf den Tag zurück, `zen version` zeigt ihn. `zen update` bringt dich wieder auf
   `dev`.
+- [ ] Signierter Kanal (installiert noch nichts): `zen kanal status` zeigt «Anker fehlt», solange die Schlüssel fehlen,
+  sonst die Fingerabdrücke von Wurzel und Release; die vergleichst du mit «zenOS Wurzel» und «zenOS Release» in
+  1Password. `sudo zen kanal pruefen` holt von GitHub und listet `v0.1.0-rc1` bis `rc3` als «unsigniert». An
+  `/opt/zenos` ändert sich dabei nichts (`zen version` zeigt danach denselben Commit).
 - [ ] Die Temperatur steht in der Leiste, der Lüfter im System-Menü (Argon ONE). Unter Last (in kitty viermal
   `yes > /dev/null &`, danach `pkill yes`) wird der Lüfter hörbar schneller und später wieder leiser.
 - [ ] Argon-Knopf: Doppeltipp startet neu, drei Sekunden halten schaltet aus, einmal kurz drücken tut nichts.

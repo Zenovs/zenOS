@@ -1,0 +1,51 @@
+# zenOS: Tags und Branches von origin holen, ohne Rechte (zenos-kanal holen-intern). Läuft als flüchtiger
+# Systembenutzer (DynamicUser) in einer Sandbox: nur Netz und der eigene Ordner /var/lib/zenos-kanal-holen, kein
+# Home, keine Geräte, keine Rechte. Das Ergebnis ist ein Bundle (uebergabe.bundle), das zenos-kanal-pruefen.service
+# als root ohne Netz prüft. Gestartet nur von «sudo zen kanal pruefen» (kein Timer in dieser Fassung).
+[Unit]
+Description=zenOS: Kanal holen (ohne Rechte)
+Documentation=file:///opt/zenos/docs/image-und-releases.md
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/usr/local/libexec/zenos/zenos-kanal
+
+[Service]
+Type=oneshot
+DynamicUser=yes
+StateDirectory=zenos-kanal-holen
+StateDirectoryMode=0755
+UMask=0022
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/zenos/zenos-kanal holen-intern
+# Das Programm bricht git fetch nach 600 s selbst ab
+TimeoutStartSec=15min
+Nice=10
+IOSchedulingClass=idle
+# Ein fremder Server soll die Platte nicht füllen (ein Pack von zenOS ist wenige MB gross)
+LimitFSIZE=1G
+SyslogIdentifier=zenos-kanal
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateIPC=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources

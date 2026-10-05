@@ -7,6 +7,15 @@ an; eine Version entspricht einem Tag `v…` im Repo.
 
 ### Neu
 
+- **Signierter Kanal auf dem Gerät, nur prüfend:** `sudo zen kanal pruefen` holt Tags und Branches von GitHub als
+  flüchtiger Systembenutzer ohne Rechte in einer Sandbox und prüft sie als root ohne Netz gegen den Vertrauensanker
+  `/etc/zenos/vertrauen`: annotiert, Name gleich dem Feld im Tag, genau eine SSH-Signatur, `git verify-tag` gegen
+  Release-Schlüssel und Widerrufe, Hauptbuch gegen verschobene Tags (ein gültig signierter, verschobener Tag blockiert
+  den Kanal), kein Downgrade (`hoechste`), Tags `vertrauen/NNNN` nur mit der Wurzel und steigender Serie. Das Ergebnis
+  steht in `/var/lib/zenos/kanal/stand.json`, `zen kanal status` zeigt es mit den Fingerabdrücken. Installiert wird
+  nichts, `zen update` bleibt der Weg von Hand. Solange `system/vertrauen/` keine Schlüssel hat, meldet der Kanal
+  «Anker fehlt». Neu: `scripts/bin/zenos-kanal`, Module `12-vertrauen` (Anker nur anlegen, wenn er fehlt oder leer
+  ist) und `14-kanal`, `zen kanal`, Abschnitt «Signierter Kanal» in `zen doctor`.
 - **Signierte Releases vorbereitet:** `scripts/release-signieren.sh vX.Y.Z[-rcN]` signiert ein Release auf dem Mac
   mit dem Schlüssel «zenOS Release» aus 1Password (Touch ID, kein privater Schlüssel in einer Datei). Vorher prüft
   es sauberen Baum, HEAD auf origin, Tag neu und höher, CI und Anker und zeigt die Commits seit dem letzten Release
