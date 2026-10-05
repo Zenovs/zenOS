@@ -23,9 +23,9 @@
 #   die Oberfläche ihn vorher (eine Eingabe bricht ab), schaltet nichts aus.
 # - Nur gesperrt (am Login-Bildschirm: keine andere Sitzung), nur wenn die Einstellung es erlaubt, und nie während
 #   einer SSH-Sitzung oder -Verbindung, eines tmux- oder screen-Servers, einer Installation (install.sh, zen update,
-#   zen rollback), apt oder dpkg, automatischer Updates, wenn ein Programm das Ausschalten blockiert (logind-Hemmer
-#   «shutdown», Modus block) oder wenn logind es nicht ohne Passwort erlaubt (CanPowerOff). Was sich nicht prüfen
-#   lässt, gilt als blockiert.
+#   zen rollback, eine Unit zenos-kanal-* des Kanals), apt oder dpkg, automatischer Updates, wenn ein Programm das
+#   Ausschalten blockiert (logind-Hemmer «shutdown», Modus block) oder wenn logind es nicht ohne Passwort erlaubt
+#   (CanPowerOff). Was sich nicht prüfen lässt, gilt als blockiert.
 # - Nur «systemctl poweroff --check-inhibitors=yes»: nie neu starten, nie Hemmer übergehen (kein -i, kein --force).
 # - Prozesse nur mit Argumentlisten, keine Shell. Jeder Entscheid steht mit Grund im Journal (logger -t zenos-energie).
 # Exit 0 ja bzw. erledigt · 1 nein bzw. blockiert (Grund auf stdout) · 2 falscher Aufruf · 3 systemctl poweroff
@@ -192,7 +192,26 @@ pruefe_installation() {
     exec {fd}<&-
   fi
   # zen update holt zuerst den neuen Stand (git), bevor install.sh die Sperre nimmt
-  laeuft_nicht "Update läuft (zen update)" -f '(^|[ /])zen (update|rollback)( |$)'
+  laeuft_nicht "Update läuft (zen update)" -f '(^|[ /])zen (update|rollback)( |$)' || return 1
+  pruefe_kanal
+}
+
+# Der Kanal arbeitet in systemd-Units (holen, prüfen, installieren, Automatik, Bestätigung nach dem Start). Seine
+# Sperren in /run/zenos-sperre und die von install.sh als root sieht ein Benutzer nicht, und der Block-Hemmer gilt nur,
+# solange install.sh läuft (nicht beim Bereitstellen, bei der Gesundheitsprüfung, beim Rückweg). systemd gibt den
+# Zustand jedem Benutzer: Läuft eine Unit zenos-kanal-*, schaltet zenos-energie nicht aus.
+pruefe_kanal() {
+  local einheiten
+  if ! einheiten=$(systemctl list-units --type=service --state=activating,active,deactivating,reloading \
+    --no-legend --plain --no-pager 'zenos-kanal-*.service' 2>/dev/null); then
+    grund="Updates nicht prüfbar (systemctl)"
+    return 1
+  fi
+  einheiten=${einheiten%%$'\n'*}
+  if [[ -n "${einheiten// /}" ]]; then
+    grund="Update läuft (${einheiten%% *})"
+    return 1
+  fi
 }
 
 # Paketverwaltung und automatische Updates. unattended-upgrade-shutdown wartet ständig auf das Ende des Systems

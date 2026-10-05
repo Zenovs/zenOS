@@ -429,6 +429,42 @@ class EnergieTest(unittest.TestCase):
         self.assertEqual(self.darf(), (0, "ja"))
         self.assertFalse(os.path.exists(self.sperrdatei))
 
+    def test_kanal_installation_als_root(self):
+        # Ein Lauf des Kanals (zen update, Einstellungen, Automatik, Bestätigung nach dem Start) arbeitet in Units als
+        # root: Seine Sperren in /run/zenos-sperre sieht ein Benutzer nicht, der Block-Hemmer gilt nur während
+        # install.sh. systemd sagt jedem, ob eine Unit zenos-kanal-* läuft.
+        self.frei()
+        self.assertEqual(self.darf(), (0, "ja"))
+        for einheit, zustand in (("zenos-kanal-installieren.service", "activating"),
+                                 ("zenos-kanal-automatik.service", "activating"),
+                                 ("zenos-kanal-bestaetigen.service", "activating"),
+                                 ("zenos-kanal-zustimmen@0123456789abcdef0123456789abcdef01234567.service",
+                                  "deactivating")):
+            with self.subTest(einheit):
+                self.verhalten("systemctl", "aus.list-units",
+                               f"{einheit} loaded {zustand} start start zenOS: Kanal\nzenos-kanal-pruefen.service "
+                               "loaded activating start start zenOS\n")
+                self.assertEqual(self.darf(), (1, f"nein: Update läuft ({einheit})"))
+                self.assertEqual(self.aufruf("status")[1], f"nein: Update läuft ({einheit})\n")
+        self.verhalten("systemctl", "exit.list-units", "1")
+        self.assertEqual(self.darf(), (1, "nein: Updates nicht prüfbar (systemctl)"))
+        self.vergessen("systemctl.exit.list-units", "systemctl.aus.list-units")
+        self.assertEqual(self.darf(), (0, "ja"))
+        aufruf = [a for a in self.aufrufe("systemctl") if a and a[0] == "list-units"][-1]
+        self.assertEqual(aufruf, ["list-units", "--type=service", "--state=activating,active,deactivating,reloading",
+                                  "--no-legend", "--plain", "--no-pager", "zenos-kanal-*.service"])
+        # Auch unmittelbar vor dem Ausschalten (nach der Vorwarnung) und am Login-Bildschirm
+        self.sperren()
+        self.vorwarnung(70)
+        self.verhalten("systemctl", "aus.list-units", "zenos-kanal-installieren.service loaded activating start "
+                                                      "start x\n")
+        code, aus, _ = self.aufruf("ausschalten")
+        self.assertEqual((code, aus), (1, "nein: Update läuft (zenos-kanal-installieren.service)\n"))
+        self.assertEqual(self.poweroff(), [])
+        self.login_sitzungen()
+        self.assertEqual(self.aufruf("darf-ausschalten-login")[:2],
+                         (1, "nein: Update läuft (zenos-kanal-installieren.service)\n"))
+
     @unittest.skipIf(os.geteuid() == 0, "root liest jede Datei")
     def test_sperrdatei_nicht_lesbar(self):
         self.frei()
