@@ -96,6 +96,15 @@ def k(name):
     return _modul["schluessel"][name]
 
 
+def anker_ohne_schluessel():
+    """Der Anker aus dem Repo nur mit seinen Kommentaren: der Stand vor den ersten Schlüsseln (bis v0.1.0-rc3)."""
+    dateien = {}
+    for name in ("release", "wurzel", "widerrufen", "serie"):
+        with open(os.path.join(ANKER, name), encoding="utf-8") as f:
+            dateien[f"system/vertrauen/{name}"] = "".join(z for z in f if not z.strip() or z.lstrip().startswith("#"))
+    return dateien
+
+
 def anker(release=("rel",), wurzel="wur", widerrufen=(), serie=1, kommentar="# Testanker"):
     """Dateien für system/vertrauen; Schlüssel über ihre Namen."""
     return {
@@ -127,9 +136,7 @@ class Basis(unittest.TestCase):
 
         dateien = {"README.md": "Test\n", "system/pam/zenos-sperre": "auth required pam_unix.so\n",
                    "shell/leiste/Uhr.qml": "Item {}\n"}
-        for name in ("release", "wurzel", "widerrufen", "serie"):
-            with open(os.path.join(ANKER, name), encoding="utf-8") as f:
-                dateien[f"system/vertrauen/{name}"] = f.read()
+        dateien.update(anker_ohne_schluessel())
         with open(SKRIPT, encoding="utf-8") as f:
             dateien["scripts/release-signieren.sh"] = f.read()
         with open(LISTE, encoding="utf-8") as f:
@@ -348,9 +355,7 @@ class Release(Basis):
 
     def test_anker_ohne_schluessel(self):
         dateien = {}
-        for name in ("release", "wurzel", "widerrufen", "serie"):
-            with open(os.path.join(ANKER, name), encoding="utf-8") as f:
-                dateien[f"system/vertrauen/{name}"] = f.read()
+        dateien.update(anker_ohne_schluessel())
         self.commit("anker leer", dateien)
         self.git("push", "-q", "origin", "dev")
         ergebnis = self.lauf("v0.1.0-rc4", eingabe="ja\nja\n")

@@ -760,10 +760,11 @@ class Vertrauen(Basis):
 
 class Anker(Basis):
     def test_leerer_anker_wie_im_repo(self):
+        # Der Anker im Repo ohne seine Schlüssel- und Serienzeilen: nur die Kommentare, wie vor den ersten Schlüsseln
         texte = {}
         for name in K.ANCHOR_FILES:
             with open(os.path.join(ANKER_REPO, name), encoding="utf-8") as f:
-                texte[name] = f.read()
+                texte[name] = "".join(z for z in f if not z.strip() or z.lstrip().startswith("#"))
         self.anker_dateien(texte)
         self.commit("rc3")
         self.unsigniert("v0.1.0-rc3")
@@ -837,8 +838,14 @@ class Anker(Basis):
     def test_anker_pruefen_repo(self):
         aus = io.StringIO()
         with contextlib.redirect_stdout(aus):
-            self.assertEqual(K.cmd_anchor(["--pruefen", ANKER_REPO]), 1)
-        self.assertTrue(aus.getvalue().startswith("leer:"))
+            self.assertEqual(K.cmd_anchor(["--pruefen", ANKER_REPO]), 0)
+        # Der Anker im Repo: Serie 1, je ein Schlüssel für Wurzel und Release (Fingerabdrücke aus 1Password bestätigt)
+        self.assertTrue(aus.getvalue().startswith("vollständig: Serie 1, Wurzel SHA256:9xQZHFzUT4CF87GQ2VrCo6oGEC1DimrsHOtEmnB5pDk"),
+                        aus.getvalue())
+        self.assertIn("1 Release-Schlüssel, 0 widerrufen", aus.getvalue())
+        with open(os.path.join(ANKER_REPO, "release"), encoding="utf-8") as f:
+            schluessel = [" ".join(z.split()[-2:]) for z in f if z.startswith("zenos-release ")]
+        self.assertEqual([K.fingerprint(schluessel[0])], ["SHA256:6CAhnfU9qHJz36663u/A/HxmZkKxao0r2QxT3oy+DzI"])
         with contextlib.redirect_stdout(aus):
             self.assertEqual(K.cmd_anchor(["--pruefen", K.ANCHOR_DIR]), 0)
         os.unlink(os.path.join(K.ANCHOR_DIR, "serie"))
@@ -1045,7 +1052,8 @@ class Ablauf(Basis):
         with contextlib.redirect_stderr(err):
             self.assertEqual(K.cmd_check([]), 75)
         self.assertIn("läuft gerade", err.getvalue())
-        self.assertIn(f"PID {os.getpid()}", err.getvalue(), "wer die Sperre hält, steht dabei")
+        if os.path.exists("/proc/locks"):  # nur unter Linux, auf dem Mac gibt es kein /proc
+            self.assertIn(f"PID {os.getpid()}", err.getvalue(), "wer die Sperre hält, steht dabei")
         self.assertFalse(os.path.exists(os.path.join(K.STATE_DIR, "stand.json")))
 
     def test_sperre_nur_fuer_root(self):

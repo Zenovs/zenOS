@@ -12,4 +12,6 @@
 # Die Wurzel selbst ändert sich nie über das Netz. Ein Gerät bekommt sie mit dem Image oder einmalig aus dem Repo,
 # danach nur noch von Hand.
 #
-# Noch steht hier kein Schlüssel, Zeno legt ihn später an. Bis dahin ist der Anker unvollständig.
+# Fingerabdruck (ssh-keygen -lf): SHA256:9xQZHFzUT4CF87GQ2VrCo6oGEC1DimrsHOtEmnB5pDk
+
+zenos-wurzel namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIP5/eiO8Ce4fWTumVbLLvl5QWCVrOMzGrUdiGHjP/vzn

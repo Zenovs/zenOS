@@ -11,8 +11,9 @@
 # scripts/release-signieren.sh. Der private Teil verlässt 1Password nie. Stehen mehrere Zeilen hier (nur während
 # eines Wechsels), gilt jede; signiert wird mit der ersten.
 #
-# Noch steht hier kein Schlüssel, Zeno legt ihn später an. Bis dahin ist der Anker unvollständig: Das Skript
-# signiert nichts, und ein Gerät installiert über den Kanal nichts («Anker fehlt»).
+# Fingerabdruck (ssh-keygen -lf): SHA256:6CAhnfU9qHJz36663u/A/HxmZkKxao0r2QxT3oy+DzI
 #
 # Ändern geht nur zusammen mit einer höheren Serie (Datei serie) und einem Tag vertrauen/NNNN, den der Wurzel-Schlüssel
 # signiert hat. Einzelheiten: docs/image-und-releases.md, Abschnitt «Signierte Releases».
+
+zenos-release namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJzRtv9Gvak/n3j3uDA8umaiMPmnUgtPTugjPTRJp/x/

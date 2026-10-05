@@ -5,8 +5,9 @@
 #   sudo zen kanal pruefen       holt Tags und Branches von origin (ohne Rechte), prüft sie ohne Netz, schreibt den
 #                                Stand (/var/lib/zenos/kanal/stand.json) und zeigt ihn. Installiert nichts.
 #   zen kanal anker              zeigt den Vertrauensanker /etc/zenos/vertrauen
-#   sudo zen kanal anker ORDNER  setzt den Anker von Hand aus ORDNER (etwa /opt/zenos/system/vertrauen): Fingerabdruck
-#                                der Wurzel aus 1Password eintippen, die Release-Schlüssel mit «ja» bestätigen
+#   sudo zen kanal anker ORDNER  setzt den Anker von Hand aus ORDNER (etwa /opt/zenos/system/vertrauen): den ganzen
+#                                Fingerabdruck der Wurzel und von jedem Release-Schlüssel die ersten 8 Zeichen nach
+#                                «SHA256:» aus 1Password eintippen
 # Das Programm ist /usr/local/libexec/zenos/zenos-kanal (kommt mit install.sh). Installiert wird mit «zen update» und
 # «zen rollback <tag>» über dieselben Units.
 # shellcheck shell=bash

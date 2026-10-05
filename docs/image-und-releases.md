@@ -72,11 +72,13 @@ Bau im Einzelnen läuft (Optionen, lokal im Container, Aufräumen), steht in `im
 
 ## Signierte Releases
 
-**Stand:** Signieren ist eingerichtet. Auf den Geräten prüft `zenos-kanal` die Tags (`sudo zen kanal pruefen`,
-siehe «Auf dem Gerät»), installiert aber noch nichts; `zen update` zieht weiter den Zweig `dev` ohne
-Signaturprüfung. Die echten Schlüssel fehlen noch, Zeno legt sie später an. Solange ist der Anker leer:
-`scripts/release-signieren.sh` signiert nichts, und der Kanal meldet «Anker fehlt» (fail-closed). Der heutige Weg von
-Hand über `dev` bleibt.
+**Stand:** Signieren ist eingerichtet. Der Anker `system/vertrauen/` hat Serie 1 mit je einem öffentlichen Schlüssel
+«zenOS Release» (`SHA256:6CAhnfU9qHJz36663u/A/HxmZkKxao0r2QxT3oy+DzI`) und «zenOS Wurzel»
+(`SHA256:9xQZHFzUT4CF87GQ2VrCo6oGEC1DimrsHOtEmnB5pDk`), beide am 05.10.2026 mit 1Password abgeglichen. `zen update`
+und `zen rollback` laufen über `zenos-kanal` (siehe «Auf dem Gerät»): auf `stabil` und `vorschau` nur gültig
+signierte Tags, auf `dev` ein nicht durchgehend signierter Stand nur nach einem getippten «ja». Ein Gerät ohne Anker
+(`/etc/zenos/vertrauen`) meldet «Anker fehlt» und installiert über `stabil` und `vorschau` nichts (fail-closed).
+Automatische Updates mit einstellbarem Zeitpunkt kommen in einem zweiten Teil.
 
 ### Schlüssel und Anker
 
