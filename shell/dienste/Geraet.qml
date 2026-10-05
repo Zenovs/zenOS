@@ -50,6 +50,9 @@ Singleton {
     // «unbekannt» (Datei fehlt, ist kaputt oder zu alt)
     readonly property string akkuWert: _daten.akku.vorhanden ? Logik.akkuWert(_daten.akku) : (akkuVorhanden ? "unbekannt" : "")
 
+    // Gehäuse laut zenos-argon: "argon-one-up" (Laptop mit Deckel), "argon-one-v3" oder leer (unbekannt)
+    readonly property string modell: _daten.geraet
+
     readonly property bool luefterVorhanden: _daten.luefter.vorhanden
     // «aus», «Stufe 2 von 4 · 3120 U/min» oder «55 %»
     readonly property string luefterWert: Logik.luefterWert(_daten.luefter)

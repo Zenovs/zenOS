@@ -770,6 +770,7 @@ START_RUNDGANG=(
   "einstellungen oeffnen webapps"
   "einstellungen oeffnen apps"
   "einstellungen oeffnen allgemein"
+  "einstellungen oeffnen energie"
   "einstellungen oeffnen system"
   # Energie: Zeitleiste mit den Standardwerten. Ungesperrt bleibt die Sperre hell, auch wenn zenos-bildschirm «aus»
   # meldet (dunkel heisst gesperrt).

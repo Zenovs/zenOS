@@ -8,8 +8,8 @@ import qs.dienste as Dienste
 import "../modi/zustandslogik.js" as Logik
 
 // Seite «Allgemein»: Name, Ort, Erscheinungsbild (hell, dunkel, nach Tageszeit mit Zeiten),
-// automatische Sperre (1–15 Minuten, nicht abschaltbar), Mitteilungen ohne Zustand und Scroll-Tempo
-// für Touchpad und Maus (wirkt nach dem Speichern sofort, siehe Dienst Raster).
+// automatische Sperre (1–15 Minuten, nicht abschaltbar, mit Verweis auf die Seite «Energie»), Mitteilungen ohne
+// Zustand und Scroll-Tempo für Touchpad und Maus (wirkt nach dem Speichern sofort, siehe Dienst Raster).
 // Gespeichert wird in ~/.config/zenos/einstellungen.json (Einstellungen-Dienst).
 Item {
     id: root
@@ -196,36 +196,51 @@ Item {
             width: parent.width
             beschriftung: "Automatische Sperre nach"
 
-            Row {
-                spacing: 16
-
-                Stufenwahl {
-                    wert: Dienste.Leitplanken.sperreMinuten(Dienste.Einstellungen.sperreNachMinuten)
-                    min: Dienste.Leitplanken.sperreMinutenMin
-                    max: Dienste.Leitplanken.sperreMinutenMax
-                    schritt: 1
-                    einheit: "Min."
-                    onGeaendert: wert => root.setzen("sperreNachMinuten", Dienste.Leitplanken.sperreMinuten(wert))
-                }
+            Column {
+                spacing: 6
 
                 Row {
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: 8
+                    spacing: 16
 
-                    Symbol {
-                        anchors.verticalCenter: parent.verticalCenter
-                        name: "schloss"
-                        groesse: 14
-                        farbe: Theme.gedaempft
+                    Stufenwahl {
+                        wert: Dienste.Leitplanken.sperreMinuten(Dienste.Einstellungen.sperreNachMinuten)
+                        min: Dienste.Leitplanken.sperreMinutenMin
+                        max: Dienste.Leitplanken.sperreMinutenMax
+                        schritt: 1
+                        einheit: "Min."
+                        onGeaendert: wert => root.setzen("sperreNachMinuten", Dienste.Leitplanken.sperreMinuten(wert))
                     }
 
-                    Text {
+                    Row {
                         anchors.verticalCenter: parent.verticalCenter
-                        text: "Leitplanke: 1 bis 15 Minuten, lässt sich nicht abschalten."
-                        color: Theme.gedaempft
-                        font.family: Theme.schriftText
-                        font.pixelSize: Theme.groesseLabel
+                        spacing: 8
+
+                        Symbol {
+                            anchors.verticalCenter: parent.verticalCenter
+                            name: "schloss"
+                            groesse: 14
+                            farbe: Theme.gedaempft
+                        }
+
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "Leitplanke: 1 bis 15 Minuten, lässt sich nicht abschalten."
+                            color: Theme.gedaempft
+                            font.family: Theme.schriftText
+                            font.pixelSize: Theme.groesseLabel
+                        }
                     }
+                }
+
+                // Bildschirm aus nach der Sperre und was sonst ohne Eingabe geschieht: Seite «Energie»
+                Knopf {
+                    x: -16
+                    implicitHeight: 32
+                    variante: "still"
+                    symbol: "monitor"
+                    schriftGroesse: Theme.groesseLabel
+                    text: "Bildschirm aus nach der Sperre: Energie"
+                    onClicked: Dienste.Aktionen.einstellungen("energie")
                 }
             }
         }

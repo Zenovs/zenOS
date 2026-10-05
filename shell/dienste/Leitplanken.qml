@@ -38,7 +38,9 @@ Singleton {
 
     // Text für die Einstellungen
     readonly property string hinweis: "Bei Bildschirmfreigabe bleiben Mitteilungsinhalte immer verborgen, und die automatische Sperre bleibt aktiv. Kein Modus und kein Zustand kann das ändern."
-    readonly property string energieHinweis: "Der Bildschirm geht nur aus, wenn zenOS gesperrt ist. Vor dem Ausschalten warnt zenOS " + vorwarnungSekunden + " s lang, jede Eingabe bricht ab."
+    // Text für die Seite «Energie». Das Ausschalten nach langer Sperre (mit vorwarnungSekunden Vorwarnung) kommt
+    // dazu, sobald es gebaut ist.
+    readonly property string energieHinweis: "Die automatische Sperre bleibt immer aktiv, nichts auf dieser Seite verzögert sie. Auch ein Video hält sie höchstens " + sperreTrotzHemmerMinuten + " Min. ohne Eingabe auf. Der Bildschirm geht nur aus, wenn zenOS gesperrt ist."
 
     // Minuten bis zur automatischen Sperre, immer 1–15 (Standard 5)
     function sperreMinuten(wunsch: var): int {

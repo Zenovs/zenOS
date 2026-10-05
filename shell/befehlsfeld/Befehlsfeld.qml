@@ -95,6 +95,12 @@ Scope {
             woerter: "bildschirm aus dunkel monitor display schwarz"
         },
         {
+            id: "energie",
+            titel: "Energie",
+            symbol: "akku-halb",
+            woerter: "energie strom akku bereitschaft standby schlafen"
+        },
+        {
             id: "abmelden",
             titel: "Abmelden",
             frage: "Wirklich abmelden?",
@@ -286,6 +292,9 @@ Scope {
             break;
         case "bildschirm-aus":
             Aktionen.bildschirmAus();
+            break;
+        case "energie":
+            Aktionen.einstellungen("energie");
             break;
         case "abmelden":
             Aktionen.abmelden();

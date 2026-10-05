@@ -10,9 +10,10 @@ import qs.dienste as Dienste
 
 // Einstellungen-Fenster (FloatingWindow mit labwc-Titelzeile) nach Entwurf 2 «Modi & Zustände»:
 // Navigation (260 px) mit Modi, Zuständen, Rastern, Bildschirmen (scrollt), darunter fest Web-Apps, Apps,
-// Allgemein, System; rechts die Seite Seite<Name>.qml aus diesem Ordner (Seiten anderer Module per Dateiname).
+// Allgemein, Energie, System; rechts die Seite Seite<Name>.qml aus diesem Ordner (Seiten anderer Module per
+// Dateiname).
 // Seite als "name" oder "name/unterauswahl", z. B. "modi/arbeit", "zustand/fokus", "zustand/fokus@arbeit",
-// "modi/neu", "zustand/neu", "allgemein".
+// "modi/neu", "zustand/neu", "allgemein", "energie".
 // IPC «einstellungen»: oeffnen(seite) (nicht während der Einrichtung), schliessen()
 Scope {
     id: root
@@ -28,6 +29,7 @@ Scope {
             "web-apps": "SeiteWebApps.qml",
             "apps": "SeiteApps.qml",
             "allgemein": "SeiteAllgemein.qml",
+            "energie": "SeiteEnergie.qml",
             "system": "SeiteSystem.qml"
         })
 
@@ -337,6 +339,13 @@ Scope {
                             text: "Allgemein"
                             gewaehlt: root.seite === "allgemein"
                             onClicked: root.navigieren("allgemein")
+                        }
+
+                        NavEintrag {
+                            width: navFuss.width
+                            text: "Energie"
+                            gewaehlt: root.seite === "energie"
+                            onClicked: root.navigieren("energie")
                         }
 
                         NavEintrag {
