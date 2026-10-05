@@ -277,8 +277,8 @@ Die Logik läuft in Quickshell selbst, ohne eigenen Hintergrunddienst.
 | Erzeugte Konfiguration | `~/.config/labwc/rc.xml` und `themerc-override`, `~/.config/kanshi/config`, `~/.config/kitty/*-theme.auto.conf` | nein, erzeugt |
 | `zen` | `/usr/local/bin/zen` verweist auf `/opt/zenos/scripts/zen` | ja |
 | Kanal für `zen update` | `/etc/xdg/zenos/kanal` (`dev` oder `main`; der signierte Kanal kennt `stabil`, `vorschau`, `dev`, `main` gilt als `stabil`) | nein, vom Installer |
-| Vertrauensanker | `/etc/zenos/vertrauen/{release,wurzel,widerrufen,serie}` (root, 0644; nur angelegt, wenn er fehlt oder leer ist; danach nur über `vertrauen/NNNN` oder `zen kanal anker`) | ja, beim ersten Mal (`system/vertrauen/`) |
-| Signierter Kanal | Programm `/usr/local/libexec/zenos/zenos-kanal` (Kopie, root, 0755), Units `zenos-kanal-holen.service` und `zenos-kanal-pruefen.service`, Stand `/var/lib/zenos/kanal/{stand.json,gesehen.json,hoechste}`, Bundle des Holers `/var/lib/zenos-kanal-holen/` | Programm und Units ja (Kopien), Stand nie |
+| Vertrauensanker | `/etc/zenos/vertrauen/{release,wurzel,widerrufen,serie}` (root, 0644). Mit Schlüsseln gefüllt nur im Image (aus `system/vertrauen/`) oder von Hand (`sudo zen kanal anker ORDNER`, Fingerabdrücke aus 1Password eintippen), danach nur über `vertrauen/NNNN` | im Image ja (`system/vertrauen/`), sonst nein |
+| Signierter Kanal | Programm `/usr/local/libexec/zenos/zenos-kanal` (Kopie, root, 0755; die vorige Fassung als `zenos-kanal.vorher`), Units `zenos-kanal-holen`, `-pruefen`, `-installieren` (statisch) und `-nachstart` (aktiviert, vor greetd); Zustand `/var/lib/zenos/kanal/` (`stand.json`, `gesehen.json`, `hoechste`, `gesperrt/`, `wunsch.json`, `auftrag.json`, `laeuft.json`, `gut.json`, `letzte.json`, `angehalten`, `bereit/<commit>`); Spiegel und Bundle des Holers `/var/lib/zenos-kanal-holen/`; Sperren und Vermerk eines `install.sh` von Hand `/run/zenos-sperre/` (nur root, 0700) | Programm und Units ja (Kopien), Zustand nie |
 | Lüfterkurve (optional) | `/etc/xdg/zenos/argon.json` | nie |
 | Freigabe Akkuprofil (ONE UP) | `/etc/xdg/zenos/argon-akkuprofil` (`zen akku freigeben`) | nie |
 | Gerätewerte (Akku, Lüfter) | `/run/zenos/geraet.json` (flüchtig, Ordner gehört `zenos-argon`) | nie |
@@ -329,8 +329,8 @@ Systemteile, dann alle Benutzerteile.
 |---|---|
 | `00-vorbereitung` | System prüfen (Ubuntu 26.04 als Kennung oder als Basis von zenOS, arm64/amd64, Platz), Werkzeuge des Installers |
 | `10-code` | `/opt/zenos` auf den Stand der Quelle bringen (atomar), Kanal festlegen |
-| `12-vertrauen` | Vertrauensanker `/etc/zenos/vertrauen` aus `system/vertrauen/`, nur wenn er fehlt oder leer ist; sonst nur Besitz und Rechte |
-| `14-kanal` | signierter Kanal: `zenos-kanal` als root-eigene Kopie, Units zum Holen und Prüfen, `/var/lib/zenos/kanal`. Installiert nichts |
+| `12-vertrauen` | Vertrauensanker `/etc/zenos/vertrauen` anlegen; mit Schlüsseln aus `system/vertrauen/` nur im Image, sonst nur ein Hinweis auf `sudo zen kanal anker`; Besitz und Rechte |
+| `14-kanal` | signierter Kanal: `zenos-kanal` als root-eigene Kopie (die vorige als `zenos-kanal.vorher`), die vier Units, `/var/lib/zenos/kanal`; aktiviert `zenos-kanal-nachstart.service`. Installiert selbst nichts |
 | `20-pakete` | alle Paketlisten aus `scripts/pakete/` in einem apt-Lauf |
 | `22-aufraeumen` | snapd und landscape-common entfernen (nur automatisch installierte, snapd nicht bei eigenen Snaps), snapd per apt-Pin fernhalten |
 | `25-quickshell` | Quickshell bauen, nur wenn der Stempel fehlt oder abweicht |
@@ -394,9 +394,10 @@ Mac (Claude Code, Tests im Container) ── push ──▶ GitHub dev ──▶
   `zenos-kanal-nachstart.service` vor greetd die Übernahme des Codes (`install.sh --nur-code`, ohne Netz), damit der
   Login keinen Mischstand sieht; `zen update` setzt den Rest fort. Nach zwei unterbrochenen Versuchen wird die
   Version gesperrt und der Rückweg genommen.
-- **Von Hand:** `install.sh` aus einem Arbeits-Checkout (etwa `~/zenOS`) wartet auf die Kanal-Sperre
-  `/run/lock/zenos-kanal.lock` und markiert den Stand als «angehalten»; das nächste `zen update` kehrt zum Kanal
-  zurück. Den Notweg ohne `zen` und ohne den neuen Code beschreibt `ANLEITUNG.md`, Abschnitt F.
+- **Von Hand:** `install.sh` aus einem Arbeits-Checkout (etwa `~/zenOS`) oder aus `/opt/zenos` wartet über sudo
+  auf die Kanal-Sperre und vermerkt sich in `/run/zenos-sperre/hand` (nur root); solange es läuft, installiert der
+  Kanal nichts. Aus einem Arbeits-Checkout markiert es den Stand als «angehalten»; das nächste `zen update` kehrt zum
+  Kanal zurück. Den Notweg ohne `zen` und ohne den neuen Code beschreibt `ANLEITUNG.md`, Abschnitt F.
 - **`zen kanal`:** `zen kanal status` zeigt Kanal, Zustand, Fingerabdrücke, abgelehnte Tags, letzte Installation,
   guten und gesperrten Stand; `sudo zen kanal pruefen` holt und prüft, ohne zu installieren. Regeln, Zustände und
   Dateien: `docs/image-und-releases.md`, «Signierte Releases».

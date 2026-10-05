@@ -114,6 +114,7 @@ _ende() {
   # Die Ende-Zeile muss ins Log, auch wenn das Terminal gerade wegfällt (SSH getrennt, Leser der Ausgabe beendet)
   trap '' HUP PIPE
   _zenos_aufraeumen
+  _hand_vermerk_entfernen
   if [[ -n "$_SUDO_WACH_PID" ]]; then kill "$_SUDO_WACH_PID" 2>/dev/null; fi
   local aenderungen warnungen
   aenderungen=$(zenos_anzahl aenderung)
@@ -150,12 +151,29 @@ trap 'exit 143' TERM
 
 # --- Sperre: nie zwei Läufe gleichzeitig -----------------------------------
 
-# Zum Schreiben öffnet install.sh nur die eigene Sperrdatei. Eine fremde (angelegt von root oder einem
-# anderen Benutzer) lehnt der Kern in /run/lock (sticky, für alle beschreibbar) wegen fs.protected_regular
-# ab, auch für root und auch, wenn ihre Rechte das Schreiben erlauben. flock geht auch lesend.
+# Ordner der Sperren, die nur root halten kann (wie in zenos-kanal): /run/zenos-sperre, 0700. Eine Sperre in /run/lock
+# (für alle beschreibbar) könnte jeder Benutzer anlegen oder lesend öffnen und halten (flock geht auch so).
+_ROOT_SPERREN=/run/zenos-sperre
+_HAND_VERMERK=""
+
+# Als root (Kanal, nachstart --nur-code): die Sperre in _ROOT_SPERREN, an die kein Benutzer kommt. Sonst (von Hand als
+# Benutzer, auch die Benutzerteile beim Anmelden, und im Image) /run/lock/zenos-install.lock wie bisher. Zum Schreiben
+# öffnet install.sh dort nur die eigene Sperrdatei: Eine fremde lehnt der Kern in /run/lock (sticky, für alle
+# beschreibbar) wegen fs.protected_regular ab, auch für root. flock geht auch lesend. Bleibt die Sperre 15 Minuten
+# belegt: Exit 75, ohne etwas begonnen zu haben (zenos-kanal zählt den Versuch dann nicht).
 _sperren() {
   local sperre=/run/lock/zenos-install.lock
-  if [[ -e "$sperre" || -L "$sperre" ]]; then
+  if (( EUID == 0 && ! ZENOS_IMAGE )) && [[ -d /run && ! -L "$_ROOT_SPERREN" ]]; then
+    install -d -m 0700 -o root -g root -- "$_ROOT_SPERREN" 2>/dev/null || true
+    sperre=$_ROOT_SPERREN/install.lock
+    if [[ -d "$_ROOT_SPERREN" && -O "$_ROOT_SPERREN" && ! -L "$_ROOT_SPERREN" && ! -L "$sperre" ]] &&
+      { exec 9>>"$sperre"; } 2>/dev/null; then
+      :
+    else
+      echo "install.sh: $_ROOT_SPERREN nicht nutzbar, weiter ohne Sperre" >&2
+      return 0
+    fi
+  elif [[ -e "$sperre" || -L "$sperre" ]]; then
     if [[ -O "$sperre" && ! -L "$sperre" ]] && { exec 9>>"$sperre"; } 2>/dev/null; then
       :
     elif ! { exec 9<"$sperre"; } 2>/dev/null; then
@@ -173,28 +191,43 @@ _sperren() {
   fi
   if ! flock -n 9; then
     (( _RUHIG )) || echo "Eine andere zenOS-Installation läuft gerade, warte …" >&2
-    flock -w 900 9 || { echo "install.sh: Sperre nicht frei geworden" >&2; exit 1; }
+    flock -w 900 9 || { echo "install.sh: Sperre $sperre nicht frei geworden" >&2; exit 75; }
   fi
 }
 
-# Ein Lauf von Hand aus einem anderen Checkout (etwa ~/zenOS) wartet zuerst auf die Kanal-Sperre und hält sie bis zum
-# Ende: Kanal und Hand stellen /opt/zenos nie zugleich um. Vor der eigenen Sperre, in derselben Reihenfolge wie
-# zenos-kanal (erst Kanal, dann install.sh); sonst könnten sich ein Lauf von Hand und der Rückweg des Kanals
-# gegenseitig blockieren. Nicht für Läufe des Kanals selbst (ZENOS_KANAL_LAUF=1), aus /opt/zenos, Image und
-# Benutzerteile. Eine fremde Sperrdatei nur lesend, wie oben.
-_kanal_sperren() {
-  local sperre=/run/lock/zenos-kanal.lock warten=900
-  (( ! ZENOS_IMAGE && ! _NUR_BENUTZER )) || return 0
-  [[ "${ZENOS_KANAL_LAUF:-}" != 1 && "$ZENOS_QUELLE" != "$(readlink -m -- "$ZENOS_CODE")" ]] || return 0
-  befehl_vorhanden flock && [[ -d /run/lock && ! -L "$sperre" ]] || return 0
-  if [[ -e "$sperre" && ! -O "$sperre" ]]; then
-    { exec 6<"$sperre"; } 2>/dev/null || return 0
-  elif ! { exec 6>>"$sperre"; } 2>/dev/null; then
-    { exec 6<"$sperre"; } 2>/dev/null || return 0
+# Ein Lauf von Hand (aus ~/zenOS oder aus /opt/zenos, nicht der Kanal, nicht Image, nicht nur Benutzerteile) vermerkt
+# sich für zenos-kanal: Er wartet auf die Kanal-Sperre (nur root, über sudo), trägt darunter seine PID in
+# /run/zenos-sperre/hand ein und gibt sie wieder frei. Solange dieser Prozess läuft, installiert der Kanal nichts
+# (zen update meldet es); umgekehrt wartet ein Lauf von Hand, bis der Kanal fertig ist. Den Vermerk kann nur root
+# schreiben, ein anderer Benutzer kann den Kanal so nicht anhalten. Am Ende entfernt _ende ihn.
+_hand_vermerken() {
+  local warten=900
+  (( ! ZENOS_IMAGE && ! _NUR_BENUTZER && ! _NUR_CODE )) || return 0
+  [[ "${ZENOS_KANAL_LAUF:-}" != 1 ]] || return 0
+  befehl_vorhanden flock && [[ -d /run ]] || return 0
+  $SUDO install -d -m 0700 -o root -g root -- "$_ROOT_SPERREN"
+  if printf '%s\n' "$$" | $SUDO flock -n "$_ROOT_SPERREN/kanal.lock" tee -- "$_ROOT_SPERREN/hand" > /dev/null; then
+    _HAND_VERMERK=$_ROOT_SPERREN/hand
+    return 0
   fi
-  flock -n 6 && return 0
   (( _RUHIG )) || echo "Der Kanal prüft oder installiert gerade, warte (höchstens $(( warten / 60 )) Minuten) …" >&2
-  flock -w "$warten" 6 || { echo "install.sh: Der Kanal ist nach $(( warten / 60 )) Minuten nicht fertig" >&2; exit 1; }
+  if ! printf '%s\n' "$$" |
+    $SUDO flock -w "$warten" "$_ROOT_SPERREN/kanal.lock" tee -- "$_ROOT_SPERREN/hand" > /dev/null; then
+    echo "install.sh: Der Kanal ist nach $(( warten / 60 )) Minuten nicht fertig" >&2
+    exit 75
+  fi
+  _HAND_VERMERK=$_ROOT_SPERREN/hand
+}
+
+# Den eigenen Vermerk entfernen (nur, wenn er noch diese PID trägt). Ohne sudo-Anmeldung bleibt er liegen; zenos-kanal
+# übergeht ihn, sobald dieser Prozess nicht mehr läuft.
+_hand_vermerk_entfernen() {
+  [[ -n "$_HAND_VERMERK" ]] || return 0
+  local -a als_root=()
+  if [[ -n "$SUDO" ]]; then als_root=(sudo -n); fi
+  if [[ "$("${als_root[@]}" cat -- "$_HAND_VERMERK" 2>/dev/null)" == "$$" ]]; then
+    "${als_root[@]}" rm -f -- "$_HAND_VERMERK" 2>/dev/null || true
+  fi
 }
 
 # --- sudo ------------------------------------------------------------------
@@ -407,11 +440,11 @@ _oberflaeche_auffrischen() {
 
 # --- Ablauf ----------------------------------------------------------------
 
-_kanal_sperren
 _sperren
 # Beginn dieses Laufs (nach der Sperre), für _oberflaeche_auffrischen
 printf -v _LAUF_BEGINN '%(%s)T' -1
 _sudo_vorbereiten
+_hand_vermerken
 ZENOS_TMP=$(mktemp -d "${TMPDIR:-/tmp}/zenos-install.XXXXXX")
 export ZENOS_TMP
 : > "$ZENOS_TMP/zaehler"

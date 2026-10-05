@@ -361,14 +361,29 @@ stehen in `docs/image-und-releases.md`, Abschnitt «Signierte Releases».
   gleich den Gruppen in `scripts/lib/sensible-pfade`; ein neuer Stand kann keinen streichen), installiert es nur nach
   Zustimmung, auch wenn es signiert ist. Indirekte Änderungen (neue Pakete, gemeinsame Bibliotheken) fängt die Liste
   nicht.
-- **Kein Aussperren:** Nach jeder Installation prüft zenos-kanal die Gesundheit, dazu den Selbsttest des eben
-  installierten zenos-kanal (liest er den Anker, nimmt er den Tag an?). Scheitert etwas, geht es auf den Stand davor
-  zurück, die Version ist gesperrt. Der Notweg in `ANLEITUNG.md`, Abschnitt F, braucht weder `zen` noch den Kanal.
+- **Kein Aussperren:** Nach jeder Installation prüft zenos-kanal die Gesundheit (gewertet wird nur, was das Update
+  verschlechtert; ein schon ausgefallenes greetd sperrt kein Update). Dazu kommt der Selbsttest des eben installierten
+  zenos-kanal: Liest er den Anker, nimmt er den Tag an, und laufen, wenn er sich geändert hat, status, update, rollback,
+  installieren und nachstart als Probelauf in einem Wegwerf-Zustand durch? Scheitert etwas, geht es auf den Stand davor
+  zurück (dort ohne Probelauf), die Version ist gesperrt. Was der Selbsttest nicht fängt, holt der Notweg: die vorige
+  Fassung `zenos-kanal.vorher` zurück, dann `zen rollback`. Erst danach kommt der git-Notweg in `ANLEITUNG.md`,
+  Abschnitt F; er prüft den Tag gegen den Anker des Geräts und nimmt `dev` nur, solange der Anker fehlt. Grenzen: Ein
+  Fehler, der erst nach einem Neustart auftritt (Login, PAM), fällt der Gesundheitsprüfung nicht auf; eine Bestätigung
+  nach dem Start kommt mit Teil B.
+- **Lokale Benutzer:** Sperren und der Vermerk eines `install.sh` von Hand liegen in `/run/zenos-sperre` (nur root,
+  0700). Früher lagen sie in `/run/lock`, für alle beschreibbar: Jeder Prozess als Benutzer (etwa ein Agent nach einer
+  Prompt-Injection) konnte eine Sperre halten, den Kanal abschneiden und über die Kette Versuch → gesperrt → Rückweg
+  an derselben Sperre ein «kaputt» erzwingen (Prüfung, selbst nachgestellt). Scheitert `install.sh` nur an seiner
+  Sperre (Exit 75, nichts begonnen), zählt der Versuch nicht.
 - **Prüfung auf dem Gerät** (`scripts/bin/zenos-kanal`): Holen und Prüfen sind getrennt. Ein flüchtiger Systembenutzer
   ohne Rechte holt in einer Sandbox nur über https und gibt ein Bundle weiter; root öffnet dessen Repo nie. root prüft
   ohne Netz in einem Repo, das jedes Mal neu entsteht, mit leerer Umgebung für git (keine fremde config, keine Hooks,
   kein fsmonitor, OpenPGP und X.509 aus). Der Anker liegt root-eigen in `/etc/zenos/vertrauen` und wird nie aus
-  `/opt/zenos` gelesen. Ein Hauptbuch erkennt verschobene Tags, `hoechste` verhindert ein Downgrade. Selbst
+  `/opt/zenos` gelesen. Ein Hauptbuch erkennt verschobene Tags am Commit, nicht an der Objekt-ID: Die Signatur lässt
+  sich ohne Schlüssel neu umbrechen, git nimmt das an, nur die Objekt-ID ändert sich (selbst nachgestellt); früher löste
+  das einen ALARM aus und blockierte jedes Gerät. Viele Tags auf origin blockieren nichts (höchstens 2000
+  Signaturprüfungen je Lauf), der Holer holt nur `dev` und `v*` und räumt seinen Spiegel auf. In die Bereitstellung
+  und nach `/opt/zenos` kommen nur geprüfte Tags. `hoechste` verhindert ein Downgrade. Selbst
   nachgestellt: `git verify-tag` nimmt auch einen Tag mit zwei Signaturen oder unter falschem Namen an, und mit
   OpenPGP prüft git gegen den Schlüsselbund von gpg statt gegen den Anker; der Kanal lehnt alle drei ab.
 - **Signieren nur bewusst:** `scripts/release-signieren.sh` läuft in einem eigenen Terminal-Tab ohne Claude Code. Es

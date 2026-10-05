@@ -237,10 +237,12 @@ _basis_letzter_lauf() { # LOG MODI (etwa «normal|image»)
   ' "$1" 2>/dev/null
 }
 
-# Wahr, wenn gerade ein install.sh läuft (seine Sperre ist belegt). Lesend geöffnet, wie install.sh eine fremde
-# Sperrdatei öffnet; ist sie frei, gibt die Subshell sie gleich wieder frei.
+# Wahr, wenn gerade ein install.sh läuft: eines des Kanals (die Marke /run/zenos-kanal/uebernahme steht, seine Sperre
+# in /run/zenos-sperre ist nur für root) oder eines als Benutzer (dessen Sperre ist belegt). Lesend geöffnet, wie
+# install.sh eine fremde Sperrdatei öffnet; ist sie frei, gibt die Subshell sie gleich wieder frei.
 _basis_install_laeuft() {
   local sperre=/run/lock/zenos-install.lock
+  [[ -e /run/zenos-kanal/uebernahme ]] && return 0
   [[ -f "$sperre" ]] && command -v flock >/dev/null 2>&1 || return 1
   ( exec 9<"$sperre" && ! flock -n 9 ) 2>/dev/null
 }

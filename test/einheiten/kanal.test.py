@@ -100,7 +100,8 @@ class Basis(unittest.TestCase):
             "ANCHOR_DIR": self.pfad("etc", "zenos", "vertrauen"),
             "STATE_DIR": self.pfad("var", "lib", "zenos", "kanal"),
             "FETCH_DIR": self.pfad("var", "lib", "zenos-kanal-holen"),
-            "LOCK_FILE": self.pfad("run", "zenos-kanal.lock"),
+            "LOCK_FILE": self.pfad("run", "sperre", "kanal.lock"),
+            "HAND_MARK": self.pfad("run", "sperre", "hand"),
             "TRUSTED_UIDS": (0, os.getuid()),
             "PATH_CHECK_TOP": self.ordner,
             "ALLOWED_SCHEMES": ("https", "file"),
@@ -199,6 +200,26 @@ class Basis(unittest.TestCase):
     def lauf(self):
         self.assertEqual(self.holen(), 0, self.holen_ausgabe)
         return self.pruefen()
+
+    def neu_verpackt(self, name, breite=64, anhang=""):
+        """Angriff ohne Schlüssel: dasselbe Tag-Objekt, die Base64-Zeilen der Signatur anders umbrochen (dazu ANHANG am
+        Ende), mit git mktag neu angelegt und unter NAME gesetzt. Nutzlast und Signatur bleiben gleich, git verify-tag
+        nimmt es an, nur die Objekt-ID ist neu."""
+        roh = self.git("cat-file", "tag", f"refs/tags/{name}") + "\n"
+        anfang = roh.index(K.SIG_BEGIN) + len(K.SIG_BEGIN) + 1
+        ende = roh.index(K.SIG_END)
+        b64 = "".join(roh[anfang:ende].split())
+        neu = roh[:anfang] + "\n".join(b64[i:i + breite] for i in range(0, len(b64), breite)) + "\n" + roh[ende:]
+        oid = subprocess.run(["git", "-C", self.server, "mktag"], input=neu + anhang, text=True, env=self.env,
+                             capture_output=True, check=True).stdout.strip()
+        self.assertNotEqual(oid, self.git("rev-parse", f"refs/tags/{name}"))
+        with open(self.pfad("erlaubt-wur"), "w", encoding="utf-8") as f:
+            f.write(f'zenos-release namespaces="git" {k("rel")}\nzenos-wurzel namespaces="git" {k("wur")}\n')
+        r = subprocess.run(["git", "-C", self.server, "-c", f"gpg.ssh.allowedSignersFile={self.pfad('erlaubt-wur')}",
+                            "verify-tag", oid], env=self.env, capture_output=True, text=True, check=False)
+        self.assertEqual(r.returncode, 0, "git nimmt die neue Hülle an: " + r.stderr)
+        self.git("update-ref", f"refs/tags/{name}", oid)
+        return oid
 
     def abgelehnt(self, stand):
         return {e["tag"]: e["grund"] for e in stand["abgelehnt"]}
@@ -380,14 +401,52 @@ class Releases(Basis):
         _, stand = self.lauf()
         self.assertEqual(stand["bereit"]["version"], "v0.1.0")
 
-    def test_zu_viele_tags(self):
-        self.addCleanup(setattr, K, "MAX_TAGS", K.MAX_TAGS)
-        K.MAX_TAGS = 3
-        for n in range(4):
-            self.unsigniert(f"v0.0.{n}")
+    def test_viele_tags_blockieren_nicht(self):
+        """Angriff (Prüfung, Probe F): 1001 leichte Tags per Push, ohne Schlüssel. Früher «blockiert» auf jedem Gerät,
+        auch für ein neues, gültig signiertes Release. Jetzt kosten sie kaum etwas und blockieren nichts."""
+        self.commit("zwei")
+        self.signieren("v1.0.0")
+        befehle = "".join(f"create refs/tags/v0.0.{n} HEAD\n" for n in range(1001))
+        subprocess.run(["git", "-C", self.server, "update-ref", "--stdin"], input=befehle, text=True, env=self.env,
+                       check=True)
+        for n in range(50):
+            self.unsigniert(f"v0.1.{n}")
         rc, stand = self.lauf()
-        self.assertEqual((rc, stand["zustand"]), (3, "blockiert"))
-        self.assertIn("Zu viele Tags", stand["grund"])
+        self.assertEqual((rc, stand["zustand"], stand["bereit"]["version"]), (0, "bereit", "v1.0.0"), stand["grund"])
+        self.assertEqual(len(stand["abgelehnt"]), K.MAX_REJECTED_SHOWN, "die Liste bleibt kurz")
+        self.assertIn(f"{1051 - K.MAX_REJECTED_SHOWN} weitere Tags abgelehnt (nicht einzeln aufgeführt)",
+                      stand["hinweise"])
+        # Ein neues, gültig signiertes Release kommt trotzdem an
+        self.commit("drei")
+        self.signieren("v1.1.0")
+        rc, stand = self.lauf()
+        self.assertEqual((rc, stand["bereit"]["version"]), (0, "v1.1.0"))
+
+    def test_signaturpruefungen_begrenzt(self):
+        """Kopien einer echten Signatur unter anderen Namen kosten je ein git verify-tag. Höchstens MAX_VERIFY je Lauf;
+        die übrigen bleiben ungeprüft (Hinweis), nichts ist «blockiert», bekannte gültige Namen zählen nicht mit."""
+        self.commit("zwei")
+        echt = self.signieren("v0.1.0")
+        self.lauf()
+        roh = self.git("cat-file", "tag", echt)
+        for name in ("v9.0.0", "v9.0.1", "v9.0.2"):
+            kopie = roh.replace("tag v0.1.0\n", f"tag {name}\n", 1) + "\n"
+            oid = subprocess.run(["git", "-C", self.server, "mktag"], input=kopie, text=True, env=self.env,
+                                 capture_output=True, check=True).stdout.strip()
+            self.git("update-ref", f"refs/tags/{name}", oid)
+        self.commit("drei")
+        self.signieren("v0.2.0")
+        self.addCleanup(setattr, K, "MAX_VERIFY", K.MAX_VERIFY)
+        K.MAX_VERIFY = 2
+        rc, stand = self.lauf()
+        self.assertEqual((rc, stand["zustand"]), (0, "bereit"))
+        self.assertEqual(stand["bereit"]["version"], "v0.1.0", "v0.2.0 blieb ungeprüft, v0.1.0 ist bekannt")
+        self.assertIn("2 Tags blieben ungeprüft", " ".join(stand["hinweise"]))
+        self.assertEqual(self.abgelehnt(stand).get("v9.0.2"), "Signatur ungültig")
+        K.MAX_VERIFY = 4
+        rc, stand = self.pruefen()
+        self.assertEqual((rc, stand["bereit"]["version"]), (0, "v0.2.0"))
+        self.assertNotIn("ungeprüft", " ".join(stand["hinweise"]))
 
 
 class Hauptbuch(Basis):
@@ -409,6 +468,43 @@ class Hauptbuch(Basis):
         rc, stand = self.lauf()
         self.assertEqual((rc, stand["zustand"]), (0, "bereit"))
 
+    def test_neu_umbrochen_ist_kein_alarm(self):
+        """Angriff (Prüfung, Befund 1, Probe A): Wer auf GitHub schreiben darf, bricht die Signatur von v0.1.0 neu um
+        oder hängt eine Leerzeile an. Früher: ALARM und «blockiert» auf jedem Gerät, auch für das nächste echte
+        Release. Jetzt zählt der Commit: dasselbe Commit in anderer Hülle gilt weiter."""
+        commit = self.commit("zwei")
+        vorher = self.signieren("v0.1.0")
+        rc, stand = self.lauf()
+        self.assertEqual((rc, stand["bereit"]["version"]), (0, "v0.1.0"))
+        self.assertEqual(self.hauptbuch()["v0.1.0"]["commit"], commit)
+        for breite, anhang in ((64, ""), (70, "\n")):
+            neu = self.neu_verpackt("v0.1.0", breite, anhang)
+            rc, stand = self.lauf()
+            self.assertEqual((rc, stand["zustand"]), (0, "bereit"), stand["grund"])
+            self.assertNotIn("ALARM", stand["grund"])
+            self.assertTrue(any("derselbe Commit" in h for h in stand["hinweise"]), stand["hinweise"])
+            self.assertEqual(self.hauptbuch()["v0.1.0"]["objekt"], neu)
+            self.assertNotEqual(neu, vorher)
+        # Das nächste echte Release kommt an
+        self.commit("drei")
+        self.signieren("v0.2.0")
+        rc, stand = self.lauf()
+        self.assertEqual((rc, stand["bereit"]["version"]), (0, "v0.2.0"))
+
+    def test_altes_hauptbuch_ohne_commit(self):
+        """Ein Hauptbuch der vorigen Fassung (ohne Commit, mit ungültigen Namen) wird gelesen und ergänzt."""
+        commit = self.commit("zwei")
+        objekt = self.signieren("v0.1.0")
+        self.unsigniert("v0.0.9")
+        os.makedirs(K.STATE_DIR, exist_ok=True)
+        K.write_json(os.path.join(K.STATE_DIR, "gesehen.json"), {"version": 1, "tags": {
+            "v0.1.0": {"objekt": objekt, "gueltig": True, "erstmals": "2026-10-01T00:00:00Z"},
+            "v0.0.9": {"objekt": self.git("rev-parse", "refs/tags/v0.0.9"), "gueltig": False, "erstmals": None}}})
+        rc, stand = self.lauf()
+        self.assertEqual(rc, 0, stand["grund"])
+        self.assertEqual(self.hauptbuch(), {"v0.1.0": {"objekt": objekt, "gueltig": True, "commit": commit,
+                                                       "erstmals": "2026-10-01T00:00:00Z"}})
+
     def test_verschoben_ungueltig(self):
         self.commit("zwei")
         vorher = self.signieren("v0.1.0")
@@ -418,8 +514,8 @@ class Hauptbuch(Basis):
         rc, stand = self.lauf()
         self.assertEqual((rc, stand["zustand"]), (0, "aktuell"))
         self.assertIn("auf origin verschoben", self.abgelehnt(stand)["v0.1.0"])
-        self.assertEqual(self.hauptbuch()["v0.1.0"], {"objekt": vorher, "gueltig": True,
-                                                      "erstmals": self.hauptbuch()["v0.1.0"]["erstmals"]})
+        self.assertEqual(self.hauptbuch()["v0.1.0"], {"objekt": vorher, "gueltig": True, "commit": self.git(
+            "rev-parse", "HEAD"), "erstmals": self.hauptbuch()["v0.1.0"]["erstmals"]})
 
     def test_geloescht(self):
         self.commit("zwei")
@@ -434,7 +530,8 @@ class Hauptbuch(Basis):
         self.commit("zwei")
         self.unsigniert("v0.1.0")
         self.lauf()
-        self.assertFalse(self.hauptbuch()["v0.1.0"]["gueltig"])
+        self.assertFalse(os.path.exists(os.path.join(K.STATE_DIR, "gesehen.json")),
+                         "ungültige Namen kommen nicht ins Hauptbuch (sonst wüchse es mit jedem fremden Tag)")
         self.git("tag", "-d", "v0.1.0")
         neu = self.signieren("v0.1.0")
         rc, stand = self.lauf()
@@ -491,6 +588,25 @@ class Hoechste(Basis):
         self.geraet_auf("v0.2.0")  # etwa über zen update auf dev
         _, stand = self.pruefen()
         self.assertEqual((stand["hoechste"], stand["zustand"]), ("v0.2.0", "aktuell"))
+
+    def test_nicht_aus_einer_unterbrochenen_installation(self):
+        """Ein Abbruch liess /opt/zenos auf einem Ziel stehen, das nie gesund wurde; die Prüfung danach hob hoechste
+        darauf, obwohl die Version gleich gesperrt wurde (Ende-zu-Ende-Test). Solange laeuft.json da ist, nicht."""
+        self.commit("zwei")
+        self.signieren("v0.1.0")
+        self.commit("drei")
+        self.signieren("v0.2.0")
+        self.geraet_auf("v0.1.0")
+        _, stand = self.lauf()
+        self.assertEqual(self.hoechste(), "v0.1.0")
+        self.geraet_auf("v0.2.0")
+        K.write_json(os.path.join(K.STATE_DIR, "laeuft.json"), {"version": 1, "phase": "ziel"})
+        _, stand = self.pruefen()
+        self.assertEqual((self.hoechste(), stand["hoechste"]), ("v0.1.0", "v0.1.0"))
+        self.assertIn("hoechste bleibt", " ".join(stand["hinweise"]))
+        os.unlink(os.path.join(K.STATE_DIR, "laeuft.json"))
+        _, stand = self.pruefen()
+        self.assertEqual(self.hoechste(), "v0.2.0")
 
     def test_ableitung_aus_lokalem_stand(self):
         """Fehlt hoechste und liegt der installierte Stand nur auf dem Gerät (nicht gepusht), zählt der Verlauf in
@@ -585,6 +701,45 @@ class Vertrauen(Basis):
         _, stand = self.lauf()
         self.assertIn("andere Wurzel", self.abgelehnt(stand)["vertrauen/0002"])
         self.assertEqual(K.load_device_anchor().root, k("wur"))
+
+    def test_vertrauens_tag_neu_umbrochen(self):
+        """Wie Befund 1, für vertrauen/NNNN: neu umbrochen ist kein Alarm, der Anker bleibt."""
+        self.neuer_anker(2, release=("rel2",), widerrufen=("rel",), serie=2)
+        self.lauf()
+        self.assertEqual(K.load_device_anchor().series, 2)
+        self.neu_verpackt("vertrauen/0002")
+        rc, stand = self.lauf()
+        self.assertNotEqual(stand["zustand"], "blockiert", stand["grund"])
+        self.assertEqual(K.load_device_anchor().series, 2)
+
+    def test_abbruch_beim_ankerwechsel(self):
+        """Ausfall (Prüfung, Befund 11): Strom weg zwischen den Dateien des Ankers. Früher stand nach «widerrufen» der
+        alte Release-Schlüssel in release und in widerrufen: Anker ungültig, für immer «Anker fehlt». Jetzt ist jeder
+        Zwischenstand gültig, und der nächste Lauf vollendet den Wechsel."""
+        self.neuer_anker(2, release=("rel2",), widerrufen=("rel",), serie=2)
+        self.holen()
+        echt = K.write_atomic
+        self.addCleanup(setattr, K, "write_atomic", echt)
+        for abbruch_bei in (1, 2, 3):
+            self.anker()
+            gezaehlt = []
+
+            def schreiben(pfad, text, mode=0o644, grenze=abbruch_bei, liste=gezaehlt):
+                if pfad.startswith(K.ANCHOR_DIR + os.sep):
+                    liste.append(pfad)
+                    if len(liste) == grenze:
+                        raise OSError(5, "Strom weg")
+                return echt(pfad, text, mode)
+
+            K.write_atomic = schreiben
+            self.pruefen()
+            K.write_atomic = echt
+            zwischen = K.load_device_anchor()  # wirft, wenn der Zwischenstand ungültig ist
+            self.assertIn(zwischen.series, (1, 2), abbruch_bei)
+            rc, stand = self.pruefen()
+            anker = K.load_device_anchor()
+            self.assertEqual((anker.series, anker.release, anker.revoked), (2, [k("rel2")], [k("rel")]), abbruch_bei)
+            self.assertNotEqual(stand["zustand"], "anker_fehlt", abbruch_bei)
 
     def test_widerruf_bleibt(self):
         self.anker(widerrufen=("fremd",))
@@ -716,10 +871,19 @@ class Anker(Basis):
         rc, text = self.anker_von_hand(ordner, ["SHA256:falsch"])
         self.assertEqual(rc, 3, text)
         self.assertFalse(os.path.exists(K.ANCHOR_DIR))
-        rc, text = self.anker_von_hand(ordner, [K.fingerprint(k("wur")), "nein"])
-        self.assertEqual(rc, 3, text)
+        # Angriff (Prüfung, Befund 7): Die Fingerabdrücke aus dem Ordner stehen vor der Eingabe nicht auf dem
+        # Bildschirm, auch nicht nach einer falschen; abtippen geht nicht
+        self.assertNotIn(K.fingerprint(k("wur")), text)
+        self.assertNotIn(K.fingerprint(k("rel2"))[7:15], text)
         rc, text = self.anker_von_hand(ordner, [K.fingerprint(k("wur")), "ja"])
+        self.assertEqual(rc, 3, text)
+        self.assertNotIn(K.fingerprint(k("rel2"))[7:15], text)
+        rc, text = self.anker_von_hand(ordner, [K.fingerprint(k("wur")), K.fingerprint(k("rel"))[7:15]])
+        self.assertEqual(rc, 3, text)
+        self.assertFalse(os.path.exists(K.ANCHOR_DIR))
+        rc, text = self.anker_von_hand(ordner, [K.fingerprint(k("wur")), K.fingerprint(k("rel2"))[7:15]])
         self.assertEqual(rc, 0, text)
+        self.assertIn(K.fingerprint(k("rel2")), text, "danach zeigt es die übernommenen Fingerabdrücke")
         anker = K.load_device_anchor()
         self.assertEqual((anker.release, anker.root, anker.series), ([k("rel2")], k("wur"), 1))
 
@@ -728,7 +892,9 @@ class Anker(Basis):
         rc, text = self.anker_von_hand(self.quelle(serie=2), [])
         self.assertEqual(rc, 3, text)
         self.assertIn("kleiner", text)
-        rc, text = self.anker_von_hand(self.quelle(serie=4, release=("rel2",)), [K.fingerprint(k("wur")), "ja"])
+        rc, text = self.anker_von_hand(self.quelle(serie=4, release=("rel2", "rel")),
+                                       [K.fingerprint(k("wur")), K.fingerprint(k("rel"))[7:15],
+                                        K.fingerprint(k("rel2"))[7:15]])
         self.assertEqual(rc, 0, text)
         anker = K.load_device_anchor()
         self.assertEqual((anker.series, anker.revoked), (4, [k("fremd")]), "Widerrufe des Geräts bleiben")
@@ -782,6 +948,40 @@ class Ablauf(Basis):
                         ort=os.path.join(K.FETCH_DIR, "spiegel.git"))
         self.assertNotIn("refs/kanal/tags/v0.2.0", refs)
 
+    def test_holen_nur_was_der_kanal_braucht(self):
+        """Angriff (Prüfung, Befund 4, Probe C): Ein fremder Branch voller Daten, je Runde neu, und der Spiegel des
+        Holers wuchs ohne Grenze (gc.auto=0, alle Branches). Jetzt holt er nur dev und v*, und was nicht mehr erreichbar
+        ist, fliegt nach dem Holen raus."""
+        spiegel = os.path.join(K.FETCH_DIR, "spiegel.git")
+
+        def groesse():
+            return K.tree_size(spiegel)
+
+        self.signieren("v0.1.0")
+        self.unsigniert("anderer-tag")
+        self.git("checkout", "-q", "-b", "gross")
+        self.commit("gross", {"daten": os.urandom(3 << 20).hex()})
+        self.git("checkout", "-q", "dev")
+        self.assertEqual(self.holen(), 0, self.holen_ausgabe)
+        refs = self.git("for-each-ref", "--format=%(refname)", ort=spiegel).split("\n")
+        self.assertEqual(sorted(refs), ["refs/kanal/heads/dev", "refs/kanal/tags/v0.1.0"])
+        klein = groesse()
+        self.assertLess(klein, 1 << 20)
+        # Daten auf dev selbst, danach dev zurückgesetzt: Sie bleiben nicht im Spiegel
+        for runde in range(3):
+            self.commit(f"daten {runde}", {"daten": os.urandom(2 << 20).hex()})
+            self.assertEqual(self.holen(), 0, self.holen_ausgabe)
+            self.assertGreater(groesse(), 2 << 20)
+            self.git("reset", "-q", "--hard", "HEAD~1")
+            self.assertEqual(self.holen(), 0, self.holen_ausgabe)
+            self.assertLess(groesse(), klein + (256 << 10), f"Runde {runde}")
+        # Zu gross: weg damit, Meldung statt voller Platte
+        self.addCleanup(setattr, K, "MAX_MIRROR", K.MAX_MIRROR)
+        K.MAX_MIRROR = 1024
+        self.assertEqual(self.holen(), 1)
+        self.assertFalse(os.path.exists(spiegel))
+        self.assertIn("grösser als", self.holen_ausgabe)
+
     def test_holen_ohne_dev_und_ohne_tags(self):
         self.git("branch", "-m", "dev", "main")
         self.assertEqual(self.holen(), 0, self.holen_ausgabe)
@@ -802,6 +1002,28 @@ class Ablauf(Basis):
         self.assertEqual((rc, stand["zustand"]), (1, "fehler"))
         self.assertIn("Bundle", stand["grund"])
 
+    def test_wunsch_bei_uhrsprung(self):
+        """Ausfall (Prüfung, Befund 15c): Stellt NTP die Uhr nach dem Start um mehr als eine Stunde, galt der Wunsch von
+        zen update als zu alt. Jetzt zählt die Zeit seit dem Start."""
+        if K.boot_clock()[0] is None:
+            self.skipTest("ohne /proc/sys/kernel/random/boot_id")
+        self.commit("zwei")
+        self.signieren("v0.1.0")
+        K.write_wish("update")
+        spaeter = K.now() + datetime.timedelta(hours=3)
+        self.addCleanup(setattr, K, "now", K.now)
+        K.now = lambda: spaeter
+        _, stand = self.lauf()
+        self.assertIsNotNone(stand["wunsch"], "der Wunsch gilt trotz Uhrsprung")
+        # Ein Wunsch aus einem anderen Start zählt nach der Uhrzeit
+        pfad = os.path.join(K.STATE_DIR, "wunsch.json")
+        K.write_wish("update")
+        alt = K.load_json(pfad)
+        alt.update(start="00000000-0000-0000-0000-000000000000", zeit=K.iso(spaeter - datetime.timedelta(hours=2)))
+        K.write_json(pfad, alt, 0o600)
+        _, stand = self.pruefen()
+        self.assertIsNone(stand["wunsch"])
+
     def test_kanal(self):
         self.kanal("nightly")
         rc, stand = self.lauf()
@@ -815,6 +1037,7 @@ class Ablauf(Basis):
         self.assertEqual(stand["kanal"], "dev")
 
     def test_sperre_belegt(self):
+        os.makedirs(os.path.dirname(K.LOCK_FILE), mode=0o755)
         fd = os.open(K.LOCK_FILE, os.O_WRONLY | os.O_CREAT, 0o644)
         self.addCleanup(os.close, fd)
         fcntl.flock(fd, fcntl.LOCK_EX)
@@ -822,7 +1045,36 @@ class Ablauf(Basis):
         with contextlib.redirect_stderr(err):
             self.assertEqual(K.cmd_check([]), 75)
         self.assertIn("läuft gerade", err.getvalue())
+        self.assertIn(f"PID {os.getpid()}", err.getvalue(), "wer die Sperre hält, steht dabei")
         self.assertFalse(os.path.exists(os.path.join(K.STATE_DIR, "stand.json")))
+
+    def test_sperre_nur_fuer_root(self):
+        """Angriff (Prüfung, Befund 2): In /run/lock (für alle beschreibbar) konnte jeder Benutzer die Sperre anlegen
+        oder lesend öffnen und halten. Jetzt liegt sie in einem Ordner nur für root (0700), die Datei muss root gehören,
+        ein Verweis führt zu einer Meldung statt zu einem Abbruch mit Traceback."""
+        ordner = os.path.dirname(K.LOCK_FILE)
+        self.assertEqual(K.lock_or_exit().release(), None)
+        self.assertEqual(os.stat(ordner).st_mode & 0o777, 0o700, "nur root kommt hinein")
+        self.assertEqual(os.stat(K.LOCK_FILE).st_mode & 0o777, 0o600)
+        os.chmod(ordner, 0o755)
+        K.lock_or_exit().release()
+        self.assertEqual(os.stat(ordner).st_mode & 0o777, 0o700, "zu weite Rechte werden wieder eng")
+        # Eine Datei, die nicht root gehört (hier: Tests laufen ohne root, also nur die eigene UID als «fremd»)
+        self.addCleanup(setattr, K, "TRUSTED_UIDS", K.TRUSTED_UIDS)
+        K.TRUSTED_UIDS = (0,)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(K.lock_or_exit(), 1)
+        self.assertIn("gehört nicht root", err.getvalue())
+        K.TRUSTED_UIDS = (0, os.getuid())
+        os.unlink(K.LOCK_FILE)
+        os.symlink(self.pfad("woanders"), K.LOCK_FILE)
+        for befehl in (K.cmd_check, K.cmd_install, K.cmd_after_boot):
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(befehl([]), 1, befehl.__name__)
+            self.assertIn("Sperre", err.getvalue())
+        self.assertFalse(os.path.exists(self.pfad("woanders")))
 
     def test_haertung_gegen_fremde_config_und_hooks(self):
         """Weder eine globale git-config noch config und Hooks in /opt/zenos ändern die Prüfung oder führen etwas

@@ -1,7 +1,8 @@
 # zenOS: das zuletzt geholte Bundle prüfen (zenos-kanal pruefen). Läuft als root, aber ohne Netz (PrivateNetwork)
 # und ohne Rechte über root hinaus. Schreiben darf es nur /var/lib/zenos/kanal (Stand, Hauptbuch, hoechste, Wunsch,
 # Auftrag und die Bereitstellungen in bereit/), /etc/zenos/vertrauen (nur über einen gültigen Tag vertrauen/NNNN) und
-# die Sperre in /run/lock. /opt/zenos liest es nur. Installieren ist Sache von zenos-kanal-installieren.service.
+# die Sperren in /run/zenos-sperre (nur root, 0700; bleibt nach dem Lauf stehen). /opt/zenos liest es nur. Installieren
+# ist Sache von zenos-kanal-installieren.service.
 # Gestartet von «zen update», «zen rollback» und «sudo zen kanal pruefen».
 [Unit]
 Description=zenOS: Kanal prüfen und bereitstellen (ohne Netz)
@@ -14,6 +15,9 @@ Type=oneshot
 ExecStart=/usr/bin/python3 -I /usr/local/libexec/zenos/zenos-kanal pruefen
 StateDirectory=zenos/kanal
 StateDirectoryMode=0755
+RuntimeDirectory=zenos-sperre
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
 UMask=0022
 TimeoutStartSec=10min
 Nice=10
@@ -21,7 +25,7 @@ SyslogIdentifier=zenos-kanal
 
 PrivateNetwork=yes
 RestrictAddressFamilies=AF_UNIX
-ReadWritePaths=-/etc/zenos/vertrauen /run/lock
+ReadWritePaths=-/etc/zenos/vertrauen
 NoNewPrivileges=yes
 CapabilityBoundingSet=
 AmbientCapabilities=

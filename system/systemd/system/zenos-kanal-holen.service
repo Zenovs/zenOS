@@ -1,7 +1,8 @@
 # zenOS: Tags und Branches von origin holen, ohne Rechte (zenos-kanal holen-intern). Läuft als flüchtiger
 # Systembenutzer (DynamicUser) in einer Sandbox: nur Netz und der eigene Ordner /var/lib/zenos-kanal-holen, kein
-# Home, keine Geräte, keine Rechte. Das Ergebnis ist ein Bundle (uebergabe.bundle), das zenos-kanal-pruefen.service
-# als root ohne Netz prüft. Gestartet nur von «sudo zen kanal pruefen» (kein Timer in dieser Fassung).
+# Home, keine Geräte, keine Rechte. Geholt werden nur die Tags v* und der Branch dev; der Spiegel wird danach
+# aufgeräumt. Das Ergebnis ist ein Bundle (uebergabe.bundle), das zenos-kanal-pruefen.service als root ohne Netz prüft.
+# Gestartet von «zen update», «zen rollback» und «sudo zen kanal pruefen» (kein Timer in dieser Fassung).
 [Unit]
 Description=zenOS: Kanal holen (ohne Rechte)
 Documentation=file:///opt/zenos/docs/image-und-releases.md

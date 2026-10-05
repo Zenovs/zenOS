@@ -95,7 +95,8 @@ Der Anker `system/vertrauen/` hat vier Dateien. Zeilen mit `#` und leere Zeilen 
   keine weiteren Optionen, kein Kommentar und kein Name hinter dem Schlüssel.
 - `widerrufen`: Format von `gpg.ssh.revocationFile`, je Zeile ein öffentlicher Schlüssel `ssh-ed25519 AAAA…`. Die
   Datei muss es geben, auch leer: Fehlt sie, warnt git nur und nimmt die Signatur an. Die Liste wächst nur.
-- `serie`: eine Zahl von 1 bis 9999. Serie 1 ist der erste Anker, er kommt mit dem Image oder einmalig aus dem Repo.
+- `serie`: eine Zahl von 1 bis 9999. Serie 1 ist der erste Anker, er kommt mit dem Image oder einmalig von Hand
+  (`sudo zen kanal anker /opt/zenos/system/vertrauen`); ein unsignierter Stand füllt ihn nie von selbst.
 
 Ein Schlüssel steht nie zugleich in `release` und `wurzel` oder in `release` und `widerrufen`. Öffentliche Schlüssel
 sind keine Geheimnisse (Manifest 0, Ausnahme für die Prüfschlüssel); gitleaks lässt sie durch und meldet private.
@@ -185,22 +186,27 @@ später, der Zeitpunkt wird am Gerät eingestellt).
 | `zen kanal status` | alle | Kanal, Zustand, Anker mit Fingerabdrücken, installierter Stand, `hoechste`, gültige und abgelehnte Tags, letzter Kontakt, letzte Installation, guter Stand, gesperrte Stände |
 | `sudo zen kanal pruefen` | root | startet `zenos-kanal-holen.service`, dann `zenos-kanal-pruefen.service`, zeigt danach den Status. Installiert nichts |
 | `zen kanal anker` | alle | zeigt den Anker des Geräts |
-| `sudo zen kanal anker ORDNER` | root, nur im Terminal | setzt den Anker von Hand: Fingerabdruck der Wurzel eintippen, Release-Schlüssel mit «ja» bestätigen. Bei gleicher Wurzel nie mit kleinerer Serie, Widerrufe des Geräts bleiben |
+| `sudo zen kanal anker ORDNER` | root, nur im Terminal | setzt den Anker von Hand: den Fingerabdruck der Wurzel und von jedem Release-Schlüssel die ersten 8 Zeichen nach `SHA256:` aus 1Password eintippen. Die Werte aus dem Ordner zeigt es erst danach (auch nach einer falschen Eingabe nicht), damit niemand abtippt, was auf dem Bildschirm steht. Bei gleicher Wurzel nie mit kleinerer Serie, Widerrufe des Geräts bleiben |
 
 Ablauf:
 
 1. **Holen** (`zenos-kanal-holen.service`): als flüchtiger Systembenutzer (DynamicUser) in einer Sandbox, nur mit
    Netz und dem eigenen Ordner `/var/lib/zenos-kanal-holen`. Die Adresse ist origin aus `/opt/zenos/.git/config`,
-   nur `https://` ohne Zugangsdaten. `git fetch --no-tags --prune` holt erzwungen `refs/tags/*` nach
-   `refs/kanal/tags/*` und `refs/heads/*` nach `refs/kanal/heads/*`, mit fsck, Zeitlimit 600 s. Ein verschobener
-   oder gelöschter Tag bricht nichts ab. Ergebnis: `uebergabe.bundle` und `holen.json` (Zeitpunkt, Fehler; nur zur
-   Anzeige).
+   nur `https://` ohne Zugangsdaten. `git fetch --no-tags --prune` holt erzwungen nur `refs/tags/v*` (Versionen und
+   `vertrauen/NNNN`) nach `refs/kanal/tags/v*` und den Branch `dev` nach `refs/kanal/heads/dev` (ob es ihn gibt, sagt
+   vorher `git ls-remote`; ein fehlender Branch in der Liste liesse den Abruf scheitern), mit fsck, Zeitlimit 600 s.
+   Ein verschobener oder gelöschter Tag bricht nichts ab. Danach entfernt es andere Refs, packt den Spiegel neu und
+   löscht, was nicht mehr erreichbar ist (`repack -a -d`, `prune`); ist er dann grösser als 2 GB, fliegt er weg. So
+   füllt ein fremder Branch oder ein wiederholter Push grosser Daten die Platte nicht (Prüfung, Befund 4). Ergebnis:
+   `uebergabe.bundle` und `holen.json` (Zeitpunkt, Fehler; nur zur Anzeige).
 2. **Prüfen** (`zenos-kanal-pruefen.service`): root, ohne Netz (PrivateNetwork), schreiben nur nach
-   `/var/lib/zenos/kanal`, `/etc/zenos/vertrauen` und `/run/lock`. Die Sperre `/run/lock/zenos-kanal.lock` teilt es
-   mit `zen update`. Das Bundle wird kopiert (ohne Verweisen zu folgen, höchstens 1 GiB) und in ein Repo geholt, das
-   bei jedem Lauf neu entsteht (eigene config, keine Hooks). Jedes git läuft mit leerer Umgebung, ohne System- und
-   Benutzer-config, ohne Ersatzobjekte, mit `core.hooksPath=/dev/null`, `core.fsmonitor=false`,
-   `protocol.allow=never`, `gpg.ssh.program=/usr/bin/ssh-keygen`, OpenPGP und X.509 aus.
+   `/var/lib/zenos/kanal`, `/etc/zenos/vertrauen` und `/run/zenos-sperre` (RuntimeDirectory, 0700, bleibt stehen). Die
+   Sperre `/run/zenos-sperre/kanal.lock` teilt es mit `zen update`, dem Installieren und einem `install.sh` von Hand;
+   nur root kommt an sie heran (früher `/run/lock`, wo jeder Benutzer sie halten konnte). Das Bundle wird kopiert
+   (ohne Verweisen zu folgen, höchstens 1 GiB) und in ein Repo geholt, das bei jedem Lauf neu entsteht (eigene
+   config, keine Hooks). Jedes git läuft mit leerer Umgebung, ohne System- und Benutzer-config, ohne Ersatzobjekte,
+   mit `core.hooksPath=/dev/null`, `core.fsmonitor=false`, `protocol.allow=never`,
+   `gpg.ssh.program=/usr/bin/ssh-keygen`, OpenPGP und X.509 aus.
 3. **Regeln**, in dieser Reihenfolge:
    - Anker: wie oben, root-eigen und für andere nicht schreibbar, auch jeder Ordner darüber. Sonst «Anker fehlt»,
      und nichts gilt als gültig. Die Formprüfung der Tags läuft trotzdem (etwa «unsigniert»).
@@ -209,14 +215,25 @@ Ablauf:
      Schlüssel in der Signatur darf nicht widerrufen sein und muss zur Rolle passen. Dann `git verify-tag
      <Objekt-ID>` gegen den Anker mit der erwarteten Zeile `Good "git" signature for <prinzipal> with ED25519 key
      <fingerabdruck>`.
+   - Viele Tags: Die Tag-Objekte liest es mit drei Aufrufen von `git cat-file --batch` statt zwei je Tag (höchstens
+     64 KiB je Objekt). Leichte, unsignierte und fremd signierte Tags kosten so kaum etwas. `git verify-tag` läuft nur
+     für Tags mit einem Schlüssel des Ankers, höchstens 2000-mal je Lauf; schon gültige Namen zählen nicht mit und
+     kommen zuerst, danach die höchsten Versionen. Die übrigen bleiben ungeprüft (Hinweis), nichts ist deswegen
+     «blockiert» (früher blockierten 1001 leichte Tags jedes Gerät, Prüfung, Befund 5). Abgelehnt zeigt es höchstens
+     100, den Rest als Zahl.
    - `vertrauen/NNNN` zuerst, aufsteigend, nur mit NNNN über der eigenen Serie (siehe oben). Der neue Anker wird
-     Datei für Datei atomar geschrieben, die Serie zuletzt.
-   - Hauptbuch `gesehen.json` (Name → Objekt, gültig, erstmals gesehen): Zeigt ein schon gültiger Name auf ein
-     anderes, ebenfalls gültiges Objekt, ist der Kanal «blockiert» (ALARM), bis der Name wieder auf das alte Objekt
-     zeigt. Ein ungültiges neues Objekt lehnt nur diesen Namen ab, ein auf origin gelöschter Tag ist ein Hinweis und
-     kein Ziel mehr (Notbremse).
+     Datei für Datei atomar geschrieben: `release`, `widerrufen`, die Serie zuletzt. Bricht es dazwischen ab, ist jeder
+     Zwischenstand ein gültiger Anker, und der nächste Lauf vollendet den Wechsel (früher zuerst `widerrufen`: Der
+     alte Release-Schlüssel stand dann zugleich in `release` und `widerrufen`, «Anker fehlt» für immer).
+   - Hauptbuch `gesehen.json` (nur Namen, die gültig waren: Objekt, Commit, erstmals gesehen): Zeigt ein schon
+     gültiger Name gültig signiert auf einen anderen Commit, ist der Kanal «blockiert» (ALARM), bis der Name wieder
+     auf den alten Commit zeigt. Derselbe Commit in einem anderen Tag-Objekt ist kein Alarm, das Hauptbuch übernimmt
+     die neue Objekt-ID: Die Base64-Zeilen der Signatur lassen sich ohne Schlüssel anders umbrechen oder mit einer
+     Leerzeile versehen, git nimmt das an (selbst nachgestellt, Prüfung, Befund 1). Ein ungültiges neues Objekt lehnt
+     nur diesen Namen ab, ein auf origin gelöschter Tag ist ein Hinweis und kein Ziel mehr (Notbremse).
    - `hoechste` (`/var/lib/zenos/kanal/hoechste`): Jeder gültige Tag, dessen Commit im Verlauf des installierten
-     Stands liegt, hebt es an; es sinkt nie. Den Verlauf liest es im eigenen Repo oder, für nicht gepushte Commits,
+     Stands liegt, hebt es an; es sinkt nie. Solange eine Installation unterbrochen ist (`laeuft.json`), hebt es sich
+     nicht: `/opt/zenos` steht dann womöglich auf einem Ziel, das nie gesund wurde. Den Verlauf liest es im eigenen Repo oder, für nicht gepushte Commits,
      in `/opt/zenos` (nur lesend, nicht flach). Fehlt `hoechste` und gehört der installierte Stand zu keiner
      signierten Version, ist der Kanal «blockiert», ausser der Stand liegt vor allen gültigen Versionen.
    - Ziel: die höchste gültige Version des Kanals über `hoechste`, ohne Versionen in `/var/lib/zenos/kanal/gesperrt/`.
@@ -232,7 +249,10 @@ Ablauf:
 4. **Stand:** `/var/lib/zenos/kanal/stand.json` (0644, atomar): `kanal`, `zustand`, `grund`, `geprueft`,
    `letzter_kontakt`, `holen_fehler`, `anker` (Serie und Fingerabdrücke), `anker_problem`, `installiert`,
    `hoechste`, `bereit` (Version, Commit, Objekt, `erstmals`, `frei_ab`, `rueckfrage`), `dev`, `gueltig`,
-   `abgelehnt`, `hinweise`, `wunsch` (Antwort auf `zen update` bzw. `zen rollback`, siehe unten).
+   `abgelehnt`, `hinweise`, `wunsch` (Antwort auf `zen update` bzw. `zen rollback`, siehe unten), `installation`
+   (Prüfsumme von `letzte.json` und `gut.json`: Weicht sie ab, zeigt `zen kanal status` «veraltet: Seit der letzten
+   Prüfung wurde installiert», statt alte Angaben als aktuell auszugeben). Nach jeder Installation prüft `zen update`
+   ohne Netz und ohne Wunsch neu.
 
 | Zustand | Exit | Bedeutung |
 |---|---|---|
@@ -241,16 +261,17 @@ Ablauf:
 | `zustimmung` | 10 | wie `bereit`, aber der Weg trifft Firewall, Netz oder Boot: nur mit Zustimmung |
 | `dev` | 0 | Kanal dev, nur Auskunft |
 | `anker_fehlt` | 3 | kein vollständiger Anker: nichts gilt |
-| `blockiert` | 3 | ALARM im Hauptbuch, unbekannter Kanal, `hoechste` nicht ableitbar, Bundle unbrauchbar, mehr als 1000 Tags |
+| `blockiert` | 3 | ALARM im Hauptbuch, unbekannter Kanal, `hoechste` nicht ableitbar, Bundle unbrauchbar |
 | `kein_kontakt` | 10 | noch nie geholt |
 | `fehler` | 1 | Prüfung abgebrochen |
 | (keiner) | 75 | Sperre belegt (ein `zen update` läuft), `stand.json` bleibt |
 
 #### Wunsch und Bereitstellung (`zen update`, `zen rollback`)
 
-`zen update` startet als root `zenos-kanal update` im Terminal. Es schreibt `wunsch.json` (Art, Tag, Kennung, eine
-Stunde gültig), startet holen und prüfen und liest die Antwort aus `stand.json` (`wunsch`). Das Prüfen bestimmt das
-Ziel:
+`zen update` startet als root `zenos-kanal update` im Terminal. Läuft gerade ein `install.sh` von Hand (Vermerk
+`/run/zenos-sperre/hand`, siehe unten), endet es mit 75. Es schreibt `wunsch.json` (Art, Tag, Kennung, eine Stunde
+gültig, gemessen an der Zeit seit dem Start: Stellt NTP die Uhr dazwischen, gilt er weiter), startet holen und prüfen
+und liest die Antwort aus `stand.json` (`wunsch`). Das Prüfen bestimmt das Ziel:
 
 - `stabil`, `vorschau`: die höchste gültige Version des Kanals, nicht unter `hoechste` (auch gleich: ein
   `zen update` nach einem Rollback kehrt zurück). Ohne Anker oder bei «blockiert» nichts.
@@ -266,45 +287,70 @@ neuen Commits (mit `%G?`) und fragt «Genau diesen Stand (…) installieren?». 
 zweiten Wunsch und gilt nur für genau diese Commit-ID (dev) bzw. dieses Tag-Objekt; ein neuerer Stand braucht ein
 neues «ja». Ohne Terminal gibt es keine Zustimmung.
 
-Ist alles erfüllt, stellt das Prüfen das Ziel bereit, ohne Netz: `/var/lib/zenos/kanal/bereit/<commit>` ist ein
-eigenes Repo ohne Hooks mit den Objekten aus dem Prüf-Repo, alle Tags, ausgecheckt (dev auf dem Branch dev, sonst
-losgelöst), origin wie in `/opt/zenos`. Verlangt werden mindestens 1 GiB frei auf `bereit/`, `/opt/zenos` und `/var`,
-HEAD gleich dem Commit und ein sauberer Baum (auch ohne unversionierte oder ignorierte Dateien). Dann folgt
-`auftrag.json` (eine Stunde gültig).
+Ist alles erfüllt, stellt das Prüfen das Ziel bereit, ohne Netz und jedes Mal neu:
+`/var/lib/zenos/kanal/bereit/<commit>` ist ein eigenes Repo ohne Hooks mit den Objekten aus dem Prüf-Repo, ausgecheckt
+(dev auf dem Branch dev, sonst losgelöst), origin wie in `/opt/zenos`. Tags nur geprüfte: der Ziel-Tag, auf dev die
+gültig signierten (so kommt kein fremder Tag nach `/opt/zenos` und in `zen version`). Eine ältere Bereitstellung
+desselben Commits (etwa von dev, ohne den Tag) wird ersetzt, nicht übernommen. Verlangt werden mindestens 1 GiB frei auf
+`bereit/`, `/opt/zenos` und `/var`, HEAD gleich dem Commit und ein sauberer Baum (auch ohne unversionierte oder
+ignorierte Dateien). Dann folgt `auftrag.json` (eine Stunde gültig).
 
 #### Installieren
 
-`zenos-kanal-installieren.service` (root, mit Netz, `KillMode=mixed`, `TimeoutStopSec=20min`) liest `auftrag.json`,
+`zenos-kanal-installieren.service` (root, mit Netz, `KillMode=mixed`, `TimeoutStopSec=20min`) endet mit 75, solange
+ein `install.sh` von Hand läuft (Vermerk). Sonst liest es `auftrag.json`,
 prüft die Bereitstellung noch einmal (Ort, Besitz, Commit, sauber; signiert gegen den Anker von jetzt, dev-Bereich
 neu, sonst nur mit «ja») und legt den Rückweg an: den laufenden Stand von `/opt/zenos`, aus `gut.json` oder frisch als
 Bereitstellung (Commit ohne Änderungen von Hand). Dann:
 
-1. Wurde dpkg unterbrochen (`/var/lib/dpkg/updates`), läuft zuerst `dpkg --configure -a`, sobald kein anderer
-   Paketvorgang die Sperren hält.
+1. Sperrdateien von git, die ein Abbruch in `/opt/zenos/.git` liegen liess (`index.lock`, `HEAD.lock`,
+   `refs/…/*.lock`), entfernt es (unter der Kanal-Sperre, ohne Lauf von Hand: dann arbeitet dort kein anderes git).
+   Wurde dpkg unterbrochen (`/var/lib/dpkg/updates`), läuft `dpkg --configure -a`, sobald kein anderer Paketvorgang
+   die Sperren hält. Kam inzwischen ein Stopp (Ausschalten), beginnt kein `install.sh` mehr (`wartet`).
 2. `laeuft.json` mit Ziel, Rückweg, Phase und Versuchszähler, `/run/zenos-kanal/uebernahme` und ein Block-Inhibitor
    für Ausschalten und Ruhezustand («zenOS wird aktualisiert»).
 3. `<bereit>/scripts/install.sh` als root mit `ZENOS_KANAL_LAUF=1`, ohne Terminal; 10-code übernimmt den Code Datei
    für Datei atomar nach `/opt/zenos`. Ein SIGTERM (Ausschalten durch root) wartet auf das Ende von install.sh.
+   Scheitert `install.sh` nur an seiner Sperre (Exit 75, kein «== Beginn» im Log), zählt der Versuch nicht: keine
+   Sperre der Version, kein Rückweg, Ergebnis `wartet` (Exit 75).
 4. Gesundheit: Exit 0 und «== Ende … ok» im install.log, `/opt/zenos` auf dem Commit und sauber, `scripts/zen`,
-   `install.sh`, `zenos-greeter` und `zenos-sitzung` nicht leer, `bash -n scripts/zen`, `zen version` gibt «zenOS …»
-   aus, `quickshell --version` läuft, greetd nicht ausgefallen, und der eben installierte zenos-kanal besteht
-   `selbsttest` (liest den Anker, nimmt den installierten Tag an).
+   `install.sh`, `zenos-greeter` und `zenos-sitzung` nicht leer, `bash -n` über `scripts/zen`, `install.sh` und
+   `scripts/{zen.d,lib,module,doctor.d}/*.sh`, `zen version` gibt «zenOS …» aus, `quickshell --version` läuft und
+   greetd ist nicht ausgefallen (beides nur, wenn es vor `install.sh` noch ging: Ein schon ausgefallenes greetd soll
+   das Update, das es repariert, nicht sperren), und der eben installierte zenos-kanal besteht `selbsttest`: Er liest
+   den Anker und nimmt den installierten Tag an. Brachte der Stand einen anderen zenos-kanal (und kennt der
+   `--probelauf`), macht er dazu einen Probelauf von `status`, `update`, `rollback`, `installieren` und `nachstart` in
+   einem Wegwerf-Zustand unter `/var/lib/zenos/kanal/selbsttest` (holen fällt aus, prüfen läuft auf dem letzten
+   Bundle, nichts wird bereitgestellt oder installiert). Ein Laufzeitfehler darin gilt als nicht gesund. Beim Rückweg
+   prüft der Selbsttest nur den Anker: Der Schlüssel des alten Tags kann inzwischen widerrufen sein, und der alte
+   zenos-kanal lief schon. Ein unveränderter zenos-kanal bekommt keinen Probelauf: Er hat eben dieses Update
+   ausgeführt, und ein Fehlalarm sperrte sonst jedes weitere Update (im Ende-zu-Ende-Test so passiert, als der
+   Probelauf selbst einen Fehler hatte).
 5. Gesund: `gut.json`, `hoechste` (nur bei einem Update, nie bei einem Rollback), alte Bereitstellungen weg, Marker
    `angehalten` weg, daemon-reload der Benutzerinstanz einer Sitzung auf seat0; die übrigen Benutzerteile richtet
    `zen update` danach als Benutzer ein (sonst die nächste Anmeldung). Ergebnis `installiert`.
 6. Nicht gesund: Die Version kommt nach `gesperrt/` (Grund, Zeit), dann derselbe Lauf mit dem Rückweg. Ist er gesund,
-   Ergebnis `zurueck` (Exit 4), sonst `kaputt` (Exit 5, keine weiteren Versuche, Notweg ANLEITUNG F). Ist das Ziel
-   der laufende Stand selbst, gibt es keinen Rückweg und keine Sperre (`gescheitert`).
+   Ergebnis `zurueck` (Exit 4), sonst `kaputt` (Exit 5, keine weiteren Versuche; die Meldung nennt zuerst den Grund,
+   ANLEITUNG F «Kaputt»). Ist das Ziel der laufende Stand selbst, gibt es keinen Rückweg und keine Sperre
+   (`gescheitert`, Exit 4).
 
 Ein harter Abbruch (Strom, `kill -9`) hinterlässt `laeuft.json`. `zenos-kanal-nachstart.service` (aktiviert, nur mit
 `laeuft.json`, vor greetd, ohne Netz) vollendet beim Start die Übernahme des Codes mit `install.sh --nur-code` aus der
 Bereitstellung; kennt deren install.sh die Option nicht (Stände vor diesem Kanal), bleibt das `zen update`. Ein
 `zen update` setzt danach zuerst den unterbrochenen Lauf fort. Nach zwei unterbrochenen Versuchen sperrt schon
 nachstart die Version und nimmt den Code des Rückwegs. Ein `install.sh` von Hand erledigt einen unterbrochenen Lauf.
-Das Ergebnis jedes Laufs steht in `letzte.json` (`ergebnis`, `grund`, `ziel`, `rueckweg`, `versuche`, `hinweise`).
+Das Ergebnis jedes Laufs, der eine Installation betraf, steht in `letzte.json` (`ergebnis`, `grund`, `ziel`,
+`rueckweg`, `versuche`, `hinweise`); `abgelehnt`, `wartet` und `nichts` überschreiben es nicht, sonst verschwände ein
+`kaputt` aus `zen doctor`. `zen doctor` und `zen version` zeigen auch `gescheitert` und `fehler`; ein `angehalten`
+löst ein älteres `kaputt` ab und umgekehrt.
 
-Ein `install.sh` von Hand aus einem Arbeits-Checkout wartet auf die Kanal-Sperre und hinterlässt `angehalten`
-(Commit, Zeit): `zen update` installiert den Stand des Kanals dann neu, auch wenn der Commit gleich ist.
+Ein `install.sh` von Hand (aus einem Arbeits-Checkout oder aus `/opt/zenos`, nicht der Kanal, nicht das Image, nicht
+nur die Benutzerteile) wartet über sudo auf die Kanal-Sperre und trägt darunter seine PID in `/run/zenos-sperre/hand`
+ein. Solange dieser Prozess läuft (`/proc/<pid>`, `install.sh`), installiert der Kanal nichts (Exit 75); am Ende
+entfernt install.sh den Vermerk. Den Vermerk kann nur root schreiben. Läufe als root (Kanal, `--nur-code`) nehmen die
+Sperre `/run/zenos-sperre/install.lock`, Läufe als Benutzer weiter `/run/lock/zenos-install.lock`. Ein Lauf aus einem
+Arbeits-Checkout hinterlässt `angehalten` (Commit, Zeit): `zen update` installiert den Stand des Kanals dann neu, auch
+wenn der Commit gleich ist.
 
 | Datei in `/var/lib/zenos/kanal` | Inhalt |
 |---|---|
@@ -325,18 +371,21 @@ Ein `install.sh` von Hand aus einem Arbeits-Checkout wartet auf die Kanal-Sperre
 | 4 | gescheitert, zurück auf dem Stand davor |
 | 5 | kaputt: auch der Rückweg scheiterte |
 | 10 | wartet: Zustimmung (auch «nein»), Platz, kein Kontakt |
-| 75 | ein anderes `zen update` oder eine Prüfung läuft |
+| 75 | ein anderes `zen update`, eine Prüfung, ein `install.sh` von Hand oder eine andere Installation läuft (die Meldung nennt den Prozess) |
 
 Am Gerät nach dem Einrichten (je ein Befehl): `zen kanal status` (Fingerabdrücke mit 1Password vergleichen),
 `sudo zen kanal pruefen`. Solange der Anker leer ist, steht dort «Anker fehlt» und `v0.1.0-rc1` bis `rc3` als
 «unsigniert»; `zen update` geht dann nur auf dev und nur mit «ja».
 
 Übergang: Das erste `zen update` mit diesem Stand läuft noch über den alten Weg (`git checkout` in `/opt/zenos`,
-`install.sh`) und bringt den Kanal; erst das nächste geht darüber. Ein `zen rollback` auf einen älteren Stand (etwa
+`install.sh`) und bringt den Kanal; erst das nächste geht darüber. Hat das Gerät `v0.1.0-rc1` vor seiner Verschiebung
+auf GitHub geholt, bricht dieser alte Weg mit «git fetch ist fehlgeschlagen» ab; dann einmal der Notweg aus
+ANLEITUNG F (holt ohne Tags). Ein `zen rollback` auf einen älteren Stand (etwa
 `v0.1.0-rc3`) bringt dessen alten `zen update` zurück, der Kanal-Code bleibt liegen und stört nicht.
 
-Rückweg für diesen Schritt: der Notweg in `ANLEITUNG.md`, Abschnitt F (`git fetch`, `git checkout`, `install.sh`, ohne
-`zen` und ohne den Kanal), oder `zen rollback` auf einen Stand davor.
+Rückweg für diesen Schritt: `zen rollback` auf einen Stand davor; hat das neue Kanal-Programm selbst einen Fehler, die
+vorige Fassung zurück (`zenos-kanal.vorher`, ANLEITUNG F); zuletzt der git-Notweg in `ANLEITUNG.md`, Abschnitt F
+(signierter Tag gegen den Anker des Geräts geprüft, `dev` nur ohne Anker, ohne `zen` und ohne den Kanal).
 
 Geprüft im Testcontainer mit `test/container/kanal-e2e.sh` (echtes systemd, eigenes origin über https mit
 Wegwerf-CA, Wegwerf-Schlüssel): Übergang mit dem alten `zen update`; dev ohne Anker mit «nein» und «ja»; install.sh
@@ -344,7 +393,9 @@ zweimal als root aus der Bereitstellung (zweiter Lauf 0 Änderungen); signierter
 Modul, das abbricht, und ein leeres `scripts/zen` (Rückweg, gesperrt); ein kleines tmpfs (wartet, Exit 10); ein
 Rückfrage-Pfad; SIGKILL mitten im Lauf mit nachgestellter halber Übernahme, Neustart (nachstart vor greetd), Fortsetzen;
 zwei Abbrüche (Rückweg schon beim Start); SIGTERM während install.sh (läuft zu Ende); Rollback signiert und unsigniert;
-fehlendes zenos-kanal und Notweg.
+fehlendes zenos-kanal und Notweg (signierter Tag gegen den Anker); Sperren nur für root (ein Benutzer hält die alten
+Sperren in `/run/lock`, `zen update` läuft trotzdem; ein `install.sh` von Hand hält den Kanal an); eine
+zurückgebliebene `index.lock`.
 
 ### Einmalig einrichten (Zeno)
 
@@ -376,15 +427,25 @@ Mit Wegwerf-Schlüsseln, im Container (git 2.53, OpenSSH 10.2) und auf dem Mac (
 - `%G?` ist bei einer gültigen Signatur eines Schlüssels, der nicht im Anker steht, `U`, nicht `G`; bei einem
   widerrufenen `B`. Für dev zählt nur `G`.
 - Ein Bundle lässt sich nur mit `protocol.file.allow=always` holen (sonst «transport 'file' not allowed»). Ein
-  explizit verlangter Branch, den es auf origin nicht gibt, lässt `git fetch` scheitern; der Holer holt deshalb
-  `refs/heads/*`.
+  explizit verlangter Branch, den es auf origin nicht gibt, lässt `git fetch` scheitern; der Holer fragt deshalb
+  vorher mit `git ls-remote`, ob es `dev` gibt.
+- Eine SSH-Signatur lässt sich ohne Schlüssel neu umbrechen (64 statt 70 Zeichen je Zeile) oder mit einer Leerzeile am
+  Ende versehen: `git mktag` legt das Objekt an, `git verify-tag` nimmt es an, die Objekt-ID ist neu. Das Hauptbuch
+  vergleicht deshalb den Commit. Eine Pflicht zur Zeilenlänge 70 gibt es nicht: Wie op-ssh-sign von 1Password
+  umbricht, ist hier nicht prüfbar, und mit dem Commit-Vergleich spielt die Hülle keine Rolle mehr.
 - Die Tests `test/einheiten/kanal.test.py` spielen Holen und Prüfen mit Wegwerf-Schlüsseln durch: unsigniert,
   leichter Tag, fremder Schlüssel, Wurzel statt Release, Tag-Name falsch, Tag auf einen Baum, zwei Signaturen,
   OpenPGP mit importiertem Schlüssel (git nimmt ihn mit gpg an, der Kanal nie), widerrufen, verschoben (gültig:
   ALARM; ungültig: abgelehnt), gelöscht, Downgrade, `hoechste` abgeleitet und nicht ableitbar, `vertrauen/NNNN`
   (Wechsel, mit dem Release-Schlüssel, falsche oder kleinere Serie, andere Wurzel, Widerruf bleibt), leerer Anker
   wie im Repo, fehlende Widerrufsdatei, Rechte, Verweise, fremde git-config und Hooks, dev mit unsigniertem
-  Zwischencommit, Sperre, Wartezeit.
+  Zwischencommit, Sperre, Wartezeit. Dazu die Befunde der Prüfung: neu umbrochene Signatur (kein Alarm), 1001 leichte
+  Tags und Kopien echter Signaturen (nicht blockiert, begrenzt), Abbruch nach jeder Datei des Ankers, Spiegel des
+  Holers (nur dev und v*, wächst nicht), Sperren nur für root, Uhrsprung, Anker von Hand ohne Abtippen.
+  `test/einheiten/kanal-installieren.test.py` spielt dazu durch: Lauf von Hand hält den Kanal an, Sperre von
+  install.sh belegt, greetd schon vorher ausgefallen, zurückgebliebene git-Sperren, Stand nach der Installation,
+  Probelauf im Selbsttest, Syntaxfehler in zen.d, alte Bereitstellung ohne Tag, nur geprüfte Tags, Rückweg auf einen
+  widerrufenen Schlüssel, «gescheitert» bleibt sichtbar, Stopp vor install.sh, belegte Prüfung, kein Netz.
 
 ### Grenzen
 
@@ -397,7 +458,12 @@ Mit Wegwerf-Schlüsseln, im Container (git 2.53, OpenSSH 10.2) und auf dem Mac (
 - Ein Rückweg ist kein Schnappschuss: Pakete, Units und Dateien, die ein gescheiterter Stand neu brachte, bleiben
   liegen; zurück kommt der Code und was install.sh des alten Stands einrichtet.
 - Ein Abbruch mitten in apt bleibt bis zum nächsten `zen update` halb (dpkg); nachstart vollendet nur den Code.
-- Die Bestätigung einige Minuten nach dem Start (läuft der Login?) kommt erst mit der Automatik.
+- Die Bestätigung einige Minuten nach dem Start (läuft der Login?) kommt erst mit der Automatik (Teil B): Ein
+  Update, das erst nach dem Neustart den Login bricht (greetd-Konfiguration, PAM), gilt bis dahin als gesund.
+- Offen für Teil B (Automatik): «erstmals» in `gesehen.json` entsteht mit der Uhr beim ersten Sehen, auch wenn sie
+  noch nicht synchronisiert ist (die 24 h auf stabil verschieben sich dann); ein `zen rollback` sperrt die Version,
+  von der er wegführt, nicht, und die Automatik brächte sie wieder.
+- Ein Prozess, der als root läuft, kann den Kanal weiterhin anhalten (Sperre halten). Gegen root schützt nichts.
 
 ## Quellcode und Lizenzen
 

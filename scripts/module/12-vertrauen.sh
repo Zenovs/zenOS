@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
-# 12-vertrauen: Vertrauensanker /etc/zenos/vertrauen für den signierten Kanal, nur wenn er fehlt
+# 12-vertrauen: Vertrauensanker /etc/zenos/vertrauen für den signierten Kanal, mit Schlüsseln gefüllt nur im Image
 # shellcheck shell=bash
 #
 # Der Anker (release, wurzel, widerrufen, serie; Format in docs/image-und-releases.md, «Signierte Releases») sagt dem
 # Gerät, welchen Signaturen es glaubt. zenos-kanal liest ihn nur von hier, nie aus /opt/zenos. Danach ändert ihn nur
 # noch zenos-kanal selbst (ein gültiger Tag vertrauen/NNNN) oder Zeno von Hand («sudo zen kanal anker ORDNER»).
 #
-# Dieses Modul überschreibt einen Anker deshalb nie:
-# - Fehlt /etc/zenos/vertrauen, kommt es aus system/vertrauen dieses Stands (im Image beim Bau, sonst beim ersten
-#   install.sh: Vertrauen beim ersten Mal, die Fingerabdrücke zeigt «zen kanal status»).
-# - Ist es da, aber leer (nur Kommentare, wie heute im Repo, solange die Schlüssel fehlen), und hat system/vertrauen
-#   inzwischen einen vollständigen Anker, kommt dieser einmal dazu. Ein leerer Anker ist kein Anker.
+# Dieses Modul überschreibt einen Anker deshalb nie, und es füllt ihn nur beim Image-Bau (--image) aus dem Repo:
+# - Fehlt /etc/zenos/vertrauen, legt es den Ordner an. Im Image kommt der Anker aus system/vertrauen des gebauten
+#   Stands. Sonst nur, solange system/vertrauen noch keine Schlüssel hat (dann sind es leere Dateien).
+# - Ist der Anker leer (nur Kommentare, wie heute im Repo, solange die Schlüssel fehlen) und hat system/vertrauen
+#   inzwischen Schlüssel, übernimmt es sie nicht von selbst: Dieser Stand kam womöglich ungeprüft (dev mit «ja»), und
+#   ein untergeschobener Anker gälte danach für jedes signierte Release. Es sagt, wie es von Hand geht: «sudo zen kanal
+#   anker /opt/zenos/system/vertrauen» mit den Fingerabdrücken aus 1Password.
 # - Sonst bleibt der Inhalt, wie er ist. Nur Besitz und Rechte (root, 0755 bzw. 0644) stellt es wieder her.
 # Unvollständig oder ungültig gibt es eine Warnung: Der Kanal gilt dann als «Anker fehlt» und installiert nichts.
 
@@ -26,8 +28,12 @@ modul_system() {
   fi
   if [[ ! -e "$ziel" ]]; then
     ordner_sicherstellen "$ziel" 0755 root:root
-    _vertrauen_kopieren "$quelle" "$ziel"
-    log_info "Vertrauensanker angelegt: $(_vertrauen_zustand "$ziel")"
+    if [[ "$ZENOS_IMAGE" == 1 || "$(_vertrauen_zustand "$quelle")" != vollständig* ]]; then
+      _vertrauen_kopieren "$quelle" "$ziel"
+      log_info "Vertrauensanker angelegt: $(_vertrauen_zustand "$ziel")"
+    else
+      _vertrauen_von_hand
+    fi
     return 0
   fi
 
@@ -37,18 +43,25 @@ modul_system() {
   case "$zustand" in
     vollständig*) ;;
     leer*)
-      if [[ "$(_vertrauen_zustand "$quelle")" == vollständig* ]]; then
+      if [[ "$(_vertrauen_zustand "$quelle")" != vollständig* ]]; then
+        log_info "Vertrauensanker noch ohne Schlüssel: Signiertes gibt es nicht, zen update nur auf dev und mit «ja»"
+      elif [[ "$ZENOS_IMAGE" == 1 ]]; then
         _vertrauen_kopieren "$quelle" "$ziel"
-        log_info "Vertrauensanker zum ersten Mal mit Schlüsseln: $(_vertrauen_zustand "$ziel")"
-        log_info "Fingerabdrücke mit 1Password vergleichen: zen kanal status"
+        log_info "Vertrauensanker aus dem Image-Stand: $(_vertrauen_zustand "$ziel")"
       else
-        log_info "Vertrauensanker noch ohne Schlüssel: Signiertes gibt es nicht, zen update geht nur auf dev und mit «ja»"
+        _vertrauen_von_hand
       fi
       ;;
     *)
       log_warnung "Vertrauensanker $ziel: $zustand. Der Kanal installiert nichts (von Hand: sudo zen kanal anker ORDNER)"
       ;;
   esac
+}
+
+# Schlüssel im Repo, Anker leer: nur ein Hinweis, übernommen wird von Hand
+_vertrauen_von_hand() {
+  log_info "system/vertrauen hat Schlüssel, der Anker des Geräts noch nicht. Einmal von Hand übernehmen"
+  log_info "(Fingerabdrücke aus 1Password eintippen): sudo zen kanal anker $ZENOS_CODE/system/vertrauen"
 }
 
 # Inhalt prüfen mit zenos-kanal: «vollständig: …», «leer: …» oder «ungültig: …»

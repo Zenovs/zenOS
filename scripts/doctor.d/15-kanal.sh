@@ -68,9 +68,8 @@ _kanal_stand() {
   grund=${zeile#* }
   case "$zustand" in
     ungeprueft | "") hinweis "Kanal noch nie geprüft (sudo zen kanal pruefen)" ;;
-    veraltet) hinweis "Kanal: $grund" ;;
     aktuell | bereit | dev) ok "Kanal: $grund" ;;
-    zustimmung) hinweis "Kanal: $grund" ;;
+    zustimmung | veraltet) hinweis "Kanal: $grund" ;;
     kein_kontakt) warnung "Kanal: $grund" ;;
     anker_fehlt) hinweis "Kanal: Anker fehlt, es gilt nichts als gültig (zen kanal status)" ;;
     blockiert | fehler) fehler "Kanal $zustand: $grund" ;;
@@ -89,6 +88,8 @@ _kanal_installation() {
     keine | "") hinweis "Installation: noch nichts über den Kanal installiert (zen update)" ;;
     angehalten) hinweis "Installation angehalten: $text" ;;
     zurueck) warnung "Letzte Installation gescheitert, Rückweg gelungen $text" ;;
+    gescheitert) warnung "Letzte Installation gescheitert, es läuft der Stand davor $text" ;;
+    fehler) warnung "Letzte Installation brach ab $text (zen kanal status)" ;;
     unterbrochen) warnung "$text" ;;
     kaputt) fehler "Installation kaputt $text" ;;
     *) warnung "Installation: unbekannter Zustand «$schluessel»" ;;

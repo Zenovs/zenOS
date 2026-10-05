@@ -7,6 +7,22 @@ an; eine Version entspricht einem Tag `v…` im Repo.
 
 ### Neu
 
+- **Kanal gehärtet nach der Prüfung von Schritt 4:** Das Hauptbuch vergleicht Commits statt Objekt-IDs: Eine ohne
+  Schlüssel neu umbrochene Signatur löst keinen ALARM mehr aus, der jedes Gerät blockierte. Sperren liegen in
+  `/run/zenos-sperre` (nur root) statt in `/run/lock`, wo jeder Benutzer den Kanal abschneiden und über die belegte
+  Sperre von install.sh ein «kaputt» mit gesperrter Version erzwingen konnte; ein `install.sh` von Hand vermerkt sich
+  dort, und scheitert install.sh nur an seiner Sperre, zählt der Versuch nicht. Viele Tags auf origin blockieren nicht
+  mehr (Prüfungen begrenzt, die bekannten zuerst), der Holer holt nur `dev` und `v*` und räumt seinen Spiegel auf. In
+  die Bereitstellung und nach `/opt/zenos` kommen nur geprüfte Tags, eine alte Bereitstellung ohne Tag wird ersetzt.
+  Die Gesundheitsprüfung wertet greetd und Quickshell nur, wenn das Update sie verschlechtert, prüft alle Shell-Skripte
+  mit `bash -n`, und der Selbsttest macht einen Probelauf von status, update, rollback, installieren und nachstart;
+  die vorige Fassung bleibt als `zenos-kanal.vorher`. Zurückgebliebene git-Sperren in `/opt/zenos` räumt der Kanal
+  weg, der Anker wird in einer Reihenfolge geschrieben, die jeden Abbruch übersteht, `zen kanal status` merkt nach
+  einer Installation, dass der Stand veraltet ist, und `zen update` prüft danach neu. Den Anker füllt ein ungeprüfter
+  Stand nie mehr von selbst: `sudo zen kanal anker ORDNER` mit den Fingerabdrücken aus 1Password (abtippen vom
+  Bildschirm geht nicht). Der Notweg in ANLEITUNG F prüft einen Tag gegen den Anker und nimmt `dev` nur ohne Anker.
+  Exit 75 bei belegter Prüfung, «wartet» ohne Netz, Wunsch und Auftrag überstehen einen Uhrsprung, «gescheitert»
+  bleibt in `zen doctor` sichtbar.
 - **zen update und zen rollback über den Kanal:** `/opt/zenos` wird nie mehr direkt umgestellt. `zen update` holt
   ohne Rechte, prüft und stellt ohne Netz bereit (`/var/lib/zenos/kanal/bereit/<commit>`) und installiert als Dienst
   `zenos-kanal-installieren.service` (root, Block-Inhibitor fürs Ausschalten, `KillMode=mixed`; ein SSH-Abbruch

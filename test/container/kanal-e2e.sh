@@ -29,8 +29,14 @@
 #   werkbank     install.sh von Hand aus ~/zenOS mit einem nicht gepushten Commit: wartet auf die Kanal-Sperre,
 #                «angehalten»; zen update kehrt nur mit «ja» zum Kanal zurück
 #   stopp        SIGTERM an den Dienst während install.sh (Ausschalten): install.sh läuft zu Ende, Ergebnis gesund
-#   notweg       zenos-kanal fehlt: zen update verweist auf ANLEITUNG F; der Notweg ohne zen (fetch, checkout,
-#                install.sh) bringt ihn zurück, danach geht zen update wieder
+#   notweg       zenos-kanal fehlt: zen update verweist auf ANLEITUNG F; der Notweg ohne zen bringt ihn zurück: mit
+#                Anker ein signierter Tag, gegen den Anker des Geräts geprüft (ein unsignierter fällt durch), ohne
+#                Anker dev mit Blick auf die neuen Commits; danach geht zen update wieder
+#   sperren      die Sperren gehören nur root: Ein Benutzer hält die alten in /run/lock und kommt an die neuen nicht
+#                heran, zen update läuft trotzdem; ein install.sh von Hand hält den Kanal an (Exit 75), danach weiter
+#   gitsperre    eine zurückgebliebene /opt/zenos/.git/index.lock: zen update räumt sie weg und installiert
+#   probelauf    ein geänderter zenos-kanal macht im Selbsttest einen Probelauf; einer mit Laufzeitfehler in update
+#                fällt auf: Rückweg (ohne Probelauf), danach geht zen update wieder
 
 set -euo pipefail
 
@@ -458,25 +464,124 @@ s_rollback() {
 
 s_notweg() {
   schritt "notweg: ANLEITUNG F ohne zen, auch wenn der Kanal kaputt ist"
-  local rc=0 spitze
+  local rc=0 spitze tag=v0.1.1-rc5 ziel
+  anker_schreiben
+  ziel=$(g -C "$REMOTE" rev-parse "$tag^{commit}")
   spitze=$(neuer_commit "e2e: vor dem notweg" e2e/vor-notweg "1")
   rm -f /usr/local/libexec/zenos/zenos-kanal
   zen_als_tester "" zen update || rc=$?
   erwarte_rc "$rc" 1 "zen update ohne zenos-kanal"
   erwarte_text "ANLEITUNG.md, Abschnitt F" "Verweis auf den Notweg"
-  runuser -u "$TESTER" -- sudo git -C /opt/zenos fetch --no-tags origin dev
-  runuser -u "$TESTER" -- sudo git -C /opt/zenos checkout --force -B dev origin/dev
+  # Mit Anker: ein signierter Tag, mit den Befehlen aus ANLEITUNG F gegen den Anker des Geräts geprüft
+  runuser -u "$TESTER" -- sudo git -C /opt/zenos fetch --no-tags origin "+refs/tags/$tag:refs/tags/$tag"
+  runuser -u "$TESTER" -- sudo git -C /opt/zenos -c gpg.ssh.allowedSignersFile=/etc/zenos/vertrauen/release \
+    -c gpg.ssh.revocationFile=/etc/zenos/vertrauen/widerrufen verify-tag -v "$tag" > "$E2E/zen.txt" 2>&1 ||
+    { cat "$E2E/zen.txt" >&2; fehler "verify-tag gegen den Anker"; }
+  erwarte_text "^tag $tag\$" "Name im Tag"
+  erwarte_text 'Good "git" signature for zenos-release' "Signatur gegen den Anker"
+  runuser -u "$TESTER" -- sudo git -C /opt/zenos fetch --no-tags origin "+refs/tags/v0.1.0-rc3:refs/tags/v0.1.0-rc3"
+  if runuser -u "$TESTER" -- sudo git -C /opt/zenos -c gpg.ssh.allowedSignersFile=/etc/zenos/vertrauen/release \
+    -c gpg.ssh.revocationFile=/etc/zenos/vertrauen/widerrufen verify-tag -v v0.1.0-rc3 > /dev/null 2>&1; then
+    fehler "ein unsignierter Tag besteht die Prüfung des Notwegs"
+  fi
+  ok "ein unsignierter Tag fällt durch"
+  runuser -u "$TESTER" -- sudo git -C /opt/zenos checkout --quiet --force "$tag"
   runuser -u "$TESTER" -- env HOME=/home/$TESTER /opt/zenos/scripts/install.sh > "$E2E/zen.txt" 2>&1 ||
-    { tail -n 30 "$E2E/zen.txt" >&2; fehler "install.sh nach dem Notweg"; }
-  erwarte_kopf "$spitze" "Notweg auf origin/dev"
+    { tail -n 30 "$E2E/zen.txt" >&2; fehler "install.sh nach dem Notweg (Tag)"; }
+  erwarte_kopf "$ziel" "Notweg auf $tag"
   [[ -f /usr/local/libexec/zenos/zenos-kanal ]] || fehler "install.sh hat zenos-kanal nicht wiederhergestellt"
   ok "zenos-kanal wieder da"
+  # Ohne Anker: dev, mit Blick auf die neuen Commits
   anker_leeren
+  runuser -u "$TESTER" -- sudo git -C /opt/zenos fetch --no-tags origin dev
+  runuser -u "$TESTER" -- sudo git -C /opt/zenos log --format='%h %an %s' HEAD..origin/dev > "$E2E/zen.txt"
+  erwarte_text "e2e: vor dem notweg" "neue Commits gezeigt"
+  runuser -u "$TESTER" -- sudo git -C /opt/zenos checkout --quiet --force -B dev origin/dev
+  runuser -u "$TESTER" -- env HOME=/home/$TESTER /opt/zenos/scripts/install.sh > "$E2E/zen.txt" 2>&1 ||
+    { tail -n 30 "$E2E/zen.txt" >&2; fehler "install.sh nach dem Notweg (dev)"; }
+  erwarte_kopf "$spitze" "Notweg auf origin/dev"
+  [[ ! -e /run/zenos-sperre/hand ]] || fehler "Vermerk des Laufs von Hand bleibt liegen"
+  ok "Vermerk des Laufs von Hand wieder weg"
   rc=0
   kanal dev
   neuer_commit "e2e: nach dem notweg" e2e/notweg "1" > /dev/null
   zen_als_tester "ja" zen update || rc=$?
   erwarte_rc "$rc" 0 "zen update danach"
+}
+
+s_sperren() {
+  schritt "sperren: nur root kommt an die Sperren"
+  local neu rc=0 i quelle=/home/$TESTER/zenOS hand
+  anker_leeren
+  kanal dev
+  # Ein Benutzer hält die Sperren, die früher galten (auch die von install.sh, an der früher der Kanal 15 Minuten
+  # wartete und dann «kaputt» endete). zenos-kanal direkt als root, ohne zen: Die Benutzerteile danach liefen als
+  # tester und warteten zu Recht auf dessen eigene Sperre.
+  # flock -o: Nur flock selbst hält die Sperre (nicht sleep), pkill gibt sie wieder frei
+  runuser -u "$TESTER" -- flock -o /run/lock/zenos-install.lock sleep 600 &
+  runuser -u "$TESTER" -- flock -o /run/lock/zenos-kanal.lock sleep 600 &
+  runuser -u "$TESTER" -- flock -o /run/lock/zenos-kanal-bedienung.lock sleep 600 &
+  sleep 1
+  neu=$(neuer_commit "e2e: sperren" e2e/sperren "1")
+  printf 'ja\n' | script -qefc "/usr/bin/python3 -I /usr/local/libexec/zenos/zenos-kanal update" /dev/null \
+    > "$E2E/zen.out" 2>&1 || rc=$?
+  tr -d '\r' < "$E2E/zen.out" > "$E2E/zen.txt"
+  pkill -u "$TESTER" -f 'flock -o /run/lock/zenos' || true
+  wait || true
+  erwarte_rc "$rc" 0 "zen update, während ein Benutzer die alten Sperren hält"
+  erwarte_kopf "$neu" "installiert"
+  [[ "$(stat -c '%U %a' /run/zenos-sperre)" == "root 700" ]] ||
+    fehler "/run/zenos-sperre: $(stat -c '%U %a' /run/zenos-sperre)"
+  if runuser -u "$TESTER" -- flock -n /run/zenos-sperre/kanal.lock true 2>/dev/null; then
+    fehler "ein Benutzer kommt an die Kanal-Sperre"
+  fi
+  ok "/run/zenos-sperre gehört root (0700), ein Benutzer kommt nicht an die Sperre"
+
+  schritt "sperren: ein install.sh von Hand hält den Kanal an"
+  if [[ ! -f "$ARBEIT/scripts/module/11-e2e-warten.sh" ]]; then
+    neuer_commit "e2e: warten" scripts/module/11-e2e-warten.sh \
+      $'#!/usr/bin/env bash\n# 11-e2e-warten: nur im Ende-zu-Ende-Test: wartet, solange /srv/kanal-e2e/warten da ist\n# shellcheck shell=bash\nmodul_system() {\n  local i=0\n  log_info "e2e: warte"\n  while [[ -e /srv/kanal-e2e/warten ]] && (( i < 600 )); do sleep 1; i=$((i + 1)); done\n}\n' > /dev/null
+  fi
+  runuser -u "$TESTER" -- git -C "$quelle" fetch -q origin dev
+  runuser -u "$TESTER" -- git -C "$quelle" checkout -q --force -B werkbank FETCH_HEAD
+  touch "$E2E/warten"
+  runuser -u "$TESTER" -- env HOME=/home/$TESTER "$quelle/scripts/install.sh" > "$E2E/hand.txt" 2>&1 &
+  hand=$!
+  for i in $(seq 1 120); do
+    [[ -f /run/zenos-sperre/hand ]] && grep -q "e2e: warte" /var/log/zenos/install.log 2>/dev/null &&
+      [[ "$(tail -n 3 /var/log/zenos/install.log)" == *"e2e: warte"* ]] && break
+    sleep 1
+  done
+  (( i < 120 )) || fehler "install.sh von Hand kam nicht bis zum Warten"
+  ok "Vermerk /run/zenos-sperre/hand ($(cat /run/zenos-sperre/hand))"
+  neu=$(neuer_commit "e2e: während der Hand" e2e/hand "1")
+  rc=0
+  zen_als_tester "ja" zen update || rc=$?
+  erwarte_rc "$rc" 75 "zen update während eines Laufs von Hand"
+  erwarte_text "install.sh von Hand läuft gerade" "Grund: Lauf von Hand"
+  rm -f "$E2E/warten"
+  wait "$hand" || { tail -n 30 "$E2E/hand.txt" >&2; fehler "install.sh von Hand"; }
+  [[ ! -e /run/zenos-sperre/hand ]] || fehler "Vermerk bleibt nach dem Lauf von Hand"
+  ok "Vermerk nach dem Lauf von Hand weg"
+  rc=0
+  zen_als_tester "ja" zen update || rc=$?
+  erwarte_rc "$rc" 0 "zen update danach"
+  erwarte_kopf "$neu" "installiert"
+}
+
+s_gitsperre() {
+  schritt "gitsperre: zurückgebliebene index.lock in /opt/zenos"
+  local neu rc=0
+  anker_leeren
+  kanal dev
+  neu=$(neuer_commit "e2e: gitsperre" e2e/gitsperre "1")
+  touch /opt/zenos/.git/index.lock /opt/zenos/.git/HEAD.lock
+  zen_als_tester "ja" zen update || rc=$?
+  erwarte_rc "$rc" 0 "zen update mit index.lock und HEAD.lock"
+  erwarte_kopf "$neu" "installiert"
+  [[ ! -e /opt/zenos/.git/index.lock && ! -e /opt/zenos/.git/HEAD.lock ]] || fehler "Sperren von git bleiben liegen"
+  enthaelt "index.lock" json "$STAND/letzte.json" '.hinweise[]' || fehler "Hinweis auf die entfernte Sperre fehlt"
+  ok "Sperren von git entfernt, mit Hinweis"
 }
 
 s_werkbank() {
@@ -493,7 +598,8 @@ s_werkbank() {
   runuser -u "$TESTER" -- git -C "$quelle" -c user.name=e2e -c user.email=e2e@example.invalid commit -q -m "e2e: werkbank"
   lokal=$(runuser -u "$TESTER" -- git -C "$quelle" rev-parse HEAD)
   # Die Kanal-Sperre 8 s lang halten, als liefe gerade eine Prüfung
-  flock /run/lock/zenos-kanal.lock sleep 8 &
+  install -d -m 0700 /run/zenos-sperre
+  flock /run/zenos-sperre/kanal.lock sleep 8 &
   halter=$!
   sleep 1
   runuser -u "$TESTER" -- env HOME=/home/$TESTER "$quelle/scripts/install.sh" > "$E2E/zen.txt" 2>&1 ||
@@ -545,6 +651,40 @@ s_stopp() {
   erwarte_kopf "$neu" "trotz Stopp fertig installiert und gesund"
 }
 
+s_probelauf() {
+  schritt "probelauf: ein geänderter zenos-kanal macht im Selbsttest einen Probelauf"
+  local neu rc=0
+  anker_leeren
+  kanal dev
+  printf '\n# e2e: geändert\n' >> "$ARBEIT/scripts/bin/zenos-kanal"
+  neu=$(neuer_commit "e2e: zenos-kanal geändert")
+  zen_als_tester "ja" zen update || rc=$?
+  erwarte_rc "$rc" 0 "zen update mit geändertem zenos-kanal"
+  erwarte_kopf "$neu" "installiert"
+  enthaelt "Selbsttest mit Probelauf" json "$STAND/letzte.json" '.hinweise[]' || fehler "kein Probelauf"
+  [[ ! -e "$STAND/selbsttest" ]] || fehler "Wegwerf-Zustand des Probelaufs bleibt liegen"
+  ok "Probelauf lief, Wegwerf-Zustand weg"
+
+  schritt "probelauf: Laufzeitfehler in update fällt auf, Rückweg ohne Probelauf"
+  sed -i 's/^def cmd_update(argv):$/def cmd_update(argv):\n    raise RuntimeError("e2e: Laufzeitfehler")/' \
+    "$ARBEIT/scripts/bin/zenos-kanal"
+  grep -q 'e2e: Laufzeitfehler' "$ARBEIT/scripts/bin/zenos-kanal" || fehler "Laufzeitfehler nicht eingebaut"
+  neuer_commit "e2e: zenos-kanal mit Laufzeitfehler" > /dev/null
+  rc=0
+  zen_als_tester "ja" zen update || rc=$?
+  erwarte_rc "$rc" 4 "zen update mit kaputtem zenos-kanal"
+  erwarte_text "Probelauf «update»: RuntimeError" "Grund: Probelauf"
+  erwarte_kopf "$neu" "zurück auf dem Stand davor"
+  if grep -q 'e2e: Laufzeitfehler' /usr/local/libexec/zenos/zenos-kanal; then fehler "kaputter zenos-kanal bleibt"; fi
+  ok "der vorige zenos-kanal ist zurück"
+  sed -i '/e2e: Laufzeitfehler/d' "$ARBEIT/scripts/bin/zenos-kanal"
+  neu=$(neuer_commit "e2e: zenos-kanal repariert")
+  rc=0
+  zen_als_tester "ja" zen update || rc=$?
+  erwarte_rc "$rc" 0 "zen update danach"
+  erwarte_kopf "$neu" "installiert"
+}
+
 case "${1:-}" in
   einrichten) s_einrichten ;;
   migration) s_migration ;;
@@ -562,5 +702,8 @@ case "${1:-}" in
   notweg) s_notweg ;;
   stopp) s_stopp ;;
   werkbank) s_werkbank ;;
-  *) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  sperren) s_sperren ;;
+  gitsperre) s_gitsperre ;;
+  probelauf) s_probelauf ;;
+  *) sed -n '2,39p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

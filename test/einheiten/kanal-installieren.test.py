@@ -17,8 +17,11 @@ import importlib.machinery
 import importlib.util
 import io
 import json
+import fcntl
 import os
 import re
+import signal
+import subprocess
 import sys
 import unittest
 
@@ -47,11 +50,15 @@ set -u
 quelle=$(cd "$(dirname "$0")/.." && pwd -P)
 modus=normal
 if [ "${1:-}" = --nur-code ]; then modus=code; fi
+# Sperre von install.sh belegt: Exit 75, bevor etwas beginnt (wie das echte install.sh)
+if [ -e "$ZENOS_TEST_CODE.sperre-belegt" ]; then exit 75; fi
 printf '\\n== Beginn 2026-10-05 10:00:00 · %s · zenOS-Installation\\n' "$modus" >> "$ZENOS_TEST_LOG"
 commit=$(git -C "$quelle" rev-parse HEAD) || exit 3
 git -C "$ZENOS_TEST_CODE" fetch -q --no-tags "$quelle" HEAD || exit 3
 git -C "$ZENOS_TEST_CODE" checkout -q --force --detach "$commit" || exit 4
 printf '%s %s %s\\n' "$modus" "$commit" "${ZENOS_KANAL_LAUF:-}" >> "$ZENOS_TEST_CODE.laeufe"
+if [ "$modus" = normal ] && [ -e "$quelle/greetd-kaputt" ]; then : > "$ZENOS_TEST_CODE.greetd-ausgefallen"; fi
+if [ "$modus" = normal ] && [ -e "$quelle/kaputt-und-sperre" ]; then : > "$ZENOS_TEST_CODE.sperre-belegt"; exit 1; fi
 if [ "$modus" = normal ] && [ -e "$quelle/kaputt" ]; then exit 1; fi
 printf '== Ende 2026-10-05 10:00:01 · %s · ok · 0 Änderungen · 0 Warnungen\\n' "$modus" >> "$ZENOS_TEST_LOG"
 """
@@ -63,10 +70,24 @@ exit 2
 
 SELBSTTEST_ATTRAPPE = """import os
 import sys
-if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "selbsttest-scheitert")):
+hier = os.path.dirname(os.path.abspath(__file__))
+if os.path.exists(os.path.join(hier, "selbsttest-scheitert")):
     print("Selbsttest kaputt")
     sys.exit(3)
+if "--tag" in sys.argv and os.path.exists(os.path.join(hier, "tag-widerrufen")):
+    print("selbsttest: Tag gilt nicht: Schlüssel widerrufen")
+    sys.exit(3)
 print("selbsttest ok")
+"""
+
+SYSTEMCTL_ATTRAPPE = """#!/bin/sh
+# Attrappe für systemctl (Test): greetd gilt als ausgefallen, solange die Marke da ist
+if [ "$1" = is-failed ]; then
+  for a in "$@"; do last=$a; done
+  if [ "$last" = greetd.service ] && [ -e "$ZENOS_TEST_CODE.greetd-ausgefallen" ]; then exit 0; fi
+  exit 1
+fi
+exit 0
 """
 
 
@@ -92,7 +113,7 @@ class Geraet(B.Basis):
         werte = {
             "INSTALL_LOG": self.log,
             "RUNTIME_DIR": laufzeit,
-            "UI_LOCK_FILE": self.pfad("run", "zenos-kanal-bedienung.lock"),
+            "UI_LOCK_FILE": self.pfad("run", "sperre", "bedienung.lock"),
             "INSTALLED_PROGRAM": programm,
             "PYTHON": sys.executable,
             "QUICKSHELL": self.pfad("gibt-es-nicht", "quickshell"),
@@ -410,7 +431,12 @@ class Signiert(Geraet):
         self.zen_bis_bereit()
         pfad = os.path.join(K.STATE_DIR, "auftrag.json")
         auftrag = self.zustand("auftrag.json")
-        auftrag["zeit"] = K.iso(K.now() - datetime.timedelta(hours=2))
+        # Nur die Uhr springt (NTP nach dem Start): Der Auftrag gilt weiter (Prüfung, Befund 15c)
+        if auftrag.get("start"):
+            self.assertTrue(K.fresh(auftrag, K.now() + datetime.timedelta(hours=3)), "nur die Uhr sprang")
+            auftrag["seit_start"] -= 7200
+        else:
+            auftrag["zeit"] = K.iso(K.now() - datetime.timedelta(hours=2))
         K.write_json(pfad, auftrag)
         self.assertEqual(self.installieren(), 3)
         self.assertIn("älter als eine Stunde", self.ausgabe)
@@ -568,6 +594,7 @@ class Weiteres(Geraet):
         self.assertEqual(sorted(gruppen), sorted(K.CONSENT_PATHS))
 
     def test_bedienung_gesperrt(self):
+        os.makedirs(os.path.dirname(K.UI_LOCK_FILE), mode=0o700, exist_ok=True)
         fd = os.open(K.UI_LOCK_FILE, os.O_WRONLY | os.O_CREAT, 0o644)
         self.addCleanup(os.close, fd)
         import fcntl
@@ -619,6 +646,315 @@ class Weiteres(Geraet):
     def test_hilfe_nennt_alle_befehle(self):
         for befehl in ("update", "rollback", "installieren", "nachstart", "selbsttest"):
             self.assertRegex(K.__doc__, re.compile(rf"^  zenos-kanal {befehl}\b", re.M))
+
+
+@unittest.skipUnless(B.HAT_WERKZEUGE, "git oder ssh-keygen fehlt unter /usr/bin")
+class Befunde(Geraet):
+    """Angriffe und Ausfälle aus der Prüfung von Schritt 4, je mit dem Ablauf, der vorher scheiterte."""
+
+    def hand_lauf(self):
+        """Ein Prozess install.sh (wartet nur), als wäre ein install.sh von Hand am Laufen; dazu sein Vermerk."""
+        programm = self.pfad("install.sh")
+        with open(programm, "w", encoding="utf-8") as f:
+            f.write("import time\ntime.sleep(60)\n")
+        proc = subprocess.Popen([sys.executable, programm])
+        self.addCleanup(proc.wait)
+        self.addCleanup(proc.kill)
+        os.makedirs(os.path.dirname(K.HAND_MARK), mode=0o700, exist_ok=True)
+        with open(K.HAND_MARK, "w", encoding="utf-8") as f:
+            f.write(f"{proc.pid}\n")
+        return proc
+
+    def test_lauf_von_hand_haelt_den_kanal_an(self):
+        """Befund 2: Die Abstimmung mit install.sh von Hand geht nicht mehr über eine Sperre in /run/lock (die jeder
+        Benutzer halten konnte), sondern über einen Vermerk, den nur root schreibt. Solange er gilt: 75, nichts
+        installiert. Ein Vermerk eines beendeten Prozesses zählt nicht."""
+        self.commit("neu")
+        self.signieren("v0.1.0-rc4")
+        proc = self.hand_lauf()
+        self.assertEqual(self.zen(), 75, self.ausgabe)
+        self.assertIn(f"install.sh von Hand läuft gerade (PID {proc.pid})", self.ausgabe)
+        K.write_wish("update")
+        self.lauf()
+        self.assertEqual(self.installieren(), 75, self.ausgabe)
+        self.assertTrue(os.path.exists(os.path.join(K.STATE_DIR, "auftrag.json")), "der Auftrag bleibt")
+        self.assertEqual(self.laeufe(), [])
+        proc.kill()
+        proc.wait()
+        self.assertEqual(self.zen(), 0, self.ausgabe)
+        self.assertEqual(self.kopf(), self.git("rev-parse", "HEAD"))
+
+    def test_sperre_von_install_sh_belegt(self):
+        """Befund 2 (Probe B2): Kam install.sh nicht an seine Sperre (Exit 75, nichts begonnen), wurde die Version
+        gesperrt, der Rückweg scheiterte an derselben Sperre: «kaputt». Jetzt zählt der Versuch nicht."""
+        gut = self.signiert_installiert("v0.1.0-rc4")
+        self.commit("neu")
+        self.signieren("v0.1.0-rc5")
+        marke = K.CODE_DIR + ".sperre-belegt"
+        open(marke, "w").close()
+        self.assertEqual(self.zen(), 75, self.ausgabe)
+        self.assertIn("kam nicht an seine Sperre", self.ausgabe)
+        self.assertFalse(os.path.exists(os.path.join(K.STATE_DIR, "gesperrt")), "nichts gesperrt")
+        self.assertFalse(os.path.exists(os.path.join(K.STATE_DIR, "laeuft.json")), "nichts begonnen")
+        self.assertEqual(self.zustand("letzte.json")["ergebnis"], "installiert", "letzte.json bleibt")
+        self.assertEqual(self.kopf(), gut)
+        os.unlink(marke)
+        self.assertEqual(self.zen(), 0, self.ausgabe)
+        # Belegt erst beim Rückweg: laeuft.json bleibt (Phase Rückweg), der nächste Lauf vollendet ihn
+        self.commit("kaputt", {"kaputt-und-sperre": "1\n"})
+        self.signieren("v0.1.0-rc6")
+        self.assertEqual(self.zen(), 75, self.ausgabe)
+        laeuft = self.zustand("laeuft.json")
+        self.assertEqual((laeuft["phase"], laeuft["versuche"]["rueckweg"]), ("rueckweg", 0))
+        os.unlink(marke)
+        self.assertEqual(self.zen(), 4, self.ausgabe)
+        self.assertEqual(self.zustand("letzte.json")["ergebnis"], "zurueck")
+
+    def test_greetd_war_schon_ausgefallen(self):
+        """Befund 9: greetd fiel schon vor dem Update aus. Früher «kaputt» bei jedem Versuch, auch für das Update, das
+        es reparieren soll. Jetzt zählt nur, was das Update verschlechtert."""
+        systemd = self.pfad("systemd")
+        os.makedirs(systemd)
+        systemctl = self.pfad("systemctl")
+        with open(systemctl, "w", encoding="utf-8") as f:
+            f.write(SYSTEMCTL_ATTRAPPE)
+        os.chmod(systemctl, 0o755)
+        for name, wert in (("SYSTEMD_RUN_DIR", systemd), ("SYSTEMCTL", systemctl), ("LOGINCTL", "/bin/false")):
+            self.addCleanup(setattr, K, name, getattr(K, name))
+            setattr(K, name, wert)
+        self.signiert_installiert("v0.1.0-rc4")
+        marke = K.CODE_DIR + ".greetd-ausgefallen"
+        open(marke, "w").close()
+        neu = self.commit("fix")
+        self.signieren("v0.1.0-rc5")
+        self.assertEqual(self.zen(), 0, self.ausgabe)
+        self.assertEqual(self.kopf(), neu)
+        self.assertIn("greetd war schon vor dem Update ausgefallen", " ".join(self.zustand("letzte.json")["hinweise"]))
+        # Fällt greetd erst durch das Update aus, ist es nicht gesund; der Rückweg gelingt trotzdem
+        os.unlink(marke)
+        self.commit("bricht greetd", {"greetd-kaputt": "1\n"})
+        self.signieren("v0.1.0-rc6")
+        self.assertEqual(self.zen(), 4, self.ausgabe)
+        letzte = self.zustand("letzte.json")
+        self.assertEqual(letzte["ergebnis"], "zurueck")
+        self.assertIn("greetd ist ausgefallen", letzte["grund"])
+        self.assertEqual(self.kopf(), neu)
+
+    def test_zurueckgebliebene_git_sperren(self):
+        """Befund 10: Strom weg mitten in 10-code liess .git/index.lock liegen; danach scheiterten Ziel, Rückweg und
+        Notweg. Jetzt räumt der Kanal sie unter seiner Sperre weg (installieren und nachstart)."""
+        gitdir = os.path.join(K.CODE_DIR, ".git")
+        for name in ("index.lock", "HEAD.lock", os.path.join("refs", "heads", "dev.lock")):
+            open(os.path.join(gitdir, name), "w").close()
+        neu = self.commit("neu")
+        self.signieren("v0.1.0-rc4")
+        self.assertEqual(self.zen(), 0, self.ausgabe)
+        self.assertEqual(self.kopf(), neu)
+        self.assertIn("index.lock", " ".join(self.zustand("letzte.json")["hinweise"]))
+        self.assertFalse(os.path.exists(os.path.join(gitdir, "index.lock")))
+        # nachstart ebenso
+        K.write_json(os.path.join(K.STATE_DIR, "laeuft.json"), {
+            "version": 1, "phase": "ziel", "versuche": {"ziel": 1, "rueckweg": 0}, "rueckweg": None, "grund": None,
+            "ziel": {**self.zustand("gut.json"), "pfad": os.path.join(K.STATE_DIR, "bereit", neu)}})
+        open(os.path.join(gitdir, "index.lock"), "w").close()
+        self.assertEqual(self.nachstart(), 0, self.ausgabe)
+        self.assertIn("index.lock", self.ausgabe)
+        self.assertFalse(os.path.exists(os.path.join(gitdir, "index.lock")))
+
+    def test_stand_nach_der_installation(self):
+        """Befund 12: stand.json zeigte nach zen update noch die Lage davor («neue Version bereit», «von Hand
+        geändert?»). Jetzt prüft zen update danach neu; und status merkt, wenn seither installiert wurde."""
+        self.signiert_installiert("v0.1.0-rc4")
+        neu = self.commit("neu")
+        self.signieren("v0.1.0-rc5")
+        self.assertEqual(self.zen(), 0, self.ausgabe)
+        stand = self.zustand("stand.json")
+        self.assertEqual((stand["zustand"], stand["installiert"]["commit"], stand["hoechste"]),
+                         ("aktuell", neu, "v0.1.0-rc5"))
+        with contextlib.redirect_stdout(io.StringIO()) as aus:
+            K.cmd_status(["--kurz"])
+        self.assertTrue(aus.getvalue().startswith("aktuell "), aus.getvalue())
+        # Ohne die Prüfung danach (Installation von Hand über die Unit): «veraltet» statt falscher Meldungen
+        self.commit("weiter")
+        self.signieren("v0.1.0-rc6")
+        K.write_wish("update")
+        self.lauf()
+        self.assertEqual(self.installieren(), 0, self.ausgabe)
+        with contextlib.redirect_stdout(io.StringIO()) as aus:
+            K.cmd_status(["--kurz"])
+            K.cmd_status([])
+        self.assertTrue(aus.getvalue().startswith("veraltet Seit der letzten Prüfung wurde installiert"),
+                        aus.getvalue())
+        self.assertNotIn("von Hand geändert", aus.getvalue())
+
+    def test_selbsttest_probelauf(self):
+        """Befund 13: Ein Laufzeitfehler in update galt als gesund, das nächste zen update brach ab. Der Selbsttest
+        macht jetzt einen Probelauf (status, update, rollback, installieren, nachstart) im Wegwerf-Zustand."""
+        self.signiert_installiert("v0.1.0-rc4")
+        self.commit("neu")
+        self.signieren("v0.1.0-rc5")
+        self.lauf()
+        vorher = {n: open(os.path.join(K.STATE_DIR, n), encoding="utf-8").read()
+                  for n in ("stand.json", "gesehen.json", "gut.json", "hoechste")}
+        bereit = sorted(os.listdir(os.path.join(K.STATE_DIR, "bereit")))
+        werte = (K.STATE_DIR, K.LOCK_FILE, K.DRY_RUN, K.start_unit)
+        aus = io.StringIO()
+        with contextlib.redirect_stdout(aus):
+            self.assertEqual(K.cmd_selftest(["--anker", "--probelauf"]), 0, aus.getvalue())
+        nachher = {n: open(os.path.join(K.STATE_DIR, n), encoding="utf-8").read() for n in vorher}
+        self.assertEqual(vorher, nachher, "der echte Zustand bleibt")
+        self.assertEqual(sorted(os.listdir(os.path.join(K.STATE_DIR, "bereit"))), bereit, "nichts bereitgestellt")
+        self.assertFalse(os.path.exists(os.path.join(K.STATE_DIR, "selbsttest")))
+        self.assertFalse(os.path.exists(os.path.join(K.STATE_DIR, "auftrag.json")))
+        self.assertEqual((K.STATE_DIR, K.LOCK_FILE, K.DRY_RUN, K.start_unit), werte, "alles zurückgestellt")
+        self.assertEqual(self.laeufe()[-1][1], self.kopf(), "kein install.sh im Probelauf")
+        for ziel, wo in ((K.Operator, "steps"), (K.Check, "fulfil"), (K.Installation, "new_run")):
+            echt = getattr(ziel, wo)
+
+            def kaputt(*_a, **_k):
+                raise RuntimeError("Probe: Laufzeitfehler")
+
+            setattr(ziel, wo, kaputt)
+            try:
+                with contextlib.redirect_stdout(io.StringIO()) as aus:
+                    self.assertEqual(K.cmd_selftest(["--probelauf"]), 1, wo)
+                    self.assertEqual(K.cmd_selftest([]), 0, "ohne --probelauf kein Probelauf")
+            finally:
+                setattr(ziel, wo, echt)
+            self.assertIn("Probelauf", aus.getvalue())
+            self.assertIn("RuntimeError: Probe: Laufzeitfehler", aus.getvalue())
+
+    def test_probelauf_nur_fuer_einen_geaenderten_updater(self):
+        """Der Probelauf läuft nur, wenn der Stand einen anderen zenos-kanal brachte, der ihn kennt, und nie beim
+        Rückweg: Ein Fehlalarm darin machte sonst Ziel und Rückweg «kaputt» (im Ende-zu-Ende-Test passiert)."""
+        protokoll = self.pfad("selbsttest.argv")
+        with open(K.INSTALLED_PROGRAM, "a", encoding="utf-8") as f:
+            f.write(f"open({protokoll!r}, 'a').write(' '.join(sys.argv[1:]) + chr(10))\n")
+        self.signiert_installiert("v0.1.0-rc4")
+        echt = K.run_visible
+        self.addCleanup(setattr, K, "run_visible", echt)
+
+        def neuer_updater(argv, env, timeout=None, cwd="/"):
+            rc = echt(argv, env, timeout, cwd)
+            with open(K.INSTALLED_PROGRAM, "a", encoding="utf-8") as f:
+                f.write("# neue Fassung, kennt --probelauf\n")
+            return rc
+
+        K.run_visible = neuer_updater
+        self.commit("neu")
+        self.signieren("v0.1.0-rc5")
+        self.assertEqual(self.zen(), 0, self.ausgabe)
+        self.commit("kaputt", {"kaputt": "1\n"})
+        self.signieren("v0.1.0-rc6")
+        self.assertEqual(self.zen(), 4, self.ausgabe)
+        with open(protokoll, encoding="utf-8") as f:
+            aufrufe = f.read().splitlines()
+        self.assertNotIn("--probelauf", aufrufe[0], "unverändert: kein Probelauf")
+        self.assertIn("--probelauf", aufrufe[1], "geändert: Probelauf")
+        self.assertIn("--probelauf", aufrufe[2], "Ziel rc6: Probelauf")
+        self.assertEqual(aufrufe[3], "selbsttest --anker", "Rückweg: nur der Anker")
+
+    def test_syntaxfehler_in_zen_d(self):
+        """Befund 13: bash -n prüfte nur scripts/zen, nicht scripts/zen.d/*.sh und install.sh."""
+        gut = self.signiert_installiert("v0.1.0-rc4")
+        self.commit("kaputtes zen.d", {"scripts/zen.d/kaputt.sh": "befehl_kaputt() {\n  if true; then\n}\n"})
+        self.signieren("v0.1.0-rc5")
+        self.assertEqual(self.zen(), 4, self.ausgabe)
+        self.assertIn("Syntaxfehler in scripts/zen.d/kaputt.sh", self.zustand("letzte.json")["grund"])
+        self.assertEqual(self.kopf(), gut)
+
+    def test_alte_bereitstellung_ohne_tag(self):
+        """Befund 6 (Probe D): Eine alte Bereitstellung desselben Commits (von dev, ohne den Tag) wurde übernommen,
+        das signierte Ziel bei jedem Versuch abgelehnt («Tag fehlt in der Bereitstellung»). Jetzt immer neu."""
+        self.kanal("dev")
+        c = self.commit("c")
+        self.antworten = ["ja"]
+        self.assertEqual(self.zen(), 0, self.ausgabe)
+        self.assertTrue(os.path.isdir(os.path.join(K.STATE_DIR, "bereit", c)))
+        self.signieren("v0.2.0")
+        self.kanal("vorschau")
+        K.write_json(os.path.join(K.STATE_DIR, "angehalten"), {"version": 1, "commit": c, "zeit": K.iso(K.now())})
+        for _ in range(2):
+            rc = self.zen()
+            self.assertNotIn("fehlt in der Bereitstellung", self.ausgabe)
+            self.assertEqual(rc, 0, self.ausgabe)
+        gut = self.zustand("gut.json")
+        self.assertEqual((gut["tag"], gut["commit"], gut["signiert"]), ("v0.2.0", c, True))
+
+    def test_nur_gepruefte_tags_in_der_bereitstellung(self):
+        """Befund 8: Alle Tags von origin kamen in die Bereitstellung und nach /opt/zenos, ein fremder v9.9.9 auf
+        demselben Commit fälschte «zen version». Jetzt nur der geprüfte Ziel-Tag (dev: nur gültige)."""
+        neu = self.commit("neu")
+        self.signieren("v0.2.0")
+        self.git("-c", "user.name=Fremd", "tag", "-a", "-m", "fremd", "v9.9.9", ort=self.server,
+                 pruefen=True)
+        self.assertEqual(self.zen(), 0, self.ausgabe)
+        tags = self.git("tag", "-l", ort=os.path.join(K.STATE_DIR, "bereit", neu)).split()
+        self.assertEqual(tags, ["v0.2.0"])
+        self.kanal("dev")
+        weiter = self.commit("weiter", signiert_mit="rel")
+        self.assertEqual(self.zen(), 0, self.ausgabe)
+        tags = self.git("tag", "-l", ort=os.path.join(K.STATE_DIR, "bereit", weiter)).split()
+        self.assertEqual(tags, ["v0.2.0"])
+
+    def test_rueckweg_auf_widerrufenen_schluessel(self):
+        """Befund 18b: Der Rückweg auf einen Stand, dessen Schlüssel inzwischen widerrufen ist, scheiterte am Selbsttest
+        (--tag): «kaputt», obwohl der alte Stand läuft. Beim Rückweg prüft der Selbsttest den Tag nicht mehr."""
+        gut = self.signiert_installiert("v0.1.0-rc4")
+        open(os.path.join(os.path.dirname(K.INSTALLED_PROGRAM), "tag-widerrufen"), "w").close()
+        self.commit("kaputt", {"kaputt": "1\n"})
+        self.signieren("v0.1.0-rc5")
+        self.assertEqual(self.zen(), 4, self.ausgabe)
+        self.assertEqual(self.zustand("letzte.json")["ergebnis"], "zurueck")
+        self.assertEqual(self.kopf(), gut)
+
+    def test_gescheitert_bleibt_sichtbar(self):
+        """Befund 16: «gescheitert» fiel in doctor auf «gut» zurück, und ein späteres «abgelehnt» überschrieb ein
+        «kaputt» oder «zurueck» in letzte.json."""
+        self.kanal("dev")
+        kaputt = self.commit("kaputt", {"kaputt": "1\n"})
+        self.geraet_auf(kaputt)
+        os.makedirs(K.STATE_DIR, exist_ok=True)
+        K.write_json(os.path.join(K.STATE_DIR, "angehalten"), {"version": 1, "commit": kaputt,
+                                                               "zeit": K.iso(K.now())})
+        self.antworten = ["ja"]
+        self.assertEqual(self.zen(), 4, self.ausgabe)
+        self.assertEqual(self.zustand("letzte.json")["ergebnis"], "gescheitert")
+        self.assertEqual(K.installation_summary()[0], "gescheitert")
+        K.write_json(os.path.join(K.STATE_DIR, "auftrag.json"), {"version": 1})
+        self.assertEqual(self.installieren(), 3)
+        self.assertEqual(self.zustand("letzte.json")["ergebnis"], "gescheitert", "abgelehnt überschreibt nichts")
+
+    def test_stopp_vor_install_sh(self):
+        """Befund 19c: Kam der Stopp (Ausschalten) vor install.sh, startete es trotzdem mitten im Herunterfahren."""
+        self.commit("neu")
+        self.signieren("v0.1.0-rc4")
+        echt = K.dpkg_repair
+        self.addCleanup(setattr, K, "dpkg_repair", echt)
+        K.dpkg_repair = lambda: os.kill(os.getpid(), signal.SIGTERM)
+        self.assertEqual(self.zen(), 10, self.ausgabe)
+        self.assertIn("Stopp verlangt", self.ausgabe)
+        self.assertEqual(self.laeufe(), [])
+        self.assertFalse(os.path.exists(os.path.join(K.STATE_DIR, "laeuft.json")))
+
+    def test_pruefung_belegt_gibt_75(self):
+        """Befund 15a: Hielt ein anderer Lauf die Kanal-Sperre, endete zen update mit 1 statt 75."""
+        os.makedirs(os.path.dirname(K.LOCK_FILE), mode=0o700, exist_ok=True)
+        fd = os.open(K.LOCK_FILE, os.O_WRONLY | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, fd)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        self.commit("neu")
+        self.assertEqual(self.zen(), 75, self.ausgabe)
+        self.assertIn("läuft gerade", self.ausgabe)
+
+    def test_ohne_netz_wartet(self):
+        """Befund 15b: Erstes zen update ohne Netz auf dev ohne Anker: «abgelehnt – origin/dev fehlt» statt «wartet»."""
+        self.kanal("dev")
+        self.ohne_anker()
+        self.git("remote", "set-url", "origin", f"file://{self.pfad('gibt-es-nicht')}", ort=K.CODE_DIR)
+        self.assertEqual(self.zen(), 10, self.ausgabe)
+        self.assertIn("Kein Kontakt zu origin", self.ausgabe)
+        self.assertNotIn("origin/dev fehlt", self.ausgabe)
 
 
 if __name__ == "__main__":

@@ -11,10 +11,11 @@
 # Zwei Arten von Quellen:
 # - Der Kanal (zen update, zen rollback): zenos-kanal startet install.sh als root aus einer geprüften Bereitstellung
 #   (/var/lib/zenos/kanal/bereit/<commit>) mit ZENOS_KANAL_LAUF=1. Er hält die Kanal-Sperre selbst.
-# - Von Hand aus einem Arbeits-Checkout (etwa ~/zenOS): install.sh hat vorher auf die Kanal-Sperre
-#   (/run/lock/zenos-kanal.lock) gewartet und hält sie bis zum Ende, damit Kanal und Hand nie zugleich /opt/zenos
-#   umstellen. Danach gilt der Stand als «angehalten» (/var/lib/zenos/kanal/angehalten): Er stammt nicht aus dem
-#   Kanal, bis zum nächsten zen update kommt nichts automatisch.
+# - Von Hand aus einem Arbeits-Checkout (etwa ~/zenOS): install.sh hat vorher auf die Kanal-Sperre gewartet und sich
+#   in /run/zenos-sperre/hand vermerkt (nur root kann das); solange es läuft, installiert der Kanal nichts. So stellen
+#   Kanal und Hand nie zugleich /opt/zenos um. Danach gilt der Stand als «angehalten»
+#   (/var/lib/zenos/kanal/angehalten): Er stammt nicht aus dem Kanal, bis zum nächsten zen update kommt nichts
+#   automatisch.
 # Jeder Lauf von Hand (auch aus /opt/zenos, etwa der Notweg) ersetzt eine unterbrochene Kanal-Installation
 # (laeuft.json): Die gilt danach als erledigt, statt beim nächsten zen update fortgesetzt zu werden.
 

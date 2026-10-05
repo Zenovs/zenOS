@@ -34,9 +34,13 @@
 - `--nur-code`: nur als root, nur Modul 10-code (Code nach `/opt/zenos`), ohne Netz. Für
   `zenos-kanal-nachstart.service` nach einem Abbruch.
 - `ZENOS_KANAL_LAUF=1` setzt zenos-kanal, wenn es install.sh aus einer Bereitstellung startet. Ohne die Variable
-  gilt ein Lauf als «von Hand»: Aus einem anderen Checkout wartet install.sh vor der eigenen Sperre auf die
-  Kanal-Sperre (dieselbe Reihenfolge wie zenos-kanal) und 10-code markiert den Stand als angehalten; jeder Lauf von
-  Hand erledigt eine unterbrochene Kanal-Installation (`laeuft.json`).
+  gilt ein Lauf als «von Hand»: install.sh wartet über sudo auf die Kanal-Sperre und trägt darunter seine PID in
+  `/run/zenos-sperre/hand` ein (nur root; solange der Prozess läuft, installiert der Kanal nichts; am Ende entfernt
+  es den Vermerk). Aus einem anderen Checkout markiert 10-code den Stand als angehalten; jeder Lauf von Hand erledigt
+  eine unterbrochene Kanal-Installation (`laeuft.json`).
+- Sperre: Läufe als root (Kanal, `--nur-code`) nehmen `/run/zenos-sperre/install.lock` (Ordner nur für root, 0700),
+  Läufe als Benutzer und das Image `/run/lock/zenos-install.lock`. Wird sie in 15 Minuten nicht frei, endet install.sh
+  mit Exit 75, ohne etwas begonnen zu haben (zenos-kanal zählt den Versuch dann nicht).
 - `--ruhig`: im Terminal nur Warnungen und Fehler, alles andere ins Log.
 - Log: `/var/log/zenos/install.log` (gehört dem Benutzer, Gruppe `adm`, 0640). Kann `--nur-benutzer`
   dort nicht schreiben (frisches Image), landet das Log in `~/.local/state/zenos/install.log`. Jeder
@@ -119,13 +123,14 @@ modul_benutzer() {  # optional; als Benutzer, ohne sudo, nie im --image-Modus
 - Den Unterbefehlen stehen `lib/gemeinsam.sh` sowie `zen_git` (lesend in /opt/zenos), `zen_git_root`
   (schreibend als root), `zen_fehler`, `zen_warnung`, `zen_hinweis`, `$SUDO` und `$ZENOS_CODE` (immer
   `/opt/zenos`) zur Verfügung.
-- `zen update` und `zen rollback <tag>` starten `sudo /usr/local/libexec/zenos/zenos-kanal update` bzw.
-  `rollback <tag>`. Das schreibt einen Wunsch, startet `zenos-kanal-holen` und `zenos-kanal-pruefen`, fragt bei
-  Bedarf nach «ja» (gebunden an die gezeigte Commit- bzw. Objekt-ID), startet dann `zenos-kanal-installieren` und
-  zeigt dessen Journal. Eine eigene Sperre (`/run/lock/zenos-kanal-bedienung.lock`) verhindert zwei gleichzeitige
-  Aufrufe. Nach einer Installation oder einem Rückweg richtet zen die Benutzerteile ein (`install.sh
+- `zen update` und `zen rollback <tag>` starten `sudo /usr/local/libexec/zenos/zenos-kanal update` bzw. `rollback
+  <tag>`. Das schreibt einen Wunsch, startet `zenos-kanal-holen` und `zenos-kanal-pruefen`, fragt bei Bedarf nach «ja»
+  (gebunden an die gezeigte Commit- bzw. Objekt-ID), startet dann `zenos-kanal-installieren` und zeigt dessen Journal,
+  danach prüft es den Stand neu. Eine eigene Sperre (`/run/zenos-sperre/bedienung.lock`, nur root) verhindert zwei
+  gleichzeitige Aufrufe. Nach einer Installation oder einem Rückweg richtet zen die Benutzerteile ein (`install.sh
   --nur-benutzer`). Exit: 0 installiert oder aktuell, 3 abgelehnt, 4 gescheitert und zurück, 5 kaputt, 10 wartet
-  (Zustimmung, Platz, Netz), 75 läuft schon. Fehlt zenos-kanal, verweist zen auf den Notweg (ANLEITUNG F).
+  (Zustimmung, Platz, Netz), 75 läuft schon (auch ein `install.sh` von Hand). Fehlt zenos-kanal, verweist zen auf den
+  Notweg (ANLEITUNG F).
 
 ## zen doctor
 
@@ -158,9 +163,12 @@ Wurzel-Schlüssel. Ablauf und Regeln: `docs/image-und-releases.md`, «Signierte 
 `bin/zenos-kanal` (Python 3, nur Standardbibliothek, `python3 -I`) läuft als root-eigene Kopie
 `/usr/local/libexec/zenos/zenos-kanal` (Modul `14-kanal`): `holen-intern` in `zenos-kanal-holen.service`
 (DynamicUser, Sandbox, nur Netz), `pruefen` in `zenos-kanal-pruefen.service` (root, PrivateNetwork), `status` und
-`anker` für alle. Prozesse nur mit Argumentlisten, jedes git mit leerer Umgebung und gehärteten Einstellungen. Den
-Anker legt `12-vertrauen` an, nur wenn er fehlt oder leer ist. Regeln, Zustände und Exit-Codes:
-`docs/image-und-releases.md`, «Auf dem Gerät: zenos-kanal». Tests: `test/einheiten/kanal.test.py`.
+`anker` für alle, `installieren` in `zenos-kanal-installieren.service`, `nachstart` vor greetd, `selbsttest` als Teil
+der Gesundheitsprüfung (mit Probelauf in einem Wegwerf-Zustand). Die vorige Fassung bleibt als `zenos-kanal.vorher`.
+Prozesse nur mit Argumentlisten, jedes git mit leerer Umgebung und gehärteten Einstellungen. Den Anker legt
+`12-vertrauen` an; mit Schlüsseln füllt es ihn nur im Image, sonst `sudo zen kanal anker ORDNER`. Regeln, Zustände und
+Exit-Codes: `docs/image-und-releases.md`, «Auf dem Gerät: zenos-kanal». Tests: `test/einheiten/kanal.test.py`,
+`test/einheiten/kanal-installieren.test.py`, Ende-zu-Ende `test/container/kanal-e2e.sh`.
 
 ## pruefen.sh
 
