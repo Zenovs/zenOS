@@ -50,6 +50,9 @@ testwurzel=${ZENOS_ENERGIE_TESTWURZEL:-}
 testwurzel=${testwurzel%/}
 geraet_datei=$testwurzel/run/zenos/geraet.json
 install_sperre=$testwurzel/run/lock/zenos-install.lock
+# Laufzeit seit dem Start; in Tests eingefroren, damit die Grenze bei 60 s nicht an einer verstrichenen Sekunde hängt
+uptime_datei=/proc/uptime
+if [[ -n "$testwurzel" && -r "$testwurzel/proc/uptime" ]]; then uptime_datei=$testwurzel/proc/uptime; fi
 
 laufzeit=${XDG_RUNTIME_DIR:-/run/user/$EUID}
 vorwarnung=$laufzeit/zenos/vorwarnung
@@ -309,7 +312,7 @@ start_lesen() {
   local rest
   boot="" laufzeit_s=""
   read -r boot < /proc/sys/kernel/random/boot_id 2>/dev/null || true
-  read -r laufzeit_s rest < /proc/uptime 2>/dev/null || true
+  read -r laufzeit_s rest < "$uptime_datei" 2>/dev/null || true
   laufzeit_s=${laufzeit_s%%.*}
   [[ "$boot" =~ ^[0-9a-f-]{36}$ && "$laufzeit_s" =~ ^[0-9]{1,12}$ ]]
 }

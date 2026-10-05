@@ -109,6 +109,15 @@ class EnergieTest(unittest.TestCase):
                        os.path.join(self.testwurzel, "run", "zenos"), os.path.join(self.testwurzel, "run", "lock")):
             os.makedirs(ordner, exist_ok=True)
         os.chmod(self.lz, 0o700)
+        # Laufzeit seit dem Start eingefroren (zenos-energie liest sie im Testmodus von hier): Eine Sekunde, die
+        # während des Tests verstreicht, darf die Grenze bei 60 s nicht verschieben
+        os.makedirs(os.path.join(self.testwurzel, "proc"), exist_ok=True)
+        laufzeit = "100000.00"
+        if os.path.exists("/proc/uptime"):
+            with open("/proc/uptime", encoding="utf-8") as f:
+                laufzeit = f.read().split()[0]
+        with open(os.path.join(self.testwurzel, "proc", "uptime"), "w", encoding="utf-8") as f:
+            f.write(f"{laufzeit} 1.00\n")
         self.programm = os.path.join(self.bin, "zenos-energie")
         shutil.copy2(ENERGIE, self.programm)
         shutil.copy2(IDLE, os.path.join(self.bin, "zenos-idle"))
@@ -183,12 +192,11 @@ class EnergieTest(unittest.TestCase):
         with open(self.geraet, "w", encoding="utf-8") as f:
             json.dump(daten, f)
 
-    @staticmethod
-    def start_jetzt():
-        """(Start-ID, ganze Sekunden seit dem Start) wie zenos-energie"""
+    def start_jetzt(self):
+        """(Start-ID, ganze Sekunden seit dem Start) wie zenos-energie, mit der eingefrorenen Laufzeit"""
         with open("/proc/sys/kernel/random/boot_id", encoding="utf-8") as f:
             boot = f.read().strip()
-        with open("/proc/uptime", encoding="utf-8") as f:
+        with open(os.path.join(self.testwurzel, "proc", "uptime"), encoding="utf-8") as f:
             laufzeit = int(float(f.read().split()[0]))
         return boot, laufzeit
 
