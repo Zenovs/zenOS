@@ -497,7 +497,8 @@ setuid bleibt für den Blick auf die Sperre):
 2. Nur `lauf`: bis 2 Min. auf die Uhr warten, dann `zenos-kanal-holen.service` (scheitert es, gilt der letzte Stand).
 3. Ist eine Installation unterbrochen (`laeuft.json`), setzt die Automatik sie fort, wenn der Zeitpunkt passt (nicht
    bei `hand`); ihr Ziel war schon geprüft und bereitgestellt, auch ein «ja» von Hand gilt weiter.
-4. Kanal dev, Zeitpunkt passt nicht: nur prüfen (ohne Wunsch), damit `stand.json` stimmt.
+4. Kanal dev oder der Zeitpunkt passt nicht: nichts installieren; nach dem Holen nur prüfen (ohne Wunsch), damit
+   `stand.json` und die Oberfläche den neuen Stand kennen.
 5. Sonst `wunsch.json` mit `art: automatik` (nie mit «ja») und prüfen: Das Prüfen stellt genau den Stand bereit, den
    es eben `bereit` nennt, nach der Wartezeit, ohne Grund für ein «ja» (Rückschritt, gesperrt, Firewall, Netz, Boot),
    nie auf dev; `auftrag.json` mit `von_hand: false` (install.sh läuft mit `--ruhig`).
