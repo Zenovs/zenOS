@@ -1,7 +1,9 @@
-# Prüft jeden Push und jeden Pull Request auf dev und main mit scripts/pruefen.sh: gitleaks über den ganzen
-# Verlauf und den Arbeitsstand, shellcheck, Python-Syntax, JSON-Schemas, Hex- und sh-c-Regel, Dateinamen,
+# Prüft jeden Push und jeden Pull Request auf dev und main und jeden Tag v* mit scripts/pruefen.sh: gitleaks über
+# den ganzen Verlauf und den Arbeitsstand, shellcheck, Python-Syntax, JSON-Schemas, Hex- und sh-c-Regel, Dateinamen,
 # Einheitentests unter test/einheiten (python3, node, fish) und qmllint (ohne Quickshell-Typen: rot nur bei
 # Syntaxfehlern). Der Teil mit der laufenden Oberfläche wird ohne labwc und Quickshell übersprungen.
+# image.yml ruft diesen Workflow für jeden Tag v* zusätzlich selbst auf (workflow_call, Job «Prüfung»): Ein Release
+# gibt es nur, wenn diese Prüfung für genau diesen Stand im selben Lauf grün ist.
 # Läuft in Ubuntu 26.04 wie der Pi, auf einem arm64-Runner. Einzige fremde Action ist actions/checkout, auf
 # einen Commit festgelegt. Keine Geheimnisse, nur Leserechte, nichts wird hochgeladen.
 
@@ -10,14 +12,18 @@ name: pruefen
 on:
   push:
     branches: [dev, main]
+    tags: ["v*"]
   pull_request:
     branches: [dev, main]
+  workflow_call:
 
 permissions:
   contents: read
 
+# Je Workflow und Ref eine Gruppe: Aufgerufen aus image.yml ist github.workflow «Image». So bricht der Lauf für den
+# Tag den aus image.yml nicht ab (und umgekehrt).
 concurrency:
-  group: pruefen-${{ github.ref }}
+  group: pruefen-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -36,14 +42,15 @@ jobs:
         shell: bash
     steps:
       # git vor dem Auschecken, sonst lädt actions/checkout nur ein Archiv ohne Verlauf.
-      # nodejs, fish, unattended-upgrades, lsb-release und openssh-client nur für die Einheitentests (ohne sie
-      # überspringt pruefen.sh diese Tests; unattended-upgrades und lsb-release braucht sicherheitsquelle.test.py,
-      # openssh-client mit ssh-keygen und ssh-agent release-signieren.test.py).
+      # nodejs, fish, unattended-upgrades, lsb-release, openssh-client und python3-yaml nur für die Einheitentests
+      # (ohne sie überspringt pruefen.sh diese Tests; unattended-upgrades und lsb-release braucht
+      # sicherheitsquelle.test.py, openssh-client mit ssh-keygen und ssh-agent release-signieren.test.py und
+      # image-signatur.test.py, python3-yaml dort die Prüfschritte von image.yml).
       - name: Werkzeuge installieren
         run: |
           apt-get -o Acquire::Retries=3 update -qq
           apt-get -o Acquire::Retries=3 install -y -qq --no-install-recommends \
-            ca-certificates git shellcheck gitleaks python3 python3-jsonschema qt6-declarative-dev-tools \
+            ca-certificates git shellcheck gitleaks python3 python3-jsonschema python3-yaml qt6-declarative-dev-tools \
             nodejs fish unattended-upgrades lsb-release openssh-client
 
       - name: Auschecken (ganzer Verlauf für gitleaks)

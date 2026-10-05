@@ -1,7 +1,14 @@
 # Image-Bau für den Raspberry Pi 5, nur bei Tags v*.
-# Tags mit «-rc» (z. B. v0.1.0-rc1): Image und Quellcode bauen und als Workflow-Artefakte ablegen, kein Release.
-# Andere v*-Tags: dazu ein GitHub-Release mit Image, Paketliste, SHA256SUMS, Manifest für den Raspberry Pi Imager
-# und dem Quellcode aller enthaltenen Pakete (image/quellen.sh). Ohne vollständige Quellen kein Release (GPL).
+# Zuerst prüft der Job «Tag und Signatur» (image/tag-pruefen.sh), ob der Tag ein Release-Tag vX.Y.Z oder vX.Y.Z-rcN ist
+# und mit dem Release-Schlüssel des Ankers system/vertrauen in seinem Stand gültig signiert (git verify-tag gehärtet und
+# ssh-keygen -Y verify, auf genau den Commit des Laufs). Sonst baut nichts. bauen.sh prüft dasselbe noch einmal und im
+# chroot zenos-kanal ein drittes Mal, wie ein Gerät.
+# Kanal je nach Tag: vX.Y.Z → stabil, vX.Y.Z-rcN → vorschau. Das Image bekommt den Anker aus system/vertrauen und den
+# Zustand ab Werk (gut.json, hoechste, gesehen.json aus dem Tag).
+# Tags mit «-rc» (z. B. v0.1.0-rc4): Image und Quellcode bauen und als Workflow-Artefakte ablegen, kein Release.
+# vX.Y.Z: dazu ein GitHub-Release mit Image, Paketliste, SHA256SUMS, Manifest für den Raspberry Pi Imager und dem
+# Quellcode aller enthaltenen Pakete (image/quellen.sh). Ohne vollständige Quellen kein Release (GPL), und ohne grüne
+# Prüfung (Job «Prüfung», scripts/pruefen.sh über pruefen.yml für genau diesen Stand) auch nicht.
 # Image, Paketliste und SHA256SUMS bekommen eine Herkunftsbestätigung von GitHub (Artifact Attestation, Sigstore).
 # Ablauf und Grenzen: image/README.md und docs/image-und-releases.md.
 name: Image
@@ -22,8 +29,52 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  tag:
+    name: Tag und Signatur
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.pruefen.outputs.version }}
+      kanal: ${{ steps.pruefen.outputs.kanal }}
+      release: ${{ steps.pruefen.outputs.release }}
+      schluessel: ${{ steps.pruefen.outputs.schluessel }}
+      serie: ${{ steps.pruefen.outputs.serie }}
+    steps:
+      # Ganze Geschichte: Mit fetch-depth 0 kommen alle Tags als Tag-Objekte (+refs/tags/*:refs/tags/*), auch
+      # vertrauen/NNNN samt Commit (geprüft im Quelltext von v7.0.1, src/ref-helper.ts: testRef vergleicht mit ^{commit},
+      # der Tag bleibt annotiert). tag-pruefen.sh lehnt einen leichten Tag ab, gebaut wird dann nichts.
+      - name: Repo auschecken
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Signatur prüfen (verify-tag gegen system/vertrauen)
+        id: pruefen
+        env:
+          TAG: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          image/tag-pruefen.sh --commit "$COMMIT" "$TAG" > "$RUNNER_TEMP/tag.txt"
+          cat "$RUNNER_TEMP/tag.txt" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Tag $TAG"
+            echo
+            sed -n -e 's/^kanal=/- Kanal: /p' -e 's/^schluessel=/- Signiert mit dem Release-Schlüssel /p' \
+              -e 's/^serie=/- Anker system\/vertrauen, Serie /p' "$RUNNER_TEMP/tag.txt"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  pruefen:
+    name: Prüfung
+    uses: ./.github/workflows/pruefen.yml
+    permissions:
+      contents: read
+
   bauen:
     name: Image bauen
+    needs: tag
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 180
     permissions:
@@ -31,25 +82,7 @@ jobs:
       # Herkunftsbestätigung (attest-build-provenance): OIDC-Token und Ablage der Bestätigung
       id-token: write
       attestations: write
-    outputs:
-      version: ${{ steps.tag.outputs.version }}
-      release: ${{ steps.tag.outputs.release }}
     steps:
-      - name: Tag prüfen
-        id: tag
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
-            echo "::error::Tag «$TAG» hat nicht die Form v<major>.<minor>.<patch>[-<zusatz>]"
-            exit 1
-          fi
-          release=true
-          if [[ "$TAG" == *-rc* ]]; then release=false; fi
-          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
-          echo "release=$release" >> "$GITHUB_OUTPUT"
-          echo "zenOS ${TAG#v} · Release: $release"
-
       - name: Repo auschecken
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -60,7 +93,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends \
-            curl ca-certificates gpgv xz-utils e2fsprogs fdisk util-linux mount git zerofree psmisc
+            curl ca-certificates gpgv xz-utils e2fsprogs fdisk util-linux mount git openssh-client zerofree psmisc
 
       - name: Platz auf dem Runner
         run: df -h / "$RUNNER_TEMP"
@@ -68,16 +101,18 @@ jobs:
       - name: Image bauen
         env:
           TAG: ${{ github.ref_name }}
-          VERSION: ${{ steps.tag.outputs.version }}
+          VERSION: ${{ needs.tag.outputs.version }}
+          KANAL: ${{ needs.tag.outputs.kanal }}
           ORIGIN: ${{ github.server_url }}/${{ github.repository }}
         run: |
-          # sudo setzt die Umgebung zurück: ohne GITHUB_ACTIONS gibt bauen.sh keine ::warning::/::error:: aus
+          # sudo setzt die Umgebung zurück: ohne GITHUB_ACTIONS gibt bauen.sh keine ::warning::/::error:: aus.
+          # bauen.sh prüft die Signatur selbst noch einmal und bricht ab, wenn Kanal oder Version nicht zum Tag passen.
           sudo --preserve-env=GITHUB_ACTIONS image/bauen.sh --ref "refs/tags/$TAG" --version "$VERSION" \
-            --origin "$ORIGIN" --arbeit "$RUNNER_TEMP/image" --ausgabe "$RUNNER_TEMP/ausgabe"
+            --kanal "$KANAL" --origin "$ORIGIN" --arbeit "$RUNNER_TEMP/image" --ausgabe "$RUNNER_TEMP/ausgabe"
 
       - name: Ergebnis prüfen
         env:
-          VERSION: ${{ steps.tag.outputs.version }}
+          VERSION: ${{ needs.tag.outputs.version }}
         working-directory: ${{ runner.temp }}/ausgabe
         run: |
           datei="zenos-$VERSION-pi5-arm64.img.xz"
@@ -93,7 +128,8 @@ jobs:
             echo
             echo "- \`$datei\`: $(( groesse / 1048576 )) MiB"
             echo "- SHA-256: \`$(cut -d ' ' -f 1 SHA256SUMS)\`"
-            sed -n 's/^ubuntu_datei=/- Grundlage: /p' "$RUNNER_TEMP/image/basis.txt"
+            sed -n -e 's/^ubuntu_datei=/- Grundlage: /p' -e 's/^kanal=/- Kanal im Image: /p' \
+              -e 's/^signatur=/- Tag signiert mit /p' "$RUNNER_TEMP/image/basis.txt"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Herkunft bestätigen
@@ -103,7 +139,7 @@ jobs:
 
       - name: Manifest für den Raspberry Pi Imager
         env:
-          VERSION: ${{ steps.tag.outputs.version }}
+          VERSION: ${{ needs.tag.outputs.version }}
           TAG: ${{ github.ref_name }}
           DOWNLOAD: ${{ github.server_url }}/${{ github.repository }}/releases/download
         run: |
@@ -135,7 +171,10 @@ jobs:
 
       - name: Versionshinweise
         env:
-          VERSION: ${{ steps.tag.outputs.version }}
+          VERSION: ${{ needs.tag.outputs.version }}
+          KANAL: ${{ needs.tag.outputs.kanal }}
+          SCHLUESSEL: ${{ needs.tag.outputs.schluessel }}
+          TAG: ${{ github.ref_name }}
           REPO: ${{ github.repository }}
         run: |
           ubuntu_datei=$(sed -n 's/^ubuntu_datei=//p' "$RUNNER_TEMP/image/basis.txt")
@@ -148,7 +187,8 @@ jobs:
           - **Schreiben:** mit dem Raspberry Pi Imager 2.x über die Manifest-Datei \`zenos-$VERSION.rpi-imager-manifest\` (Doppelklick oder «App Options › Content Repository › Edit › Use custom file»). Nur so wirken die Einstellungen für Benutzer, SSH und WLAN. balenaEtcher geht auch, dann ohne Einstellungen. Ziel: SD-Karte, USB-Stick oder NVMe.
           - **Erste Anmeldung:** Mit Einstellungen aus dem Imager gilt dein eigener Benutzer. Ohne Einstellungen heisst der Benutzer \`user\` mit Passwort \`user\`, das zuerst geändert werden muss: mit \`Ctrl + Alt + F2\` zur Textkonsole, dort anmelden, neues Passwort setzen, \`exit\`, mit \`Ctrl + Alt + F7\` zurück zum Login von zenOS. sudo fragt immer nach dem Passwort, SSH nimmt nur Schlüssel an.
           - **Argon ONE UP (Compute Module 5):** USB ist eingestellt. Für eine NVMe-SSD muss im EEPROM \`PCIE_PROBE=1\` stehen.
-          - **Updates:** Das Grundsystem bekommt Sicherheitsupdates direkt von Ubuntu (main). Für Pakete aus universe (etwa labwc, greetd, kitty) gibt es sie verlässlich nur mit Ubuntu Pro. Quickshell und die Oberfläche aktualisiert \`zen update\`.
+          - **Signatur:** Der Tag \`$TAG\` ist mit dem Release-Schlüssel \`$SCHLUESSEL\` signiert (öffentlich in \`system/vertrauen/release\`). Prüfen im Repo: \`git -c gpg.ssh.allowedSignersFile=system/vertrauen/release -c gpg.ssh.revocationFile=system/vertrauen/widerrufen verify-tag $TAG\`.
+          - **Updates:** zenOS folgt dem Kanal \`$KANAL\` und installiert nur Tags, die mit diesem Schlüssel signiert sind, zum Zeitpunkt aus Einstellungen › System › Updates (Standard: wenn das Gerät gesperrt ist). Das Grundsystem bekommt Sicherheitsupdates direkt von Ubuntu (main). Für Pakete aus universe (etwa labwc, greetd, kitty) gibt es sie verlässlich nur mit Ubuntu Pro.
           - **Nicht enthalten:** Chrome, VS Code und 1Password. Die Einrichtung beim ersten Start installiert sie auf Wunsch aus den offiziellen Quellen der Hersteller.
           - **Quellcode:** \`zenos-$VERSION-quellen-teil*.tar\` und \`zenos-$VERSION-quickshell-*.tar\` auf dieser Seite, Übersicht in \`zenos-$VERSION-QUELLEN.txt\`, Paketliste in \`zenos-$VERSION-pi5-arm64.pakete.txt\`.
           - **Grundlage:** \`$ubuntu_datei\` (SHA-256 \`$ubuntu_sha\`), Signatur von SHA256SUMS mit dem Ubuntu-CD-Schlüssel geprüft.
@@ -161,7 +201,8 @@ jobs:
           - **Verify:** \`sha256sum -c SHA256SUMS\` and the provenance with \`gh attestation verify zenos-$VERSION-pi5-arm64.img.xz --repo $REPO\`
           - **Write:** with Raspberry Pi Imager 2.x using the manifest file \`zenos-$VERSION.rpi-imager-manifest\` (double-click, or App Options › Content Repository › Edit › Use custom file); only then are user, SSH and Wi-Fi settings applied. balenaEtcher works too, without settings.
           - **First login without Imager settings:** user \`user\`, password \`user\`, which must be changed first on the text console (\`Ctrl + Alt + F2\`, then back with \`Ctrl + Alt + F7\`). sudo always asks for the password, SSH accepts keys only.
-          - **Updates:** security updates for the base system come straight from Ubuntu (main); universe packages are only reliably covered with Ubuntu Pro. Documentation is in German.
+          - **Signature:** the tag \`$TAG\` is signed with the release key \`$SCHLUESSEL\` (public in \`system/vertrauen/release\`).
+          - **Updates:** zenOS follows the channel \`$KANAL\` and installs only tags signed with this key. Security updates for the base system come straight from Ubuntu (main); universe packages are only reliably covered with Ubuntu Pro. Documentation is in German.
           - **Source code:** the \`quellen-teil*.tar\` and \`quickshell-*.tar\` files on this page.
           - Personal project, no support.
 
@@ -171,21 +212,21 @@ jobs:
       - name: Paketliste für den Quellcode ablegen
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: zenos-${{ steps.tag.outputs.version }}-pakete
-          path: ${{ runner.temp }}/ausgabe/zenos-${{ steps.tag.outputs.version }}-pi5-arm64.pakete.txt
+          name: zenos-${{ needs.tag.outputs.version }}-pakete
+          path: ${{ runner.temp }}/ausgabe/zenos-${{ needs.tag.outputs.version }}-pi5-arm64.pakete.txt
           if-no-files-found: error
-          retention-days: ${{ steps.tag.outputs.release == 'true' && 3 || 14 }}
+          retention-days: ${{ needs.tag.outputs.release == 'true' && 3 || 14 }}
 
       - name: Image als Artefakt ablegen
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: zenos-${{ steps.tag.outputs.version }}-pi5-arm64
+          name: zenos-${{ needs.tag.outputs.version }}-pi5-arm64
           path: |
             ${{ runner.temp }}/ausgabe/
             ${{ runner.temp }}/hinweise/
           if-no-files-found: error
           compression-level: 0
-          retention-days: ${{ steps.tag.outputs.release == 'true' && 3 || 14 }}
+          retention-days: ${{ needs.tag.outputs.release == 'true' && 3 || 14 }}
 
       - name: Install-Log ablegen
         if: always()
@@ -198,7 +239,7 @@ jobs:
 
   quellen:
     name: Quellcode
-    needs: bauen
+    needs: [tag, bauen]
     # Eigener Runner, weil der Image-Job seinen Platz braucht. Im Container ubuntu:26.04 wie scripts/pruefen.sh
     # (pruefen.yml, gleicher Digest): apt und der Schlüsselbund des Ubuntu-Archivs passen dann sicher zu resolute.
     runs-on: ubuntu-24.04-arm
@@ -224,12 +265,12 @@ jobs:
       - name: Paketliste holen
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: zenos-${{ needs.bauen.outputs.version }}-pakete
+          name: zenos-${{ needs.tag.outputs.version }}-pakete
           path: pakete
 
       - name: Quellen holen und packen
         env:
-          VERSION: ${{ needs.bauen.outputs.version }}
+          VERSION: ${{ needs.tag.outputs.version }}
         run: |
           df -h "$RUNNER_TEMP"
           image/quellen.sh "pakete/zenos-$VERSION-pi5-arm64.pakete.txt" "$RUNNER_TEMP/quellen" --version "$VERSION"
@@ -239,16 +280,18 @@ jobs:
       - name: Quellen als Artefakt ablegen
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: zenos-${{ needs.bauen.outputs.version }}-quellen
+          name: zenos-${{ needs.tag.outputs.version }}-quellen
           path: ${{ runner.temp }}/quellen/
           if-no-files-found: error
           compression-level: 0
-          retention-days: ${{ needs.bauen.outputs.release == 'true' && 3 || 14 }}
+          retention-days: ${{ needs.tag.outputs.release == 'true' && 3 || 14 }}
 
+  # Nur vX.Y.Z, und nur wenn alles davor grün ist: Signatur, Prüfung (pruefen.yml für diesen Stand), Bau und Quellen.
+  # Ohne Statusfunktion im if gilt success() für alle needs.
   veroeffentlichen:
     name: Release
-    needs: [bauen, quellen]
-    if: needs.bauen.outputs.release == 'true'
+    needs: [tag, pruefen, bauen, quellen]
+    if: needs.tag.outputs.release == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -257,18 +300,18 @@ jobs:
       - name: Artefakt holen
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: zenos-${{ needs.bauen.outputs.version }}-pi5-arm64
+          name: zenos-${{ needs.tag.outputs.version }}-pi5-arm64
           path: artefakt
 
       - name: Quellen holen
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: zenos-${{ needs.bauen.outputs.version }}-quellen
+          name: zenos-${{ needs.tag.outputs.version }}-quellen
           path: quellen
 
       - name: Prüfen
         env:
-          VERSION: ${{ needs.bauen.outputs.version }}
+          VERSION: ${{ needs.tag.outputs.version }}
         working-directory: artefakt/ausgabe
         run: |
           sha256sum --check SHA256SUMS
@@ -288,7 +331,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
-          VERSION: ${{ needs.bauen.outputs.version }}
+          VERSION: ${{ needs.tag.outputs.version }}
         run: |
           dateien=("artefakt/ausgabe/zenos-$VERSION-pi5-arm64.img.xz" artefakt/ausgabe/SHA256SUMS
             "artefakt/ausgabe/zenos-$VERSION-pi5-arm64.pakete.txt" "artefakt/hinweise/zenos-$VERSION.rpi-imager-manifest"
