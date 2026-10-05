@@ -41,7 +41,8 @@ und bleibt dabei ein Ubuntu mit dessen Paketen und Sicherheitsupdates (`docs/mod
    `LABWC_PID` und `XDG_SESSION_ID`) und startet `zenos-sitzung.target`.
 4. **`zenos-sitzung.target`** (`BindsTo=graphical-session.target`) zieht per `Wants=`:
    - `zenos-shell.service`: Quickshell mit `~/.config/quickshell` (Verweis auf `/opt/zenos/shell`), `Restart=always`.
-   - `zenos-idle.service`: swayidle über `zenos-idle` (automatische Sperre), `Restart=always`.
+   - `zenos-idle.service`: swayidle über `zenos-idle` (automatische Sperre, danach Bildschirm aus; Hemmer für die
+     Ein/Aus-Taste), `Restart=always`.
    - `zenos-kanshi.service`: kanshi mit der Konfiguration aus `bildschirme.json`.
 
    Die Einheiten liegen in `/etc/systemd/user`. systemd 259 durchsucht `/etc/xdg/systemd/user` nur über
@@ -123,7 +124,8 @@ selbst endet in v0.3.1 auch bei Fehlern mit 0; `zenos-ipc` wertet die Ausgabe au
 | Ziel | Funktionen |
 |---|---|
 | `befehlsfeld` | `umschalten`, `oeffnen`, `schliessen`, `werkzeuge`, `apps` (App-Übersicht), `status` (`offen`/`zu`), `ansicht` (`apps`/`suche`) |
-| `sperre` | `sperren`, `status` (`gesperrt`/`offen`) |
+| `sperre` | `sperren`, `status` (`gesperrt`/`offen`), `bildschirm(aus\|an)` (Meldung von `zenos-bildschirm`; ungesperrt bleibt es hell), `taste` (Ein/Aus-Taste, gesperrt: Bildschirm an oder aus) |
+| `energie` | `aus` (sperren und Bildschirm aus), `status` (Zeitleiste), `vorwarnung` (Probe der Vorwarnung, schaltet nie aus, nur gesperrt) |
 | `thema` | `wechseln`, `setzen(hell\|dunkel\|tageszeit)`, `status` |
 | `modus` | `waehlen`, `wechseln(id)`, `aktiv` |
 | `zustand` | `waehlen`, `starten(id)`, `beenden`, `aktiv` |
@@ -155,7 +157,7 @@ Die Tastenkürzel von labwc rufen dieselben Ziele auf (Liste in `docs/module/m9.
 | `zenos-bildschirmfoto`, `zenos-pipette` | Werkzeuge des Befehlsfelds |
 | `zenos-chrome`, `zenos-webapp` | Chrome im Profil des Modus, Web-Apps |
 | `zenos-apps` | proprietäre Apps installieren (`zen apps`) |
-| `zenos-argon` | Argon ONE: Lüfter und Power-Button (V3), Akku-Messchip (ONE UP), Mindeststufe für den Lüfter, Werte für die Leiste |
+| `zenos-argon` | Argon ONE: Lüfter und Power-Button (V3), Akku-Messchip, Deckel und kontrolliertes Ausschalten bei 3 % (ONE UP), Mindeststufe für den Lüfter, Werte für die Leiste |
 | `zenos-luefter` | Lüfterwunsch schreiben («auto» oder Mindeststufe 1–4; root: über pkexec oder sudo, `zen luefter`) |
 | `zenos-netzwerk` | Netz von netplan/systemd-networkd auf NetworkManager umstellen und zurück (`zen netzwerk`) |
 | `zenos-firewall` | Firewall ein- und ausschalten (root: über pkexec, sudo oder `install.sh`), bewussten Zustand merken |
@@ -187,7 +189,13 @@ Die Tastenkürzel von labwc rufen dieselben Ziele auf (Liste in `docs/module/m9.
 - `ext-session-lock` (`WlSessionLock`) mit PAM (`PamContext`, Dienst `zenos-sperre` aus `/opt/zenos/system/pam`,
   Rückfall `/etc/pam.d/login`). zenOS reicht das Passwort nur an PAM weiter und leert das Feld sofort.
 - Auslöser: Super+L und `zen lock`, swayidle bei Inaktivität (1–15 Minuten), vor dem Standby und bei
-  `loginctl lock-session`.
+  `loginctl lock-session`. Dazu Super+Shift+L, «Bildschirm aus» und die Ein/Aus-Taste (sperren und Bildschirm aus),
+  das Zuklappen (Argon ONE UP) und nach höchstens 60 Minuten ohne Eingabe auch gegen einen Idle-Hemmer (Video,
+  `shell/dienste/Energie.qml`).
+- **Bildschirm aus** nur gesperrt, 1–10 Minuten nach der Sperre: `zenos-bildschirm` (wlopm) sperrt immer zuerst.
+  Die Sperre zählt ab der Sperre und verwirft die Taste, die weckt; swayidle ist die Rückfallebene ohne Oberfläche.
+  Auf Wunsch schaltet `Energie` nach 30–240 Minuten gesperrt aus, mit 60 s Vorwarnung und den Wächtern von
+  `zenos-energie` (SSH, tmux, Updates, Hemmer). Einzelheiten in `docs/module/energie.md`.
 - Marker `$XDG_RUNTIME_DIR/zenos/gesperrt`: Stürzt die Oberfläche ab, hält labwc den Bildschirm gesperrt, systemd
   startet Quickshell neu, und der Marker sperrt sofort wieder.
 - `zen lock` (auch per SSH): IPC, sonst Neustart von `zenos-shell.service`, sonst **Notfall-Sperre** mit swaylock
@@ -213,12 +221,15 @@ Die Tastenkürzel von labwc rufen dieselben Ziele auf (Liste in `docs/module/m9.
 Die Regeln aus dem Manifest stehen im Code, nicht in der Konfiguration, und lassen sich nicht abschalten:
 
 - `Leitplanken` (`shell/dienste/Leitplanken.qml`, Werte aus `shell/modi/zustandslogik.js`): Mitteilungsinhalte bei
-  Freigabe verborgen, Sperre ohne Inhalte, Sperre nicht abschaltbar, Sperrzeit 1–15 Minuten. `anwenden(zustand)`
-  setzt diese Regeln zuletzt in jedem wirksamen Zustand durch.
+  Freigabe verborgen, Sperre ohne Inhalte, Sperre nicht abschaltbar, Sperrzeit 1–15 Minuten, höchstens 60 Minuten
+  Aufschub durch einen Idle-Hemmer, Bildschirm aus nur gesperrt (1–10 Minuten danach), Ausschalten frühestens
+  30 Minuten gesperrt mit 60 s Vorwarnung, kontrolliertes Ausschalten bei 3 % Akku. `anwenden(zustand)` setzt diese
+  Regeln zuletzt in jedem wirksamen Zustand durch; die Energie-Schlüssel kann kein Zustand setzen.
 - Bei Freigabe erzeugen Karten und Zentrale die Inhalte gar nicht erst; «Heute» blendet Name und Zusammenfassung
   aus, das Befehlsfeld zeigt keine Dateinamen.
 - Der Sperrbildschirm zeigt nur die Anzahl der Mitteilungen. `zenos-idle` begrenzt die Sperrzeit selbst auf 1–15
-  Minuten und läuft mit `Restart=always`.
+  Minuten und läuft mit `Restart=always`. `zenos-bildschirm` schaltet nur bei bestätigter Sperre ab,
+  `zenos-energie` nur nach sichtbarer Vorwarnung und nur mit `--check-inhibitors=yes`.
 - Prozesse starten mit Argumentlisten, nie über `sh -c`. `zenos-labwc` lehnt eine Vorlage ab, die eine Shell
   startet. `scripts/pruefen.sh` prüft beides.
 
@@ -244,11 +255,12 @@ Die Regeln aus dem Manifest stehen im Code, nicht in der Konfiguration, und lass
   beim Ausschalten das Abschaltsignal an die Platine. Am Compute Module 5 im Argon ONE UP liest er den
   Akku-Messchip CW2217 (lädt bei Bedarf Argons Akkuprofil hinein, erst nach `zen akku freigeben`, siehe
   `docs/sicherheit.md`) und zeigt Lüfter
-  und Temperatur des Kernels an. Beide schreiben `/run/zenos/geraet.json`; die Oberfläche (`Geraet`) zeigt Akku
-  und Lüfter in Leiste und System-Menü und meldet niedrigen Akku. Den Lüfter stellt Zeno im System-Menü oder mit
-  `zen luefter` auf «auto» oder eine Mindeststufe 1–4: Der Helfer `zenos-luefter` (pkexec bzw. sudo) schreibt nur
-  den Wunsch, `zenos-argon` setzt ihn um (beim ONE UP über den Regler `user_space` der Thermal-Zone, nie weniger als
-  automatisch). Einzelheiten in `docs/module/m13.md`.
+  und Temperatur des Kernels an; er liest den Deckel (GPIO27, nur lesend) und schaltet bei 3 % Akku nach 60 s
+  Vorwarnung kontrolliert aus. Beide schreiben `/run/zenos/geraet.json`; die Oberfläche (`Geraet`) zeigt Akku
+  und Lüfter in Leiste und System-Menü, meldet niedrigen Akku und sperrt beim Zuklappen (`Energie`). Den Lüfter
+  stellt Zeno im System-Menü oder mit `zen luefter` auf «auto» oder eine Mindeststufe 1–4: Der Helfer
+  `zenos-luefter` (pkexec bzw. sudo) schreibt nur den Wunsch, `zenos-argon` setzt ihn um (beim ONE UP über den
+  Regler `user_space` der Thermal-Zone, nie weniger als automatisch). Einzelheiten in `docs/module/m13.md`.
 
 ## Entscheidung: Logik für Modi und Zustände (C5)
 

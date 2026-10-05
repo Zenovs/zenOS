@@ -8,13 +8,14 @@ Eine Datei unter `modi/`, `zustaende/` oder `raster/` mit ungültigem Inhalt feh
 
 | Datei | Inhalt | Wer schreibt |
 |---|---|---|
-| `~/.config/zenos/einstellungen.json` | Name, Ort, Erscheinungsbild, Sperrzeit, Mitteilungen ohne Zustand, Scroll-Tempo | Einrichtung, Einstellungen → Allgemein, Hell/Dunkel |
+| `~/.config/zenos/einstellungen.json` | Name, Ort, Erscheinungsbild, Sperrzeit, Mitteilungen ohne Zustand, Scroll-Tempo, Energie | Einrichtung, Einstellungen → Allgemein und Energie, Hell/Dunkel |
 | `~/.config/zenos/modi/<id>.json` | ein Modus | Einstellungen → Modi, Einrichtung (erster Modus) |
 | `~/.config/zenos/zustaende/<id>.json` | ein Zustand | Einstellungen → Zustände; Vorlagen beim ersten Mal |
 | `~/.config/zenos/raster/<id>.json` | ein Raster | Einstellungen → Raster; Vorlagen beim ersten Mal |
 | `~/.config/zenos/bildschirme.json` | Bildschirm-Profile | Einstellungen → Bildschirme; Vorlage, falls sie fehlt |
 | `~/.config/zenos/webapps.json` | Web-Apps | Einstellungen → Web-Apps (`zenos-webapp`) |
 | `~/.local/state/zenos/laufzeit.json` | was gerade gilt | die Oberfläche und `zenos-labwc`, nie von Hand |
+| `~/.local/state/zenos/energie.json` | wann und warum zenOS zuletzt selbst ausgeschaltet hat (für eine Mitteilung beim nächsten Start, danach gelöscht) | `zenos-energie`, nie von Hand |
 | `~/Ablage` | der eine Ordner für eigene Dateien | Installer, wenn er fehlt (0700); danach nur du |
 | `~/.config/user-dirs.dirs`, `~/.config/user-dirs.conf` | Benutzerordner (Downloads, Dokumente …) → `~/Ablage` | Installer, solange die erste Zeile die zenOS-Marke trägt |
 | `~/.config/Thunar/uca.xml` | Thunar-Aktion «Terminal hier öffnen» (kitty) | Installer, solange die erste Zeile die zenOS-Marke trägt; danach Thunar (eigene Aktionen) |
@@ -184,6 +185,23 @@ dann als «Eigener Wert»). Begründung der Stufen und Grenzen: `docs/module/m9.
   lädt labwc dann neu: Das neue Tempo gilt sofort, ohne Abmelden. Ausserhalb der Sitzung übernehmen es `install.sh`
   und der nächste Lauf von kanshi (beim Anmelden).
 
+### Energie
+
+Die vier Schlüssel `bildschirmAusNachSperre`, `ausschalten`, `ausschaltenNachMinuten` und `einAusTaste` stellt die
+Seite «Energie» ein. Alle Zeiten zählen ab der Sperre: Mit `sperreNachMinuten` 5, `bildschirmAusNachSperre` 1 und
+`ausschaltenNachMinuten` 60 ist zenOS nach 5 Min. ohne Eingabe gesperrt, nach 6 Min. dunkel und nach 65 Min. aus
+(bei `ausschalten: akku` nur im Akkubetrieb). Einzelheiten in `docs/module/energie.md`.
+
+- Ausserhalb der Grenzen begrenzt der Code (gerundet), ein ungültiger Wert ergibt den Standard; die Seite zeigt einen
+  Wert, den es nur von Hand gibt, als «Eigener Wert». `zen energie` nennt die Herkunft jedes Werts (Standard,
+  Einstellung, begrenzt, ungültig).
+- Wer liest: `zenos-idle` (Sperre, Bildschirm aus, Hemmer der Ein/Aus-Taste; alle 10 s, nur bei geänderter Datei),
+  die Sperre und der Dienst `Energie` (sofort) und `zenos-energie` (über `zenos-idle energie`). Ändern sich Sperr-
+  oder Bildschirmzeit, startet zenos-idle swayidle neu; Ausschalten und Ein/Aus-Taste wirken ohne Neustart.
+- Ein Zustand kann keinen dieser Schlüssel setzen (wie `sperreNachMinuten`).
+- Zur Laufzeit: `$XDG_RUNTIME_DIR/zenos/vorwarnung` (Marker der Vorwarnung, gilt einmal) und `deckel` sowie
+  `akku.ausschaltenUm` in `/run/zenos/geraet.json` (`docs/module/m13.md`).
+
 ## Web-Apps: `webapps.json`
 
 ```json
@@ -268,4 +286,9 @@ Sie sind im Code verankert, nicht in der Konfiguration:
 
 - Bei Bildschirmfreigabe bleiben Mitteilungsinhalte verborgen.
 - Der Sperrbildschirm zeigt nie Inhalte.
-- Die automatische Sperre bleibt aktiv, nach 1 bis 15 Minuten ohne Eingabe.
+- Die automatische Sperre bleibt aktiv, nach 1 bis 15 Minuten ohne Eingabe. Ein Programm, das den Leerlauf hemmt
+  (Video), hält sie höchstens 60 Minuten ohne Eingabe auf.
+- Dunkel heisst gesperrt: Der Bildschirm geht nur gesperrt aus, 1 bis 10 Minuten nach der Sperre.
+- Ausschalten nach langer Sperre frühestens nach 30 Minuten gesperrt, immer mit 60 s Vorwarnung und nie während
+  SSH, tmux oder einem Update.
+- Zuklappen sperrt sofort (Argon ONE UP). Bei 3 % Akku schaltet zenOS kontrolliert aus.

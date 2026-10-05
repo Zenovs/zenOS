@@ -284,7 +284,8 @@ unter «Am Pi prüfen».
 - [ ] Der Hell/Dunkel-Schalter wechselt ohne Flackern: Leiste, «Heute», Fensterrahmen, kitty, Chrome und VS Code (nach
   seinem ersten Start). Ein laufendes Chrome wechselt in beide Richtungen, auch von dunkel zurück auf hell.
 - [ ] Das System-Menü zeigt Netz, Lautstärke mit Regler, 1Password, Temperatur und Lüfter, dazu Sperren,
-  Einstellungen, Abmelden, Neustart und Ausschalten. Abmelden, Neustart und Ausschalten fragen einmal nach.
+  Bildschirm aus, Einstellungen, Abmelden, Neustart und Ausschalten. Abmelden, Neustart und Ausschalten fragen einmal
+  nach.
 
 **WLAN (oben rechts, nach C5)**
 - [ ] `zen netzwerk status` zeigt «Netz: NetworkManager», «NetworkManager: aktiviert · läuft», die übernommenen
@@ -322,7 +323,8 @@ unter «Am Pi prüfen».
 - [ ] Mit `Tab` zu den Werkzeugen: Das Bildschirmfoto eines Bereichs landet in der Zwischenablage und in
   `~/Ablage/Screenshots`. Dasselbe mit `Print` und `Super + Shift + S`.
 - [ ] Die Pipette (`Super + Shift + C`) kopiert per Klick einen Farbwert wie `#A7B89F`.
-- [ ] Aktionen wie «Hell/Dunkel», «Sperren» und «Einstellungen» funktionieren auch von hier.
+- [ ] Aktionen wie «Hell/Dunkel», «Sperren», «Bildschirm aus» und «Einstellungen» funktionieren auch von hier.
+  «Energie» öffnet Einstellungen → Energie.
 - [ ] Sind die Apps installiert, zeigt die Suche «chrome» Chrome ohne die Zeile «Apps installieren». «apps» zeigt
   «Apps verwalten», Enter öffnet Einstellungen → Apps.
 
@@ -385,6 +387,29 @@ systemctl --user start zenos-shell.service
 ```
 
 - [ ] Die Notfall-Sperre sperrt und lässt sich mit dem Passwort entsperren, danach ist die Oberfläche wieder da.
+
+**Energie** (Einzelheiten in `docs/module/energie.md`)
+- [ ] Einstellungen → Energie zeigt «Ohne Eingabe: Gesperrt nach 5 Min. · Bildschirm aus nach 6 Min. · Aus nach
+  65 Min. im Akkubetrieb», hell und dunkel. «Bereitschaft» sagt «Auf diesem Gerät nicht verfügbar …».
+- [ ] `Super + Shift + L` sperrt und macht den Bildschirm dunkel, wirklich dunkel (auch das Hintergrundlicht).
+  Dasselbe mit «Bildschirm aus» im System-Menü. Shift, eine Buchstabentaste oder das Touchpad wecken ihn, die Sperre
+  bleibt, im Passwortfeld steht kein Punkt, und das Passwort klappt beim ersten Versuch.
+- [ ] Ohne Eingabe: nach 5 Minuten gesperrt, eine Minute später dunkel. Eine Eingabe weckt, nach einer Minute ohne
+  Eingabe wird es wieder dunkel.
+- [ ] Ein Video in Chrome (Vollbild, ohne Eingabe): zenOS sperrt nicht nach 5 Minuten, aber spätestens nach
+  60 Minuten. Mit dem Video im Hintergrund-Tab oder minimiert: sperrt es nach 5 Minuten? Gesperrt geht der Bildschirm
+  auch mit laufendem Video nach einer Minute aus.
+- [ ] Die Ein/Aus-Taste kurz drücken: zenOS sperrt und macht dunkel, das Gerät bleibt an. Nochmals kurz: hell.
+  `systemd-inhibit --list` zeigt «zenOS» mit handle-power-key. Am Login-Bildschirm schaltet ein kurzer Druck aus.
+- [ ] Ausschalten: Einstellungen → Energie → «Immer», «Nach 30 Min.». Sperren und 30 Minuten warten (ohne SSH,
+  ohne tmux). Der Bildschirm geht an, die Sperre zeigt «zenOS schaltet um HH:MM aus · Eine Taste bricht ab». Eine
+  Taste bricht ab, es bleibt gesperrt. Nochmals 30 Minuten warten, dann schaltet das Gerät nach 60 s aus. Nach dem
+  Einschalten und Anmelden kommt einmal die Mitteilung «zenOS hat ausgeschaltet».
+- [ ] Mit offener SSH-Sitzung oder laufendem tmux schaltet es nicht aus. `journalctl -t zenos-energie` nennt den
+  Grund, Einstellungen → Energie zeigt «Zurzeit nicht: SSH-Sitzung offen». Danach wieder «Im Akkubetrieb» und
+  «60 Min.» einstellen.
+- [ ] `zen energie` zeigt die Zeiten, was das Ausschalten gerade aufhält, die Ein/Aus-Taste, «Bildschirm jetzt an»
+  und die Bereitschaft. `zen doctor` zeigt den Abschnitt «Energie» ohne Fehler.
 
 **Modi und Zustände**
 - [ ] `Super + M` öffnet die Modus-Wahl, `Super + Z` die Zustand-Wahl. Ein Klick auf den Chip in der Leiste öffnet sie

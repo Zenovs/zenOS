@@ -157,12 +157,49 @@ zeigt den Passwortdialog, wenn ein Programm Rechte verlangt, die polkit nur nach
 - Der Sperrbildschirm nutzt `ext-session-lock`. Stürzt die Oberfläche ab, bleibt der Bildschirm gesperrt.
 - Die Anmeldung läuft über PAM. zenOS verarbeitet nie selbst Passwörter. Auch der polkit-Dialog reicht das
   Passwort nur an polkit weiter (siehe «polkit-Agent»).
-- Automatische Sperre bei Inaktivität und Standby. Sie ist nicht abschaltbar.
+- Automatische Sperre bei Inaktivität und Standby. Sie ist nicht abschaltbar, und ein Programm, das den Leerlauf
+  hemmt (Video), hält sie höchstens 60 Minuten ohne Eingabe auf (Abschnitt «Energie»).
 - Bei Bildschirmfreigabe werden Mitteilungsinhalte immer verborgen.
 - Das Befehlsfeld startet Prozesse mit Argument-Listen, nie über `sh -c`.
 - Die Nutzungsstatistik des Befehlsfelds speichert nur Desktop-IDs, Zähler und die Reihenfolge der zuletzt genutzten
   Apps, keine Zeiten und keine Fenstertitel (`~/.local/share/zenos/`, nur für den Benutzer lesbar).
 - Eine Zwischenablage-Historie, falls sie kommt, ignoriert 1Password und löscht sich selbst.
+
+## Energie
+
+Bildschirm aus, Ausschalten nach langer Sperre und die Ein/Aus-Taste (`docs/module/energie.md`). Grundsatz: Energie
+sparen darf die Sperre nie schwächen.
+
+- **Dunkel heisst gesperrt:** `zenos-bildschirm aus` ruft immer zuerst `zen lock` auf (das kehrt erst bei
+  bestätigter Sperre zurück) und schaltet nur dann ab. Schlägt die Sperre fehl, bleibt der Bildschirm an, der Grund
+  steht im Journal. Ungesperrt nimmt die Sperre keine Meldung «aus» an. Damit ist auch die Reihenfolge der
+  swayidle-Timeouts kein Risiko.
+- **Nichts verzögert die automatische Sperre:** Es gibt keinen neuen Idle-Hemmer, der Timeout der Sperre bleibt
+  1–15 Minuten. Bildschirm aus und Ausschalten zählen erst ab der Sperre. zenos-idle startet nach einem Update nur
+  gesperrt neu (ein Neustart beginnt die Leerlaufzeit von vorn). Neu: Auch ein Idle-Hemmer (Video) hält die Sperre
+  höchstens 60 Minuten ohne Eingabe auf. Die Grenzen stehen eingefroren in `LEITPLANKEN`, ein Zustand kann die
+  Energie-Schlüssel nicht setzen (`GESPERRT`), und Tests gleichen die Kopien in den Shell-Helfern ab.
+- **Wecktaste:** Die Taste, die einen dunklen Bildschirm weckt, landet nicht im Passwortfeld (vorher ergab sie einen
+  Fehlversuch bei PAM). Verworfen wird genau eine Taste, nie mehr, damit ein hängender Zustand nie die
+  Passworteingabe blockiert. Es entsteht kein neuer Weg zu PAM.
+- **Keine Shell:** Helfer und Aufrufe aus der Oberfläche nutzen Argumentlisten, IPC und Helfer nehmen nur feste
+  Wörter an. swayidle führt seine Befehle über `sh -c` aus; zenos-idle gibt ihm deshalb nur feste, per Muster
+  geprüfte Pfade mit festen Wörtern (`sperrbefehl`, `bildschirmbefehl`).
+- **Ausschalten nach langer Sperre** nur mit `systemctl --no-ask-password poweroff --check-inhibitors=yes` (polkit:
+  `power-off` in der aktiven Sitzung ohne Passwort), nie neu starten, nie `-i` oder `--force` (Hemmer übergehen
+  bräuchte `auth_admin_keep`). `zenos-energie` prüft vorher selbst: Vorwarnung sichtbar, Marker 60 s bis 5 Min. alt
+  und nur einmal gültig, gesperrt, keine Fern-Sitzung (logind `Remote=yes`) und keine SSH-Verbindung, kein tmux- oder
+  screen-Server, keine Installation (Sperre von `install.sh`, nur lesend geöffnet und kurz geteilt gesperrt),
+  kein apt oder dpkg, keine automatischen Updates, kein Block-Hemmer «shutdown». Was sich nicht prüfen lässt, gilt
+  als blockiert. Jeder Entscheid steht mit Grund im Journal (`journalctl -t zenos-energie`). Fällt die Oberfläche
+  aus, wird nicht ausgeschaltet.
+- **Ein/Aus-Taste:** Der Hemmer «handle-power-key» gilt nur in der eigenen, aktiven Sitzung (polkit
+  `inhibit-handle-power-key`: `allow_active yes`) und endet mit zenos-idle. Login-Bildschirm und Konsole behalten die
+  Vorgabe von logind. Kein Drop-in in `logind.conf`, kein Eingriff ins System. Halten schaltet weiter hart aus.
+- **Deckel und leerer Akku** (Argon ONE UP): Abschnitt «Hardware (Argon ONE)».
+- **Keine Telemetrie:** Zustände bleiben lokal (`$XDG_RUNTIME_DIR/zenos`, `/run/zenos`,
+  `~/.local/state/zenos/energie.json` mit Zeit, Minuten und Art des letzten Ausschaltens). Nichts verlässt den
+  Rechner.
 
 ## Netz (NetworkManager)
 

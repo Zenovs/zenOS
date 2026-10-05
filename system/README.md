@@ -5,12 +5,12 @@ Verweis angelegt; was generiert wird, erzeugen die Programme unter `scripts/bin/
 
 | Pfad | Ziel | Zweck |
 |---|---|---|
-| `labwc/rc.xml.in` | Vorlage für `~/.config/labwc/rc.xml` (`zenos-labwc`) | Fenstermanager: Regionen, Tastenkürzel, Titelzeile, Scrollen |
+| `labwc/rc.xml.in` | Vorlage für `~/.config/labwc/rc.xml` (`zenos-labwc`) | Fenstermanager: Regionen, Tastenkürzel (auch Super+Shift+L für «Bildschirm aus» und die Ein/Aus-Taste, `docs/module/energie.md`), Titelzeile, Scrollen |
 | `labwc/{autostart,environment,shutdown,menu.xml}` | `~/.config/labwc/` (Verweise) | Start und Ende der Sitzung, Umgebung, Rechtsklick-Menüs |
 | `greeter/labwc/` | direkt aus `/opt/zenos` (`labwc -C`) | labwc des Logins, ohne Vorgabe-Tasten und mit leerem Menü |
 | `greetd/config.toml` | `/etc/greetd/config.toml` | Login auf VT 7, kein Autologin |
-| `systemd/user/` | `/etc/systemd/user/` | `zenos-sitzung.target`, `zenos-shell`, `zenos-idle`, `zenos-kanshi`, Drop-in für `xdg-desktop-portal-wlr` |
-| `systemd/system/zenos-argon.service` | `/etc/systemd/system/` | Argon ONE: Lüfter und Power-Button (V3), Akku (ONE UP), Mindeststufe für den Lüfter, `/run/zenos/geraet.json` |
+| `systemd/user/` | `/etc/systemd/user/` | `zenos-sitzung.target`, `zenos-shell`, `zenos-idle` (Sperre, Bildschirm aus, Hemmer der Ein/Aus-Taste), `zenos-kanshi`, Drop-in für `xdg-desktop-portal-wlr` |
+| `systemd/system/zenos-argon.service` | `/etc/systemd/system/` | Argon ONE: Lüfter und Power-Button (V3), Akku, Deckel (GPIO27, nur lesend) und Ausschalten bei 3 % Akku (ONE UP), Mindeststufe für den Lüfter, `/run/zenos/geraet.json` |
 | `systemd/system/zenos-wlan-land.service` | `/etc/systemd/system/` (`35-netzwerk`) | WLAN-Land mit `iw` setzen, nach `zen netzwerk umstellen` |
 | `systemd/system/zenos-netzwerk-erststart.service` | `/etc/systemd/system/` (aktiviert nur im Image) | erster Start eines Images: auf NetworkManager umstellen |
 | `systemd/system/systemd-networkd-wait-online.service.d/zenos-netzwerk.conf` | `/etc/systemd/system/…` | wait-online überspringen, solange NetworkManager das Netz verwaltet |

@@ -7,6 +7,19 @@ an; eine Version entspricht einem Tag `v…` im Repo.
 
 ### Neu
 
+- **Energie:** Neue Seite «Energie» in den Einstellungen. Der Bildschirm geht 1–10 Min. nach der Sperre aus
+  (Standard 1 Min.), nie vorher: Dunkel heisst immer gesperrt. Eine Taste oder das Touchpad weckt ihn, die Taste
+  landet nicht im Passwortfeld. «Bildschirm aus» im System-Menü, im Befehlsfeld und mit Super+Shift+L sperrt und
+  schaltet sofort ab. zenOS schaltet aus, wenn das Gerät lange gesperrt war: Standard im Akkubetrieb nach 60 Min.,
+  einstellbar «Nie», «Im Akkubetrieb» oder «Immer» und 30–240 Min. Vorher steht 60 s lang die Uhrzeit auf dem
+  Sperrbildschirm, eine Taste bricht ab, und nie während einer SSH-Sitzung, mit tmux oder während eines Updates. Ein
+  Video hält die automatische Sperre höchstens 60 Min. ohne Eingabe auf, dann sperrt zenOS trotzdem (Leitplanke).
+  Die Ein/Aus-Taste sperrt in der Sitzung und macht dunkel (oder öffnet das System-Menü), statt sofort auszuschalten;
+  gedrückt halten schaltet weiter aus. Beim Argon ONE UP sperrt Zuklappen sofort, und bei 3 % Akku schaltet zenOS
+  nach 60 s Vorwarnung kontrolliert aus (nur das Netzteil bricht ab). Bereitschaft gibt es auf diesem Gerät nicht:
+  Der Kernel bietet keinen Schlafzustand an, die Seite sagt das offen. Neues Paket: wlopm. `zen energie
+  [status|aus]`, `zen doctor` (Abschnitt «Energie»), IPC `zenos-ipc energie aus|status|vorwarnung` und `sperre
+  bildschirm|taste` (`docs/module/energie.md`).
 - **Kanal gehärtet nach der Prüfung von Schritt 4:** Das Hauptbuch vergleicht Commits statt Objekt-IDs: Eine ohne
   Schlüssel neu umbrochene Signatur löst keinen ALARM mehr aus, der jedes Gerät blockierte. Sperren liegen in
   `/run/zenos-sperre` (nur root) statt in `/run/lock`, wo jeder Benutzer den Kanal abschneiden und über die belegte
@@ -75,9 +88,9 @@ an; eine Version entspricht einem Tag `v…` im Repo.
   den Akku mit Prozent, beim Laden mit Blitz; bei höchstens 10 % im Akkubetrieb ruhig in der Warnfarbe. Das
   System-Menü zeigt Akku, Lüfter («aus» oder «Stufe 2 von 4 · 3120 U/min») und CPU-Temperatur. Bei 10 % kommt eine
   ruhige Mitteilung, bei 5 % ersetzt sie eine dringende Karte, die sofort erscheint (ohne Ton); am Netzteil
-  verschwindet sie. zenOS fährt nicht selbst herunter. Der Dienst `zenos-argon` erkennt das Gerät und liest den
-  Akku-Messchip (Cellwise CW2217). Schläft der Chip, weckt er ihn und lädt Argons Akkuprofil, aber erst nach
-  `zen akku freigeben` und nur wenn nötig; danach misst er alle 15 s. Den Lüfter regelt weiter der Kernel.
+  verschwindet sie. Bei 3 % schaltet zenOS kontrolliert aus (siehe «Energie»). Der Dienst `zenos-argon` erkennt das
+  Gerät und liest den Akku-Messchip (Cellwise CW2217). Schläft der Chip, weckt er ihn und lädt Argons Akkuprofil,
+  aber erst nach `zen akku freigeben` und nur wenn nötig; danach misst er alle 15 s. Den Lüfter regelt weiter der Kernel.
   `zen akku status`, `zenos-argon --pruefen` und `zen doctor` zeigen den Akku.
 - **Lüfter einstellen:** Im System-Menü klappt die Zeile «Lüfter» eine ruhige Wahl «Auto · 1 · 2 · 3 · 4» auf; ohne
   Passwort, nur am Gerät. «Auto» ist der Standard wie bisher, eine Stufe ist das Minimum: Bei Wärme läuft der Lüfter

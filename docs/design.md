@@ -190,6 +190,10 @@ Reichweite»; sonst bleibt sie reine Anzeige ohne Zusatz.
 Solange die Firewall aus ist, steht im System-Menü unter «Einstellungen» der Eintrag «Firewall» mit dem Wert «aus»
 und dem offenen Schloss, ohne Farbe; er öffnet die Einstellungen (System). Ist sie an, fehlt er.
 
+Unter «Sperren» steht «Bildschirm aus» mit dem Symbol `monitor`, ohne Rückfrage: Das Menü schliesst, zenOS sperrt und
+schaltet den Bildschirm aus, eine Taste weckt ihn (`docs/module/energie.md`). Dasselbe im Befehlsfeld («Bildschirm
+aus», dazu «Energie» für die Seite) und mit Super+Shift+L.
+
 ### Hinweise (Toast)
 
 Kurze Rückmeldungen wie «Farbe kopiert» erscheinen als Pille unten mittig, über den Tastenkappen von «Heute»:
@@ -335,14 +339,32 @@ Warum nicht der Stil mit Vorschaubildern: `docs/module/m9.md`, «Entscheidungen�
 ### Einstellungen
 
 Eigenes Fenster mit labwc-Titelzeile. Navigation 260 px (Modi, Zustände, Raster, Bildschirme, darunter Web-Apps,
-Apps, Allgemein, System), Titel in Instrument Serif, Felder zweispaltig. Was erst später wirkt, ist mit «später»
-markiert und nicht bedienbar.
+Apps, Allgemein, Energie, System), Titel in Instrument Serif, Felder zweispaltig. Was erst später wirkt, ist mit
+«später» markiert und nicht bedienbar.
 
 - Wenige feste Möglichkeiten zeigen Segmente (Fläche `flaeche2`, das gewählte Segment hebt sich mit `flaeche` ab),
   Zahlen eine Stufenwahl mit − und +. Beide gehen mit Tab und Pfeiltasten.
 - «Allgemein» → «Scroll-Tempo für Touchpad und Maus»: vier Segmente «Langsam», «Normal», «Schnell», «Sehr schnell»,
   ohne Zahlen. Die Wahl wirkt nach dem Speichern sofort (unter einer Sekunde), ohne Abmelden. Ein Wert, den es nur von
   Hand gibt, steht gedämpft daneben («Eigener Wert: 0,75-fach»), dann ist kein Segment gewählt.
+- «Allgemein» → «Automatische Sperre nach»: unter der Stufenwahl ein stiller Knopf «Bildschirm aus nach der Sperre:
+  Energie» (Symbol `monitor`, 13 px), der die Seite «Energie» öffnet. Die Sperre selbst bleibt auf «Allgemein», sie
+  ist Sicherheit.
+- «Energie» (`SeiteEnergie.qml`), von oben nach unten, wie die anderen Seiten zweispaltig:
+  - «Ohne Eingabe»: die Zeitleiste als ruhiger Satz in `text`, z. B. «Gesperrt nach 5 Min. · Bildschirm aus nach
+    6 Min. · Aus nach 65 Min. im Akkubetrieb».
+  - «Bildschirm aus»: Stufenwahl 1–10 «Min.», daneben «nach der Sperre» und bei einem Wert von Hand gedämpft «Eigener
+    Wert: … · es gelten N Min.». Darunter 13 px `gedaempft` «Dunkel heisst gesperrt: …» und «Sofort sperren und
+    Bildschirm aus» mit der Tastenkappe «Super Shift L».
+  - «Ausschalten, wenn gesperrt»: Segmente «Nie · Im Akkubetrieb · Immer»; ausser bei «Nie» darunter «Nach»,
+    Stufenwahl 30–240 in Schritten von 30 «Min.», «gesperrt ohne Eingabe». Hinweise in `gedaempft` (14 px, Zeilenhöhe
+    1,45): Vorwarnung und Wächter, ohne Akku «Kein Akku erkannt …», mit Akku der feste Hinweis auf 3 %. Ist gerade
+    etwas im Weg, «Zurzeit nicht: SSH-Sitzung offen» in `text2` (alle 15 s neu, solange die Seite offen ist).
+  - «Ein/Aus-Taste»: Segmente «Sperren · System-Menü · Ausschalten» und ein Hinweis, was kurz drücken und halten tun.
+  - «Zuklappen» und «Bereitschaft»: nur Text in `gedaempft` («Sperrt sofort und schaltet den Bildschirm aus …» bzw.
+    «Auf diesem Gerät nicht verfügbar: Der Kernel bietet keinen Schlafzustand an …»).
+  - Zuletzt der Leitplankenhinweis mit Schloss: «Die automatische Sperre bleibt immer aktiv, nichts auf dieser Seite
+    verzögert sie …», darunter der Fuss mit dem Pfad wie bei «Allgemein».
 
 Auf der Seite System steht zuoberst der Schalter «Firewall» mit Zustand («An», «Aus», «Wartet auf dein
 Passwort …») und einer Zeile Erklärung in `gedaempft`. Beim Ausschalten zeigt der Schalter sofort «aus»; bricht die
@@ -378,6 +400,13 @@ Passwort (`shell/polkit/Polkit.qml`).
 
 - Grosse Uhrzeit (Instrument Serif 180 px), Datum, Anzahl Mitteilungen ohne Inhalt, Passwortfeld.
 - Unten: Zeichen 16 px einfarbig `gedaempft`, daneben «zenOS gesperrt · 1Password gesperrt».
+- Vorwarnung vor dem Ausschalten: über der Pille der Mitteilungen eine zweite Pille gleicher Form (Rahmen `linie2`,
+  ohne Fläche), Symbol `ausschalten` 14 px in `text2`, Text 14 px in `text2`: «zenOS schaltet um 22:41 aus · Eine Taste
+  bricht ab». Die Uhrzeit steht still, es tickt keine Sekunde, nichts blinkt. Bei leerem Akku dieselbe Pille mit dem
+  Symbol `akku-leer` in `warnung`: «Akku fast leer: zenOS schaltet um 22:41 aus · Netzteil anschliessen bricht ab».
+  Sie ist ein Systemzustand, kein Inhalt.
+- Bildschirm aus: Der Bildschirm wird ohne Übergang dunkel und beim Wecken ohne Übergang hell (keine Animation, die
+  ruckeln könnte). Die Taste, die weckt, erscheint nicht als Punkt im Passwortfeld.
 - Der Login sieht aus wie der Sperrbildschirm und ist immer dunkel. Unten mittig steht das Zeichen 48 px
   (unterer Stein `salbei`), rechts Neustart und Ausschalten.
 
