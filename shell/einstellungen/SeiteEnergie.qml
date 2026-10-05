@@ -314,8 +314,15 @@ Item {
                     text: "Bei " + Dienste.Leitplanken.akkuAusschaltenProzent + " % Akku schaltet zenOS immer kontrolliert aus, nach " + Dienste.Leitplanken.vorwarnungSekunden + " s Vorwarnung. Nur das Netzteil bricht ab."
                 }
 
+                // Zenos Entscheid, fest: am Login-Bildschirm im Akkubetrieb (ohne Akku gilt es nie)
                 Hinweistext {
-                    visible: Dienste.Energie.ausschaltenArt !== "nie" && root._blockiert.length > 0
+                    visible: Dienste.Geraet.akkuVorhanden
+                    text: "Am Login-Bildschirm schaltet zenOS im Akkubetrieb nach " + Dienste.Leitplanken.loginAusschaltenMinuten + " Min. ohne Eingabe aus, ebenfalls mit Vorwarnung."
+                }
+
+                // Ohne Akku sagt «Kein Akku erkannt» oben schon, warum «Im Akkubetrieb» nicht greift
+                Hinweistext {
+                    visible: Dienste.Energie.ausschaltenArt !== "nie" && root._blockiert.length > 0 && !(Dienste.Energie.ausschaltenArt === "akku" && !Dienste.Geraet.akkuVorhanden)
                     text: "Zurzeit nicht: " + root._blockiert
                     color: Theme.text2
                 }
@@ -344,7 +351,7 @@ Item {
                 }
 
                 Hinweistext {
-                    text: Dienste.Energie.einAusTaste === "ausschalten" ? "Kurz drücken schaltet sofort aus. Gedrückt halten schaltet immer hart aus." : "Kurz drücken, gesperrt: Bildschirm an oder aus. Gedrückt halten schaltet immer hart aus, am Login-Bildschirm schaltet auch ein kurzer Druck aus."
+                    text: Dienste.Energie.einAusTaste === "ausschalten" ? "Kurz drücken schaltet sofort aus. Gedrückt halten schaltet immer hart aus." : "Kurz drücken, gesperrt: Bildschirm an oder aus. Gedrückt halten schaltet immer hart aus. Ohne laufende Sitzung (am Login-Bildschirm, in den ersten Sekunden nach dem Anmelden) schaltet auch ein kurzer Druck sofort aus."
                 }
             }
         }
@@ -382,9 +389,11 @@ Item {
         }
     }
 
-    // Ruhiger Text unter einer Beschriftung (Anzeige ohne Bedienung)
+    // Ruhiger Text unter einer Beschriftung (Anzeige ohne Bedienung). Nur reiner Text: «Zurzeit nicht» zeigt den Namen
+    // eines fremden logind-Hemmers.
     component Hinweistext: Text {
         width: parent ? parent.width : 0
+        textFormat: Text.PlainText
         wrapMode: Text.WordWrap
         lineHeightMode: Text.FixedHeight
         lineHeight: Math.round(font.pixelSize * 1.45)

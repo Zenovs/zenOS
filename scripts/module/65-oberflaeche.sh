@@ -49,12 +49,14 @@ modul_benutzer() {
 }
 
 # Läuft zenos-idle mit einem älteren Stand (zen update), neu starten, damit die neue Leerlauf-Logik ohne
-# neues Anmelden gilt – aber nur, wenn die Sitzung gesperrt ist: Ein Neustart beginnt die Leerlaufzeit von
-# vorn und schöbe die automatische Sperre sonst hinaus. Ungesperrt übernimmt zenos-idle den neuen Stand selbst
-# bei der nächsten Sperre (ein Stand von vor der Bildschirm-Abschaltung erst nach dem nächsten Anmelden).
+# neues Anmelden gilt – aber nur, wenn die Sitzung gesperrt und der Bildschirm an ist: Ein Neustart beginnt die
+# Leerlaufzeit von vorn und schöbe die automatische Sperre sonst hinaus, und beim Beenden schaltet swayidle einen
+# dunklen Bildschirm über resume an (er bliebe gesperrt hell, bis swayidle wieder abschaltet). Sonst übernimmt
+# zenos-idle den neuen Stand selbst, sobald gesperrt und der Bildschirm an ist; ein Stand ohne diese Prüfung (von
+# vor der Bildschirm-Abschaltung) erst nach dem nächsten Anmelden.
 # Kein Zähler: Ein Neustart ändert nichts am System (wie 55-zustaende).
 _oberflaeche_idle_neu_laden() {
-  local laufzeit=$1 einheit=zenos-idle.service start datei code neuer=0
+  local laufzeit=$1 einheit=zenos-idle.service start datei code neuer=0 bildschirm
   start=$(XDG_RUNTIME_DIR=$laufzeit systemctl --user show --timestamp=unix -p ExecMainStartTimestamp --value \
     "$einheit" 2>/dev/null) || return 0
   start=${start#@}
@@ -65,7 +67,13 @@ _oberflaeche_idle_neu_laden() {
   done
   (( neuer )) || return 0
   if [[ ! -e "$laufzeit/zenos/gesperrt" ]]; then
-    log_info "Automatische Sperre geändert; zenos-idle übernimmt den neuen Stand bei der nächsten Sperre."
+    log_info "Automatische Sperre geändert; zenos-idle übernimmt den neuen Stand bei der nächsten Sperre (ein Stand von vor der Bildschirm-Abschaltung erst nach dem nächsten Anmelden)."
+    return 0
+  fi
+  bildschirm=$(XDG_RUNTIME_DIR=$laufzeit timeout 10 "$ZENOS_CODE/scripts/bin/zenos-bildschirm" status 2>/dev/null) ||
+    bildschirm=""
+  if [[ "$bildschirm" == aus || "$bildschirm" == teils ]]; then
+    log_info "Automatische Sperre geändert; gesperrt und dunkel, zenos-idle übernimmt den neuen Stand, sobald der Bildschirm wieder an ist (ein Stand von vor der Bildschirm-Abschaltung erst nach dem nächsten Anmelden)."
     return 0
   fi
   if XDG_RUNTIME_DIR=$laufzeit systemctl --user try-restart "$einheit" 2>/dev/null; then

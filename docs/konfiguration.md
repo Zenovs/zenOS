@@ -190,7 +190,8 @@ dann als «Eigener Wert»). Begründung der Stufen und Grenzen: `docs/module/m9.
 Die vier Schlüssel `bildschirmAusNachSperre`, `ausschalten`, `ausschaltenNachMinuten` und `einAusTaste` stellt die
 Seite «Energie» ein. Alle Zeiten zählen ab der Sperre: Mit `sperreNachMinuten` 5, `bildschirmAusNachSperre` 1 und
 `ausschaltenNachMinuten` 60 ist zenOS nach 5 Min. ohne Eingabe gesperrt, nach 6 Min. dunkel und nach 65 Min. aus
-(bei `ausschalten: akku` nur im Akkubetrieb). Einzelheiten in `docs/module/energie.md`.
+(bei `ausschalten: akku` nur im Akkubetrieb). Am Login-Bildschirm gilt fest, ohne Schlüssel: im Akkubetrieb nach
+30 Min. ohne Eingabe aus. Einzelheiten in `docs/module/energie.md`.
 
 - Ausserhalb der Grenzen begrenzt der Code (gerundet), ein ungültiger Wert ergibt den Standard; die Seite zeigt einen
   Wert, den es nur von Hand gibt, als «Eigener Wert». `zen energie` nennt die Herkunft jedes Werts (Standard,
@@ -199,7 +200,8 @@ Seite «Energie» ein. Alle Zeiten zählen ab der Sperre: Mit `sperreNachMinuten
   die Sperre und der Dienst `Energie` (sofort) und `zenos-energie` (über `zenos-idle energie`). Ändern sich Sperr-
   oder Bildschirmzeit, startet zenos-idle swayidle neu; Ausschalten und Ein/Aus-Taste wirken ohne Neustart.
 - Ein Zustand kann keinen dieser Schlüssel setzen (wie `sperreNachMinuten`).
-- Zur Laufzeit: `$XDG_RUNTIME_DIR/zenos/vorwarnung` (Marker der Vorwarnung, gilt einmal) und `deckel` sowie
+- Zur Laufzeit: `$XDG_RUNTIME_DIR/zenos/vorwarnung` (Marker der Vorwarnung mit Start-ID und Laufzeit, legt
+  `zenos-energie` an, gilt einmal) und `deckel` sowie
   `akku.ausschaltenUm` in `/run/zenos/geraet.json` (`docs/module/m13.md`).
 
 ## Web-Apps: `webapps.json`

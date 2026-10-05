@@ -32,6 +32,8 @@ var LEITPLANKEN = Object.freeze({
     ausschaltenMinutenMax: 240,
     ausschaltenMinutenStandard: 60,
     vorwarnungSekunden: 60,
+    // Am Login-Bildschirm im Akkubetrieb: so lange ohne Eingabe, dann (mit derselben Vorwarnung) aus
+    loginAusschaltenMinuten: 30,
     // Bei so wenig Akku (im Akkubetrieb) schaltet zenOS kontrolliert aus, statt hart abzuschalten
     akkuAusschaltenProzent: 3
 });

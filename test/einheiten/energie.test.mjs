@@ -89,6 +89,13 @@ test("Akkubetrieb nur bei sicherer Messung; unbekannt gilt als Netzteil", () => 
   // Unbekannte Art: der Standard «akku»
   assert.equal(E.ausschaltenAktiv("quatsch", akku), true);
   assert.equal(E.ausschaltenAktiv("quatsch", null), false);
+
+  // Login-Bildschirm (fest, ohne Einstellung): nur sicher im Akkubetrieb
+  assert.equal(E.loginAusschaltenAktiv(akku), true);
+  assert.equal(E.loginAusschaltenAktiv(Object.assign({}, akku, { laedt: true })), false);
+  assert.equal(E.loginAusschaltenAktiv(Object.assign({}, akku, { zustand: "unbekannt" })), false);
+  assert.equal(E.loginAusschaltenAktiv(null), false);
+  assert.equal(Z.LEITPLANKEN.loginAusschaltenMinuten, 30);
 });
 
 test("Zeitleiste: Sperre, dann Bildschirm aus, dann ausschalten", () => {
@@ -122,34 +129,54 @@ test("Zeitleiste: Sperre, dann Bildschirm aus, dann ausschalten", () => {
   assert.equal(E.zeitleisteText({ ausschalten: "nie" }, null), "Gesperrt nach 5 Min. · Bildschirm aus nach 6 Min.");
 });
 
-test("Vorwarnung: 60 s, dann ausschalten; Eingabe bricht ab", () => {
+// n Takte zu 1 s
+function takte(z, n) {
+  for (let i = 0; i < n; i++) z = E.vorwarnungTakt(z);
+  return z;
+}
+
+test("Vorwarnung: 60 Takte zu 1 s, dann ausschalten; Eingabe bricht ab", () => {
   let z = E.vorwarnung();
   assert.equal(z.phase, "aus");
   assert.equal(E.vorwarnungSchritt(z, T0), "nichts");
   z = E.vorwarnungStarten(z, T0);
-  assert.deepEqual(plain(z), { phase: "laeuft", seit: T0, um: T0 + 60 * S, grund: "" });
+  assert.deepEqual(plain(z), { phase: "laeuft", seit: T0, um: T0 + 60 * S, grund: "", takte: 0 });
   // Ein zweiter Start setzt die Zeit nicht zurück
   assert.equal(E.vorwarnungStarten(z, T0 + 30 * S), z);
   assert.equal(E.vorwarnungSchritt(z, T0), "nichts");
-  assert.equal(E.vorwarnungSchritt(z, T0 + 59 * S), "nichts");
-  assert.equal(E.vorwarnungSchritt(z, T0 + 60 * S), "ausschalten");
-  assert.equal(E.vorwarnungSchritt(z, T0 + 5 * MIN), "ausschalten");
-  // Zu alt oder die Uhr ging zurück: nie ausschalten
-  assert.equal(E.vorwarnungSchritt(z, T0 + 5 * MIN + 1), "abbrechen");
-  assert.equal(E.vorwarnungSchritt(z, T0 - 1), "abbrechen");
-  assert.equal(E.vorwarnungSchritt({ phase: "laeuft", seit: NaN, um: 0 }, T0), "abbrechen");
+  assert.equal(E.vorwarnungSchritt(takte(z, 59), T0 + 59 * S), "nichts");
+  assert.equal(E.vorwarnungSchritt(takte(z, 60), T0 + 60 * S), "ausschalten");
+  assert.equal(E.vorwarnungSchritt(takte(z, 300), T0 + 5 * MIN), "ausschalten");
+  // Zu alt (der Helfer hängt) oder kaputt: nie ausschalten
+  assert.equal(E.vorwarnungSchritt(takte(z, 301), T0 + 5 * MIN + S), "abbrechen");
+  for (const kaputt of [NaN, -1, "60", undefined, Infinity])
+    assert.equal(E.vorwarnungSchritt({ phase: "laeuft", seit: T0, um: T0, takte: kaputt }, T0), "abbrechen", String(kaputt));
+  // Ausserhalb der Vorwarnung zählt kein Takt
+  assert.equal(E.vorwarnungTakt(E.vorwarnung()).takte, 0);
 
   const ab = E.vorwarnungAbbrechen(z, "eingabe");
-  assert.deepEqual(plain(ab), { phase: "aus", seit: 0, um: 0, grund: "eingabe" });
+  assert.deepEqual(plain(ab), { phase: "aus", seit: 0, um: 0, grund: "eingabe", takte: 0 });
   assert.equal(E.vorwarnungSchritt(ab, T0 + 60 * S), "nichts");
   assert.equal(E.vorwarnungAbbrechen(z, 42).grund, "");
   // Nach dem Abbruch beginnt eine neue Vorwarnung wieder mit vollen 60 s
   assert.equal(E.vorwarnungStarten(ab, T0 + 10 * MIN).um, T0 + 10 * MIN + 60 * S);
+  assert.equal(E.vorwarnungStarten(takte(z, 59), T0 + 10 * MIN).takte, 59, "läuft schon: bleibt");
+  assert.equal(E.vorwarnungStarten(ab, T0 + 10 * MIN).takte, 0);
+});
+
+test("Vorwarnung: Ein Sprung der Uhr verkürzt sie nie", () => {
+  // Die Uhr springt während der Vorwarnung um 4 Min. nach vorn (NTP nach langer Zeit offline): Es zählen nur Takte
+  let z = takte(E.vorwarnungStarten(E.vorwarnung(), T0), 5);
+  assert.equal(E.vorwarnungSchritt(z, T0 + 4 * MIN), "nichts");
+  // … oder zurück: ebenfalls nur Takte
+  assert.equal(E.vorwarnungSchritt(z, T0 - 10 * MIN), "nichts");
+  z = takte(z, 55);
+  assert.equal(E.vorwarnungSchritt(z, T0 - 10 * MIN), "ausschalten");
 });
 
 test("Vorwarnung: blockiert, neuer Versuch nach 5 Min.", () => {
   const z = E.vorwarnungBlockiert(E.vorwarnungStarten(E.vorwarnung(), T0), T0 + 60 * S, "ssh");
-  assert.deepEqual(plain(z), { phase: "warten", seit: T0 + 60 * S, um: T0 + 6 * MIN, grund: "ssh" });
+  assert.deepEqual(plain(z), { phase: "warten", seit: T0 + 60 * S, um: T0 + 6 * MIN, grund: "ssh", takte: 0 });
   assert.equal(E.vorwarnungSchritt(z, T0 + 5 * MIN), "nichts");
   assert.equal(E.vorwarnungSchritt(z, T0 + 6 * MIN), "neu-pruefen");
   assert.equal(E.vorwarnungSchritt(z, T0), "neu-pruefen");
@@ -160,6 +187,28 @@ test("Vorwarnung: blockiert, neuer Versuch nach 5 Min.", () => {
   // Unbekanntes gilt als «aus»
   for (const kaputt of [null, undefined, {}, { phase: "ausschalten" }, "laeuft"])
     assert.equal(E.vorwarnungSchritt(kaputt, T0), "nichts");
+  assert.equal(E.vorwarnungPruefbar(E.vorwarnung()), true);
+  assert.equal(E.vorwarnungPruefbar(z), true);
+  assert.equal(E.vorwarnungPruefbar(neu), false);
+});
+
+test("Vorwarnung: von logind abgelehnt, erst nach einer Eingabe wieder", () => {
+  const z = E.vorwarnungAbgelehnt(takte(E.vorwarnungStarten(E.vorwarnung(), T0), 60), T0 + 61 * S, "polkit");
+  assert.deepEqual(plain(z), { phase: "abgelehnt", seit: T0 + 61 * S, um: 0, grund: "polkit", takte: 0 });
+  // Kein neuer Versuch, auch nach Stunden nicht (sonst ginge der Bildschirm alle 5 Min. an)
+  assert.equal(E.vorwarnungSchritt(z, T0 + 6 * MIN), "nichts");
+  assert.equal(E.vorwarnungSchritt(z, T0 + 600 * MIN), "nichts");
+  assert.equal(E.vorwarnungPruefbar(z), false);
+  assert.equal(E.vorwarnungTakt(z), z);
+  // Eine Eingabe (Abbruch) gibt sie wieder frei
+  assert.equal(E.vorwarnungPruefbar(E.vorwarnungAbbrechen(z, "eingabe")), true);
+});
+
+test("Zeile der Vorwarnung: leerer Akku vor dem Ausschalten nach langer Sperre", () => {
+  assert.equal(E.vorwarnungText("", ""), "");
+  assert.equal(E.vorwarnungText("", "22:41"), "zenOS schaltet um 22:41 aus · Eine Taste bricht ab");
+  assert.equal(E.vorwarnungText("22:40", "22:41"), "Akku fast leer: zenOS schaltet um 22:40 aus · Netzteil anschliessen bricht ab");
+  assert.equal(E.vorwarnungText(null, undefined), "");
 });
 
 test("Wecktaste: genau eine Taste wird verworfen", () => {
@@ -174,15 +223,16 @@ test("Wecktaste: genau eine Taste wird verworfen", () => {
   z = E.bildschirmHell(z, T0 + 5);
   assert.equal(E.wecktasteVerwerfen(z, T0 + 10), false);
 
-  // «an» kommt vor der Taste: die erste Taste innerhalb 1 s verworfen, danach nicht mehr
+  // «an» kommt knapp vor der Taste: die erste Taste innerhalb 300 ms verworfen, danach nicht mehr
   z = E.bildschirmHell(E.bildschirmDunkel(E.weckzustand()), T0);
-  assert.equal(E.wecktasteVerwerfen(z, T0 + 999), true);
+  assert.equal(E.wecktasteVerwerfen(z, T0 + 299), true);
   z = E.wecktasteGesehen(z);
-  assert.equal(E.wecktasteVerwerfen(z, T0 + 1000), false);
+  assert.equal(E.wecktasteVerwerfen(z, T0 + 300), false);
 
-  // Geweckt mit dem Touchpad: Das Passwort danach (nach 1 s) bleibt ganz
+  // Geweckt mit Maus, Touchpad, Ein/Aus-Taste oder Aufklappen: Das Passwort danach bleibt ganz, auch wer sofort tippt
   z = E.bildschirmHell(E.bildschirmDunkel(E.weckzustand()), T0);
-  assert.equal(E.wecktasteVerwerfen(z, T0 + 1000), false);
+  for (const nach of [300, 500, 800, 3 * S])
+    assert.equal(E.wecktasteVerwerfen(z, T0 + nach), false, `${nach} ms`);
   assert.equal(E.wecktasteVerwerfen(z, T0 - 1), false);
 
   // Bleibt «dunkel» hängen, geht trotzdem nur eine Taste verloren
@@ -200,34 +250,17 @@ test("Wecktaste: genau eine Taste wird verworfen", () => {
     assert.equal(E.wecktasteVerwerfen(kaputt, T0), false);
 });
 
-test("Vorwarnung: Die Taste, die abbricht, landet nicht im Passwortfeld (genau eine)", () => {
-  // Bildschirm war dunkel, die Vorwarnung schaltet ihn ohne Eingabe an
-  let z = E.vorwarnungGezeigt(E.bildschirmDunkel(E.weckzustand()));
-  assert.equal(z.dunkel, false);
-  // Die Meldung «an» danach ändert nichts
-  assert.deepEqual(plain(E.bildschirmHell(z, T0)), plain(z));
-  // Auch nach 50 s: die erste Taste wird verworfen, die zweite nicht
-  assert.equal(E.wecktasteVerwerfen(z, T0 + 50 * S), true);
-  z = E.wecktasteGesehen(z);
-  assert.equal(E.wecktasteVerwerfen(z, T0 + 50 * S + 10), false);
-  // Danach meldet der Dienst das Ende: keine weitere Taste geht verloren
-  z = E.vorwarnungVorbei(z, T0 + 50 * S + 20);
-  assert.equal(E.wecktasteVerwerfen(z, T0 + 50 * S + 30), false);
-
-  // Umgekehrt: Die Eingabe (Ende der Vorwarnung) kommt vor der Taste. Die Taste bis 1 s danach wird verworfen.
-  z = E.vorwarnungVorbei(E.vorwarnungGezeigt(E.weckzustand()), T0);
-  assert.equal(E.wecktasteVerwerfen(z, T0 + 999), true);
-  z = E.wecktasteGesehen(z);
-  assert.equal(E.wecktasteVerwerfen(z, T0 + 1000), false);
-  // Abbruch mit der Maus: Das Passwort danach bleibt ganz
-  z = E.vorwarnungVorbei(E.vorwarnungGezeigt(E.weckzustand()), T0);
-  assert.equal(E.wecktasteVerwerfen(z, T0 + 3 * S), false);
-  // Ende ohne Vorwarnung (z. B. doppelt gemeldet): nichts ändert sich
-  const ruhig = E.wecktasteGesehen(E.weckzustand());
-  assert.deepEqual(plain(E.vorwarnungVorbei(ruhig, T0)), plain(ruhig));
-  assert.deepEqual(plain(E.vorwarnungVorbei(null, T0)), plain(E.weckzustand()));
+test("Vorwarnung: Wer das Passwort tippt, verliert kein Zeichen", () => {
+  // Der Bildschirm war dunkel, die Vorwarnung schaltet ihn ohne Eingabe an (Meldung «an»). Das Feld ist zu sehen:
+  // Eine Taste nach mehr als 300 ms landet im Feld, auch die erste.
+  let z = E.bildschirmHell(E.bildschirmDunkel(E.weckzustand()), T0);
+  for (const nach of [S, 10 * S, 50 * S])
+    assert.equal(E.wecktasteVerwerfen(z, T0 + nach), false, `${nach} ms`);
+  // Die Funktionen des alten Wegs gibt es nicht mehr (die Vorwarnung verwirft nichts)
+  assert.equal(typeof E.vorwarnungGezeigt, "undefined");
+  assert.equal(typeof E.vorwarnungVorbei, "undefined");
   // Blockiert: wieder dunkel, die nächste Taste ist wieder eine Wecktaste
-  z = E.bildschirmDunkel(E.vorwarnungVorbei(E.wecktasteGesehen(E.vorwarnungGezeigt(E.weckzustand())), T0));
+  z = E.bildschirmDunkel(E.wecktasteGesehen(z));
   assert.equal(E.wecktasteVerwerfen(z, T0 + 10 * MIN), true);
 });
 
@@ -240,7 +273,6 @@ test("Ein/Aus-Taste gesperrt: dunkel oder eben geweckt heisst an, sonst aus", ()
   assert.equal(E.tasteGesperrt(geweckt, T0 + 2000), "aus");
   assert.equal(E.tasteGesperrt(geweckt, T0 - 1), "aus");
   assert.equal(E.tasteGesperrt(E.weckzustand(), T0), "aus");
-  assert.equal(E.tasteGesperrt(E.vorwarnungGezeigt(E.weckzustand()), T0), "aus");
   for (const kaputt of [null, undefined, "dunkel", 5])
     assert.equal(E.tasteGesperrt(kaputt, T0), "aus");
 });
@@ -296,7 +328,8 @@ test("Grenzen überall gleich: Leitplanken, Schema", () => {
 test("Leitplanken.qml reicht die Grenzen aus zustandslogik.js weiter", () => {
   const qml = lesen("shell", "dienste", "Leitplanken.qml");
   for (const k of ["bildschirmNurGesperrt", "bildschirmAusNachSperreMin", "bildschirmAusNachSperreMax", "ausschaltenMinutenMin",
-    "ausschaltenMinutenMax", "vorwarnungSekunden", "sperreTrotzHemmerMinuten", "akkuAusschaltenProzent"])
+    "ausschaltenMinutenMax", "vorwarnungSekunden", "sperreTrotzHemmerMinuten", "akkuAusschaltenProzent",
+    "loginAusschaltenMinuten"])
     assert.match(qml, new RegExp(`readonly property \\w+ ${k}: Logik\\.LEITPLANKEN\\.${k}\\n`), k);
   assert.match(qml, /function bildschirmMinuten\(wunsch: var\): int \{\s*return EnergieLogik\.bildschirmMinuten\(wunsch\);/);
   assert.match(qml, /function ausschaltenMinuten\(wunsch: var\): int \{\s*return EnergieLogik\.ausschaltenMinuten\(wunsch\);/);

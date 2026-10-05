@@ -1324,9 +1324,11 @@ class AkkuLeer(unittest.TestCase):
         self.aufrufe = []
         self.belegt = ""
         self.rc = 0
+        self.meldungen = []
         self.kritisch = A.CriticalBattery(self.log, clock=self.uhr,
                                           wall=lambda: WAND + datetime.timedelta(seconds=self.uhr.t - 1000),
-                                          busy=lambda: self.belegt, runner=self.runner)
+                                          busy=lambda: self.belegt, runner=self.runner,
+                                          notify=lambda text: self.meldungen.append(text) or True)
         self.messen(5)  # erster Wert: 5 % im Akkubetrieb
 
     def runner(self, argv, **kwargs):
@@ -1427,13 +1429,122 @@ class AkkuLeer(unittest.TestCase):
         self.bis_zur_vorwarnung()
         self.assertIsNone(self.messen(fehler=True, sekunden=5))
         self.assertIn("abgebrochen: Messwert unsicher", self.logtext())
-        # Ladestand 0 heisst beim Messchip «noch kein Wert»: ebenso unsicher
-        self.bis_zur_vorwarnung()
-        self.assertIsNone(self.messen(0, sekunden=5))
         start = self.bis_zur_vorwarnung()
         while self.uhr.t - start < 60:
             self.messen(3, sekunden=5)
         self.assertEqual(len(self.aufrufe), 1)
+
+    def test_null_prozent_am_ende_des_akkus_zaehlt(self):
+        # Der CW2217 springt von 4 % direkt auf 0 % (echtes Ende): Das zählt als leer, die Vorwarnung beginnt
+        self.messen(4)
+        self.assertIsNone(self.messen(0))
+        self.assertIsNone(self.messen(0))
+        start = self.uhr.t + 15
+        self.assertIsNotNone(self.messen(0))
+        self.assertEqual(self.monitor.percent, 0)
+        # 0 % während der Vorwarnung bricht nicht ab (nur das Netzteil)
+        while self.uhr.t - start < 60:
+            self.assertTrue(self.kritisch.active)
+            self.messen(0, sekunden=5)
+        self.assertEqual(len(self.aufrufe), 1)
+        self.assertNotIn("abgebrochen", self.logtext())
+
+    def test_null_prozent_mitten_in_der_vorwarnung(self):
+        start = self.bis_zur_vorwarnung()
+        self.messen(0, sekunden=5)
+        self.assertTrue(self.kritisch.active)
+        while self.uhr.t - start < 60:
+            self.messen(0, sekunden=5)
+        self.assertEqual(len(self.aufrufe), 1)
+
+    def test_null_prozent_ohne_gueltigen_wert_davor_zaehlt_nie(self):
+        # Kurz nach dem Aktivieren meldet der Chip 0 %, bis er den ersten Wert hat: kein Messwert
+        monitor = A.BatteryMonitor(A.BatteryGauge(self.chip, sleep=lambda s: None), self.log, clock=self.uhr)
+        kritisch = A.CriticalBattery(self.log, clock=self.uhr, busy=lambda: "", runner=self.runner,
+                                     notify=lambda text: True)
+        self.chip.reg[0x04] = 0
+        for _ in range(20):
+            self.uhr.t += 15
+            monitor.tick()
+            kritisch.update(monitor)
+            self.assertIsNone(monitor.sample)
+            self.assertIsNone(monitor.percent)
+        self.assertFalse(kritisch.active)
+        # Nach einem hohen Wert ist 0 % unplausibel (ein Sprung von 50 auf 0): ebenso kein Messwert
+        self.chip.reg[0x04] = 50
+        self.uhr.t += 15
+        monitor.tick()
+        self.chip.reg[0x04] = 0
+        for _ in range(5):
+            self.uhr.t += 15
+            monitor.tick()
+            kritisch.update(monitor)
+            self.assertIsNone(monitor.sample)
+        self.assertEqual(monitor.percent, 50)
+        self.assertFalse(kritisch.active)
+        self.assertEqual(self.aufrufe, [])
+
+    def test_akku_erholt_sich_bricht_ab(self):
+        self.bis_zur_vorwarnung()
+        # Eine einzelne höhere Messung bricht nicht ab (die nächste ist wieder 3 %)
+        self.messen(9, sekunden=5)
+        self.messen(3, sekunden=5)
+        self.messen(9, sekunden=5)
+        self.assertTrue(self.kritisch.active)
+        # Zwei sichere Messungen hintereinander ab 6 %: Ende der Vorwarnung
+        self.assertIsNone(self.messen(6, sekunden=5))
+        self.assertFalse(self.kritisch.active)
+        self.assertIn("abgebrochen: Akku wieder bei 6 %", self.logtext())
+        for _ in range(20):
+            self.messen(6, sekunden=5)
+        self.assertEqual(self.aufrufe, [])
+        # Unter 6 % (5 %, 4 %) gilt nicht als erholt
+        start = self.bis_zur_vorwarnung()
+        while self.uhr.t - start < 60:
+            self.messen(5, sekunden=5)
+        self.assertEqual(len(self.aufrufe), 1)
+
+    def test_meldung_an_alle_terminals(self):
+        self.bis_zur_vorwarnung()
+        self.assertEqual(self.meldungen, ["zenOS: Akku fast leer (3 %). zenOS schaltet um 22:42 kontrolliert aus. "
+                                          "Netzteil anschliessen bricht ab."])
+        self.messen(3, entlaedt=False, sekunden=5)
+        self.assertEqual(self.meldungen[-1], "zenOS: Ausschalten bei leerem Akku abgebrochen (Netzteil angeschlossen).")
+        # Mit Wartezeit (dpkg): auch die späteste Uhrzeit
+        start = self.bis_zur_vorwarnung()
+        self.belegt = "dpkg läuft"
+        while self.uhr.t - start < 60:
+            self.messen(3, sekunden=5)
+        self.assertTrue(self.meldungen[-1].startswith("zenOS: Akku leer, aber dpkg läuft. zenOS schaltet spätestens um "))
+
+    def test_meldung_scheitert_haelt_nichts_auf(self):
+        def kaputt(text):
+            raise OSError("kein wall")
+
+        self.kritisch.notify = kaputt
+        start = self.bis_zur_vorwarnung()
+        while self.uhr.t - start < 60:
+            self.messen(3, sekunden=5)
+        self.assertEqual(len(self.aufrufe), 1)
+        self.assertIn("Meldung an die Terminals fehlgeschlagen", self.logtext())
+
+    def test_wall_mit_argumentliste_und_stdin(self):
+        aufrufe = []
+
+        def runner(argv, **kwargs):
+            aufrufe.append((argv, kwargs))
+            return types.SimpleNamespace(returncode=0)
+
+        self.assertTrue(A.wall_message("zenOS: Text; $(nicht ausführen)", runner=runner))
+        self.assertEqual(len(aufrufe), 1)
+        argv, kwargs = aufrufe[0]
+        self.assertEqual(argv, ["wall"])
+        self.assertEqual(kwargs["input"], "zenOS: Text; $(nicht ausführen)\n")
+        self.assertNotIn("shell", kwargs)
+        # In der Testwurzel nie
+        with tempfile.TemporaryDirectory() as wurzel, mock.patch.dict(os.environ, {"ZENOS_ARGON_TESTWURZEL": wurzel}):
+            self.assertIsNone(A.wall_message("x", runner=runner))
+        self.assertEqual(len(aufrufe), 1)
 
     def test_dpkg_wartet_hoechstens_5_min(self):
         start = self.bis_zur_vorwarnung()

@@ -4,8 +4,9 @@
 Ohne Sitzung und ohne echtes swayidle: Jeder Test hat einen eigenen Baum mit einer Kopie von zenos-idle, daneben
 Attrappen von zenos-bildschirm und zen, dazu falsche swayidle und systemd-inhibit im PATH. Alle Attrappen schreiben ihre
 Aufrufe der Reihe nach in eine gemeinsame Datei. Geprüft werden die Argumente für swayidle (Reihenfolge, Sekunden,
-resume), «an» beim Start, der Neustart nur bei geänderten Zeiten, SIGUSR1 und SIGTERM, der neue Stand nach einem Update
-(nur gesperrt), der Hemmer «handle-power-key» (nur ausser bei «ausschalten», kein verwaister Prozess nach einem Wechsel
+resume), «an» beim Start (ausser gesperrt und dunkel), der Neustart nur bei geänderten Zeiten (nie gesperrt und dunkel),
+SIGUSR1 (nur notiert) und SIGTERM, der neue Stand nach einem Update (nur gesperrt und hell), der Deckel als Rückfallebene
+ohne Oberfläche, der Hemmer «handle-power-key» (nur ausser bei «ausschalten», kein verwaister Prozess nach einem Wechsel
 oder dem Ende), die unveränderte Ausgabe von «pruefen» und der Abgleich der Grenzen und Wörter mit zustandslogik.js,
 energie.js (über node, falls vorhanden) und dem Schema. Läuft unter Linux (GNU stat, /proc).
 
@@ -43,6 +44,13 @@ if WER == "bildschirm" and sys.argv[1:] == ["status"]:
             print(f.read().strip())
     except OSError:
         print("an")
+if WER == "systemctl":
+    # systemctl --user --quiet is-active zenos-shell.service: Exit aus <log>.systemctl-exit (Standard 3: inaktiv)
+    try:
+        with open(os.environ["IDLE_TEST_LOG"] + ".systemctl-exit", encoding="utf-8") as f:
+            sys.exit(int(f.read().strip()))
+    except OSError:
+        sys.exit(3)
 if WER == "inhibit":
     # Wie systemd-inhibit: den Befehl nach den Optionen als Kind starten und auf ihn warten (ohne Todessignal: Endet
     # die Attrappe, bliebe das Kind, ausser zenos-idle räumt es weg). inhibit.exit lässt den Hemmer scheitern.
@@ -93,6 +101,10 @@ class IdleTest(unittest.TestCase):
         self.attrappe(self.zen, "zen")
         self.attrappe(os.path.join(self.fake, "swayidle"), "swayidle")
         self.attrappe(os.path.join(self.fake, "systemd-inhibit"), "inhibit")
+        self.attrappe(os.path.join(self.fake, "systemctl"), "systemctl")
+        self.testwurzel = os.path.join(wurzel, "system")
+        self.geraet = os.path.join(self.testwurzel, "run", "zenos", "geraet.json")
+        os.makedirs(os.path.dirname(self.geraet), exist_ok=True)
         self.log = os.path.join(wurzel, "ereignisse")
         self.status = os.path.join(wurzel, "status")
         self.einstellungen = os.path.join(self.home, ".config", "zenos", "einstellungen.json")
@@ -105,6 +117,7 @@ class IdleTest(unittest.TestCase):
             "IDLE_TEST_LOG": self.log,
             "IDLE_TEST_STATUS": self.status,
             "ZENOS_IDLE_INTERVALL": "1",
+            "ZENOS_IDLE_TESTWURZEL": self.testwurzel,
         }
         self.prozess = None
 
@@ -307,7 +320,7 @@ class IdleTest(unittest.TestCase):
         self.assertEqual(self.starten()["argv"], self.erwartete_argumente(3, 4))
 
     def test_sperre_zuletzt_bildschirm_zuerst(self):
-        # swayidle stellt Timeouts vorne in seine Liste: SIGUSR1 löst die Sperre damit vor «Bildschirm aus» aus
+        # Bildschirm aus nach S+B, die Sperre nach S
         argv = self.starten()["argv"]
         timeouts = [argv[i + 2] for i, wert in enumerate(argv) if wert == "timeout"]
         self.assertEqual(timeouts, [f"{self.bildschirm} aus", f"{self.zen} lock"])
@@ -321,6 +334,104 @@ class IdleTest(unittest.TestCase):
         erster_start = next(i for i, e in enumerate(ereignisse) if e["wer"] == "swayidle")
         an = [i for i, e in enumerate(ereignisse) if e["wer"] == "bildschirm" and e["argv"] == ["an"]]
         self.assertTrue(an and an[0] < erster_start, ereignisse)
+
+    def gesperrt_und(self, status):
+        os.makedirs(os.path.join(self.lz, "zenos"), exist_ok=True)
+        with open(os.path.join(self.lz, "zenos", "gesperrt"), "w", encoding="utf-8") as f:
+            f.write("2026-10-05T20:00:00+02:00\n")
+        with open(self.status, "w", encoding="utf-8") as f:
+            f.write(status + "\n")
+
+    def test_gesperrt_und_dunkel_bleibt_beim_start_dunkel(self):
+        for status in ("aus", "teils"):
+            with self.subTest(status=status):
+                if self.prozess:
+                    self.ende_der_ausgabe()
+                    self.prozess.stdout.close()
+                    self.prozess.stderr.close()
+                if os.path.exists(self.log):
+                    os.unlink(self.log)
+                self.gesperrt_und(status)
+                self.starten()
+                self.assertNotIn(["an"], [e["argv"] for e in self.ereignisse() if e["wer"] == "bildschirm"])
+                self.assertIn("der Bildschirm bleibt aus", self.ende_der_ausgabe())
+        # Gesperrt und hell oder ungesperrt (auch wenn dunkel gemeldet): an
+        for gesperrt, status in ((True, "an"), (False, "aus")):
+            with self.subTest(gesperrt=gesperrt, status=status):
+                self.prozess.stdout.close()
+                self.prozess.stderr.close()
+                if os.path.exists(self.log):
+                    os.unlink(self.log)
+                self.gesperrt_und(status)
+                if not gesperrt:
+                    os.unlink(os.path.join(self.lz, "zenos", "gesperrt"))
+                self.starten()
+                self.assertIn(["an"], [e["argv"] for e in self.ereignisse() if e["wer"] == "bildschirm"])
+                self.ende_der_ausgabe()
+
+    def test_neue_zeiten_warten_gesperrt_und_dunkel(self):
+        self.starten()
+        self.gesperrt_und("aus")
+        self.schreiben({"sperreNachMinuten": 5, "bildschirmAusNachSperre": 3})
+        time.sleep(3)
+        # Ein Neustart schaltete den Bildschirm über resume an: erst übernehmen, wenn er wieder an ist
+        self.assertEqual(len(self.starts()), 1)
+        with open(self.status, "w", encoding="utf-8") as f:
+            f.write("an\n")
+        self.assertTrue(self.warten(lambda: len(self.starts()) >= 2))
+        self.assertEqual(self.starts()[-1]["argv"], self.erwartete_argumente(5, 3))
+
+    def deckel(self, zu, seit):
+        daten = {"version": 1, "zeit": "2026-10-05T20:00:00+02:00", "geraet": "argon-one-up",
+                 "deckel": {"vorhanden": True, "zu": zu, "seit": seit}}
+        tmp = self.geraet + ".neu"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(daten, f)
+        os.replace(tmp, self.geraet)
+
+    def zen_aufrufe(self):
+        return [e["argv"] for e in self.ereignisse() if e["wer"] == "zen"]
+
+    def test_deckel_sperrt_ohne_oberflaeche(self):
+        # Beim Start zugeklappt (z. B. an einem anderen Bildschirm): nie sperren, nur ein neuer Wechsel zählt
+        self.deckel(True, None)
+        self.starten()
+        time.sleep(2.5)
+        self.assertEqual(self.zen_aufrufe(), [])
+        self.deckel(False, "2026-10-05T20:01:00+02:00")
+        time.sleep(2.5)
+        self.assertEqual(self.zen_aufrufe(), [])
+        # Zugeklappt, die Oberfläche läuft nicht (zenos-shell.service inaktiv): zen lock
+        self.deckel(True, "2026-10-05T20:02:00+02:00")
+        self.assertTrue(self.warten(lambda: self.zen_aufrufe() == [["lock"]]))
+        # Derselbe Wechsel nur einmal
+        time.sleep(2.5)
+        self.assertEqual(self.zen_aufrufe(), [["lock"]])
+        # Läuft die Oberfläche, sperrt sie selbst: zenos-idle tut nichts
+        with open(self.log + ".systemctl-exit", "w", encoding="utf-8") as f:
+            f.write("0\n")
+        self.deckel(False, "2026-10-05T20:03:00+02:00")
+        self.deckel(True, "2026-10-05T20:04:00+02:00")
+        time.sleep(2.5)
+        self.assertEqual(self.zen_aufrufe(), [["lock"]])
+        self.assertIn(["--user", "--quiet", "is-active", "zenos-shell.service"],
+                      [e["argv"] for e in self.ereignisse() if e["wer"] == "systemctl"])
+        # Schon gesperrt: nichts
+        os.unlink(self.log + ".systemctl-exit")
+        self.gesperrt_und("an")
+        self.deckel(False, "2026-10-05T20:05:00+02:00")
+        self.deckel(True, "2026-10-05T20:06:00+02:00")
+        time.sleep(2.5)
+        self.assertEqual(self.zen_aufrufe(), [["lock"]])
+
+    def test_deckel_kaputte_datei_ohne_folgen(self):
+        self.starten()
+        for inhalt in ("", "{kaputt", '{"deckel": {"zu": "ja", "seit": "$(reboot)"}}', '{"deckel": null}'):
+            with open(self.geraet, "w", encoding="utf-8") as f:
+                f.write(inhalt)
+            time.sleep(1.2)
+        self.assertEqual(self.zen_aufrufe(), [])
+        self.assertIsNone(self.prozess.poll())
 
     def test_neustart_nur_bei_geaenderten_werten(self):
         self.schreiben({"sperreNachMinuten": 5})
@@ -343,17 +454,18 @@ class IdleTest(unittest.TestCase):
         self.assertEqual(self.starts()[-1]["argv"], self.erwartete_argumente(9, 3))
         self.assertIsNone(self.prozess.poll())
 
-    def test_usr1_wird_weitergereicht(self):
-        start = self.starten()
+    def test_usr1_wird_nicht_weitergereicht(self):
+        # Die Timeouts von swayidle beachten Idle-Hemmer: Mit einem Video bliebe der Bildschirm an, und sie blieben auf
+        # 0 stehen (sofort gesperrt nach dem Entsperren). «Bildschirm aus» sofort geht über zen energie aus.
+        self.starten()
         os.kill(self.prozess.pid, signal.SIGUSR1)
-        self.assertTrue(self.warten(lambda: any(e.get("signal") == "USR1" and e["pid"] == start["pid"]
-                                                for e in self.ereignisse())))
+        time.sleep(1.5)
+        os.kill(self.prozess.pid, signal.SIGUSR1)
         time.sleep(1.5)
         self.assertIsNone(self.prozess.poll(), "zenos-idle hat sich bei USR1 beendet")
         self.assertEqual(len(self.starts()), 1)
-        # zweimal hintereinander geht auch
-        os.kill(self.prozess.pid, signal.SIGUSR1)
-        self.assertTrue(self.warten(lambda: sum(e.get("signal") == "USR1" for e in self.ereignisse()) >= 2))
+        self.assertFalse(any(e.get("signal") == "USR1" for e in self.ereignisse()))
+        self.assertEqual(self.ende_der_ausgabe().count("SIGUSR1 ignoriert"), 2)
 
     def test_term_beendet_beide(self):
         start = self.starten()

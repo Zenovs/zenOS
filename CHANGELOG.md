@@ -12,11 +12,13 @@ an; eine Version entspricht einem Tag `v…` im Repo.
   landet nicht im Passwortfeld. «Bildschirm aus» im System-Menü, im Befehlsfeld und mit Super+Shift+L sperrt und
   schaltet sofort ab. zenOS schaltet aus, wenn das Gerät lange gesperrt war: Standard im Akkubetrieb nach 60 Min.,
   einstellbar «Nie», «Im Akkubetrieb» oder «Immer» und 30–240 Min. Vorher steht 60 s lang die Uhrzeit auf dem
-  Sperrbildschirm, eine Taste bricht ab, und nie während einer SSH-Sitzung, mit tmux oder während eines Updates. Ein
+  Sperrbildschirm, eine Taste bricht ab, und nie während einer SSH-Sitzung, mit tmux oder während eines Updates. Am
+  Login-Bildschirm schaltet zenOS im Akkubetrieb nach 30 Min. ohne Eingabe aus, ebenfalls mit Vorwarnung. Ein
   Video hält die automatische Sperre höchstens 60 Min. ohne Eingabe auf, dann sperrt zenOS trotzdem (Leitplanke).
   Die Ein/Aus-Taste sperrt in der Sitzung und macht dunkel (oder öffnet das System-Menü), statt sofort auszuschalten;
   gedrückt halten schaltet weiter aus. Beim Argon ONE UP sperrt Zuklappen sofort, und bei 3 % Akku schaltet zenOS
-  nach 60 s Vorwarnung kontrolliert aus (nur das Netzteil bricht ab). Bereitschaft gibt es auf diesem Gerät nicht:
+  nach 60 s Vorwarnung kontrolliert aus (nur das Netzteil bricht ab); offene Terminals, auch per SSH, bekommen eine
+  Meldung, und der Login-Bildschirm zeigt die Uhrzeit. Bereitschaft gibt es auf diesem Gerät nicht:
   Der Kernel bietet keinen Schlafzustand an, die Seite sagt das offen. Neues Paket: wlopm. `zen energie
   [status|aus]`, `zen doctor` (Abschnitt «Energie»), IPC `zenos-ipc energie aus|status|vorwarnung` und `sperre
   bildschirm|taste` (`docs/module/energie.md`).

@@ -40,11 +40,16 @@ SyslogIdentifier=zenos-argon
 # gehören root, dafür braucht es keine Capability). CAP_SYS_BOOT braucht logind, damit «systemctl reboot/poweroff»
 # vom Power-Button (V3) und bei leerem Akku (ONE UP) ohne Rückfrage durchgeht. Gelesen werden dafür auch
 # /run/lock/zenos-install.lock (geteilt gesperrt, läuft install.sh?) und /proc/*/comm (läuft dpkg?).
+# Vor dem Ausschalten bei leerem Akku meldet «wall» es allen offenen Terminals (auch SSH): dafür nur schreibend die
+# Pseudo-Terminals und Konsolen, mit der Gruppe tty wie wall selbst (ohne CAP_DAC_OVERRIDE gälte sonst nur der Besitzer).
 CapabilityBoundingSet=CAP_SYS_BOOT
 NoNewPrivileges=yes
 DevicePolicy=closed
 DeviceAllow=char-i2c rw
 DeviceAllow=char-gpiochip rw
+DeviceAllow=char-pts w
+DeviceAllow=char-tty w
+SupplementaryGroups=tty
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes

@@ -2,7 +2,8 @@
 .import "../modi/zustandslogik.js" as Logik
 // Logik des Energiemanagements ohne QML: wirksame Werte aus einstellungen.json (begrenzt durch die
 // Leitplanken in modi/zustandslogik.js), Zeitleiste ab der letzten Eingabe, Vorwarnung vor dem Ausschalten
-// und die Wecktaste der Sperre. Getestet mit test/einheiten/energie.test.mjs (node).
+// (in der Sitzung und am Login-Bildschirm) und die Wecktaste der Sperre. Getestet mit
+// test/einheiten/energie.test.mjs (node).
 //
 // Schlüssel in einstellungen.json (Schema: config/schema/einstellungen.schema.json):
 //   bildschirmAusNachSperre  Minuten nach der Sperre, 1–10 (Standard 1)
@@ -25,10 +26,13 @@ var STANDARD = Object.freeze({
 
 // Ist das Ausschalten blockiert (SSH, tmux, Update …), versucht es zenOS nach dieser Zeit erneut
 var NEUER_VERSUCH_MS = 5 * 60000;
-// Eine ältere Vorwarnung gilt nicht mehr (z. B. nach einem Sprung der Uhr): dann nie ausschalten
+// Eine ältere Vorwarnung gilt nicht mehr (z. B. weil der Helfer hängt): dann nie ausschalten. Gezählt in Takten zu 1 s
+// (wie zenos-energie, VORWARNUNG_MAX, dort nach der Laufzeit), nicht mit der Uhr: Ein Sprung der Uhr verkürzt die
+// Vorwarnung nie.
 var VORWARNUNG_MAX_MS = 5 * 60000;
-// So lange nach dem Wecken verwirft die Sperre noch eine Taste (das Signal «an» kann vor der Taste kommen)
-var WECKEN_SCHONFRIST_MS = 1000;
+// So kurz nach dem Wecken verwirft die Sperre noch die erste Taste (das Signal «an» könnte knapp vor der Taste kommen,
+// die geweckt hat). Kurz, damit ein Passwort nach dem Wecken mit Maus oder Touchpad ganz ankommt.
+var WECKEN_SCHONFRIST_MS = 300;
 // So lange nach dem Wecken gilt ein Druck auf die Ein/Aus-Taste noch als Wecken (die Taste selbst weckt schon über
 // die Eingabe, ihr Befehl kommt etwas später an) und schaltet den Bildschirm nicht gleich wieder aus
 var TASTE_SCHONFRIST_MS = 2000;
@@ -104,6 +108,11 @@ function ausschaltenAktiv(art, akku) {
     return a === "akku" && imAkkubetrieb(akku);
 }
 
+// Am Login-Bildschirm (Zenos Entscheid, fest): nur sicher im Akkubetrieb, nach LP.loginAusschaltenMinuten ohne Eingabe
+function loginAusschaltenAktiv(akku) {
+    return imAkkubetrieb(akku);
+}
+
 // --- Zeitleiste ---------------------------------------------------------------
 
 // Was nach wie vielen Minuten ohne Eingabe geschieht: gesperrt, Bildschirm aus und ausgeschaltet (bei «immer»,
@@ -144,46 +153,73 @@ function zeitleisteText(einstellungen, akku) {
 }
 
 // --- Vorwarnung vor dem Ausschalten -------------------------------------------
-// Zustand: { phase, seit, um, grund }
+// Zustand: { phase, seit, um, grund, takte }
 //   aus:     keine Vorwarnung (grund: warum zuletzt abgebrochen, z. B. «eingabe» oder «netzteil»)
-//   laeuft:  Vorwarnung sichtbar seit «seit», fällig um «um» (60 s später)
+//   laeuft:  Vorwarnung sichtbar seit «seit», Uhrzeit des Ausschaltens «um» (nur zur Anzeige). Ausgeschaltet wird
+//            nach 60 Takten zu 1 s (vorwarnungTakt), nie nach der Uhr.
 //   warten:  Ausschalten war blockiert (grund), neuer Versuch um «um» (5 Min. später)
+//   abgelehnt: logind hat das Ausschalten nach der Vorwarnung abgelehnt (grund). Bis zur nächsten Eingabe keine neue
+//            Vorwarnung: Sonst ginge der Bildschirm die ganze Nacht alle 5 Min. für 60 s an.
 // Zeiten in Millisekunden (Date.now()).
 
+var _PHASEN = ["laeuft", "warten", "abgelehnt"];
+
 function vorwarnung() {
-    return { phase: "aus", seit: 0, um: 0, grund: "" };
+    return { phase: "aus", seit: 0, um: 0, grund: "", takte: 0 };
 }
 
 function _phase(z) {
-    return z !== null && typeof z === "object" && (z.phase === "laeuft" || z.phase === "warten") ? z.phase : "aus";
+    return z !== null && typeof z === "object" && _PHASEN.indexOf(z.phase) >= 0 ? z.phase : "aus";
+}
+
+// Darf jetzt gefragt werden, ob ausgeschaltet werden darf? Nur ohne Vorwarnung und nach einer Blockade, nie nach
+// einer Ablehnung durch logind (erst wieder nach einer Eingabe).
+function vorwarnungPruefbar(z) {
+    var phase = _phase(z);
+    return phase === "aus" || phase === "warten";
 }
 
 // Vorwarnung beginnen. Läuft schon eine, bleibt sie, wie sie ist (die 60 s beginnen nicht neu).
 function vorwarnungStarten(z, jetzt) {
     if (_phase(z) === "laeuft")
         return z;
-    return { phase: "laeuft", seit: jetzt, um: jetzt + LP.vorwarnungSekunden * 1000, grund: "" };
+    return { phase: "laeuft", seit: jetzt, um: jetzt + LP.vorwarnungSekunden * 1000, grund: "", takte: 0 };
+}
+
+// Ein Takt der laufenden Vorwarnung (Timer, 1 s). Ein Sprung der Uhr ändert nichts daran. Ein QML-Timer kann etwas zu
+// früh feuern (im Container: 30 Takte in 29,8 s): Massgebend für die 60 s ist deshalb die Laufzeit seit dem Start in
+// zenos-energie. Ist die Vorwarnung dort noch keine 60 s alt (Exit 4), fragt die Oberfläche im nächsten Takt erneut.
+function vorwarnungTakt(z) {
+    if (_phase(z) !== "laeuft")
+        return z;
+    var n = typeof z.takte === "number" && isFinite(z.takte) && z.takte >= 0 ? Math.floor(z.takte) : 0;
+    return { phase: "laeuft", seit: z.seit, um: z.um, grund: "", takte: n + 1 };
 }
 
 // Abbrechen (Eingabe, Netzteil, entsperrt …)
 function vorwarnungAbbrechen(z, grund) {
-    return { phase: "aus", seit: 0, um: 0, grund: typeof grund === "string" ? grund : "" };
+    return { phase: "aus", seit: 0, um: 0, grund: typeof grund === "string" ? grund : "", takte: 0 };
 }
 
 // Ausschalten war blockiert: später erneut prüfen
 function vorwarnungBlockiert(z, jetzt, grund) {
-    return { phase: "warten", seit: jetzt, um: jetzt + NEUER_VERSUCH_MS, grund: typeof grund === "string" ? grund : "" };
+    return { phase: "warten", seit: jetzt, um: jetzt + NEUER_VERSUCH_MS, grund: typeof grund === "string" ? grund : "", takte: 0 };
 }
 
-// Was jetzt zu tun ist: «nichts», «ausschalten» (60 s Vorwarnung sind um), «abbrechen» (Vorwarnung zu alt
-// oder die Uhr ging zurück: nie ausschalten) oder «neu-pruefen» (nach einer Blockade)
+// logind hat das Ausschalten abgelehnt (polkit, eine andere Sitzung …): bis zur nächsten Eingabe nichts mehr
+function vorwarnungAbgelehnt(z, jetzt, grund) {
+    return { phase: "abgelehnt", seit: jetzt, um: 0, grund: typeof grund === "string" ? grund : "", takte: 0 };
+}
+
+// Was jetzt zu tun ist: «nichts», «ausschalten» (60 Takte Vorwarnung sind um), «abbrechen» (Vorwarnung zu alt oder
+// kaputt: nie ausschalten) oder «neu-pruefen» (nach einer Blockade). Nach einer Ablehnung immer «nichts».
 function vorwarnungSchritt(z, jetzt) {
     var phase = _phase(z);
     if (phase === "laeuft") {
-        var alter = jetzt - z.seit;
-        if (!isFinite(alter) || alter < 0 || alter > VORWARNUNG_MAX_MS)
+        var takte = z.takte;
+        if (typeof takte !== "number" || !isFinite(takte) || takte < 0 || takte * 1000 > VORWARNUNG_MAX_MS)
             return "abbrechen";
-        return alter >= LP.vorwarnungSekunden * 1000 ? "ausschalten" : "nichts";
+        return takte >= LP.vorwarnungSekunden ? "ausschalten" : "nichts";
     }
     if (phase === "warten") {
         if (!isFinite(z.um) || !isFinite(z.seit) || jetzt >= z.um || jetzt < z.seit)
@@ -192,14 +228,25 @@ function vorwarnungSchritt(z, jetzt) {
     return "nichts";
 }
 
+// Zeile auf der Sperre und am Login-Bildschirm (Uhrzeiten als «HH:mm», leer: keine). Der leere Akku (zenos-argon) hat
+// Vorrang: Dort bricht nur das Netzteil ab.
+function vorwarnungText(akkuUhrzeit, uhrzeit) {
+    if (typeof akkuUhrzeit === "string" && akkuUhrzeit.length > 0)
+        return "Akku fast leer: zenOS schaltet um " + akkuUhrzeit + " aus · Netzteil anschliessen bricht ab";
+    if (typeof uhrzeit === "string" && uhrzeit.length > 0)
+        return "zenOS schaltet um " + uhrzeit + " aus · Eine Taste bricht ab";
+    return "";
+}
+
 // --- Wecktaste der Sperre -----------------------------------------------------
 // Ist der Bildschirm dunkel, weckt ihn die erste Eingabe. Eine Taste dafür darf nicht ins Passwortfeld (ein
 // Zeichen zu viel ergäbe einen Fehlversuch bei PAM). Verworfen wird genau eine Taste: die erste, solange es
-// dunkel ist oder bis 1 s nach dem Wecken (das Signal «an» kann vor der Taste ankommen). Nie mehr als eine:
-// Bliebe «dunkel» hängen, könnte man sonst kein Passwort mehr eingeben.
-// Ebenso während der Vorwarnung vor dem Ausschalten: Der Bildschirm ging ohne Eingabe an, die erste Taste bricht
-// die Vorwarnung ab und landet nicht im Feld (auch bis 1 s nach dem Ende, falls die Eingabe vor der Taste ankommt).
-// Zustand: { dunkel, gewecktUm (ms, -1: nicht geweckt), offen (die Wecktaste steht noch aus), vorwarnung }
+// dunkel ist oder bis 300 ms nach dem Wecken (falls das Signal «an» knapp vor der Taste ankommt). Nie mehr als eine:
+// Bliebe «dunkel» hängen, könnte man sonst kein Passwort mehr eingeben. Weckt die Maus oder das Touchpad, kommt das
+// Passwort danach ganz an.
+// Während der sichtbaren Vorwarnung vor dem Ausschalten wird nichts verworfen: Das Feld ist zu sehen, wer dann das
+// Passwort tippt, soll entsperren (die Eingabe bricht die Vorwarnung ohnehin ab).
+// Zustand: { dunkel, gewecktUm (ms, -1: nicht geweckt), offen (die Wecktaste steht noch aus) }
 
 function weckzustand() {
     return { dunkel: false, gewecktUm: -1, offen: false };
@@ -220,23 +267,11 @@ function bildschirmHell(z, jetzt) {
     return { dunkel: false, gewecktUm: jetzt, offen: z.offen === true };
 }
 
-// Die Vorwarnung ist sichtbar (der Bildschirm ging dafür an): Die nächste Taste bricht ab und wird verworfen
-function vorwarnungGezeigt(z) {
-    return { dunkel: false, gewecktUm: -1, offen: true, vorwarnung: true };
-}
-
-// Die Vorwarnung ist vorbei. Stand die Taste noch aus, gilt sie bis 1 s danach noch als Abbruchtaste.
-function vorwarnungVorbei(z, jetzt) {
-    if (!(z && z.vorwarnung === true))
-        return z && typeof z === "object" ? z : weckzustand();
-    return { dunkel: z.dunkel === true, gewecktUm: jetzt, offen: z.offen === true };
-}
-
 // Diese Taste verwerfen? Danach immer wecktasteGesehen() aufrufen.
 function wecktasteVerwerfen(z, jetzt) {
     if (!z || typeof z !== "object" || z.offen !== true)
         return false;
-    if (z.dunkel === true || z.vorwarnung === true)
+    if (z.dunkel === true)
         return true;
     var seit = typeof z.gewecktUm === "number" && z.gewecktUm >= 0 ? jetzt - z.gewecktUm : -1;
     return seit >= 0 && seit < WECKEN_SCHONFRIST_MS;

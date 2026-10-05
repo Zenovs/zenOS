@@ -34,8 +34,11 @@ import "../dienste/energie.js" as EnergieLogik
 // - Wecktaste: Die Taste, die einen dunklen Bildschirm weckt, landet nicht im Passwortfeld (sonst ein Fehlversuch
 //   bei PAM). Verworfen wird genau eine Taste (Logik in dienste/energie.js). Dunkel ist die Sperre durch den
 //   eigenen Aufruf von zenos-bildschirm oder dessen Meldung «sperre bildschirm aus», nie ungesperrt.
-// - Vorwarnung vor dem Ausschalten (dienste/Energie.qml): eine ruhige Zeile mit der Uhrzeit, ohne Sekunden. Die
-//   Taste, die sie abbricht, landet ebenfalls nicht im Passwortfeld.
+// - Neustart der Oberfläche (Absturz, Neuladen) bei dunklem Bildschirm: Beim Start fragt die Sperre
+//   «zenos-bildschirm status». Ist es dunkel und gesperrt, gilt es als dunkel (Eingaben wecken, die Wecktaste wird
+//   verworfen); ungesperrt geht der Bildschirm an. Entsperren schaltet ihn immer an: Dunkel heisst gesperrt.
+// - Vorwarnung vor dem Ausschalten (dienste/Energie.qml): eine ruhige Zeile mit der Uhrzeit, ohne Sekunden. Das
+//   Passwortfeld ist dabei zu sehen: Wer tippt, tippt ins Feld (die Eingabe bricht die Vorwarnung ab).
 // - Ausschalten bei leerem Akku (zenos-argon, Geraet.akkuAusschaltenUm): dieselbe Zeile mit dem Akku-Symbol und der
 //   Uhrzeit. Sie hat Vorrang, eine Taste bricht nicht ab (nur das Netzteil), und den Bildschirm schaltet sie nicht an.
 // - Ein/Aus-Taste (IPC «sperre taste», von zenos-energie taste): Bildschirm an, wenn er dunkel ist oder eben geweckt
@@ -81,7 +84,7 @@ Scope {
     // Uhrzeit des Ausschaltens bei leerem Akku (zenos-argon), z. B. «22:41» (leer: keins)
     readonly property string akkuAusschaltenUm: Geraet.akkuAusschaltenUm > 0 ? Qt.formatDateTime(new Date(Geraet.akkuAusschaltenUm), "HH:mm") : ""
     // Zeile auf der Sperre: leerer Akku vor der Vorwarnung nach langer Sperre
-    readonly property string vorwarnungText: akkuAusschaltenUm.length > 0 ? "Akku fast leer: zenOS schaltet um " + akkuAusschaltenUm + " aus · Netzteil anschliessen bricht ab" : ausschaltenUm.length > 0 ? "zenOS schaltet um " + ausschaltenUm + " aus · Eine Taste bricht ab" : ""
+    readonly property string vorwarnungText: EnergieLogik.vorwarnungText(akkuAusschaltenUm, ausschaltenUm)
 
     // Der Bildschirm ist aus bzw. wieder an (Meldung von zenos-bildschirm oder eigener Aufruf über Energie)
     function bildschirmGemeldet(was: string): void {
@@ -113,7 +116,7 @@ Scope {
             if (root.dunkel)
                 Energie.bildschirm("an");
         } else {
-            // Wie Super+Shift+L: über zen energie aus (zenos-idle, eine Eingabe weckt wieder)
+            // Wie Super+Shift+L: über zen energie aus (eine Eingabe weckt wieder)
             Energie.aus();
         }
         return was;
@@ -204,6 +207,9 @@ Scope {
         Oberflaeche.gesperrt = false;
         _zuruecksetzen();
         _aufraeumen();
+        // Dunkel heisst gesperrt: Entsperrt ist der Bildschirm immer an, auch wenn die Sperre nichts von «aus» wusste
+        // (z. B. nach einem Neustart der Oberfläche, blind entsperrt). Ist er schon an, schaltet der Helfer nichts.
+        Energie.bildschirm("an");
     }
 
     // Nach dem Entsperren: geänderte Dateien der Oberfläche suchen (neuer als der Marker), dann den Marker
@@ -266,6 +272,7 @@ Scope {
                 root._weck = EnergieLogik.weckzustand();
                 root._zuruecksetzen();
                 root._aufraeumen();
+                Energie.bildschirm("an");
             }
         }
 
@@ -683,15 +690,6 @@ Scope {
         function onBildschirmGeschaltet(was: string): void {
             root.bildschirmGemeldet(was);
         }
-
-        function onVorwarnungGestartet(): void {
-            if (lock.locked)
-                root._weck = EnergieLogik.vorwarnungGezeigt(root._weck);
-        }
-
-        function onVorwarnungBeendet(grund: string): void {
-            root._weck = EnergieLogik.vorwarnungVorbei(root._weck, Date.now());
-        }
     }
 
     Connections {
@@ -747,10 +745,34 @@ Scope {
         }
     }
 
+    // Beim Start: Ist der Bildschirm schon aus (die Oberfläche startete neu, während es gesperrt und dunkel war)? Dann
+    // weiss die Sperre davon: Eingaben wecken, die Wecktaste wird verworfen. Ungesperrt geht er an.
+    Process {
+        id: startStatus
+
+        command: [Pfade.bin + "/zenos-bildschirm", "status"]
+        workingDirectory: Pfade.home
+        stdout: StdioCollector {
+            onStreamFinished: {
+                const zeile = text.trim().split("\n").pop() ?? "";
+                if (zeile !== "aus" && zeile !== "teils")
+                    return;
+                if (lock.locked) {
+                    console.info("Sperre: Bildschirm beim Start schon aus, eine Eingabe weckt ihn");
+                    root.bildschirmGemeldet("aus");
+                } else {
+                    console.info("Sperre: Bildschirm beim Start aus, aber nicht gesperrt: schalte ihn an");
+                    Energie.bildschirm("an");
+                }
+            }
+        }
+    }
+
     Component.onCompleted: {
         // Blockierendes Lesen: Existiert der Marker, ist die Sperre gesetzt, bevor die Shell etwas zeigt
         markerDatei.text();
         if (markerDatei.loaded)
             sperren();
+        startStatus.running = true;
     }
 }

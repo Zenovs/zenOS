@@ -14,6 +14,8 @@ StartLimitIntervalSec=0
 Type=simple
 ExecStart=/opt/zenos/scripts/bin/zenos-idle
 Restart=always
-RestartSec=5
+# Kurz: Zwischen zwei Läufen fehlt der Hemmer für die Ein/Aus-Taste (ein kurzer Druck schaltete dann aus).
+# StartLimitIntervalSec=0 oben: systemd gibt nie auf.
+RestartSec=1
 # Das Ende der Sitzung (labwc shutdown) wartet nicht auf swayidle
 TimeoutStopSec=5

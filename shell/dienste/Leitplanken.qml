@@ -31,6 +31,7 @@ Singleton {
     readonly property int ausschaltenMinutenMin: Logik.LEITPLANKEN.ausschaltenMinutenMin
     readonly property int ausschaltenMinutenMax: Logik.LEITPLANKEN.ausschaltenMinutenMax
     readonly property int vorwarnungSekunden: Logik.LEITPLANKEN.vorwarnungSekunden
+    readonly property int loginAusschaltenMinuten: Logik.LEITPLANKEN.loginAusschaltenMinuten
     readonly property int akkuAusschaltenProzent: Logik.LEITPLANKEN.akkuAusschaltenProzent
 
     // Inhalte gerade verbergen? (Bildschirm wird geteilt)

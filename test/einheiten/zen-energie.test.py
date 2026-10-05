@@ -5,7 +5,7 @@ Ohne Sitzung: Jeder Test hat einen eigenen Baum mit einer Kopie von scripts/zen,
 scripts/zen.d/energie.sh. Daneben stehen Attrappen von «zen lock» (zen.d/lock.sh), zenos-idle und zenos-bildschirm,
 dazu falsche systemctl und pgrep in einem PATH, der sonst nur die nötigen Werkzeuge enthält. Alle Attrappen schreiben
 ihre Aufrufe der Reihe nach in eine gemeinsame Datei. Geprüft wird vor allem die Leitplanke «dunkel heisst gesperrt»:
-ohne bestätigte Sperre weder SIGUSR1 an zenos-idle noch «zenos-bildschirm aus».
+ohne bestätigte Sperre kein «zenos-bildschirm aus». Nie über SIGUSR1 an zenos-idle (swayidle beachtet Idle-Hemmer).
 
   python3 test/einheiten/zen-energie.test.py
 """
@@ -154,52 +154,30 @@ class ZenEnergieTest(unittest.TestCase):
                 self.assertEqual(self.usr1(), [])
                 self.assertEqual(self.bildschirm_aus(), [])
 
-    def test_mit_zenos_idle_ueber_usr1(self):
-        self.verhalten("systemctl", "exit.is-active", "0")
-        self.verhalten("systemctl", "aus.show", "4242\n")
-        rc, aus, fehler = self.zen("aus")
-        self.assertEqual((rc, fehler), (0, ""))
-        self.assertIn("Bildschirm aus", aus)
-        reihe = self.wer()
-        self.assertEqual(reihe[0], "lock", "zuerst sperren")
-        self.assertEqual(self.bildschirm_aus(), [])
-        self.assertEqual([e["argv"] for e in self.usr1()],
-                         [["--user", "kill", "--kill-whom=main", "--signal=USR1", "zenos-idle.service"]])
-        # swayidle als Kind von zenos-idle, und es kann den Bildschirm ausschalten
-        pgrep = [e["argv"] for e in self.ereignisse() if e["wer"] == "pgrep"]
-        self.assertEqual(len(pgrep), 1)
-        self.assertIn("-P", pgrep[0])
-        self.assertEqual(pgrep[0][pgrep[0].index("-P") + 1], "4242")
-        self.assertTrue(re.search(pgrep[0][-1], "swayidle -w timeout 360 /opt/zenos/scripts/bin/zenos-bildschirm aus"))
-        self.assertLess(reihe.index("lock"), reihe.index("pgrep"))
-
-    def test_ohne_zenos_idle_direkt(self):
-        rc, aus, fehler = self.zen("aus")
-        self.assertEqual((rc, fehler), (0, ""))
-        self.assertIn("Eine Taste weckt ihn", aus)
-        self.assertEqual(self.usr1(), [])
-        reihe = self.wer()
-        self.assertEqual(reihe[0], "lock")
-        self.assertEqual(len(self.bildschirm_aus()), 1)
-        self.assertEqual(reihe[-1], "bildschirm")
-
-    def test_ohne_swayidle_oder_ohne_signal_direkt(self):
-        faelle = {
-            "pgrep findet nichts": [("pgrep", "exit", "1")],
-            "MainPID 0": [("systemctl", "aus.show", "0\n")],
-            "kill scheitert": [("systemctl", "exit.kill", "1")],
-        }
-        for name, verhalten in faelle.items():
-            with self.subTest(name):
-                self.vergessen("ereignisse", "pgrep.exit", "systemctl.exit.kill")
-                self.verhalten("systemctl", "exit.is-active", "0")
-                self.verhalten("systemctl", "aus.show", "4242\n")
-                for eintrag in verhalten:
-                    self.verhalten(*eintrag)
-                rc, _, fehler = self.zen("aus")
+    def test_immer_direkt_auch_mit_zenos_idle(self):
+        # Auch wenn zenos-idle mit swayidle läuft (und ein Video den Leerlauf hemmt): zen lock, dann zenos-bildschirm aus.
+        # Nie SIGUSR1: Die Timeouts von swayidle beachten Idle-Hemmer und blieben danach auf 0 stehen.
+        for zenos_idle in (True, False):
+            with self.subTest(zenos_idle=zenos_idle):
+                self.vergessen("ereignisse", "systemctl.exit.is-active", "systemctl.aus.show")
+                if zenos_idle:
+                    self.verhalten("systemctl", "exit.is-active", "0")
+                    self.verhalten("systemctl", "aus.show", "4242\n")
+                rc, aus, fehler = self.zen("aus")
                 self.assertEqual((rc, fehler), (0, ""))
+                self.assertEqual(aus, "Bildschirm aus. Eine Eingabe weckt ihn, die Sperre bleibt.\n")
+                self.assertEqual(self.usr1(), [])
+                reihe = self.wer()
+                self.assertEqual(reihe[0], "lock", "zuerst sperren")
                 self.assertEqual(len(self.bildschirm_aus()), 1)
-                self.assertEqual(self.wer()[0], "lock")
+                self.assertEqual(reihe[-1], "bildschirm")
+                self.assertNotIn("pgrep", reihe)
+
+    def test_skript_ohne_usr1(self):
+        with open(ENERGIE, encoding="utf-8") as f:
+            text = "".join(z for z in f if not z.lstrip().startswith("#"))
+        self.assertNotIn("USR1", text)
+        self.assertNotRegex(text, r"systemctl --user kill")
 
     def test_bildschirm_scheitert(self):
         self.verhalten("bildschirm", "exit", "1")

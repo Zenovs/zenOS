@@ -194,6 +194,9 @@ CHARGE_CONFIRMATIONS = 3
 READ_TOLERANCE = 2
 SOC_JUMP = 10
 SOC_ZERO_NOTICE = 120.0
+# 0 % meldet der Chip auch, solange er noch keinen Wert hat (kurz nach dem Aktivieren). Hat er in diesem Lauf schon
+# einen Ladestand bis hierhin geliefert, ist 0 % dagegen ein echter Messwert: Der Akku ist leer.
+SOC_ZERO_VALID_FROM = 10
 PROFILE_WRITES_PER_HOUR = 3
 PROFILE_RETRY_FIRST = 30.0
 PROFILE_RETRY_MAX = 3600.0
@@ -237,6 +240,9 @@ CRITICAL_CONFIRMATIONS = 3
 CRITICAL_WARNING_SECONDS = 60
 # Läuft dpkg oder install.sh, so lange höchstens zusätzlich warten (ein hartes Aus wäre schlimmer als ein Abbruch)
 CRITICAL_MAX_DEFER = 300
+# Erholt sich der Ladestand während der Vorwarnung (zwei sichere Messungen hintereinander ab 3 + 3 %), endet sie
+CRITICAL_RECOVERY_MARGIN = 3
+CRITICAL_RECOVERY_CONFIRMATIONS = 2
 # install.sh hält diese Sperre exklusiv, solange es läuft
 INSTALL_LOCK_PATH = "/run/lock/zenos-install.lock"
 
@@ -1366,8 +1372,9 @@ class BatteryMonitor:
         self._failed = False
         self._zero_since = None
         self._announced = False
-        # Rohe Messung dieses Takts: (Ladestand, entlädt) mit plausiblem Ladestand (1–100 %), sonst None (Lesefehler,
-        # Chip startet oder misst nicht, unplausibel). Für CriticalBattery: ein einzelner Takt, ohne Entprellung.
+        # Rohe Messung dieses Takts: (Ladestand, entlädt) mit plausiblem Ladestand (1–100 %, 0 % nach einem gültigen
+        # niedrigen Wert in diesem Lauf), sonst None (Lesefehler, Chip startet oder misst nicht, unplausibel). Für
+        # CriticalBattery: ein einzelner Takt, ohne Entprellung.
         self.sample = None
 
     @property
@@ -1480,9 +1487,10 @@ class BatteryMonitor:
     def _take(self, soc, discharging, now):
         if 100 < soc <= 105:
             soc = 100
-        if soc == 0:
+        if soc == 0 and (self.percent is None or self.percent > SOC_ZERO_VALID_FROM):
             # Kurz nach dem Aktivieren meldet der Chip 0 %, bis er den ersten Wert hat (Argon wertet 0 ebenso
-            # als ungültig). Bleibt es dabei, einmal ins Journal.
+            # als ungültig). Bleibt es dabei, einmal ins Journal. Nach einem gültigen niedrigen Ladestand in diesem
+            # Lauf (höchstens SOC_ZERO_VALID_FROM) ist 0 % dagegen ein Messwert: Der Akku ist leer.
             self._zero_since = self._zero_since if self._zero_since is not None else now
             if now - self._zero_since >= SOC_ZERO_NOTICE:
                 self.log.problem("akku-null", "Der Akku-Messchip meldet seit 2 Minuten 0 % (noch kein Messwert?)")
@@ -1560,25 +1568,45 @@ def system_busy():
     return ""
 
 
+def wall_message(text, runner=subprocess.run):
+    """Meldung an alle offenen Terminals (wall, auch SSH-Sitzungen und Konsolen), Text über stdin. True, wenn wall sie
+    absetzen konnte, None ohne Versuch (mit ZENOS_ARGON_TESTWURZEL nie). Der Dienst darf dafür auf /dev/pts und die
+    Konsolen schreiben (DeviceAllow, Gruppe tty)."""
+    if test_root():
+        return None
+    try:
+        result = runner(["wall"], input=text + "\n", capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
 class CriticalBattery:
     """Leitplanke (Code, nicht abschaltbar): kontrolliertes Ausschalten bei leerem Akku statt eines harten Aus.
 
     - Zählen nur bei sicherem Messwert (Zustand «ok») und sicherem Entladen (entprellt und in diesem Takt): drei
       Messungen hintereinander mit höchstens 3 % (CRITICAL_PERCENT). Jeder andere Takt setzt zurück.
     - Dann 60 s Vorwarnung: report() liefert die Uhrzeit für «akku.ausschaltenUm» (Oberfläche: dringende Mitteilung,
-      Zeile auf der Sperre). Abbrechen kann nur das Netzteil: schon eine Messung «lädt» bricht ab, eine Taste nicht.
-      Ein unsicherer Messwert bricht ebenfalls ab (nie ausschalten ohne sicheren Wert); dann beginnt alles von vorn.
+      Zeile auf der Sperre und am Login-Bildschirm), dazu eine Meldung an alle Terminals (wall, auch per SSH).
+      Abbrechen kann das Netzteil: schon eine Messung «lädt» bricht ab, eine Taste nicht. Ebenso zwei sichere Messungen
+      hintereinander ab CRITICAL_PERCENT + CRITICAL_RECOVERY_MARGIN (die Spannung hat sich erholt, oder die ersten
+      waren Fehlmessungen). Ein unsicherer Messwert bricht ab (nie ausschalten ohne sicheren Wert); dann beginnt alles
+      von vorn. 0 % nach einem gültigen niedrigen Wert gilt als sicher (BatteryMonitor, SOC_ZERO_VALID_FROM).
     - Läuft danach install.sh oder dpkg, wird gewartet, höchstens CRITICAL_MAX_DEFER (5 Min.) länger; die Uhrzeit zeigt
-      dann diese späteste. SSH-Sitzungen, tmux und Hemmer halten es nicht auf: Bei leerem Akku käme sonst das harte Aus.
+      dann diese späteste. SSH-Sitzungen, tmux und Hemmer halten es nicht auf: Bei leerem Akku käme sonst das harte Aus
+      (Abweichung vom Wortlaut von Zenos Entscheid, «nie während SSH, tmux oder Updates»; docs/module/energie.md).
     - Ausgeschaltet wird mit «systemctl poweroff» (nie neu starten, nie --force). Mit ZENOS_ARGON_TESTWURZEL nie."""
 
-    def __init__(self, log, clock=time.monotonic, wall=None, busy=system_busy, runner=subprocess.run):
+    def __init__(self, log, clock=time.monotonic, wall=None, busy=system_busy, runner=subprocess.run, notify=None):
         self.log = log
         self.clock = clock
         self.wall = wall or (lambda: datetime.datetime.now().astimezone())
         self.busy = busy
         self.runner = runner
+        # Meldung an die Terminals (Text): im Dienst wall, in Tests eine Attrappe
+        self.notify = notify or (lambda text: wall_message(text, runner=runner))
         self.count = 0
+        self.recovered = 0
         self.deadline = None  # Ende der Vorwarnung (clock)
         self.until = None  # Uhrzeit des Ausschaltens für die Statusdatei (wall)
         self.deferred = False
@@ -1618,6 +1646,13 @@ class CriticalBattery:
         if sample is None:
             self._cancel("Messwert unsicher, es beginnt von vorn")
             return
+        if sample[0] >= CRITICAL_PERCENT + CRITICAL_RECOVERY_MARGIN:
+            self.recovered += 1
+            if self.recovered >= CRITICAL_RECOVERY_CONFIRMATIONS:
+                self._cancel(f"Akku wieder bei {sample[0]} %")
+                return
+        else:
+            self.recovered = 0
         now = self.clock()
         if now < self.deadline:
             return
@@ -1628,6 +1663,8 @@ class CriticalBattery:
                 self.until = self.until + datetime.timedelta(seconds=CRITICAL_MAX_DEFER)
                 self.log.warning(f"Akku leer, aber {reason}: zenOS wartet damit, spätestens bis "
                                  f"{self.until.strftime('%H:%M:%S')}")
+                self._tell(f"zenOS: Akku leer, aber {reason}. zenOS schaltet spätestens um "
+                           f"{self.until.strftime('%H:%M')} aus.")
             return
         if reason:
             self.log.warning(f"Akku leer und {reason}: zenOS wartet nicht länger als "
@@ -1638,14 +1675,30 @@ class CriticalBattery:
         self.deadline = self.clock() + CRITICAL_WARNING_SECONDS
         self.until = self.wall() + datetime.timedelta(seconds=CRITICAL_WARNING_SECONDS)
         self.deferred = False
+        self.recovered = 0
         self.log.warning(f"Akku bei {percent} % im Akkubetrieb ({CRITICAL_CONFIRMATIONS} Messungen): zenOS schaltet um "
                          f"{self.until.strftime('%H:%M:%S')} kontrolliert aus, nur das Netzteil bricht ab")
+        self._tell(f"zenOS: Akku fast leer ({percent} %). zenOS schaltet um {self.until.strftime('%H:%M')} "
+                   "kontrolliert aus. Netzteil anschliessen bricht ab.")
 
     def _cancel(self, why):
         self.log.info(f"Ausschalten bei leerem Akku abgebrochen: {why}")
         self.count = 0
+        self.recovered = 0
         self.deadline = self.until = None
         self.deferred = False
+        self._tell(f"zenOS: Ausschalten bei leerem Akku abgebrochen ({why}).")
+
+    def _tell(self, text):
+        """Meldung an alle Terminals; ein Fehlschlag einmal ins Journal, das Ausschalten hängt nicht davon ab."""
+        try:
+            ok = self.notify(text)
+        except Exception as err:  # eine Meldung darf das Ausschalten nie aufhalten
+            ok = False
+            self.log.problem("akku-wall", f"Meldung an die Terminals fehlgeschlagen ({err})")
+            return
+        if ok is False:
+            self.log.problem("akku-wall", "Meldung an die Terminals (wall) fehlgeschlagen")
 
     def _poweroff(self, percent):
         if test_root():

@@ -5,7 +5,7 @@ Ohne Sitzung: Jeder Test hat einen eigenen Baum mit einer Kopie von zenos-bildsc
 und zenos-ipc, dazu falsche wlopm, logger und systemctl in einem PATH, der sonst nur die nötigen Werkzeuge enthält
 (so fehlt wlopm wirklich, wenn der Test es entfernt). Alle Attrappen schreiben ihre Aufrufe der Reihe nach in eine
 gemeinsame Datei. Geprüft wird vor allem die Leitplanke «dunkel heisst gesperrt»: ohne bestätigte Sperre nie
-«wlopm --off».
+«wlopm --off», und antwortet die Oberfläche, muss ihre Sperre «aus» quittieren.
 
   python3 test/einheiten/bildschirm.test.py
 """
@@ -28,6 +28,7 @@ WERKZEUGE = ["bash", "python3", "timeout", "sed", "head", "readlink", "dirname",
 #   <wer>.exit   Exit-Code (Standard 0)
 #   <wer>.aus    Ausgabe auf stdout (wlopm: für «--json» allein; für --on/--off ist {"errors": []} Standard)
 #   <wer>.warten Sekunden, die die Attrappe vorher wartet
+#   wlopm.danach Ausgabe für «--json» nach dem nächsten --on/--off (ein zweiter Aufruf hat gleichzeitig geschaltet)
 ATTRAPPE = r'''#!/usr/bin/env python3
 import json, os, sys, time
 WER = %r
@@ -45,6 +46,9 @@ if datei("warten"):
 if WER == "wlopm" and len(sys.argv) > 2:
     aus = datei("schalten")
     print(aus if aus is not None else '{"errors": []}')
+    if datei("danach") is not None:
+        with open(os.path.join(ORDNER, "wlopm.aus"), "w", encoding="utf-8") as f:
+            f.write(datei("danach"))
 elif datei("aus") is not None:
     print(datei("aus"), end="")
 sys.exit(int(datei("exit") or 0))
@@ -73,6 +77,8 @@ class BildschirmTest(unittest.TestCase):
             self.attrappe(os.path.join(self.fake, name), name)
         # systemctl --user show-environment: keine Sitzung (die echte Benutzerinstanz bleibt aussen vor)
         self.verhalten("systemctl", "exit", "1")
+        # Die Sperre der Oberfläche quittiert «aus» (Quickshell kann davor Hinweise ausgeben)
+        self.verhalten("ipc", "aus", "aus\n")
         for name in WERKZEUGE:
             pfad = shutil.which(name)
             self.assertIsNotNone(pfad, name)
@@ -193,8 +199,41 @@ class BildschirmTest(unittest.TestCase):
     def test_aus_wartet_nicht_auf_eine_haengende_oberflaeche(self):
         self.verhalten("ipc", "warten", "20")
         beginn = time.monotonic()
-        self.assertEqual(self.aufruf("aus")[0], 0)
+        code, _, fehler = self.aufruf("aus")
+        self.assertEqual(code, 0)
         self.assertLess(time.monotonic() - beginn, 10)
+        self.assertEqual(self.wlopm_aufrufe(), [["--json", "--off", "*"]])
+        self.assertIn("Oberfläche nicht erreichbar (zenos-ipc, Exit 124)", fehler)
+
+    def test_aus_nur_wenn_die_sperre_quittiert(self):
+        # Die Oberfläche antwortet, sieht sich aber nicht gesperrt (eben entsperrt): Der Bildschirm bleibt an
+        for antwort in ("an\n", "\n", "Hinweis\nan\n", "offen\n"):
+            with self.subTest(antwort=antwort):
+                self.vergessen("ereignisse")
+                self.verhalten("ipc", "aus", antwort)
+                code, _, fehler = self.aufruf("aus")
+                self.assertEqual(code, 1)
+                self.assertEqual(self.wlopm_aufrufe(), [])
+                self.assertIn("der Bildschirm bleibt an", fehler)
+        # Hinweise von Quickshell vor der Antwort: die letzte Zeile zählt
+        self.vergessen("ereignisse")
+        self.verhalten("ipc", "aus", "qt.qpa: Hinweis\naus\n")
+        self.assertEqual(self.aufruf("aus")[0], 0)
+        self.assertEqual(self.wlopm_aufrufe(), [["--json", "--off", "*"]])
+
+    def test_aus_ohne_oberflaeche_ohne_quittung(self):
+        # Notfall-Sperre ohne Oberfläche (zenos-ipc: keine Oberfläche, Exit 2): abschalten, mit Eintrag im Journal
+        for rc in ("1", "2"):
+            with self.subTest(rc=rc):
+                self.vergessen("ereignisse")
+                self.verhalten("ipc", "exit", rc)
+                code, _, fehler = self.aufruf("aus")
+                self.assertEqual(code, 0)
+                self.assertEqual(self.wlopm_aufrufe(), [["--json", "--off", "*"]])
+                self.assertIn(f"Oberfläche nicht erreichbar (zenos-ipc, Exit {rc})", fehler)
+        os.unlink(os.path.join(self.bin, "zenos-ipc"))
+        self.vergessen("ereignisse")
+        self.assertEqual(self.aufruf("aus")[0], 0)
         self.assertEqual(self.wlopm_aufrufe(), [["--json", "--off", "*"]])
 
     def test_stern_bleibt_ein_argument(self):
@@ -204,16 +243,39 @@ class BildschirmTest(unittest.TestCase):
                 f.write("x")
         self.assertEqual(self.aufruf("aus", cwd=self.wurzel)[0], 0)
         self.assertEqual(self.aufruf("an", cwd=self.wurzel)[0], 0)
-        self.assertEqual(self.wlopm_aufrufe(), [["--json", "--off", "*"], ["--json", "--on", "*"]])
+        self.assertEqual(self.wlopm_aufrufe(), [["--json", "--off", "*"], ["--json"], ["--json", "--on", "*"]])
 
     # --- an
 
     def test_an(self):
+        self.verhalten("wlopm", "aus", status_json("off"))
         self.assertEqual(self.aufruf("an"), (0, "", ""))
         self.assertEqual(self.ereignisse(), [
+            ("wlopm", ["--json"]),
             ("wlopm", ["--json", "--on", "*"]),
             ("ipc", ["sperre", "bildschirm", "an"]),
         ])
+
+    def test_an_schon_an(self):
+        # z. B. nach dem Entsperren: nicht schalten, nur der Sperre melden
+        self.verhalten("wlopm", "aus", status_json("on"))
+        self.assertEqual(self.aufruf("an"), (0, "", ""))
+        self.assertEqual(self.ereignisse(), [("wlopm", ["--json"]), ("ipc", ["sperre", "bildschirm", "an"])])
+
+    def test_an_gleichzeitig_zweimal(self):
+        # swayidle (resume) und die Sperre schalten zugleich ein: wlopm meldet beim zweiten einen Fehler, danach ist
+        # aber alles an. Das ist erledigt, ohne Fehler im Journal.
+        self.verhalten("wlopm", "aus", status_json("off"))
+        self.verhalten("wlopm", "schalten", '{"errors": [{"output": "HDMI-A-1", "error": "setting power mode failed"}]}')
+        self.verhalten("wlopm", "danach", status_json("on"))
+        self.assertEqual(self.aufruf("an"), (0, "", ""))
+        self.assertNotIn("logger", [w for w, _ in self.ereignisse(ohne=())])
+        # Bleibt er aus, ist es ein Fehler
+        self.vergessen("wlopm.danach", "ereignisse")
+        self.verhalten("wlopm", "aus", status_json("off"))
+        code, _, fehler = self.aufruf("an")
+        self.assertEqual(code, 1)
+        self.assertIn("wlopm --on meldet", fehler)
 
     def test_an_sperrt_nicht_und_entsperrt_nicht(self):
         self.aufruf("an")

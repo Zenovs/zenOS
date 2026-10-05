@@ -20,6 +20,11 @@ ShellRoot {
         id: anmeldung
     }
 
+    // Im Akkubetrieb nach 30 Min. ohne Eingabe aus, dazu die Zeile der Vorwarnung (auch bei leerem Akku)
+    Leerlauf {
+        id: leerlauf
+    }
+
     Variants {
         model: Quickshell.screens
 
@@ -29,6 +34,7 @@ ShellRoot {
             screen: modelData
             konten: kontoliste
             ablauf: anmeldung
+            leerlauf: leerlauf
             // Formular und Tastaturfokus auf dem ersten Bildschirm
             mitFormular: Quickshell.screens.length === 0 || Quickshell.screens[0] === modelData
         }

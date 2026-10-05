@@ -358,8 +358,10 @@ Apps, Allgemein, Energie, System), Titel in Instrument Serif, Felder zweispaltig
     Bildschirm aus» mit der Tastenkappe «Super Shift L».
   - «Ausschalten, wenn gesperrt»: Segmente «Nie · Im Akkubetrieb · Immer»; ausser bei «Nie» darunter «Nach»,
     Stufenwahl 30–240 in Schritten von 30 «Min.», «gesperrt ohne Eingabe». Hinweise in `gedaempft` (14 px, Zeilenhöhe
-    1,45): Vorwarnung und Wächter, ohne Akku «Kein Akku erkannt …», mit Akku der feste Hinweis auf 3 %. Ist gerade
-    etwas im Weg, «Zurzeit nicht: SSH-Sitzung offen» in `text2` (alle 15 s neu, solange die Seite offen ist).
+    1,45, nur reiner Text): Vorwarnung und Wächter, ohne Akku «Kein Akku erkannt …», mit Akku der feste Hinweis auf
+    3 % und auf den Login-Bildschirm (30 Min. im Akkubetrieb). Ist gerade etwas im Weg, «Zurzeit nicht: SSH-Sitzung
+    offen» in `text2` (alle 15 s neu, solange die Seite offen ist); ohne Akku bei «Im Akkubetrieb» nicht, das sagt
+    «Kein Akku erkannt» schon.
   - «Ein/Aus-Taste»: Segmente «Sperren · System-Menü · Ausschalten» und ein Hinweis, was kurz drücken und halten tun.
   - «Zuklappen» und «Bereitschaft»: nur Text in `gedaempft` («Sperrt sofort und schaltet den Bildschirm aus …» bzw.
     «Auf diesem Gerät nicht verfügbar: Der Kernel bietet keinen Schlafzustand an …»).
@@ -406,9 +408,11 @@ Passwort (`shell/polkit/Polkit.qml`).
   Symbol `akku-leer` in `warnung`: «Akku fast leer: zenOS schaltet um 22:41 aus · Netzteil anschliessen bricht ab».
   Sie ist ein Systemzustand, kein Inhalt.
 - Bildschirm aus: Der Bildschirm wird ohne Übergang dunkel und beim Wecken ohne Übergang hell (keine Animation, die
-  ruckeln könnte). Die Taste, die weckt, erscheint nicht als Punkt im Passwortfeld.
+  ruckeln könnte). Die Taste, die weckt, erscheint nicht als Punkt im Passwortfeld. Während der Vorwarnung landet
+  jede Taste im Feld (es ist zu sehen).
 - Der Login sieht aus wie der Sperrbildschirm und ist immer dunkel. Unten mittig steht das Zeichen 48 px
-  (unterer Stein `salbei`), rechts Neustart und Ausschalten.
+  (unterer Stein `salbei`), rechts Neustart und Ausschalten. Die Pille der Vorwarnung (Leerlauf im Akkubetrieb oder
+  leerer Akku) steht dort wie auf der Sperre unter dem Datum, auf jedem Bildschirm.
 
 ### Erster Start
 

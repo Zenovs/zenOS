@@ -7,10 +7,14 @@
 #   zenos-bildschirm status   «an», «aus» oder «teils» (nur einige aus)
 #
 # Leitplanke (Code): Dunkel heisst gesperrt. Es gibt keinen Weg, den Bildschirm ohne Sperre auszuschalten.
-# Aufgerufen von zenos-idle (swayidle: timeout … resume) und später von der Oberfläche, immer mit
+# Aufgerufen von zenos-idle (swayidle: timeout … resume), von der Oberfläche und von «zen energie aus», immer mit
 # Argumentlisten. wlopm schaltet nur die Ausgabe ab: Der Ausgang bleibt im Layout, Fenster und Sperrflächen
-# bleiben (anders als wlr-randr --off). Die Oberfläche erfährt es über «zenos-ipc sperre bildschirm aus|an»
-# (die Sperre verwirft damit die Taste, die den Bildschirm weckt); antwortet sie nicht, geht es ohne.
+# bleiben (anders als wlr-randr --off). Vor dem Abschalten fragt «aus» die Sperre der Oberfläche
+# («zenos-ipc sperre bildschirm aus»): Sie verwirft dann die Taste, die den Bildschirm weckt, und weckt ihn bei
+# jeder Eingabe. Antwortet sie nicht «aus» (sie sieht sich nicht gesperrt), bleibt der Bildschirm an. Nur ohne
+# erreichbare Oberfläche (Notfall-Sperre) geht er ohne diese Quittung aus, mit Eintrag im Journal; geweckt wird
+# dann über swayidle (resume) oder die Ein/Aus-Taste. «an» ist erledigt, sobald alle Bildschirme an sind (auch
+# wenn ein zweiter Aufruf gleichzeitig einschaltet).
 # Exit 0 erledigt · 1 fehlgeschlagen (Grund auf stderr und im Journal, logger -t zenos-bildschirm) ·
 # 2 falscher Aufruf · 3 keine grafische Sitzung
 
@@ -53,16 +57,27 @@ _anzeige_pruefen() { # NAME: 0 und WAYLAND_DISPLAY gesetzt, wenn der Socket da i
   export WAYLAND_DISPLAY=$1
 }
 
-# Meldung an die Oberfläche (Sperre), ohne darauf zu warten, ob sie antwortet
+# Meldung an die Oberfläche (Sperre), höchstens 2 s. Setzt antwort (die letzte Zeile, davor kann Quickshell
+# Hinweise ausgeben) und gibt den Exit von zenos-ipc zurück: 0 erreichbar, sonst nicht (2 keine Oberfläche, 1 Ziel
+# fehlt oder nicht bereit, 124 keine Antwort in 2 s, 127 zenos-ipc fehlt).
 oberflaeche_melden() { # aus|an
-  [[ -x "$ipc" ]] || return 0
-  timeout 2 "$ipc" sperre bildschirm "$1" >/dev/null 2>&1 || true
+  local ausgabe rc=0
+  antwort=""
+  [[ -x "$ipc" ]] || return 127
+  ausgabe=$(timeout 2 "$ipc" sperre bildschirm "$1" 2>/dev/null) || rc=$?
+  antwort=${ausgabe##*$'\n'}
+  return "$rc"
 }
 
-# wlopm --json --on|--off '*': 0 nur ohne gemeldete Fehler (wlopm endet auch bei Fehlern mit 0)
+# wlopm --json --on|--off '*': 0 nur ohne gemeldete Fehler (wlopm endet auch bei Fehlern mit 0). Sonst steht der
+# Grund in schaltfehler (der Aufrufer entscheidet, ob er ins Journal gehört).
 schalten() { # --on|--off
   local ausgabe
-  ausgabe=$(timeout 5 wlopm --json "$1" '*' 2>&1) || { journal "wlopm $1 fehlgeschlagen: ${ausgabe:-ohne Ausgabe}"; return 1; }
+  schaltfehler=""
+  if ! ausgabe=$(timeout 5 wlopm --json "$1" '*' 2>&1); then
+    schaltfehler="wlopm $1 fehlgeschlagen: ${ausgabe:-ohne Ausgabe}"
+    return 1
+  fi
   if ! python3 -c '
 import json, sys
 try:
@@ -71,7 +86,7 @@ except ValueError:
     sys.exit(1)
 sys.exit(0 if isinstance(daten, dict) and daten.get("errors") == [] else 1)
 ' "$ausgabe"; then
-    journal "wlopm $1 meldet: ${ausgabe//$'\n'/ }"
+    schaltfehler="wlopm $1 meldet: ${ausgabe//$'\n'/ }"
     return 1
   fi
 }
@@ -111,9 +126,20 @@ befehl_aus() {
     journal "wlopm fehlt (Paket wlopm): gesperrt, der Bildschirm bleibt an"
     return 1
   fi
-  oberflaeche_melden aus
+  # Letzte Prüfung vor dem Abschalten: Die Sperre der Oberfläche muss «aus» quittieren. Antwortet sie anders, ist
+  # sie nicht gesperrt (z. B. eben entsperrt): Dann bleibt der Bildschirm an.
+  rc=0
+  oberflaeche_melden aus || rc=$?
+  if (( rc == 0 )) && [[ "$antwort" != aus ]]; then
+    journal "Die Sperre meldet «${antwort:-keine Antwort}» statt «aus» (nicht gesperrt?): der Bildschirm bleibt an"
+    return 1
+  fi
+  if (( rc != 0 )); then
+    journal "Oberfläche nicht erreichbar (zenos-ipc, Exit $rc): schalte ohne Quittung der Sperre ab (Notfall-Sperre?)"
+  fi
   if ! schalten --off; then
-    oberflaeche_melden an
+    journal "$schaltfehler"
+    oberflaeche_melden an || true
     return 1
   fi
 }
@@ -123,8 +149,15 @@ befehl_an() {
     journal "wlopm fehlt (Paket wlopm)"
     return 1
   fi
-  schalten --on || return 1
-  oberflaeche_melden an
+  # Schon an (z. B. nach dem Entsperren): nicht schalten, nur der Sperre melden
+  if [[ "$(status 2>/dev/null)" != an ]] && ! schalten --on; then
+    # Ein zweiter Aufruf kann gleichzeitig eingeschaltet haben (swayidle resume und die Sperre): dann erledigt
+    if [[ "$(status 2>/dev/null)" != an ]]; then
+      journal "$schaltfehler"
+      return 1
+    fi
+  fi
+  oberflaeche_melden an || true
 }
 
 befehl_status() {
@@ -138,7 +171,7 @@ if (( $# != 1 )); then
 fi
 case "$1" in
   aus | an | status) ;;
-  -h | --hilfe | --help) sed -n '2,15p' "$selbst" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h | --hilfe | --help) sed -n '2,19p' "$selbst" | sed 's/^# \{0,1\}//'; exit 0 ;;
   *) meldung "unbekannter Befehl «$1» (erlaubt: aus, an, status)"; exit 2 ;;
 esac
 if (( EUID == 0 )); then

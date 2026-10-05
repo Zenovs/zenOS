@@ -4,8 +4,9 @@
 # ob zenOS nach langer Sperre ausschaltet (aus ~/.config/zenos/einstellungen.json, begrenzt durch die Leitplanken),
 # was das Ausschalten gerade aufhält (SSH, tmux, Updates …), die Ein/Aus-Taste, den Bildschirm in der laufenden Sitzung
 # und ob der Kernel Bereitschaft anbietet.
-# «aus» sperrt sofort (zen lock) und schaltet danach den Bildschirm aus, auch per SSH. Eine Eingabe am Gerät weckt
-# ihn wieder, die Sperre bleibt. Dasselbe wie Super+Shift+L und «Bildschirm aus» im System-Menü.
+# «aus» sperrt sofort (zen lock) und schaltet danach den Bildschirm aus (zenos-bildschirm aus), auch per SSH. Eine
+# Eingabe am Gerät weckt ihn wieder (die Sperre der Oberfläche, auch wenn ein Video den Leerlauf hemmt), die Sperre
+# bleibt. Dasselbe wie Super+Shift+L und «Bildschirm aus» im System-Menü.
 # Leitplanke: Der Bildschirm geht nie ungesperrt aus. Schlägt die Sperre fehl, bleibt er an.
 # Exit 0 erledigt · 1 fehlgeschlagen · 2 falscher Aufruf · 3 keine grafische Sitzung
 # shellcheck shell=bash
@@ -154,15 +155,6 @@ _energie_bereitschaft() {
   fi
 }
 
-# Läuft zenos-idle mit einem swayidle, das den Bildschirm ausschalten kann? Dann weckt dessen resume ihn wieder.
-_energie_swayidle_bereit() {
-  local pid
-  systemctl --user --quiet is-active zenos-idle.service 2>/dev/null || return 1
-  pid=$(systemctl --user show -p MainPID --value zenos-idle.service 2>/dev/null) || return 1
-  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
-  pgrep -u "$EUID" -P "$pid" -f '(^|/)swayidle .*/zenos-bildschirm aus' >/dev/null 2>&1
-}
-
 _energie_aus() {
   if (( EUID == 0 )); then
     zen_fehler "zen energie aus läuft als normaler Benutzer, nicht als root"
@@ -179,15 +171,10 @@ _energie_aus() {
   fi
   sleep "$_ENERGIE_PAUSE"
 
-  # Über zenos-idle: SIGUSR1 löst die Timeouts von swayidle sofort aus (sperren, dann Bildschirm aus), die nächste
-  # Eingabe weckt ihn über resume. Nur der Hauptprozess (zenos-idle) bekommt das Signal und reicht es weiter.
-  if _energie_swayidle_bereit &&
-    systemctl --user kill --kill-whom=main --signal=USR1 zenos-idle.service 2>/dev/null; then
-    printf 'Bildschirm aus. Eine Eingabe weckt ihn, die Sperre bleibt.\n'
-    return 0
-  fi
-
-  # Sonst direkt. Geweckt wird dann über die Sperre der Oberfläche (Eingabe bei dunklem Bildschirm).
+  # Direkt, nie über swayidle (SIGUSR1): Dessen Timeouts beachten Idle-Hemmer. Mit einem laufenden Video blieb der
+  # Bildschirm sonst an, und die auf 0 gesetzten Timeouts sperrten nach dem Entsperren sofort wieder. Geweckt wird
+  # über die Sperre der Oberfläche (jede Eingabe, ohne Rücksicht auf Hemmer); zenos-bildschirm schaltet nur ab,
+  # wenn sie «aus» quittiert.
   if [[ ! -x "$bildschirm" ]]; then
     zen_fehler "$bildschirm fehlt: gesperrt, der Bildschirm bleibt an"
     return 1
@@ -198,5 +185,5 @@ _energie_aus() {
     zen_fehler "Bildschirm aus fehlgeschlagen (zenos-bildschirm, Exit $rc): gesperrt, der Bildschirm bleibt an"
     return "$rc"
   fi
-  printf 'Bildschirm aus. Eine Taste weckt ihn, die Sperre bleibt.\n'
+  printf 'Bildschirm aus. Eine Eingabe weckt ihn, die Sperre bleibt.\n'
 }

@@ -4,8 +4,8 @@
 #
 #   zenos-idle            läuft als Benutzerdienst zenos-idle.service: startet swayidle und startet es neu,
 #                         sobald sich die wirksamen Zeiten in ~/.config/zenos/einstellungen.json ändern
-#                         (geprüft alle 10 s, gelesen nur bei geänderter Datei). SIGUSR1 löst sofort aus:
-#                         sperren, dann Bildschirm aus; die nächste Eingabe schaltet ihn wieder an.
+#                         (geprüft alle 10 s, gelesen nur bei geänderter Datei). SIGUSR1 wird nur noch notiert:
+#                         «Bildschirm aus» sofort geht über «zen energie aus» (swayidle beachtet Idle-Hemmer).
 #   zenos-idle minuten    wirksame Sperrzeit in Minuten
 #   zenos-idle pruefen    «<minuten> <standard|einstellung|begrenzt|ungueltig>» (für zen doctor, Format fest)
 #   zenos-idle energie    wirksame Werte, je Zeile «<name> <wert> <art>»: sperre, bildschirm und ausschalten
@@ -18,13 +18,22 @@
 # Der Bildschirm geht 1–10 Minuten nach der Sperre aus (bildschirmAusNachSperre, Standard 1), nie davor:
 # zenos-bildschirm sperrt immer zuerst (dunkel heisst gesperrt). Jede Eingabe schaltet ihn wieder an (resume),
 # die Sperre bleibt. Nichts hier verzögert die Sperre: Neu gestartet wird nur bei geänderten Zeiten oder,
-# nach einem Update, erst gesperrt. Die übrigen Energie-Werte (Ausschalten, Ein/Aus-Taste) starten swayidle nie neu.
+# nach einem Update, erst gesperrt. Ist es gesperrt und dunkel, wartet beides, bis der Bildschirm wieder an ist
+# (beim Beenden führt swayidle sein resume aus, der Bildschirm ginge sonst gesperrt an). Die übrigen Energie-Werte
+# (Ausschalten, Ein/Aus-Taste) starten swayidle nie neu.
+#
+# Deckel (Rückfallebene, Leitplanke «Zuklappen sperrt»): Die Oberfläche sperrt beim Zuklappen sofort. Läuft sie
+# gerade nicht (zenos-shell.service nicht aktiv, z. B. nach einem Absturz), sperrt zenos-idle bei einem neuen Wechsel
+# zu «zu» in /run/zenos/geraet.json (zenos-argon), spätestens im nächsten Takt. Nur bei einem Wechsel, nie beim
+# Start: Mit zugeklapptem Deckel an einem anderen Bildschirm weiterarbeiten bleibt möglich.
 #
 # Ein/Aus-Taste (einAusTaste): Ausser bei «ausschalten» hält zenos-idle einen logind-Hemmer «handle-power-key»
 # (systemd-inhibit … tail --pid=<zenos-idle>). Ein kurzer Druck schaltet dann nicht sofort aus, labwc gibt die Taste
 # an «zenos-energie taste» (rc.xml, XF86PowerOff). Der Hemmer gilt nur, solange zenos-idle läuft (tail endet mit
-# ihm, systemd-inhibit mit tail), und nur in der aktiven Sitzung (polkit: inhibit-handle-power-key). Am
-# Login-Bildschirm und an der Konsole gilt weiter logind: kurzer Druck schaltet aus. Halten schaltet immer hart aus.
+# ihm, systemd-inhibit mit tail; zwischen zwei Läufen 1 s Pause, RestartSec). Er läuft im Benutzerdienst, also
+# ausserhalb einer Sitzung: logind zählt ihn dann vermutlich auf allen Konsolen (am Gerät zu prüfen, siehe
+# docs/module/energie.md). Ohne zenos-idle (Login-Bildschirm, erste Sekunden der Sitzung) schaltet ein kurzer Druck
+# sofort aus (logind). Halten schaltet immer hart aus.
 
 set -euo pipefail
 
@@ -48,6 +57,9 @@ zen=$(dirname -- "$bin")/zen
 bildschirm=$bin/zenos-bildschirm
 einstellungen=$HOME/.config/zenos/einstellungen.json
 laufzeit=${XDG_RUNTIME_DIR:-/run/user/$EUID}
+# Nur für Tests: legt /run/zenos/geraet.json unter diesen Ordner (wie ZENOS_ENERGIE_TESTWURZEL)
+testwurzel=${ZENOS_IDLE_TESTWURZEL:-}
+geraet_datei=${testwurzel%/}/run/zenos/geraet.json
 
 meldung() { printf 'zenos-idle: %s\n' "$*" >&2; }
 
@@ -190,6 +202,40 @@ bildschirmbefehl() { # aus|an
 
 gesperrt() { [[ -e "$laufzeit/zenos/gesperrt" ]]; }
 
+# Ist der Bildschirm (ganz oder teils) aus? Ohne zenos-bildschirm oder ohne Antwort: nein.
+dunkel() {
+  local zustand
+  [[ -n "$aus" ]] || return 1
+  zustand=$("$bildschirm" status 2>/dev/null) || return 1
+  [[ "$zustand" == aus || "$zustand" == teils ]]
+}
+
+# --- Deckel (Rückfallebene ohne Oberfläche) -------------------------------------
+# deckel_seit: Zeitpunkt des zuletzt gesehenen Wechsels («-»: noch nicht gelesen, leer: keiner im Betrieb)
+
+deckel_pruefen() {
+  local inhalt objekt zu seit=""
+  [[ -r "$geraet_datei" ]] || return 0
+  inhalt=$(cat -- "$geraet_datei" 2>/dev/null) || return 0
+  [[ "$inhalt" =~ \"deckel\":\ *\{([^}]*)\} ]] || return 0
+  objekt=${BASH_REMATCH[1]}
+  [[ "$objekt" =~ \"zu\":\ *(true|false) ]] || return 0
+  zu=${BASH_REMATCH[1]}
+  if [[ "$objekt" =~ \"seit\":\ *\"([0-9T:.+Z-]{1,40})\" ]]; then seit=${BASH_REMATCH[1]}; fi
+  if [[ "$deckel_seit" == - ]]; then
+    deckel_seit=$seit
+    return 0
+  fi
+  [[ "$seit" != "$deckel_seit" ]] || return 0
+  deckel_seit=$seit
+  [[ "$zu" == true && -n "$seit" ]] || return 0
+  gesperrt && return 0
+  # Die Oberfläche sperrt selbst (sofort); nur ohne sie springt zenos-idle ein
+  if systemctl --user --quiet is-active zenos-shell.service 2>/dev/null; then return 0; fi
+  printf 'Deckel zugeklappt, die Oberfläche läuft nicht: sperre (zen lock)\n'
+  "$zen" lock >/dev/null 2>&1 || meldung "Sperren nach dem Zuklappen fehlgeschlagen (zen lock)"
+}
+
 # --- Hemmer für die Ein/Aus-Taste ---------------------------------------------
 # hemmer_pid: laufendes systemd-inhibit (leer: keins) · hemmer_naechster: frühester neuer Versuch (SECONDS)
 # hemmer_gemeldet: der letzte Fehlschlag steht schon im Journal (nicht bei jedem Versuch erneut)
@@ -265,31 +311,36 @@ laufen() {
   fi
   code=$(code_stand)
 
-  swayidle_pid="" hemmer_pid="" hemmer_naechster=0 hemmer_gemeldet=0 taste=${TASTE%% *}
+  swayidle_pid="" hemmer_pid="" hemmer_naechster=0 hemmer_gemeldet=0 taste=${TASTE%% *} deckel_seit=-
   # Beim Beenden (systemctl stop, Ende der Sitzung) swayidle und den Hemmer mitnehmen und ohne Fehler enden. SIGTERM
   # lässt swayidle noch die offenen resume-Befehle ausführen: Ein dunkler Bildschirm geht dabei wieder an.
   trap 'if [[ -n "$swayidle_pid" ]]; then kill "$swayidle_pid" 2>/dev/null || true; fi; hemmer_stoppen; exit 0' TERM INT HUP
-  # SIGUSR1 (sofort sperren und Bildschirm aus) an swayidle weiterreichen: Es löst alle Timeouts sofort aus
-  # und wartet mit resume auf die nächste Eingabe
-  trap 'if [[ -n "$swayidle_pid" ]] && kill -USR1 "$swayidle_pid" 2>/dev/null; then printf "Sofort: sperren und Bildschirm aus\n"; fi' USR1
+  # SIGUSR1 nicht mehr an swayidle weiterreichen: Seine Timeouts beachten Idle-Hemmer, mit einem Video blieb der
+  # Bildschirm an, und die Timeouts blieben auf 0 (sofort gesperrt nach dem Entsperren). Nur notieren, damit das
+  # Signal zenos-idle nicht beendet (ein Neustart begänne die Leerlaufzeit von vorn).
+  trap 'printf "SIGUSR1 ignoriert (Bildschirm aus sofort: zen energie aus)\n"' USR1
 
-  # Beim Start ist der Bildschirm immer an: Endete ein früheres swayidle hart (SIGKILL, Absturz), lief sein
-  # resume nicht, und der Bildschirm bliebe sonst dunkel
+  # Beim Start ist der Bildschirm an: Endete ein früheres swayidle hart (SIGKILL, Absturz), lief sein resume nicht,
+  # und der Bildschirm bliebe sonst dunkel. Ausnahme gesperrt und dunkel: Das bleibt so (sonst leuchtete die Sperre
+  # bis S+B), die Sperre der Oberfläche weckt bei jeder Eingabe, ohne Oberfläche die Ein/Aus-Taste.
   if [[ -n "$an" ]]; then
-    "$bildschirm" an >/dev/null 2>&1 || meldung "Bildschirm einschalten fehlgeschlagen (zenos-bildschirm an)"
+    if gesperrt && dunkel; then
+      printf 'Gesperrt und dunkel: der Bildschirm bleibt aus\n'
+    else
+      "$bildschirm" an >/dev/null 2>&1 || meldung "Bildschirm einschalten fehlgeschlagen (zenos-bildschirm an)"
+    fi
   fi
 
+  deckel_pruefen
+  alt=$(stand)
+  werte_lesen
   while true; do
-    alt=$(stand)
-    werte_lesen
     hemmer_pruefen
     wirksam="$sperre_min $bildschirm_min"
     argumente=()
     if [[ -n "$aus" ]]; then
       printf 'Automatische Sperre nach %s Min., Bildschirm aus %s Min. danach\n' "$sperre_min" "$bildschirm_min"
-      # Der Bildschirm zuerst, die Sperre zuletzt: swayidle stellt jeden Timeout vorne in seine Liste, SIGUSR1
-      # löst sie in dieser Reihenfolge aus, also erst sperren, dann Bildschirm aus (zenos-bildschirm aus
-      # sperrt ohnehin selbst zuerst)
+      # Der Bildschirm nach S+B, die Sperre nach S (zenos-bildschirm aus sperrt ohnehin selbst zuerst)
       argumente+=(timeout "$(((sperre_min + bildschirm_min) * 60))" "$aus" resume "$an")
     else
       printf 'Automatische Sperre nach %s Min.\n' "$sperre_min"
@@ -302,10 +353,11 @@ laufen() {
       sleep "$PRUEFINTERVALL" &
       wait $! || true
       hemmer_pruefen
+      deckel_pruefen
       # Neuer Stand nach zen update: erst übernehmen, wenn gesperrt ist (ein Neustart beginnt die Leerlaufzeit
-      # von vorn und schöbe die Sperre sonst hinaus) und solange der Bildschirm an ist (er bliebe sonst nicht
-      # dunkel). systemd startet den Dienst neu (Restart=always).
-      if [[ "$(code_stand)" != "$code" ]] && gesperrt && [[ "$("$bildschirm" status 2>/dev/null)" != aus ]]; then
+      # von vorn und schöbe die Sperre sonst hinaus) und solange der Bildschirm an ist (beim Beenden schaltet
+      # swayidle ihn über resume an, er bliebe gesperrt hell). systemd startet den Dienst neu (Restart=always).
+      if [[ "$(code_stand)" != "$code" ]] && gesperrt && ! dunkel; then
         printf 'Neuer Stand von zenos-idle, starte neu (gesperrt)\n'
         kill "$swayidle_pid" 2>/dev/null || true
         wait "$swayidle_pid" 2>/dev/null || true
@@ -313,12 +365,16 @@ laufen() {
         exit 0
       fi
       neu=$(stand)
-      [[ "$neu" != "$alt" ]] || continue
-      alt=$neu
-      werte_lesen
-      hemmer_pruefen
+      if [[ "$neu" != "$alt" ]]; then
+        alt=$neu
+        werte_lesen
+        hemmer_pruefen
+      fi
       jetzt="$sperre_min $bildschirm_min"
       [[ "$jetzt" != "$wirksam" ]] || continue
+      # Gesperrt und dunkel: später übernehmen (der Neustart schaltete den Bildschirm über resume an). Gesperrt
+      # ist schon, die Sperrzeit spielt bis zum Entsperren keine Rolle.
+      if gesperrt && dunkel; then continue; fi
       printf 'Einstellungen geändert: Sperre nach %s Min., Bildschirm aus %s Min. danach\n' "$sperre_min" "$bildschirm_min"
       kill "$swayidle_pid" 2>/dev/null || true
       wait "$swayidle_pid" 2>/dev/null || true
@@ -339,6 +395,6 @@ case "${1:-}" in
   minuten) minuten ;;
   pruefen) pruefen ;;
   energie) auswerten ;;
-  -h | --hilfe | --help) sed -n '2,28p' "$selbst" | sed 's/^# \{0,1\}//' ;;
+  -h | --hilfe | --help) sed -n '2,36p' "$selbst" | sed 's/^# \{0,1\}//' ;;
   *) meldung "unbekannter Befehl «$1» (erlaubt: minuten, pruefen, energie)"; exit 2 ;;
 esac

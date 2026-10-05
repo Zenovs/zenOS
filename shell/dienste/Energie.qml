@@ -14,9 +14,8 @@ import "energie.js" as EnergieLogik
 // energie.js und ist dort getestet.
 //
 // - aus(): Sofort-Aktion (System-Menü, Befehlsfeld, IPC «energie aus»; Super+Shift+L ruft «zen energie aus»
-//   direkt auf). Über «zen energie aus», das immer zuerst sperrt: Läuft zenos-idle, löst SIGUSR1 Sperre und
-//   Bildschirm aus sofort aus, und die nächste Eingabe weckt ihn (resume von swayidle). Sonst sperrt und schaltet
-//   zenos-bildschirm direkt, geweckt wird dann über die Sperre (sperre/Sperre.qml).
+//   direkt auf). Über «zen energie aus»: zen lock, dann zenos-bildschirm aus. Geweckt wird über die Sperre
+//   (sperre/Sperre.qml), bei jeder Eingabe und ohne Rücksicht auf Idle-Hemmer (ein Video hält das nicht auf).
 // - bildschirm("aus" | "an"): zenos-bildschirm mit Argumentliste. «aus» sperrt dort immer zuerst (dunkel heisst
 //   gesperrt). Es läuft immer nur ein Aufruf, der letzte Wunsch gilt. Gelingt er, kommt bildschirmGeschaltet.
 //   Die Sperre nutzt das für «Bildschirm aus nach der Sperre» und zum Wecken.
@@ -25,11 +24,14 @@ import "energie.js" as EnergieLogik
 //   (IdleMonitor ohne Rücksicht auf Hemmer). Ohne Hemmer sperrt zenos-idle wie bisher nach 1–15 Min.
 // - Ausschalten nach langer Sperre (ausschalten: nie | akku | immer, 30–240 Min.): Gezählt wird ab der Sperre, ohne
 //   Rücksicht auf Idle-Hemmer, «akku» nur sicher im Akkubetrieb. Ist die Zeit um, fragt der Dienst
-//   «zenos-energie darf-ausschalten» (Einstellung und Wächter: SSH, tmux, Updates, Hemmer). Ja: Vorwarnung. Der
-//   Bildschirm geht an, die Sperre zeigt ruhig die Uhrzeit des Ausschaltens, der Marker
-//   $XDG_RUNTIME_DIR/zenos/vorwarnung entsteht. Nach 60 s prüft «zenos-energie ausschalten» alles erneut und schaltet
-//   aus. Jede Eingabe, das Netzteil (bei «akku») und das Entsperren brechen ab. Ist etwas im Weg, versucht es der
-//   Dienst alle 5 Min. erneut, der Bildschirm bleibt dabei dunkel. Stürzt die Oberfläche ab, schaltet nichts aus.
+//   «zenos-energie darf-ausschalten» (Einstellung und Wächter: SSH, tmux, Updates, Hemmer, logind). Ja: Der Helfer
+//   legt den Marker $XDG_RUNTIME_DIR/zenos/vorwarnung an, die Vorwarnung beginnt. Der Bildschirm geht an, die Sperre
+//   zeigt ruhig die Uhrzeit des Ausschaltens. Nach 60 Takten zu 1 s (nie nach der Uhr) prüft «zenos-energie
+//   ausschalten» alles erneut und schaltet aus; ist die Vorwarnung nach der Laufzeit noch keine 60 s alt (Exit 4), im
+//   nächsten Takt erneut. Jede Eingabe, das Netzteil (bei «akku») und das Entsperren brechen ab
+//   und löschen den Marker; der Helfer verbraucht ihn erst unmittelbar vor dem Ausschalten. Ist etwas im Weg,
+//   versucht es der Dienst alle 5 Min. erneut, der Bildschirm bleibt dabei dunkel. Lehnt logind das Ausschalten ab
+//   (Exit 3), erst nach der nächsten Eingabe wieder. Stürzt die Oberfläche ab, schaltet nichts aus.
 // - Nach einem automatischen Aus zeigt die nächste Sitzung einmal eine ruhige Mitteilung (zenos-energie meldung).
 // - Deckel (Argon ONE UP, Leitplanke: Zuklappen sperrt immer, nicht abschaltbar): Geraet meldet jeden Wechsel, den
 //   zenos-argon an GPIO27 sieht. Zuklappen sperrt sofort und schaltet den Bildschirm aus (wie aus()), Aufklappen
@@ -77,7 +79,7 @@ Singleton {
         ausschaltenNachMinuten: Einstellungen.ausschaltenNachMinuten
     }, _akkuAnzeige)
 
-    // Vorwarnung { phase: aus | laeuft | warten, seit, um, grund } aus energie.js
+    // Vorwarnung { phase: aus | laeuft | warten | abgelehnt, seit, um, grund, takte } aus energie.js
     readonly property bool vorwarnungLaeuft: _vorwarnung.phase === "laeuft"
     // Uhrzeit des Ausschaltens (ms seit 1970) während der Vorwarnung, sonst 0
     readonly property real ausschaltenUm: vorwarnungLaeuft ? _vorwarnung.um : 0
@@ -170,6 +172,9 @@ Singleton {
     function _pruefen(): void {
         if (!root.ausschaltenZaehlt || !ausschaltMonitor.isIdle || pruefProzess.running || ausschaltProzess.running)
             return;
+        // Nach einer Ablehnung durch logind erst nach der nächsten Eingabe wieder
+        if (!EnergieLogik.vorwarnungPruefbar(root._vorwarnung))
+            return;
         root._pruefNummer += 1;
         pruefProzess.nummer = root._pruefNummer;
         pruefProzess.code = -1;
@@ -178,29 +183,33 @@ Singleton {
     }
 
     function _geprueft(nummer: int, code: int, text: string): void {
-        // Inzwischen Eingabe, entsperrt oder Netzteil: nichts mehr tun
-        if (nummer !== root._pruefNummer || !root.ausschaltenZaehlt || !ausschaltMonitor.isIdle)
+        // Inzwischen Eingabe, entsperrt oder Netzteil: nichts mehr tun. Hat der Helfer schon «ja» gesagt, liegt sein
+        // Marker da: weg damit (ohne Vorwarnung gilt er ohnehin nicht).
+        if (nummer !== root._pruefNummer || !root.ausschaltenZaehlt || !ausschaltMonitor.isIdle) {
+            if (code === 0 && !markerLoeschen.running)
+                markerLoeschen.running = true;
             return;
+        }
         if (code === 0)
             root._vorwarnen();
         else
             root._blockiert(root._grundAus(text, code));
     }
 
+    // Den Marker (ohne ihn schaltet der Helfer nie aus) hat «zenos-energie darf-ausschalten» eben angelegt
     function _vorwarnen(): void {
         root._probe = false;
         root._vorwarnung = EnergieLogik.vorwarnungStarten(EnergieLogik.vorwarnung(), Date.now());
-        // Marker für zenos-ausschalten (60 s bis 5 Min. alt): ohne ihn schaltet der Helfer nie aus
-        vorwarnungDatei.setText(new Date(root._vorwarnung.seit).toISOString() + "\n");
         console.info("Energie: Vorwarnung, schalte um", Qt.formatDateTime(new Date(root._vorwarnung.um), "HH:mm"), "aus");
         root.vorwarnungGestartet();
         root.bildschirm("an");
     }
 
-    // Jede Sekunde während der Vorwarnung, alle 5 s beim Warten nach einer Blockade
+    // Jede Sekunde während der Vorwarnung (ein Takt), alle 5 s beim Warten nach einer Blockade
     function _schritt(): void {
         if (root._faehrtHerunter)
             return;
+        root._vorwarnung = EnergieLogik.vorwarnungTakt(root._vorwarnung);
         const schritt = EnergieLogik.vorwarnungSchritt(root._vorwarnung, Date.now());
         if (schritt === "ausschalten") {
             if (root._probe) {
@@ -227,12 +236,21 @@ Singleton {
             console.info("Energie: schalte aus");
             return;
         }
-        // Inzwischen abgebrochen: nichts mehr tun (der Helfer hat den Marker ohnehin verbraucht)
+        // Nach der Laufzeit noch keine 60 s (der Takt war etwas schneller): Die Vorwarnung bleibt, im nächsten Takt erneut
+        if (code === 4)
+            return;
+        // Inzwischen abgebrochen: nichts mehr tun (der Helfer hat den Marker gelöscht oder verbraucht)
         if (nummer !== root._pruefNummer || root._vorwarnung.phase !== "laeuft")
             return;
         const grund = root._grundAus(text, code);
         root.vorwarnungBeendet("blockiert");
-        root._blockiert(grund);
+        if (code === 3) {
+            // logind hat abgelehnt: bis zur nächsten Eingabe keine neue Vorwarnung (sonst die ganze Nacht alle 5 Min.)
+            console.warn("Energie: Ausschalten abgelehnt:", grund, "· erst nach der nächsten Eingabe wieder");
+            root._vorwarnung = EnergieLogik.vorwarnungAbgelehnt(root._vorwarnung, Date.now(), grund);
+        } else {
+            root._blockiert(grund);
+        }
         // Gesperrt und ohne Eingabe: wieder dunkel (die Vorwarnung hatte den Bildschirm eingeschaltet)
         if (Oberflaeche.gesperrt)
             root.bildschirm("aus");
@@ -255,7 +273,7 @@ Singleton {
     function _abbrechen(grund: string): void {
         root._pruefNummer += 1;
         const war = root._vorwarnung.phase;
-        if (war !== "laeuft" && war !== "warten")
+        if (war !== "laeuft" && war !== "warten" && war !== "abgelehnt")
             return;
         const g = grund !== "" ? grund : Oberflaeche.gesperrt ? "bedingung" : "entsperrt";
         const probe = root._probe;
@@ -419,29 +437,18 @@ Singleton {
         }
     }
 
+    // Marker der Vorwarnung löschen (Abbruch): Danach schaltet der Helfer nicht mehr aus, auch wenn er schon prüft
     Process {
         id: markerLoeschen
 
         command: ["rm", "-f", "--", root._markerPfad]
     }
 
-    // Marker der Vorwarnung (nur Schreiben; gelöscht wird über markerLoeschen bzw. vom Helfer)
-    FileView {
-        id: vorwarnungDatei
-
-        path: root._markerPfad
-        preload: false
-        blockWrites: true
-        printErrors: false
-
-        onSaveFailed: error => console.warn("Energie: Marker der Vorwarnung nicht geschrieben:", FileViewError.toString(error))
-    }
-
     // Takt der Vorwarnung (1 s, ohne sichtbare Sekunden) und des Wartens nach einer Blockade (5 s)
     Timer {
         interval: root.vorwarnungLaeuft ? 1000 : 5000
         repeat: true
-        running: root._vorwarnung.phase !== "aus"
+        running: root._vorwarnung.phase === "laeuft" || root._vorwarnung.phase === "warten"
         onTriggered: root._schritt()
     }
 

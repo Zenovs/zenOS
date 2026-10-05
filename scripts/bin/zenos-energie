@@ -1,26 +1,36 @@
 #!/usr/bin/env bash
-# zenos-energie – Ausschalten nach langer Sperre und die Ein/Aus-Taste (als Benutzer in der Sitzung).
+# zenos-energie – Ausschalten nach langer Sperre, am Login-Bildschirm und die Ein/Aus-Taste (als Benutzer).
 #
-#   zenos-energie darf-ausschalten   «ja» (Exit 0) oder «nein: <Grund>» (Exit 1), mit Eintrag im Journal. Ändert
-#                                    nichts. Prüft die Einstellung (ausschalten: nie | akku | immer, bei «akku» den
-#                                    Akkubetrieb) und die Wächter. Die Sperre fragt das vor der Vorwarnung.
-#   zenos-energie status             dasselbe ohne Journal (für die Seite «Energie» und «zen energie»)
-#   zenos-energie ausschalten        nach der Vorwarnung: prüft Vorwarnung, Sperre, Einstellung und Wächter erneut
-#                                    und schaltet dann aus (systemctl poweroff --check-inhibitors=yes)
+#   zenos-energie darf-ausschalten   «ja» (Exit 0) oder «nein: <Grund>» (Exit 1), mit Eintrag im Journal. Prüft die
+#                                    Einstellung (ausschalten: nie | akku | immer, bei «akku» den Akkubetrieb) und die
+#                                    Wächter. Bei «ja» beginnt die Vorwarnung: Der Marker $XDG_RUNTIME_DIR/zenos/
+#                                    vorwarnung entsteht (Start-ID und Laufzeit seit dem Start, nicht die Uhrzeit).
+#   zenos-energie status             prüft dasselbe ohne Journal und ohne Marker (Seite «Energie», «zen energie»)
+#   zenos-energie ausschalten        nach der Vorwarnung: prüft Vorwarnung, Sperre, Einstellung und Wächter erneut,
+#                                    verbraucht dann den Marker und schaltet aus (systemctl poweroff --check-inhibitors)
+#   zenos-energie darf-ausschalten-login, ausschalten-login
+#                                    dasselbe am Login-Bildschirm (Greeter, Benutzer _greetd): fest «im Akkubetrieb»
+#                                    (Zenos Entscheid, die Einstellungen der Sitzung sind dort nicht lesbar), ohne
+#                                    Sperre, dafür darf keine andere Sitzung offen sein
 #   zenos-energie taste              Ein/Aus-Taste kurz gedrückt (labwc: XF86PowerOff, auch gesperrt)
 #   zenos-energie meldung            nach einem automatischen Aus: Titel und Text der Mitteilung (je eine Zeile),
 #                                    einmal, beim ersten Aufruf nach dem nächsten Start
 #
 # Leitplanken (Code, nicht abschaltbar):
-# - Ausgeschaltet wird nur nach einer sichtbaren Vorwarnung: Den Marker $XDG_RUNTIME_DIR/zenos/vorwarnung legt die
-#   Sperre zu Beginn der Vorwarnung an. Er muss 60 s bis 5 Min. alt sein und gilt nur einmal.
-# - Nur gesperrt, nur wenn die Einstellung es erlaubt, und nie während einer SSH-Sitzung oder -Verbindung, eines
-#   tmux- oder screen-Servers, einer Installation (install.sh, zen update, zen rollback), apt oder dpkg, automatischer
-#   Updates oder wenn ein Programm das Ausschalten blockiert (logind-Hemmer «shutdown», Modus block). Was sich nicht
-#   prüfen lässt, gilt als blockiert.
+# - Ausgeschaltet wird nur nach einer sichtbaren Vorwarnung: Den Marker legt «darf-ausschalten» zu Beginn der
+#   Vorwarnung an. Er muss 60 s bis 5 Min. alt sein, gemessen an der Laufzeit seit dem Start (ein Sprung der Uhr
+#   verkürzt die Vorwarnung nie), und gilt nur einmal. Verbraucht wird er erst unmittelbar vor dem Ausschalten: Löscht
+#   die Oberfläche ihn vorher (eine Eingabe bricht ab), schaltet nichts aus.
+# - Nur gesperrt (am Login-Bildschirm: keine andere Sitzung), nur wenn die Einstellung es erlaubt, und nie während
+#   einer SSH-Sitzung oder -Verbindung, eines tmux- oder screen-Servers, einer Installation (install.sh, zen update,
+#   zen rollback), apt oder dpkg, automatischer Updates, wenn ein Programm das Ausschalten blockiert (logind-Hemmer
+#   «shutdown», Modus block) oder wenn logind es nicht ohne Passwort erlaubt (CanPowerOff). Was sich nicht prüfen
+#   lässt, gilt als blockiert.
 # - Nur «systemctl poweroff --check-inhibitors=yes»: nie neu starten, nie Hemmer übergehen (kein -i, kein --force).
 # - Prozesse nur mit Argumentlisten, keine Shell. Jeder Entscheid steht mit Grund im Journal (logger -t zenos-energie).
-# Exit 0 ja bzw. erledigt · 1 nein bzw. blockiert (Grund auf stdout) · 2 falscher Aufruf
+# Exit 0 ja bzw. erledigt · 1 nein bzw. blockiert (Grund auf stdout) · 2 falscher Aufruf · 3 systemctl poweroff
+# abgelehnt (die Oberfläche versucht es dann erst nach der nächsten Eingabe wieder) · 4 Vorwarnung noch keine 60 s alt
+# (der Marker bleibt, die Oberfläche fragt im nächsten Takt erneut)
 
 set -uo pipefail
 
@@ -31,9 +41,9 @@ idle=$bin/zenos-idle
 ipc=$bin/zenos-ipc
 bildschirm=$bin/zenos-bildschirm
 
-# Gespiegelt aus shell/modi/zustandslogik.js (vorwarnungSekunden) und shell/dienste/energie.js (VORWARNUNG_MAX_MS),
-# test/einheiten/energie.test.py gleicht ab
-readonly VORWARNUNG_MIN=60 VORWARNUNG_MAX=300
+# Gespiegelt aus shell/modi/zustandslogik.js (vorwarnungSekunden, loginAusschaltenMinuten) und shell/dienste/energie.js
+# (VORWARNUNG_MAX_MS), test/einheiten/energie.test.py gleicht ab
+readonly VORWARNUNG_MIN=60 VORWARNUNG_MAX=300 LOGIN_MINUTEN=30
 
 # Nur für Tests: legt die festen Pfade unter /run unter diesen Ordner (wie ZENOS_ARGON_TESTWURZEL)
 testwurzel=${ZENOS_ENERGIE_TESTWURZEL:-}
@@ -44,7 +54,8 @@ install_sperre=$testwurzel/run/lock/zenos-install.lock
 laufzeit=${XDG_RUNTIME_DIR:-/run/user/$EUID}
 vorwarnung=$laufzeit/zenos/vorwarnung
 gesperrt_marker=$laufzeit/zenos/gesperrt
-zustand=$HOME/.local/state/zenos/energie.json
+# Am Login-Bildschirm (Benutzer _greetd) ungenutzt; HOME kann dort fehlen
+zustand=${HOME:-/nonexistent}/.local/state/zenos/energie.json
 
 meldung() { printf 'zenos-energie: %s\n' "$*" >&2; }
 journal() { logger -t zenos-energie -- "$*" 2>/dev/null || true; }
@@ -226,38 +237,128 @@ for eintrag in daten["data"][0]:
   fi
 }
 
+# logind erlaubt das Ausschalten ohne Passwort (CanPowerOff «yes»). Sonst («challenge», z. B. eine andere Sitzung,
+# oder «no») lehnte «systemctl --no-ask-password poweroff» erst nach der Vorwarnung ab.
+pruefe_kann_ausschalten() {
+  local ausgabe
+  if ! ausgabe=$(timeout 10 busctl --system call org.freedesktop.login1 /org/freedesktop/login1 \
+    org.freedesktop.login1.Manager CanPowerOff 2>/dev/null); then
+    grund="Ausschalten nicht prüfbar (logind)"
+    return 1
+  fi
+  case "$ausgabe" in
+    's "yes"') return 0 ;;
+    's "challenge"') grund="Ausschalten bräuchte ein Passwort (logind)" ;;
+    *) grund="Ausschalten nicht erlaubt (logind)" ;;
+  esac
+  return 1
+}
+
 # Einstellung und alle Wächter, der erste Grund gilt
 pruefe_alles() {
   grund=""
-  pruefe_einstellung && pruefe_sitzungen && pruefe_terminals && pruefe_installation && pruefe_pakete && pruefe_hemmer
+  pruefe_einstellung && pruefe_sitzungen && pruefe_terminals && pruefe_installation && pruefe_pakete &&
+    pruefe_hemmer && pruefe_kann_ausschalten
 }
 
-# --- Ausschalten ---------------------------------------------------------------------
+# --- Login-Bildschirm ----------------------------------------------------------------
+# Fest im Akkubetrieb nach LOGIN_MINUTEN ohne Eingabe (die Oberfläche des Greeters zählt). Die Einstellungen der
+# Sitzung sind dort nicht lesbar, und ohne offene Sitzung geht nichts verloren.
 
-# Vorwarnung: Marker vorhanden, eigene Datei, 60 s bis 5 Min. alt. Er gilt einmal (wird hier immer gelöscht).
+pruefe_einstellung_login() {
+  wenn=akku minuten=$LOGIN_MINUTEN
+  im_akkubetrieb && return 0
+  grund="nicht im Akkubetrieb (Netzteil oder Akku unbekannt)"
+  return 1
+}
+
+# Keine Fern-Sitzung und keine andere Sitzung (eine Anmeldung an der Konsole, ein Cron-Job): Erlaubt sind nur
+# Greeter und die Benutzerdienste von systemd (Klasse manager)
+pruefe_sitzungen_login() {
+  local liste id klasse
+  pruefe_sitzungen || return 1
+  liste=$(loginctl list-sessions --no-legend --no-pager 2>/dev/null) || { grund="Sitzungen nicht prüfbar (loginctl)"; return 1; }
+  while read -r id _; do
+    [[ -n "$id" ]] || continue
+    if [[ ! "$id" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || ! klasse=$(loginctl show-session "$id" -p Class --value 2>/dev/null); then
+      grund="Sitzungen nicht prüfbar (loginctl)"
+      return 1
+    fi
+    case "$klasse" in
+      greeter | manager | manager-early) ;;
+      *)
+        grund="eine andere Sitzung ist offen"
+        return 1
+        ;;
+    esac
+  done <<< "$liste"
+}
+
+pruefe_alles_login() {
+  grund=""
+  pruefe_einstellung_login && pruefe_sitzungen_login && pruefe_terminals && pruefe_installation && pruefe_pakete &&
+    pruefe_hemmer && pruefe_kann_ausschalten
+}
+
+# --- Vorwarnung --------------------------------------------------------------------------
+# Marker: eine Zeile «zenos-vorwarnung 1 <Start-ID> <Sekunden seit dem Start>». Die Laufzeit (/proc/uptime) springt nie,
+# anders als die Uhr (NTP nach langer Zeit offline, ohne RTC-Batterie).
+
+# Liest boot (Start-ID) und laufzeit (ganze Sekunden seit dem Start)
+start_lesen() {
+  local rest
+  boot="" laufzeit_s=""
+  read -r boot < /proc/sys/kernel/random/boot_id 2>/dev/null || true
+  read -r laufzeit_s rest < /proc/uptime 2>/dev/null || true
+  laufzeit_s=${laufzeit_s%%.*}
+  [[ "$boot" =~ ^[0-9a-f-]{36}$ && "$laufzeit_s" =~ ^[0-9]{1,12}$ ]]
+}
+
+vorwarnung_anlegen() {
+  local ordner=${vorwarnung%/*} neu
+  start_lesen || return 1
+  [[ -d "$ordner" ]] || (umask 077 && mkdir -p -- "$ordner") 2>/dev/null || return 1
+  neu=$vorwarnung.neu.$$
+  printf 'zenos-vorwarnung 1 %s %s\n' "$boot" "$laufzeit_s" > "$neu" 2>/dev/null && mv -f -- "$neu" "$vorwarnung" 2>/dev/null &&
+    return 0
+  rm -f -- "$neu" 2>/dev/null
+  return 1
+}
+
+vorwarnung_weg() { rm -f -- "$vorwarnung" 2>/dev/null || true; }
+
+# Vorwarnung: Marker vorhanden, eigene Datei, aus diesem Start und 60 s bis 5 Min. alt (nur prüfen, nicht löschen)
 pruefe_vorwarnung() {
-  local seit jetzt alter
+  local kennung="" version="" seit_boot="" seit="" rest="" alter
   if [[ -L "$vorwarnung" || ! -f "$vorwarnung" || ! -O "$vorwarnung" ]]; then
-    rm -f -- "$vorwarnung" 2>/dev/null
     grund="keine Vorwarnung"
     return 1
   fi
-  seit=$(stat -c %Y -- "$vorwarnung" 2>/dev/null) || seit=""
-  rm -f -- "$vorwarnung" 2>/dev/null
-  jetzt=$(date +%s)
-  if [[ ! "$seit" =~ ^[0-9]+$ ]]; then
+  read -r kennung version seit_boot seit rest < "$vorwarnung" 2>/dev/null || true
+  if ! start_lesen || [[ "$kennung $version" != "zenos-vorwarnung 1" || "$seit_boot" != "$boot" || -n "$rest" ||
+    ! "$seit" =~ ^[0-9]{1,12}$ ]]; then
     grund="Vorwarnung nicht lesbar"
     return 1
   fi
-  alter=$((jetzt - seit))
+  alter=$((laufzeit_s - seit))
   if (( alter < VORWARNUNG_MIN )); then
     grund="Vorwarnung erst ${alter} s alt (mindestens ${VORWARNUNG_MIN} s)"
+    (( alter < 0 )) || zu_frueh=1
     return 1
   fi
   if (( alter > VORWARNUNG_MAX )); then
     grund="Vorwarnung zu alt (${alter} s)"
     return 1
   fi
+}
+
+# Zuletzt, unmittelbar vor dem Ausschalten: den Marker verbrauchen. Fehlt er jetzt, hat die Oberfläche abgebrochen.
+vorwarnung_verbrauchen() {
+  if ! mv -f -- "$vorwarnung" "$vorwarnung.verbraucht" 2>/dev/null; then
+    grund="Vorwarnung abgebrochen"
+    return 1
+  fi
+  rm -f -- "$vorwarnung.verbraucht" 2>/dev/null || true
 }
 
 # ~/.local/state/zenos/energie.json: wann und warum zenOS ausgeschaltet hat (für die Mitteilung danach)
@@ -282,42 +383,77 @@ os.replace(neu, pfad)
 PY
 }
 
+# Nicht ausgeschaltet: Der Marker gilt einmal und ist danach weg
 nein() {
-  journal "Nicht ausgeschaltet: $grund"
+  vorwarnung_weg
+  journal "Nicht ausgeschaltet${ort}: $grund"
   printf 'nein: %s\n' "$grund"
   return 1
 }
 
+# ausschalten (sitzung) bzw. ausschalten-login (login)
 befehl_ausschalten() {
-  local ausgabe rc=0
-  grund=""
-  pruefe_vorwarnung || { nein; return 1; }
-  if [[ ! -e "$gesperrt_marker" ]]; then
-    grund="nicht gesperrt"
+  local modus=$1 ausgabe rc=0
+  grund="" zu_frueh=0
+  if ! pruefe_vorwarnung; then
+    # Der Takt der Oberfläche kann etwas schneller laufen als die Laufzeit (QML-Timer feuern bis zu einigen ms zu
+    # früh): noch nicht, der Marker bleibt, die Oberfläche fragt im nächsten Takt erneut (Exit 4, ohne Journal)
+    if (( zu_frueh )); then
+      printf 'nein: %s\n' "$grund"
+      return 4
+    fi
     nein
     return 1
   fi
-  pruefe_alles || { nein; return 1; }
-  zustand_schreiben 2>/dev/null || meldung "$zustand nicht geschrieben (keine Mitteilung beim nächsten Start)"
-  journal "Schalte aus: $minuten Min. gesperrt ohne Eingabe (Einstellung «$wenn»), nach 60 s Vorwarnung"
+  if [[ "$modus" == sitzung ]]; then
+    if [[ ! -e "$gesperrt_marker" ]]; then
+      grund="nicht gesperrt"
+      nein
+      return 1
+    fi
+    pruefe_alles || { nein; return 1; }
+  else
+    pruefe_alles_login || { nein; return 1; }
+  fi
+  vorwarnung_verbrauchen || { nein; return 1; }
+  if [[ "$modus" == sitzung ]]; then
+    zustand_schreiben 2>/dev/null || meldung "$zustand nicht geschrieben (keine Mitteilung beim nächsten Start)"
+    journal "Schalte aus: $minuten Min. gesperrt ohne Eingabe (Einstellung «$wenn»), nach 60 s Vorwarnung"
+  else
+    journal "Schalte aus: $minuten Min. ohne Eingabe am Login-Bildschirm im Akkubetrieb, nach 60 s Vorwarnung"
+  fi
   # Nur mit Hemmern im Blick, ohne Passwortabfrage (polkit: power-off ist in der aktiven Sitzung erlaubt)
   ausgabe=$(systemctl --no-ask-password poweroff --check-inhibitors=yes 2>&1) || rc=$?
   if (( rc != 0 )); then
     rm -f -- "$zustand" 2>/dev/null
     grund="systemctl poweroff abgelehnt (Exit $rc): ${ausgabe//$'\n'/ }"
     nein
-    return 1
+    return 3
   fi
   printf 'ausgeschaltet\n'
 }
 
+# darf-ausschalten (sitzung) bzw. darf-ausschalten-login (login): bei «ja» beginnt die Vorwarnung (Marker)
 befehl_darf_ausschalten() {
-  if pruefe_alles; then
-    journal "Ausschalten erlaubt: Vorwarnung beginnt"
+  local modus=$1 frei=1
+  if [[ "$modus" == login ]]; then
+    pruefe_alles_login || frei=0
+  else
+    pruefe_alles || frei=0
+  fi
+  if (( frei )); then
+    if ! vorwarnung_anlegen; then
+      grund="Marker der Vorwarnung nicht anlegbar ($vorwarnung)"
+      journal "Ausschalten blockiert${ort}: $grund"
+      printf 'nein: %s\n' "$grund"
+      return 1
+    fi
+    journal "Ausschalten erlaubt${ort}: Vorwarnung beginnt"
     printf 'ja\n'
     return 0
   fi
-  journal "Ausschalten blockiert: $grund"
+  vorwarnung_weg
+  journal "Ausschalten blockiert${ort}: $grund"
   printf 'nein: %s\n' "$grund"
   return 1
 }
@@ -401,23 +537,31 @@ PY
 
 # --- Aufruf ----------------------------------------------------------------------------
 
+erlaubt="darf-ausschalten, status, ausschalten, darf-ausschalten-login, ausschalten-login, taste, meldung"
 if (( $# != 1 )); then
-  meldung "Aufruf: zenos-energie darf-ausschalten|status|ausschalten|taste|meldung"
+  meldung "Aufruf: zenos-energie ${erlaubt//, /|}"
   exit 2
 fi
 case "$1" in
-  darf-ausschalten | status | ausschalten | taste | meldung) ;;
-  -h | --hilfe | --help) sed -n '2,23p' "$selbst" | sed 's/^# \{0,1\}//'; exit 0 ;;
-  *) meldung "unbekannter Befehl «$1» (erlaubt: darf-ausschalten, status, ausschalten, taste, meldung)"; exit 2 ;;
+  darf-ausschalten | status | ausschalten | darf-ausschalten-login | ausschalten-login | taste | meldung) ;;
+  -h | --hilfe | --help) sed -n '2,33p' "$selbst" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  *) meldung "unbekannter Befehl «$1» (erlaubt: $erlaubt)"; exit 2 ;;
 esac
 if (( EUID == 0 )); then
   meldung "läuft als normaler Benutzer in der Sitzung, nicht als root"
   exit 2
 fi
+# Für das Journal: wo entschieden wurde
 case "$1" in
-  darf-ausschalten) befehl_darf_ausschalten ;;
+  *-login) ort=" (Login-Bildschirm)" ;;
+  *) ort="" ;;
+esac
+case "$1" in
+  darf-ausschalten) befehl_darf_ausschalten sitzung ;;
   status) befehl_status ;;
-  ausschalten) befehl_ausschalten ;;
+  ausschalten) befehl_ausschalten sitzung ;;
+  darf-ausschalten-login) befehl_darf_ausschalten login ;;
+  ausschalten-login) befehl_ausschalten login ;;
   taste) befehl_taste ;;
   meldung) befehl_meldung ;;
 esac

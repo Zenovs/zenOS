@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
 # 66-energie: Energie – wlopm und zenos-bildschirm, Bildschirm aus nach der Sperre (wirksame Zeit), Bildschirm
 # in der laufenden Sitzung erreichbar, Stand von zenos-idle, Ausschalten nach langer Sperre (Einstellung und was
-# gerade im Weg ist), Hemmer und Tastenkürzel für die Ein/Aus-Taste, Bereitschaft des Kernels (nur Anzeige)
+# gerade im Weg ist) und am Login-Bildschirm, Hemmer und Tastenkürzel für die Ein/Aus-Taste, Bereitschaft des
+# Kernels (nur Anzeige)
 # shellcheck shell=bash
 #
 # Liest nur: zenos-idle energie (wirksame Werte, keine Inhalte aus einstellungen.json), zenos-bildschirm status,
-# zenos-energie status, die Hemmer von logind (busctl), ~/.config/labwc/rc.xml und /sys/power/state.
+# zenos-energie status, ob /run/zenos/geraet.json einen Akku meldet, die Hemmer von logind (busctl),
+# ~/.config/labwc/rc.xml und /sys/power/state.
+
+# Nur für die Einheitentests (test/einheiten/energie-modul.test.py): legt /opt/zenos und /run/zenos darunter
+_energie_wurzel=${ZENOS_DOCTOR_TESTWURZEL:-}
+_energie_wurzel=${_energie_wurzel%/}
+_energie_bin=$_energie_wurzel/opt/zenos/scripts/bin
+_energie_geraet=$_energie_wurzel/run/zenos/geraet.json
 
 pruefe_energie() {
   abschnitt "Energie"
@@ -13,6 +21,7 @@ pruefe_energie() {
   _energie_zeit
   _energie_sitzung
   _energie_ausschalten
+  _energie_login
   _energie_taste
   _energie_bereitschaft
 }
@@ -25,11 +34,11 @@ _energie_wert() {
       printf '%s' "$wert"
       return 0
     fi
-  done < <(/opt/zenos/scripts/bin/zenos-idle energie 2>/dev/null)
+  done < <("$_energie_bin/zenos-idle" energie 2>/dev/null)
 }
 
 _energie_werkzeuge() {
-  local helfer=/opt/zenos/scripts/bin/zenos-bildschirm
+  local helfer=$_energie_bin/zenos-bildschirm
   if [[ ! -x "$helfer" ]]; then
     fehler "$helfer fehlt (zen update oder install.sh)"
   fi
@@ -42,7 +51,7 @@ _energie_werkzeuge() {
 
 # Wirksame Zeiten aus zenos-idle: Bildschirm aus B Min. nach der Sperre, also nach S+B Min. ohne Eingabe
 _energie_zeit() {
-  local idle=/opt/zenos/scripts/bin/zenos-idle name wert art sperre="" bildschirm="" bildschirm_art=""
+  local idle=$_energie_bin/zenos-idle name wert art sperre="" bildschirm="" bildschirm_art=""
   if [[ ! -x "$idle" ]]; then
     fehler "$idle fehlt"
     return 0
@@ -76,8 +85,8 @@ _energie_sitzung() {
     hinweis "Keine laufende zenOS-Sitzung, Bildschirm-Steuerung erst nach der Anmeldung prüfbar"
     return 0
   fi
-  if command -v wlopm >/dev/null 2>&1 && [[ -x /opt/zenos/scripts/bin/zenos-bildschirm ]]; then
-    if status=$(XDG_RUNTIME_DIR=$laufzeit timeout 10 /opt/zenos/scripts/bin/zenos-bildschirm status 2>/dev/null); then
+  if command -v wlopm >/dev/null 2>&1 && [[ -x "$_energie_bin/zenos-bildschirm" ]]; then
+    if status=$(XDG_RUNTIME_DIR=$laufzeit timeout 10 "$_energie_bin/zenos-bildschirm" status 2>/dev/null); then
       ok "Bildschirm-Steuerung in der Sitzung erreichbar (Bildschirm ${status})"
     else
       warnung "wlopm erreicht die Bildschirme der Sitzung nicht – der Bildschirm bliebe an (zenos-bildschirm status)"
@@ -87,18 +96,32 @@ _energie_sitzung() {
   start=$("${sc[@]}" show --timestamp=unix -p ExecMainStartTimestamp --value "$einheit" 2>/dev/null)
   start=${start#@}
   [[ "$start" =~ ^[0-9]+$ ]] || return 0
-  for datei in /opt/zenos/scripts/bin/zenos-idle /opt/zenos/scripts/bin/zenos-bildschirm; do
+  for datei in "$_energie_bin/zenos-idle" "$_energie_bin/zenos-bildschirm"; do
     code=$(stat -c %Y -- "$datei" 2>/dev/null) || continue
     if [[ "$code" =~ ^[0-9]+$ ]] && (( code > start )); then
-      hinweis "zenos-idle läuft mit einem älteren Stand und übernimmt den neuen bei der nächsten Sperre"
+      hinweis "zenos-idle läuft mit einem älteren Stand und übernimmt den neuen bei der nächsten Sperre (ein Stand von vor der Bildschirm-Abschaltung erst nach dem nächsten Anmelden)"
       return 0
     fi
   done
 }
 
+# Meldet zenos-argon einen Akku? (/run/zenos/geraet.json, «akku.vorhanden», unabhängig vom Alter der Datei)
+_energie_akku_da() {
+  python3 - "$_energie_geraet" <<'PY' 2>/dev/null
+import json
+import sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        akku = json.load(f).get("akku")
+except (OSError, ValueError, AttributeError):
+    sys.exit(1)
+sys.exit(0 if isinstance(akku, dict) and akku.get("vorhanden") is True else 1)
+PY
+}
+
 # Ausschalten nach langer Sperre: Einstellung und was gerade im Weg ist (zenos-energie status, ohne Journal)
 _energie_ausschalten() {
-  local helfer=/opt/zenos/scripts/bin/zenos-energie wenn minuten antwort
+  local helfer=$_energie_bin/zenos-energie wenn minuten antwort
   if [[ ! -x "$helfer" ]]; then
     fehler "$helfer fehlt (zen update oder install.sh)"
     return 0
@@ -110,7 +133,13 @@ _energie_ausschalten() {
       hinweis "Ausschalten nach langer Sperre: nie (Einstellung)"
       return 0
       ;;
-    akku) ok "Ausschalten nach ${minuten:-?} Min. gesperrt im Akkubetrieb, mit 60 s Vorwarnung" ;;
+    akku)
+      if ! _energie_akku_da; then
+        hinweis "Ausschalten nach ${minuten:-?} Min. gesperrt im Akkubetrieb: kein Akku erkannt, greift auf diesem Gerät nie"
+        return 0
+      fi
+      ok "Ausschalten nach ${minuten:-?} Min. gesperrt im Akkubetrieb, mit 60 s Vorwarnung"
+      ;;
     immer) ok "Ausschalten nach ${minuten:-?} Min. gesperrt, mit 60 s Vorwarnung" ;;
     *)
       fehler "Einstellung zum Ausschalten nicht ermittelbar (zenos-idle energie)"
@@ -124,6 +153,12 @@ _energie_ausschalten() {
     "nein: "*) hinweis "Ausschalten zurzeit nicht möglich: ${antwort#nein: }" ;;
     *) warnung "Wächter für das Ausschalten nicht prüfbar (zenos-energie status)" ;;
   esac
+}
+
+# Am Login-Bildschirm (Zenos Entscheid, fest, unabhängig von der Einstellung): nur mit Akku
+_energie_login() {
+  _energie_akku_da || return 0
+  ok "Am Login-Bildschirm im Akkubetrieb aus nach 30 Min. ohne Eingabe, mit 60 s Vorwarnung (fest)"
 }
 
 # Ein/Aus-Taste: Tastenkürzel in labwc und, in einer laufenden Sitzung, der Hemmer von zenOS bei logind

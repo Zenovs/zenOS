@@ -13,6 +13,7 @@ PanelWindow {
 
     required property Konten konten
     required property Ablauf ablauf
+    required property Leerlauf leerlauf
     property bool mitFormular: true
 
     readonly property var _konto: konten.liste.length === 1 ? konten.liste[0] : null
@@ -79,6 +80,43 @@ PanelWindow {
                 color: Theme.gedaempft
                 font.family: Theme.schriftText
                 font.pixelSize: 18
+            }
+        }
+
+        // Vorwarnung vor dem Ausschalten (Leerlauf im Akkubetrieb oder leerer Akku), wie auf dem Sperrbildschirm: ruhig,
+        // mit Uhrzeit statt Sekunden, auf jedem Bildschirm
+        Rectangle {
+            anchors.horizontalCenter: parent.horizontalCenter
+            visible: root.leerlauf.text.length > 0
+            implicitWidth: vorwarnungZeile.implicitWidth + 38
+            implicitHeight: vorwarnungZeile.implicitHeight + 22
+            radius: Theme.radiusPille
+            color: Theme.durchsichtig
+            border.width: 1
+            border.color: Theme.linie2
+
+            Row {
+                id: vorwarnungZeile
+
+                anchors.centerIn: parent
+                spacing: 10
+
+                Symbol {
+                    anchors.verticalCenter: parent.verticalCenter
+                    name: root.leerlauf.akkuLeer ? "akku-leer" : "ausschalten"
+                    groesse: 14
+                    strichbreite: 1.8
+                    farbe: root.leerlauf.akkuLeer ? Theme.warnung : Theme.text2
+                }
+
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: root.leerlauf.text
+                    textFormat: Text.PlainText
+                    color: Theme.text2
+                    font.family: Theme.schriftText
+                    font.pixelSize: Theme.groesseText
+                }
             }
         }
 

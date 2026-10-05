@@ -172,30 +172,42 @@ sparen darf die Sperre nie schwächen.
 
 - **Dunkel heisst gesperrt:** `zenos-bildschirm aus` ruft immer zuerst `zen lock` auf (das kehrt erst bei
   bestätigter Sperre zurück) und schaltet nur dann ab. Schlägt die Sperre fehl, bleibt der Bildschirm an, der Grund
-  steht im Journal. Ungesperrt nimmt die Sperre keine Meldung «aus» an. Damit ist auch die Reihenfolge der
-  swayidle-Timeouts kein Risiko.
+  steht im Journal. Ungesperrt nimmt die Sperre keine Meldung «aus» an, und unmittelbar vor dem Abschalten muss die
+  erreichbare Sperre «aus» quittieren (sonst bleibt er an; nur ohne Oberfläche, bei der Notfall-Sperre, ohne
+  Quittung). Entsperren schaltet den Bildschirm immer an, auch nach einem Neustart der Oberfläche im Dunkeln. Damit
+  ist auch die Reihenfolge der swayidle-Timeouts kein Risiko.
 - **Nichts verzögert die automatische Sperre:** Es gibt keinen neuen Idle-Hemmer, der Timeout der Sperre bleibt
   1–15 Minuten. Bildschirm aus und Ausschalten zählen erst ab der Sperre. zenos-idle startet nach einem Update nur
   gesperrt neu (ein Neustart beginnt die Leerlaufzeit von vorn). Neu: Auch ein Idle-Hemmer (Video) hält die Sperre
-  höchstens 60 Minuten ohne Eingabe auf. Die Grenzen stehen eingefroren in `LEITPLANKEN`, ein Zustand kann die
-  Energie-Schlüssel nicht setzen (`GESPERRT`), und Tests gleichen die Kopien in den Shell-Helfern ab.
+  höchstens 60 Minuten ohne Eingabe auf. Diese Höchstdauer zählt in der Oberfläche (IdleMonitor): Ein Neustart der
+  Oberfläche beginnt sie von vorn, ohne Oberfläche gilt sie nicht (swayidle beachtet Hemmer). Ebenso sperrt das
+  Zuklappen über die Oberfläche; läuft sie nicht, sperrt zenos-idle bei einem neuen Wechsel zu «zu». Die Grenzen
+  stehen eingefroren in `LEITPLANKEN`, ein Zustand kann die Energie-Schlüssel nicht setzen (`GESPERRT`), und Tests
+  gleichen die Kopien in den Shell-Helfern ab.
 - **Wecktaste:** Die Taste, die einen dunklen Bildschirm weckt, landet nicht im Passwortfeld (vorher ergab sie einen
   Fehlversuch bei PAM). Verworfen wird genau eine Taste, nie mehr, damit ein hängender Zustand nie die
-  Passworteingabe blockiert. Es entsteht kein neuer Weg zu PAM.
+  Passworteingabe blockiert, und nur bis 300 ms nach dem Wecken (weckt die Maus, kommt das Passwort ganz an). Während
+  der sichtbaren Vorwarnung wird nichts verworfen. Es entsteht kein neuer Weg zu PAM.
 - **Keine Shell:** Helfer und Aufrufe aus der Oberfläche nutzen Argumentlisten, IPC und Helfer nehmen nur feste
   Wörter an. swayidle führt seine Befehle über `sh -c` aus; zenos-idle gibt ihm deshalb nur feste, per Muster
   geprüfte Pfade mit festen Wörtern (`sperrbefehl`, `bildschirmbefehl`).
 - **Ausschalten nach langer Sperre** nur mit `systemctl --no-ask-password poweroff --check-inhibitors=yes` (polkit:
   `power-off` in der aktiven Sitzung ohne Passwort), nie neu starten, nie `-i` oder `--force` (Hemmer übergehen
-  bräuchte `auth_admin_keep`). `zenos-energie` prüft vorher selbst: Vorwarnung sichtbar, Marker 60 s bis 5 Min. alt
-  und nur einmal gültig, gesperrt, keine Fern-Sitzung (logind `Remote=yes`) und keine SSH-Verbindung, kein tmux- oder
-  screen-Server, keine Installation (Sperre von `install.sh`, nur lesend geöffnet und kurz geteilt gesperrt),
-  kein apt oder dpkg, keine automatischen Updates, kein Block-Hemmer «shutdown». Was sich nicht prüfen lässt, gilt
-  als blockiert. Jeder Entscheid steht mit Grund im Journal (`journalctl -t zenos-energie`). Fällt die Oberfläche
-  aus, wird nicht ausgeschaltet.
-- **Ein/Aus-Taste:** Der Hemmer «handle-power-key» gilt nur in der eigenen, aktiven Sitzung (polkit
-  `inhibit-handle-power-key`: `allow_active yes`) und endet mit zenos-idle. Login-Bildschirm und Konsole behalten die
-  Vorgabe von logind. Kein Drop-in in `logind.conf`, kein Eingriff ins System. Halten schaltet weiter hart aus.
+  bräuchte `auth_admin_keep`). `zenos-energie` prüft vorher selbst: Vorwarnung sichtbar, Marker aus diesem Start,
+  60 s bis 5 Min. alt nach Laufzeit (ein Sprung der Uhr verkürzt nichts) und nur einmal gültig, verbraucht erst
+  unmittelbar vor dem Ausschalten (eine Eingabe bricht bis zuletzt ab), gesperrt, keine Fern-Sitzung (logind
+  `Remote=yes`) und keine SSH-Verbindung, kein tmux- oder screen-Server, keine Installation (Sperre von `install.sh`,
+  nur lesend geöffnet und kurz geteilt gesperrt), kein apt oder dpkg, keine automatischen Updates, kein Block-Hemmer
+  «shutdown», logind erlaubt es ohne Passwort (`CanPowerOff`). Was sich nicht prüfen lässt, gilt als blockiert. Jeder
+  Entscheid steht mit Grund im Journal (`journalctl -t zenos-energie`). Fällt die Oberfläche aus, wird nicht
+  ausgeschaltet. Am Login-Bildschirm gilt dasselbe (fest nach 30 Min. im Akkubetrieb, `shell/greeter/Leerlauf.qml`),
+  statt «gesperrt» darf keine andere Sitzung offen sein.
+- **Ein/Aus-Taste:** Den Hemmer «handle-power-key» darf nur die aktive Sitzung nehmen (polkit
+  `inhibit-handle-power-key`: `allow_active yes`), er endet mit zenos-idle. Ohne zenos-idle (Login-Bildschirm, erste
+  Sekunden nach dem Anmelden, 1 s zwischen zwei Läufen) schaltet ein kurzer Druck wie bei logind üblich sofort aus,
+  ohne Vorwarnung und Wächter. Weil der Hemmer im Benutzerdienst läuft, zählt logind ihn vermutlich auch auf einer
+  Textkonsole, solange die grafische Sitzung im Hintergrund läuft (dort bewirkt ein kurzer Druck dann nichts; am Gerät
+  zu prüfen). Kein Drop-in in `logind.conf`, kein Eingriff ins System. Halten schaltet weiter hart aus.
 - **Deckel und leerer Akku** (Argon ONE UP): Abschnitt «Hardware (Argon ONE)».
 - **Keine Telemetrie:** Zustände bleiben lokal (`$XDG_RUNTIME_DIR/zenos`, `/run/zenos`,
   `~/.local/state/zenos/energie.json` mit Zeit, Minuten und Art des letzten Ausschaltens). Nichts verlässt den
@@ -278,6 +290,8 @@ Rest von `/sys` bleibt nur lesbar). Firmware-Einstellungen (`/boot/firmware/conf
   (`CAP_SYS_BOOT`, wie der Power-Button des V3), nie neu und nie mit `--force`. Nur bei sicherem Messwert und sicherem
   Entladen, drei Messungen hintereinander, 60 s Vorwarnung; ein unsicherer oder fehlender Messwert führt nie zum
   Ausschalten, schon eine Messung «lädt» bricht ab. Läuft `dpkg` oder `install.sh`, wartet es höchstens 5 Min.
+  Vorher meldet `wall` es allen offenen Terminals: Dafür darf der Dienst nur schreibend auf Pseudo-Terminals und
+  Konsolen (`DeviceAllow=char-pts w`, `char-tty w`, Gruppe `tty` wie `wall` selbst), sonst bleibt er gehärtet.
   Gelesen wird dafür nur `/proc/*/comm` und die Sperre `/run/lock/zenos-install.lock` (lesend geöffnet, kurz geteilt
   gesperrt). Die Grenze steht im Code (`CRITICAL_PERCENT`, gespiegelt aus `LEITPLANKEN.akkuAusschaltenProzent`).
 - **Lüfter einstellen (Mindeststufe).** Standard ist «auto»: Am Compute Module 5 regelt der Kernel (`step_wise`)

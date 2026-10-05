@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Einheitentests für scripts/bin/zenos-energie (Ausschalten nach langer Sperre, Ein/Aus-Taste, Mitteilung danach).
+"""Einheitentests für scripts/bin/zenos-energie (Ausschalten nach langer Sperre und am Login-Bildschirm, Ein/Aus-Taste,
+Mitteilung danach).
 
 Nie ein echtes Ausschalten: Jeder Test hat einen eigenen Baum mit einer Kopie von zenos-energie und dem echten
 zenos-idle (es liest die Einstellungen), daneben Attrappen von zen, zenos-ipc und zenos-bildschirm. Im PATH liegen
@@ -33,7 +34,9 @@ RC_XML = os.path.join(WURZEL, "system", "labwc", "rc.xml.in")
 #   <wer>.exit / <wer>.aus           Exit-Code und Ausgabe
 #   <wer>.exit.<unter> / .aus.<unter>  dasselbe nur für einen Unterbefehl (erstes Argument ohne «-»)
 #   pgrep: prozesse.json [{"comm", "args"}]; pgrep.exit erzwingt einen Exit-Code (z. B. 2: Fehler)
-#   loginctl show-session ID: sitzungen.json {"ID": {"Remote": "yes"}}; fehlt die ID, Exit 1
+#   loginctl show-session ID -p NAME: sitzungen.json {"ID": {"Remote": "yes", "Class": "greeter"}}; fehlt die ID, Exit 1
+#   busctl: Unterbefehl ist die Methode (letztes Argument), z. B. busctl.aus.CanPowerOff
+#   <wer>.loeschen.<unter>  diese Datei löschen (z. B. die Oberfläche bricht während der letzten Prüfung ab)
 ATTRAPPE = r'''#!/usr/bin/env python3
 import json, os, re, sys
 WER = %r
@@ -65,14 +68,21 @@ if WER == "pgrep":
         if (muster.fullmatch(ziel) if ganz else muster.search(ziel)):
             sys.exit(0)
     sys.exit(1)
-unter = next((a for a in argv if not a.startswith("-")), "")
+unter = argv[-1] if WER == "busctl" and argv else next((a for a in argv if not a.startswith("-")), "")
+loeschen = datei("loeschen." + unter)
+if loeschen:
+    try:
+        os.remove(loeschen.strip())
+    except OSError:
+        pass
 if WER == "loginctl" and unter == "show-session":
     with open(os.path.join(ORDNER, "sitzungen.json"), encoding="utf-8") as f:
         sitzungen = json.load(f)
     eintrag = sitzungen.get(argv[1])
     if eintrag is None:
         sys.exit(1)
-    print(eintrag.get("Remote", "no"))
+    name = argv[argv.index("-p") + 1]
+    print(eintrag.get(name, {"Remote": "no", "Class": "user"}.get(name, "")))
     sys.exit(0)
 aus = datei("aus." + unter)
 aus = aus if aus is not None else datei("aus")
@@ -118,6 +128,7 @@ class EnergieTest(unittest.TestCase):
         self.sitzungen({})
         self.prozesse([])
         self.verhalten("busctl", "aus", json.dumps(KEIN_HEMMER) + "\n")
+        self.verhalten("busctl", "aus.CanPowerOff", 's "yes"\n')
         self.verhalten("systemctl", "aus.is-active", "inactive\ninactive\n")
         self.verhalten("systemctl", "exit.is-active", "3")
         self.umgebung = {
@@ -172,11 +183,22 @@ class EnergieTest(unittest.TestCase):
         with open(self.geraet, "w", encoding="utf-8") as f:
             json.dump(daten, f)
 
-    def vorwarnung(self, alter):
+    @staticmethod
+    def start_jetzt():
+        """(Start-ID, ganze Sekunden seit dem Start) wie zenos-energie"""
+        with open("/proc/sys/kernel/random/boot_id", encoding="utf-8") as f:
+            boot = f.read().strip()
+        with open("/proc/uptime", encoding="utf-8") as f:
+            laufzeit = int(float(f.read().split()[0]))
+        return boot, laufzeit
+
+    def vorwarnung(self, alter, boot=None, inhalt=None):
+        """Marker wie von «darf-ausschalten»: vor «alter» Sekunden Laufzeit angelegt"""
+        jetzt_boot, laufzeit = self.start_jetzt()
+        if inhalt is None:
+            inhalt = f"zenos-vorwarnung 1 {boot or jetzt_boot} {laufzeit - alter}\n"
         with open(self.marker, "w", encoding="utf-8") as f:
-            f.write("2026-10-05T20:00:00Z\n")
-        zeit = time.time() - alter
-        os.utime(self.marker, (zeit, zeit))
+            f.write(inhalt)
 
     def sperren(self):
         with open(self.gesperrt, "w", encoding="utf-8") as f:
@@ -269,14 +291,36 @@ class EnergieTest(unittest.TestCase):
         self.prozesse([("tmux: server", "tmux new -s arbeit")])
         self.darf()
         self.assertEqual(self.journal()[-1], "Ausschalten blockiert: tmux läuft")
+        self.assertFalse(os.path.exists(self.marker), "blockiert: kein Marker")
         self.vergessen("ereignisse")
         self.assertEqual(self.aufruf("status"), (1, "nein: tmux läuft\n", ""))
         self.prozesse([])
         self.assertEqual(self.aufruf("status"), (0, "ja\n", ""))
+        self.assertFalse(os.path.exists(self.marker), "status legt keinen Marker an")
         self.assertEqual(self.journal(), [])
         # Nur lesen: weder ausgeschaltet noch etwas angefasst
         self.assertEqual(self.poweroff(), [])
         self.assertEqual(self.aufrufe("zen") + self.aufrufe("ipc") + self.aufrufe("bildschirm"), [])
+
+    def test_darf_ausschalten_legt_den_marker_an(self):
+        # Die Vorwarnung beginnt mit «ja»: Marker mit Start-ID und Laufzeit (nicht der Uhr), nur für den Benutzer
+        self.frei()
+        vorher = self.start_jetzt()
+        self.assertEqual(self.darf(), (0, "ja"))
+        nachher = self.start_jetzt()
+        with open(self.marker, encoding="utf-8") as f:
+            teile = f.read().split()
+        self.assertEqual(teile[:3], ["zenos-vorwarnung", "1", vorher[0]])
+        self.assertTrue(vorher[1] <= int(teile[3]) <= nachher[1])
+        self.assertEqual([n for n in os.listdir(os.path.dirname(self.marker)) if ".neu." in n], [])
+        # Ohne Ordner legt es ihn an (0700)
+        shutil.rmtree(os.path.dirname(self.marker))
+        self.assertEqual(self.darf(), (0, "ja"))
+        self.assertEqual(os.stat(os.path.dirname(self.marker)).st_mode & 0o777, 0o700)
+        # Ein «nein» räumt einen alten Marker weg
+        self.prozesse([("tmux: server", "tmux")])
+        self.assertEqual(self.darf()[0], 1)
+        self.assertFalse(os.path.exists(self.marker))
 
     # --- Wächter
 
@@ -367,6 +411,28 @@ class EnergieTest(unittest.TestCase):
         os.chmod(self.sperrdatei, 0)
         self.assertEqual(self.darf(), (1, "nein: Installation nicht prüfbar (Sperrdatei nicht lesbar)"))
 
+    def test_logind_muss_ohne_passwort_ausschalten_lassen(self):
+        # Sonst lehnte «systemctl --no-ask-password poweroff» erst nach der Vorwarnung ab (z. B. eine zweite Sitzung)
+        self.frei()
+        faelle = {
+            's "challenge"\n': "Ausschalten bräuchte ein Passwort (logind)",
+            's "no"\n': "Ausschalten nicht erlaubt (logind)",
+            's "na"\n': "Ausschalten nicht erlaubt (logind)",
+            "": "Ausschalten nicht erlaubt (logind)",
+        }
+        for antwort, grund in faelle.items():
+            with self.subTest(antwort=antwort):
+                self.verhalten("busctl", "aus.CanPowerOff", antwort)
+                self.assertEqual(self.darf(), (1, "nein: " + grund))
+                self.assertEqual(self.aufruf("status")[1], f"nein: {grund}\n")
+        self.verhalten("busctl", "aus.CanPowerOff", 's "yes"\n')
+        self.verhalten("busctl", "exit.CanPowerOff", "1")
+        self.assertEqual(self.darf(), (1, "nein: Ausschalten nicht prüfbar (logind)"))
+        self.vergessen("busctl.exit.CanPowerOff")
+        self.assertEqual(self.darf(), (0, "ja"))
+        self.assertIn(["--system", "call", "org.freedesktop.login1", "/org/freedesktop/login1",
+                       "org.freedesktop.login1.Manager", "CanPowerOff"], self.aufrufe("busctl"))
+
     def test_apt_daily(self):
         self.frei()
         for zustand in ("active", "activating", "deactivating", "reloading"):
@@ -430,8 +496,9 @@ class EnergieTest(unittest.TestCase):
 
     def test_vorwarnung_60_s_bis_5_min(self):
         self.bereit()
-        for alter, erwartet in ((0, 1), (30, 1), (58, 1), (61, 0), (120, 0), (295, 0), (310, 1), (3600, 1),
-                                (-120, 1)):
+        # 4: noch zu früh (der Takt der Oberfläche war etwas schneller), der Marker bleibt für den nächsten Takt
+        for alter, erwartet in ((0, 4), (30, 4), (58, 4), (59, 4), (60, 0), (61, 0), (120, 0), (295, 0), (310, 1),
+                                (600, 1), (-120, 1)):
             with self.subTest(alter=alter):
                 self.vergessen("ereignisse")
                 if os.path.exists(self.zustand):
@@ -439,11 +506,63 @@ class EnergieTest(unittest.TestCase):
                 self.vorwarnung(alter)
                 code, aus, _ = self.aufruf("ausschalten")
                 self.assertEqual(code, erwartet, aus)
-                self.assertEqual(len(self.poweroff()), 1 - erwartet)
-                self.assertFalse(os.path.exists(self.marker), "Marker gilt einmal")
+                self.assertEqual(len(self.poweroff()), 1 if erwartet == 0 else 0)
+                if erwartet == 4:
+                    self.assertEqual(aus, f"nein: Vorwarnung erst {alter} s alt (mindestens 60 s)\n")
+                    self.assertTrue(os.path.exists(self.marker), "zu früh: der Marker bleibt")
+                    self.assertEqual(self.journal(), [], "zu früh: kein Eintrag je Takt")
+                else:
+                    self.assertFalse(os.path.exists(self.marker), "Marker gilt einmal")
                 if erwartet:
                     self.assertTrue(aus.startswith("nein: Vorwarnung"), aus)
                     self.assertFalse(os.path.exists(self.zustand))
+
+    def test_vorwarnung_nach_laufzeit_nicht_nach_der_uhr(self):
+        # Die Uhr springt (NTP nach langer Zeit offline): Die Datei scheint 2 Std. alt, die Vorwarnung lief aber erst
+        # 10 s. Es zählt die Laufzeit seit dem Start.
+        self.bereit()
+        self.vorwarnung(10)
+        alt = time.time() - 7200
+        os.utime(self.marker, (alt, alt))
+        self.assertEqual(self.aufruf("ausschalten")[:2], (4, "nein: Vorwarnung erst 10 s alt (mindestens 60 s)\n"))
+        self.assertEqual(self.poweroff(), [])
+        # Umgekehrt: Uhr zurück, die Datei scheint neu, die Vorwarnung lief aber 70 s
+        self.vorwarnung(70)
+        neu = time.time() + 3600
+        os.utime(self.marker, (neu, neu))
+        self.assertEqual(self.aufruf("ausschalten")[:2], (0, "ausgeschaltet\n"))
+
+    def test_vorwarnung_nur_aus_diesem_start_und_lesbar(self):
+        self.bereit()
+        faelle = {
+            "anderer Start": dict(boot="00000000-0000-0000-0000-000000000000"),
+            "altes Format": dict(inhalt="2026-10-05T20:00:00Z\n"),
+            "leer": dict(inhalt=""),
+            "Zusatz": dict(inhalt=f"zenos-vorwarnung 1 {self.start_jetzt()[0]} 5 x\n"),
+            "Version 2": dict(inhalt=f"zenos-vorwarnung 2 {self.start_jetzt()[0]} 5\n"),
+            "keine Zahl": dict(inhalt=f"zenos-vorwarnung 1 {self.start_jetzt()[0]} $(reboot)\n"),
+        }
+        for name, art in faelle.items():
+            with self.subTest(name):
+                self.vergessen("ereignisse")
+                self.vorwarnung(70, **art)
+                self.assertEqual(self.aufruf("ausschalten")[:2], (1, "nein: Vorwarnung nicht lesbar\n"))
+                self.assertEqual(self.poweroff(), [])
+                self.assertFalse(os.path.exists(self.marker), "Marker gilt einmal")
+
+    def test_eingabe_bis_zuletzt_bricht_ab(self):
+        # Die Oberfläche löscht den Marker (eine Eingabe), während der Helfer noch prüft: kein Aus
+        self.bereit()
+        self.verhalten("busctl", "loeschen.CanPowerOff", self.marker)
+        self.assertEqual(self.aufruf("ausschalten")[:2], (1, "nein: Vorwarnung abgebrochen\n"))
+        self.assertEqual(self.poweroff(), [])
+        self.assertFalse(os.path.exists(self.zustand))
+        # Verbraucht wird er erst nach allen Prüfungen: Ist etwas im Weg, bleibt kein Aus übrig
+        self.vergessen("busctl.loeschen.CanPowerOff", "ereignisse")
+        self.bereit()
+        self.assertEqual(self.aufruf("ausschalten")[:2], (0, "ausgeschaltet\n"))
+        self.assertFalse(os.path.exists(self.marker))
+        self.assertFalse(os.path.exists(self.marker + ".verbraucht"))
 
     def test_vorwarnung_nur_als_eigene_datei(self):
         self.bereit()
@@ -495,7 +614,8 @@ class EnergieTest(unittest.TestCase):
         self.verhalten("systemctl", "exit.poweroff", "1")
         self.verhalten("systemctl", "aus.poweroff", "Operation inhibited by \"Brenner\"\nPlease retry\n")
         code, aus, _ = self.aufruf("ausschalten")
-        self.assertEqual(code, 1)
+        # Exit 3: Die Oberfläche versucht es erst nach der nächsten Eingabe wieder
+        self.assertEqual(code, 3)
         self.assertEqual(aus, 'nein: systemctl poweroff abgelehnt (Exit 1): Operation inhibited by "Brenner" '
                               "Please retry\n")
         self.assertFalse(os.path.exists(self.zustand), "keine Mitteilung für ein Aus, das nicht kam")
@@ -512,6 +632,98 @@ class EnergieTest(unittest.TestCase):
         for verboten in (r"\breboot\b", r"\bhalt\b", r"--force", r"--ignore-inhibitors",
                          r"check-inhibitors=no", r"\bshutdown\s+-", r"\bsh\s+-c\b", r"\beval\b"):
             self.assertNotRegex(text, verboten)
+
+    # --- Login-Bildschirm
+
+    def login_sitzungen(self, **mehr):
+        """Nur der Greeter und der Benutzerdienst von systemd, dazu weitere Sitzungen {ID: Klasse}"""
+        zeilen = ["c1 117 _greetd seat0 1100 greeter tty7 no -", "2 117 _greetd - 1101 manager - no -"]
+        daten = {"c1": {"Class": "greeter"}, "2": {"Class": "manager"}}
+        for nummer, klasse in mehr.items():
+            zeilen.append(f"{nummer} 1000 tester - 1 {klasse} - no -")
+            daten[nummer] = {"Class": klasse}
+        self.verhalten("loginctl", "aus.list-sessions", "\n".join(zeilen) + "\n")
+        self.sitzungen(daten)
+
+    def test_login_nur_im_akkubetrieb_fest(self):
+        self.login_sitzungen()
+        self.akku()
+        self.assertEqual(self.aufruf("darf-ausschalten-login")[:2], (0, "ja\n"))
+        self.assertTrue(os.path.exists(self.marker))
+        self.assertIn("Ausschalten erlaubt (Login-Bildschirm): Vorwarnung beginnt", self.journal())
+        # Die Einstellungen der Sitzung gelten dort nicht: auch «immer» heisst am Login nur im Akkubetrieb, «nie» ändert
+        # nichts
+        for einstellung in ("immer", "nie"):
+            with self.subTest(einstellung=einstellung):
+                self.einstellen(ausschalten=einstellung)
+                self.akku(laedt=True)
+                self.assertEqual(self.aufruf("darf-ausschalten-login")[:2],
+                                 (1, "nein: nicht im Akkubetrieb (Netzteil oder Akku unbekannt)\n"))
+                self.assertFalse(os.path.exists(self.marker))
+        self.einstellen(ausschalten="nie")
+        self.akku()
+        self.assertEqual(self.aufruf("darf-ausschalten-login")[:2], (0, "ja\n"))
+
+    def test_login_keine_andere_sitzung(self):
+        self.akku()
+        for klasse in ("user", "user-early", "background", "user-incomplete"):
+            with self.subTest(klasse=klasse):
+                self.login_sitzungen(**{"5": klasse})
+                self.assertEqual(self.aufruf("darf-ausschalten-login")[:2], (1, "nein: eine andere Sitzung ist offen\n"))
+        self.login_sitzungen(**{"6": "manager-early"})
+        self.assertEqual(self.aufruf("darf-ausschalten-login")[0], 0)
+        # SSH wie in der Sitzung
+        self.login_sitzungen(**{"7": "user"})
+        self.sitzungen({"c1": {"Class": "greeter"}, "2": {"Class": "manager"}, "7": {"Class": "user", "Remote": "yes"}})
+        self.assertEqual(self.aufruf("darf-ausschalten-login")[:2], (1, "nein: SSH-Sitzung offen\n"))
+        # Nicht prüfbar: blockiert
+        self.login_sitzungen()
+        self.sitzungen({"c1": {"Class": "greeter"}})
+        self.assertEqual(self.aufruf("darf-ausschalten-login")[:2], (1, "nein: Sitzungen nicht prüfbar (loginctl)\n"))
+
+    def test_login_dieselben_waechter(self):
+        self.login_sitzungen()
+        self.akku()
+        self.prozesse([("tmux: server", "tmux")])
+        self.assertEqual(self.aufruf("darf-ausschalten-login")[:2], (1, "nein: tmux läuft\n"))
+        self.prozesse([("dpkg", "dpkg --configure -a")])
+        self.assertEqual(self.aufruf("darf-ausschalten-login")[:2], (1, "nein: Paketverwaltung läuft (apt, dpkg)\n"))
+        self.prozesse([])
+        self.verhalten("busctl", "aus.CanPowerOff", 's "challenge"\n')
+        self.assertEqual(self.aufruf("darf-ausschalten-login")[:2],
+                         (1, "nein: Ausschalten bräuchte ein Passwort (logind)\n"))
+
+    def test_login_ausschalten_ohne_sperre_und_ohne_mitteilung(self):
+        self.login_sitzungen()
+        self.akku()
+        self.vorwarnung(70)
+        code, aus, fehler = self.aufruf("ausschalten-login")
+        self.assertEqual((code, aus, fehler), (0, "ausgeschaltet\n", ""))
+        self.assertEqual(self.poweroff(), [["--no-ask-password", "poweroff", "--check-inhibitors=yes"]])
+        self.assertFalse(os.path.exists(self.marker))
+        self.assertFalse(os.path.exists(self.zustand), "keine Mitteilung: niemand war angemeldet")
+        self.assertIn("Schalte aus: 30 Min. ohne Eingabe am Login-Bildschirm im Akkubetrieb, nach 60 s Vorwarnung",
+                      self.journal())
+        # Ohne Vorwarnung, zu früh oder am Netzteil: nein
+        self.vergessen("ereignisse")
+        self.assertEqual(self.aufruf("ausschalten-login")[:2], (1, "nein: keine Vorwarnung\n"))
+        self.vorwarnung(20)
+        self.assertEqual(self.aufruf("ausschalten-login")[0], 4)
+        self.vorwarnung(70)
+        self.akku(laedt=True)
+        self.assertEqual(self.aufruf("ausschalten-login")[:2],
+                         (1, "nein: nicht im Akkubetrieb (Netzteil oder Akku unbekannt)\n"))
+        self.assertEqual(self.poweroff(), [])
+        self.assertIn("Nicht ausgeschaltet (Login-Bildschirm): nicht im Akkubetrieb (Netzteil oder Akku unbekannt)",
+                      self.journal())
+
+    def test_login_ohne_home(self):
+        # greetd setzt HOME für _greetd womöglich nicht
+        self.login_sitzungen()
+        self.akku()
+        del self.umgebung["HOME"]
+        code, aus, fehler = self.aufruf("darf-ausschalten-login")
+        self.assertEqual((code, aus, fehler), (0, "ja\n", ""))
 
     # --- Mitteilung beim nächsten Start
 
@@ -625,6 +837,9 @@ class EnergieTest(unittest.TestCase):
         with open(ENERGIE_JS, encoding="utf-8") as f:
             js = f.read()
         self.assertEqual(int(werte["VORWARNUNG_MIN"]), int(re.search(r"vorwarnungSekunden: (\d+)", logik).group(1)))
+        login = re.search(r"\bLOGIN_MINUTEN=(\d+)", skript)
+        self.assertIsNotNone(login)
+        self.assertEqual(int(login.group(1)), int(re.search(r"loginAusschaltenMinuten: (\d+)", logik).group(1)))
         maximum = re.search(r"var VORWARNUNG_MAX_MS = (\d+) \* 60000;", js)
         self.assertIsNotNone(maximum)
         self.assertEqual(int(werte["VORWARNUNG_MAX"]), int(maximum.group(1)) * 60)

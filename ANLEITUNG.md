@@ -401,6 +401,8 @@ systemctl --user start zenos-shell.service
   auch mit laufendem Video nach einer Minute aus.
 - [ ] Die Ein/Aus-Taste kurz drücken: zenOS sperrt und macht dunkel, das Gerät bleibt an. Nochmals kurz: hell.
   `systemd-inhibit --list` zeigt «zenOS» mit handle-power-key. Am Login-Bildschirm schaltet ein kurzer Druck aus.
+  Mit Ctrl+Alt+F3 auf eine Textkonsole wechseln (die Sitzung läuft weiter) und kurz drücken: Was passiert? Notieren
+  und melden (zurück mit Ctrl+Alt+F7).
 - [ ] Ausschalten: Einstellungen → Energie → «Immer», «Nach 30 Min.». Sperren und 30 Minuten warten (ohne SSH,
   ohne tmux). Der Bildschirm geht an, die Sperre zeigt «zenOS schaltet um HH:MM aus · Eine Taste bricht ab». Eine
   Taste bricht ab, es bleibt gesperrt. Nochmals 30 Minuten warten, dann schaltet das Gerät nach 60 s aus. Nach dem
@@ -408,6 +410,11 @@ systemctl --user start zenos-shell.service
 - [ ] Mit offener SSH-Sitzung oder laufendem tmux schaltet es nicht aus. `journalctl -t zenos-energie` nennt den
   Grund, Einstellungen → Energie zeigt «Zurzeit nicht: SSH-Sitzung offen». Danach wieder «Im Akkubetrieb» und
   «60 Min.» einstellen.
+- [ ] Während der Vorwarnung (`zenos-ipc energie vorwarnung`, gesperrt) direkt das Passwort tippen und Enter: Es
+  entsperrt beim ersten Versuch.
+- [ ] Login-Bildschirm im Akkubetrieb (nur Argon ONE UP): Abmelden, Netzteil ab, 30 Minuten nichts tun. Die Zeile
+  «zenOS schaltet um HH:MM aus · Eine Taste bricht ab» erscheint, eine Taste bricht ab. Ohne Eingabe schaltet das
+  Gerät 60 s später aus.
 - [ ] `zen energie` zeigt die Zeiten, was das Ausschalten gerade aufhält, die Ein/Aus-Taste, «Bildschirm jetzt an»
   und die Bereitschaft. `zen doctor` zeigt den Abschnitt «Energie» ohne Fehler.
 
