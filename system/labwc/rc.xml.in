@@ -122,6 +122,10 @@
     <keybind key="W-l">
       <action name="Execute" command="@@ZEN@@ lock" />
     </keybind>
+    <!-- Sofort sperren und Bildschirm aus (zen energie aus sperrt immer zuerst; eine Eingabe weckt ihn) -->
+    <keybind key="W-S-l">
+      <action name="Execute" command="@@ZEN@@ energie aus" />
+    </keybind>
     <keybind key="W-m">
       <action name="Execute" command="@@BIN@@/zenos-ipc modus waehlen" />
     </keybind>

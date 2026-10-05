@@ -8,7 +8,7 @@ import qs.komponenten
 // System-Menü unter dem System-Knopf der Leiste: Netz mit WLAN (WlanAbschnitt: Netz wählen, verbinden,
 // vergessen, WLAN ein/aus über NetworkManager), Lautstärke mit Regler und Stumm, 1Password, dann das Gerät
 // (Akku und CPU-Temperatur als Anzeige; Lüfter mit aufklappbarer Wahl «Auto · 1 · 2 · 3 · 4», LuefterAbschnitt),
-// dann Sperren, Einstellungen, Abmelden, Neustart und Ausschalten.
+// dann Sperren, Bildschirm aus, Einstellungen, Abmelden, Neustart und Ausschalten.
 Menuekarte {
     id: root
 
@@ -180,6 +180,17 @@ Menuekarte {
         onAusgeloest: {
             root.schliessen();
             Aktionen.sperren();
+        }
+    }
+
+    // Sperrt zuerst (dunkel heisst gesperrt), ohne Rückfrage: Eine Taste weckt den Bildschirm wieder
+    MenueEintrag {
+        width: parent.width
+        symbol: "monitor"
+        text: "Bildschirm aus"
+        onAusgeloest: {
+            root.schliessen();
+            Aktionen.bildschirmAus();
         }
     }
 

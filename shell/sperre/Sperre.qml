@@ -8,6 +8,7 @@ import Quickshell.Wayland
 import qs.theme
 import qs.dienste
 import qs.komponenten
+import "../dienste/energie.js" as EnergieLogik
 
 // Sperrbildschirm: ext-session-lock (WlSessionLock) mit einer Fläche pro Bildschirm, Anmeldung über PAM.
 //
@@ -26,6 +27,13 @@ import qs.komponenten
 //   $XDG_RUNTIME_DIR/zenos/oberflaeche-geladen fest (install.sh startet sie dann nicht nochmals neu).
 // - Leitplanke (Code): Der Sperrbildschirm zeigt nie Inhalte, nur die Anzahl der Mitteilungen – keine
 //   Vorschau, keine App-Namen.
+// - Bildschirm aus (Leitplanke: dunkel heisst gesperrt): bildschirmAusNachSperre Min. (1–10) nach der Sperre ohne
+//   Eingabe geht der Bildschirm aus (Energie.bildschirm, zenos-bildschirm). Gezählt wird ab der Sperre, auch nach
+//   Super+L, und ohne Rücksicht auf Idle-Hemmer (ein Video hinter der Sperre sieht niemand). zenos-idle schaltet
+//   zusätzlich nach Sperre plus dieser Zeit ab, als Rückfallebene ohne Oberfläche. Jede Eingabe weckt ihn wieder.
+// - Wecktaste: Die Taste, die einen dunklen Bildschirm weckt, landet nicht im Passwortfeld (sonst ein Fehlversuch
+//   bei PAM). Verworfen wird genau eine Taste (Logik in dienste/energie.js). Dunkel ist die Sperre durch den
+//   eigenen Aufruf von zenos-bildschirm oder dessen Meldung «sperre bildschirm aus», nie ungesperrt.
 Scope {
     id: root
 
@@ -59,6 +67,31 @@ Scope {
     // Nie Inhalte: nur Zahlen aus dem Mitteilungsdienst (wartende und zugestellte ungelesene)
     readonly property int anzahlMitteilungen: Math.max(0, Mitteilungen.anzahlWartend) + Math.max(0, Mitteilungen.anzahlUngelesen)
 
+    // Bildschirm und Wecktaste: { dunkel, gewecktUm, offen } aus energie.js
+    property var _weck: EnergieLogik.weckzustand()
+    readonly property bool dunkel: root._weck.dunkel === true
+
+    // Der Bildschirm ist aus bzw. wieder an (Meldung von zenos-bildschirm oder eigener Aufruf über Energie)
+    function bildschirmGemeldet(was: string): void {
+        if (was === "aus") {
+            // Dunkel heisst gesperrt: ungesperrt gibt es keinen dunklen Zustand und keine Wecktaste
+            if (lock.locked)
+                root._weck = EnergieLogik.bildschirmDunkel(root._weck);
+        } else if (was === "an") {
+            root._weck = EnergieLogik.bildschirmHell(root._weck, Date.now());
+        }
+    }
+
+    // Vor jeder Taste im Passwortfeld: true verwirft sie (die Taste, die den Bildschirm weckt). Ist es noch
+    // dunkel, weckt die Taste ihn auch selbst (falls kein swayidle mit resume darauf wartet).
+    function _wecktaste(): bool {
+        const verwerfen = EnergieLogik.wecktasteVerwerfen(root._weck, Date.now());
+        root._weck = EnergieLogik.wecktasteGesehen(root._weck);
+        if (root.dunkel)
+            Energie.bildschirm("an");
+        return verwerfen;
+    }
+
     function sperren(): void {
         if (lock.locked || root._sperrtGerade)
             return;
@@ -68,6 +101,7 @@ Scope {
             // Erst der Marker, dann die Sperre (siehe oben)
             markerDatei.setText(new Date().toISOString() + "\n");
             zustand.gesperrt = true;
+            root._weck = EnergieLogik.weckzustand();
             _zuruecksetzen();
             lock.locked = true;
             // Ohne ext-session-lock bleibt locked false
@@ -138,6 +172,7 @@ Scope {
 
     function _entsperren(): void {
         zustand.gesperrt = false;
+        root._weck = EnergieLogik.weckzustand();
         lock.locked = false;
         Oberflaeche.gesperrt = false;
         _zuruecksetzen();
@@ -201,6 +236,7 @@ Scope {
             if (zustand.gesperrt) {
                 console.warn("Sperre: labwc hat die Sperre nicht übernommen oder beendet");
                 zustand.gesperrt = false;
+                root._weck = EnergieLogik.weckzustand();
                 root._zuruecksetzen();
                 root._aufraeumen();
             }
@@ -330,6 +366,11 @@ Scope {
                                     fehler: root.fehlerAnzeigen
                                     nurLesen: root.pruefe
                                     maximaleLaenge: 1024
+                                    // Die Taste, die einen dunklen Bildschirm weckt, landet nicht im Feld
+                                    onVorTaste: event => {
+                                        if (root._wecktaste())
+                                            event.accepted = true;
+                                    }
                                     onTextChanged: {
                                         if (text !== root.eingabe)
                                             root.eingabe = text;
@@ -546,6 +587,42 @@ Scope {
         precision: SystemClock.Minutes
     }
 
+    // Bildschirm aus nach der Sperre: Zeit ab der Sperre, ohne Rücksicht auf Idle-Hemmer. Eingabe weckt.
+    IdleMonitor {
+        enabled: lock.secure
+        respectInhibitors: false
+        timeout: Energie.bildschirmMinuten * 60
+        onIsIdleChanged: {
+            if (isIdle) {
+                if (lock.secure)
+                    Energie.bildschirm("aus");
+            } else if (root.dunkel) {
+                Energie.bildschirm("an");
+            }
+        }
+    }
+
+    // Wecken: Solange es dunkel ist, weckt jede Eingabe (Taste, Maus, Touchpad), auch wenn den Bildschirm jemand
+    // anderes ausgeschaltet hat (Sofort-Aktion ohne zenos-idle). Scharf nach 1 s Ruhe; eine Taste davor weckt über
+    // _wecktaste().
+    IdleMonitor {
+        enabled: lock.secure && root.dunkel
+        respectInhibitors: false
+        timeout: 1
+        onIsIdleChanged: {
+            if (!isIdle && root.dunkel)
+                Energie.bildschirm("an");
+        }
+    }
+
+    Connections {
+        target: Energie
+
+        function onBildschirmGeschaltet(was: string): void {
+            root.bildschirmGemeldet(was);
+        }
+    }
+
     Connections {
         target: Oberflaeche
 
@@ -584,6 +661,13 @@ Scope {
         // "gesperrt", sobald labwc die Sperre bestätigt hat, sonst "offen"
         function status(): string {
             return lock.secure ? "gesperrt" : "offen";
+        }
+
+        // Meldung von zenos-bildschirm: "aus" kurz vor dem Abschalten, "an" danach. Ungesperrt bleibt es hell
+        // (dunkel heisst gesperrt). Antwort: "aus" oder "an", wie die Sperre den Bildschirm sieht.
+        function bildschirm(was: string): string {
+            root.bildschirmGemeldet(was);
+            return root.dunkel ? "aus" : "an";
         }
     }
 

@@ -16,6 +16,11 @@ Singleton {
         Oberflaeche.sperren();
     }
 
+    // Sofort sperren und den Bildschirm ausschalten (Energie, über zen energie aus). Eine Eingabe weckt ihn.
+    function bildschirmAus(): void {
+        Energie.aus();
+    }
+
     function terminal(): void {
         _launchApp(["kitty"], "", "kitty");
     }

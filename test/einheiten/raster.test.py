@@ -29,7 +29,7 @@ SHELLS = {"sh", "bash", "dash", "zsh", "fish", "ksh", "mksh", "busybox"}
 
 # Bauplan 8 (Super+1 … Super+4 kommen aus dem Raster)
 TASTEN = {
-    "W-space", "W-l", "W-m", "W-z", "W-Left", "W-Right", "W-Return", "W-S-Left", "W-S-Right", "W-q",
+    "W-space", "W-l", "W-S-l", "W-m", "W-z", "W-Left", "W-Right", "W-Return", "W-S-Left", "W-S-Right", "W-q",
     "A-Tab", "A-S-Tab", "C-A-t", "W-S-s", "Print", "W-S-c", "W-comma",
     "XF86AudioRaiseVolume", "XF86AudioLowerVolume", "XF86AudioMute", "XF86AudioMicMute",
 }

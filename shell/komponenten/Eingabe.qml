@@ -19,6 +19,10 @@ Item {
     property color flaechenFarbe: Theme.flaeche
 
     signal accepted
+    // Bei jedem Tastendruck, bevor das Feld ihn sieht. Setzt der Empfänger event.accepted = true, ist die Taste
+    // verworfen: Nichts wird getippt, auch Return und Rücktaste wirken nicht. Die Sperre verwirft so die Taste, die
+    // einen dunklen Bildschirm weckt.
+    signal vorTaste(var event)
 
     // Über text = "": Das leert auch den Rückgängig-Verlauf von TextInput, in dem clear() die getippten Zeichen
     // (auch im Passwortmodus) weiter im Speicher liesse. clear() danach bricht nur noch eine Vorschau (preedit) ab.
@@ -93,6 +97,9 @@ Item {
         // die Taste weiter; Qt fügt den Buchstaben von Super+L sonst ein (es filtert nur Ctrl).
         // AltGr (ISO_Level3) ist für Qt kein Meta, Zeichen wie @ und ~ kommen weiter an.
         Keys.onPressed: event => {
+            root.vorTaste(event);
+            if (event.accepted)
+                return;
             if (event.modifiers & Qt.MetaModifier)
                 event.accepted = true;
         }

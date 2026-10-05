@@ -88,6 +88,13 @@ Scope {
             woerter: "sperren bildschirm lock"
         },
         {
+            // Sperrt zuerst, dann Bildschirm aus (wie Super+Shift+L)
+            id: "bildschirm-aus",
+            titel: "Bildschirm aus",
+            symbol: "monitor",
+            woerter: "bildschirm aus dunkel monitor display schwarz"
+        },
+        {
             id: "abmelden",
             titel: "Abmelden",
             frage: "Wirklich abmelden?",
@@ -276,6 +283,9 @@ Scope {
             break;
         case "sperren":
             Aktionen.sperren();
+            break;
+        case "bildschirm-aus":
+            Aktionen.bildschirmAus();
             break;
         case "abmelden":
             Aktionen.abmelden();

@@ -771,6 +771,11 @@ START_RUNDGANG=(
   "einstellungen oeffnen apps"
   "einstellungen oeffnen allgemein"
   "einstellungen oeffnen system"
+  # Energie: Zeitleiste mit den Standardwerten. Ungesperrt bleibt die Sperre hell, auch wenn zenos-bildschirm «aus»
+  # meldet (dunkel heisst gesperrt).
+  "energie status → Gesperrt nach 5 Min. · Bildschirm aus nach 6 Min."
+  "sperre bildschirm aus → an"
+  "sperre bildschirm an → an"
   # App-Leiste: offen sind nur die Einstellungen, ein Fenster der Oberfläche. Es zählt nicht, die Leiste bleibt zu.
   "appleiste status → zu"
   "appleiste apps"
