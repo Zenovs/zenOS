@@ -1,0 +1,56 @@
+{
+  "_kommentar": "Fälle für den Zeitpunkt automatischer Updates (/etc/xdg/zenos/kanal-zeitpunkt): Dieselben prüfen test/einheiten/kanal-bedienung.test.py (parse_schedule in zenos-kanal) und test/einheiten/kanal.test.mjs (zeitpunktLesen in shell/dienste/kanal.js). Ungültig heisst: es gilt «sperre».",
+  "gueltig": [
+    {
+      "text": "zeitpunkt=sperre\n",
+      "art": "sperre"
+    },
+    {
+      "text": "# zenOS\nzeitpunkt=jederzeit\nseit=2026-10-05T10:00:00Z\n",
+      "art": "jederzeit"
+    },
+    {
+      "text": "zeitpunkt = hand\n",
+      "art": "hand"
+    },
+    {
+      "text": "zeitpunkt=fenster\nvon=02:00\nbis=05:00\n",
+      "art": "fenster",
+      "von": "02:00",
+      "bis": "05:00"
+    },
+    {
+      "text": "zeitpunkt=sperre\nzeitpunkt=fenster\nvon=22:00\nbis=06:00\nanderes=x\n",
+      "art": "fenster",
+      "von": "22:00",
+      "bis": "06:00"
+    },
+    {
+      "text": "zeitpunkt=fenster\nvon=23:30\nbis=00:30\n",
+      "art": "fenster",
+      "von": "23:30",
+      "bis": "00:30"
+    },
+    {
+      "text": "zeitpunkt=fenster\nvon=02:00\nbis=03:00\n",
+      "art": "fenster",
+      "von": "02:00",
+      "bis": "03:00"
+    }
+  ],
+  "ungueltig": [
+    "# nur Kommentar\n",
+    "zeitpunkt=nachts\n",
+    "zeitpunkt=Sperre\n",
+    "sperre\n",
+    "zeitpunkt=fenster\n",
+    "zeitpunkt=fenster\nvon=2:00\nbis=05:00\n",
+    "zeitpunkt=fenster\nvon=02:00\nbis=24:00\n",
+    "zeitpunkt=fenster\nvon=02:00\nbis=02:59\n",
+    "zeitpunkt=fenster\nvon=05:00\nbis=05:00\n",
+    "zeitpunkt=fenster\nvon=02:00 \nbis=05:00x\n",
+    "zeitpunkt=fenster\nvon=02:60\nbis=05:00\n",
+    "zeitpunkt=fenster\nvon=٠٢:٠٠\nbis=05:00\n",
+    "zeitpunkt=hand\nkeine-zuweisung\n"
+  ]
+}

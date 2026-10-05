@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# hilfe: kanal [status|pruefen|anker] – signierter Update-Kanal: Stand zeigen und prüfen (installieren: zen update)
+# hilfe: kanal [status|pruefen|anker|zeitpunkt] – signierter Update-Kanal: Stand zeigen und prüfen (installieren: zen update)
 #   zen kanal [status]           Kanal, Zustand, Anker mit Fingerabdrücken, gültige und abgelehnte Tags, letzte
 #                                Installation, guter Stand, gesperrte Stände
 #   sudo zen kanal pruefen       holt Tags und Branches von origin (ohne Rechte), prüft sie ohne Netz, schreibt den
@@ -8,6 +8,11 @@
 #   sudo zen kanal anker ORDNER  setzt den Anker von Hand aus ORDNER (etwa /opt/zenos/system/vertrauen): den ganzen
 #                                Fingerabdruck der Wurzel und von jedem Release-Schlüssel die ersten 8 Zeichen nach
 #                                «SHA256:» aus 1Password eintippen
+#   zen kanal zeitpunkt          zeigt, wann automatische Updates installiert werden (ohne Datei: «sperre»)
+#   sudo zen kanal zeitpunkt sperre|jederzeit|hand
+#   sudo zen kanal zeitpunkt fenster VON BIS
+#                                setzt ihn (/etc/xdg/zenos/kanal-zeitpunkt; VON und BIS als HH:MM, mindestens eine
+#                                Stunde). Dasselbe in Einstellungen › System › Updates
 # Das Programm ist /usr/local/libexec/zenos/zenos-kanal (kommt mit install.sh). Installiert wird mit «zen update» und
 # «zen rollback <tag>» über dieselben Units.
 # shellcheck shell=bash
@@ -42,8 +47,15 @@ befehl_kanal() {
         return 2
       fi
       ;;
+    zeitpunkt)
+      if (( $# == 0 )); then
+        /usr/bin/python3 -I "$_KANAL_PROGRAMM" zeitpunkt
+      else
+        $SUDO /usr/bin/python3 -I "$_KANAL_PROGRAMM" zeitpunkt "$@"
+      fi
+      ;;
     *)
-      zen_fehler "zen kanal kennt «$befehl» nicht (status, pruefen, anker)"
+      zen_fehler "zen kanal kennt «$befehl» nicht (status, pruefen, anker, zeitpunkt)"
       return 2
       ;;
   esac

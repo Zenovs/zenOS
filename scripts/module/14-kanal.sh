@@ -11,12 +11,16 @@
 #   (root, ohne Netz), zenos-kanal-installieren.service (root, mit Netz, Inhibitor) sind statisch: kein Timer, kein
 #   Start beim Booten, nur «zen update», «zen rollback» und «sudo zen kanal pruefen». zenos-kanal-nachstart.service
 #   ist aktiviert und läuft beim Start vor greetd, aber nur nach einer unterbrochenen Installation.
+#   zenos-kanal-jetzt.service und zenos-kanal-zustimmen@.service (statisch) startet nur die Oberfläche über
+#   scripts/bin/zenos-kanal-bedienen: «Jetzt installieren» und «Zustimmen …» in Einstellungen › System › Updates.
+# - polkit-Aktionen für diesen Helfer (system/polkit/org.zenos.kanal.policy): prüfen, jetzt installieren und den
+#   Zeitpunkt setzen ohne Passwort, zustimmen jedes Mal mit Passwort; alles nur in der aktiven Sitzung am Gerät.
 # - /var/lib/zenos/kanal (root, 0755) für Stand, Hauptbuch, hoechste, Auftrag und die Bereitstellungen.
 # Der Anker kommt aus 12-vertrauen.
 
 _KANAL_PROGRAMM=/usr/local/libexec/zenos/zenos-kanal
 _KANAL_EINHEITEN=(zenos-kanal-holen.service zenos-kanal-pruefen.service zenos-kanal-installieren.service
-  zenos-kanal-nachstart.service)
+  zenos-kanal-nachstart.service zenos-kanal-jetzt.service zenos-kanal-zustimmen@.service)
 
 modul_system() {
   local einheit
@@ -36,6 +40,9 @@ modul_system() {
   ordner_sicherstellen /var/lib/zenos 0755 root:root
   ordner_sicherstellen /var/lib/zenos/kanal 0755 root:root
   dienst_aktivieren zenos-kanal-nachstart.service
+  # Einstellungen › System › Updates: pkexec mit scripts/bin/zenos-kanal-bedienen (pkexec aus pakete/sicherheit.txt)
+  datei_installieren "$ZENOS_CODE/system/polkit/org.zenos.kanal.policy" \
+    /usr/share/polkit-1/actions/org.zenos.kanal.policy
 }
 
 # Gehört jeder vorhandene Ordner auf dem Weg root, und ist keiner für andere schreibbar?

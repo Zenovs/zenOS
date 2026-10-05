@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!--
+  zenOS: Updates in den Einstellungen (System › Updates; pkexec mit scripts/bin/zenos-kanal-bedienen).
+  14-kanal legt die Datei nach /usr/share/polkit-1/actions/ (root, 0644).
+
+  - pkexec ordnet einen Aufruf über den echten Pfad des Programms (exec.path) und das erste Argument (exec.argv1)
+    einer dieser Aktionen zu. Andere Argumente fallen auf org.freedesktop.policykit.exec (Administrator-Passwort);
+    der Helfer nimmt ohnehin nur pruefen, installieren, zustimmen und zeitpunkt an.
+  - Nur in der aktiven Sitzung am Gerät. Aus SSH oder einer inaktiven Sitzung nie: dort gelten «zen update» und
+    «sudo zen kanal …».
+  - Ohne Passwort: prüfen (holt und prüft, installiert nichts), jetzt installieren (nur ein gültig signierter,
+    geprüfter Stand, der kein «ja» braucht; installiert wird über dieselben Units wie bei zen update) und den
+    Zeitpunkt setzen (feste Wörter, Uhrzeiten streng geprüft; die Signaturprüfung bleibt in jedem Fall).
+  - Mit Passwort, jedes Mal (auth_admin, nicht auth_admin_keep): zustimmen, wenn ein signierter Stand Firewall, Netz
+    oder Boot ändert. Das «ja» gilt nur für das angezeigte Tag-Objekt.
+-->
+<policyconfig>
+  <vendor>zenOS</vendor>
+
+  <action id="org.zenos.kanal.pruefen">
+    <description>Nach Updates suchen</description>
+    <message>Nach Updates von zenOS suchen und sie prüfen. Installiert wird nichts.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/opt/zenos/scripts/bin/zenos-kanal-bedienen</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">pruefen</annotate>
+  </action>
+
+  <action id="org.zenos.kanal.installieren">
+    <description>Geprüftes Update installieren</description>
+    <message>Ein geprüftes, gültig signiertes Update von zenOS installieren.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/opt/zenos/scripts/bin/zenos-kanal-bedienen</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">installieren</annotate>
+  </action>
+
+  <action id="org.zenos.kanal.zeitpunkt">
+    <description>Zeitpunkt automatischer Updates einstellen</description>
+    <message>Einstellen, wann zenOS geprüfte Updates automatisch installiert.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/opt/zenos/scripts/bin/zenos-kanal-bedienen</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">zeitpunkt</annotate>
+  </action>
+
+  <action id="org.zenos.kanal.zustimmen">
+    <description>Update mit Änderungen an Firewall, Netz oder Boot installieren</description>
+    <message>Update installieren, das Firewall, Netz oder Boot ändert. Es ist gültig signiert; die Zustimmung gilt nur für diesen Stand.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/opt/zenos/scripts/bin/zenos-kanal-bedienen</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">zustimmen</annotate>
+  </action>
+</policyconfig>

@@ -37,6 +37,12 @@
 #   gitsperre    eine zurückgebliebene /opt/zenos/.git/index.lock: zen update räumt sie weg und installiert
 #   probelauf    ein geänderter zenos-kanal macht im Selbsttest einen Probelauf; einer mit Laufzeitfehler in update
 #                fällt auf: Rückweg (ohne Probelauf), danach geht zen update wieder
+#   bedienung    (zuletzt, braucht nur «einrichten» und dieses Programm in /opt/zenos) Einstellungen › System › Updates
+#                ohne Oberfläche: zenos-kanal-bedienen als root wie über pkexec. polkit kennt die Aktionen, Zeitpunkt
+#                setzen (ein zu kurzes Fenster nicht), «Jetzt prüfen», «Jetzt installieren» (signiert, ohne Frage,
+#                danach neu geprüft), ein Stand, der Netz trifft (installieren wartet, zustimmen für ein anderes Objekt
+#                nichts, für das gezeigte installiert), dev unsigniert (zustimmen abgelehnt, installieren wartet); keine
+#                Unit «failed» bei Exit 3 oder 10
 
 set -euo pipefail
 
@@ -685,6 +691,106 @@ s_probelauf() {
   erwarte_kopf "$neu" "installiert"
 }
 
+s_bedienung() {
+  schritt "bedienung: polkit und Zeitpunkt"
+  local helfer=/opt/zenos/scripts/bin/zenos-kanal-bedienen neu gut objekt rc aktion anderes
+  [[ -x "$helfer" ]] || fehler "$helfer fehlt (install.sh mit diesem Stand)"
+  for aktion in pruefen installieren zeitpunkt zustimmen; do
+    pkaction --action-id "org.zenos.kanal.$aktion" --verbose > "$E2E/zen.txt" 2>&1 ||
+      fehler "polkit kennt org.zenos.kanal.$aktion nicht"
+  done
+  erwarte_text "implicit active: *auth_admin$" "polkit: zustimmen nur mit Passwort"
+  pkaction --action-id org.zenos.kanal.installieren --verbose > "$E2E/zen.txt" 2>&1
+  erwarte_text "implicit active: *yes$" "polkit: installieren ohne Passwort"
+  erwarte_text "implicit any: *no$" "polkit: nicht aus SSH"
+  systemd-analyze verify /etc/systemd/system/zenos-kanal-jetzt.service \
+    "/etc/systemd/system/zenos-kanal-zustimmen@.service" > "$E2E/verify.txt" 2>&1 ||
+    { cat "$E2E/verify.txt" >&2; fehler "systemd-analyze verify"; }
+  ok "systemd-analyze verify ohne Befund"
+  rm -f /etc/xdg/zenos/kanal-zeitpunkt
+  rc=0
+  "$helfer" zeitpunkt fenster 22:00 06:00 > "$E2E/zen.txt" 2>&1 || rc=$?
+  erwarte_rc "$rc" 0 "zeitpunkt fenster 22:00 06:00"
+  [[ "$(stat -c '%U %a' /etc/xdg/zenos/kanal-zeitpunkt)" == "root 644" ]] || fehler "kanal-zeitpunkt: Besitz, Rechte"
+  runuser -u "$TESTER" -- env HOME=/home/$TESTER zen kanal zeitpunkt > "$E2E/zen.txt" 2>&1 || true
+  erwarte_text "Zeitpunkt: fenster 22:00-06:00" "zen kanal zeitpunkt zeigt das Fenster"
+  rc=0
+  "$helfer" zeitpunkt fenster 03:00 03:30 > "$E2E/zen.txt" 2>&1 || rc=$?
+  erwarte_rc "$rc" 2 "zu kurzes Fenster"
+  erwarte_text "mindestens 60 Minuten" "Grund «zu kurz»"
+  rc=0
+  "$helfer" zeitpunkt sperre > "$E2E/zen.txt" 2>&1 || rc=$?
+  erwarte_rc "$rc" 0 "zurück auf «sperre»"
+  enthaelt "Zeitpunkt: nur gesperrt oder ohne Anmeldung, vorher zwischen 22:00 und 06:00" \
+    journalctl -t zenos-kanal --no-pager -o cat -n 20 || fehler "Wechsel des Zeitpunkts nicht im Journal"
+  ok "Wechsel im Journal"
+
+  schritt "bedienung: jetzt prüfen, jetzt installieren (signiert, ohne Frage)"
+  anker_schreiben
+  kanal vorschau
+  neu=$(neuer_commit "e2e: bedienung" e2e/bedienung "1")
+  signieren v0.5.0-rc1
+  rc=0
+  "$helfer" pruefen > "$E2E/zen.txt" 2>&1 || rc=$?
+  erwarte_rc "$rc" 0 "pruefen"
+  [[ "$(json "$STAND/stand.json" .zustand)" == bereit ]] || fehler "stand.json: $(json "$STAND/stand.json" .zustand)"
+  ok "stand.json: bereit $(json "$STAND/stand.json" .bereit.version)"
+  rc=0
+  "$helfer" installieren > "$E2E/zen.txt" 2>&1 < /dev/null || rc=$?
+  erwarte_rc "$rc" 0 "installieren"
+  erwarte_kopf "$neu" "v0.5.0-rc1 installiert"
+  [[ "$(json "$STAND/letzte.json" .ergebnis)" == installiert ]] || fehler "letzte.json"
+  [[ "$(json "$STAND/stand.json" .zustand)" == aktuell ]] || fehler "danach nicht neu geprüft"
+  ok "letzte.json installiert, danach neu geprüft: aktuell"
+  enthaelt "Jetzt installieren" journalctl -t zenos-kanal-bedienen --no-pager -o cat -n 20 || fehler "Journal: Helfer"
+  ok "Aufruf im Journal"
+
+  schritt "bedienung: Netz betroffen → installieren wartet, zustimmen nur für das gezeigte Objekt"
+  gut=$(kopf)
+  printf '\n# e2e bedienung\n' >> "$ARBEIT/scripts/module/35-netzwerk.sh"
+  neu=$(neuer_commit "e2e: bedienung netz")
+  signieren v0.5.0-rc2
+  "$helfer" pruefen > "$E2E/zen.txt" 2>&1 || true
+  [[ "$(json "$STAND/stand.json" .zustand)" == zustimmung ]] || fehler "stand.json: $(json "$STAND/stand.json" .grund)"
+  objekt=$(json "$STAND/stand.json" .bereit.objekt)
+  ok "stand.json: zustimmung für ${objekt:0:12}"
+  rc=0
+  "$helfer" installieren > "$E2E/zen.txt" 2>&1 < /dev/null || rc=$?
+  erwarte_rc "$rc" 10 "installieren wartet"
+  erwarte_kopf "$gut" "nichts installiert"
+  [[ "$(systemctl is-failed zenos-kanal-jetzt.service)" != failed ]] || fehler "jetzt «failed» bei Exit 10"
+  ok "Unit nicht «failed»"
+  anderes=$(printf '%040d' 0)
+  rc=0
+  "$helfer" zustimmen "$anderes" > "$E2E/zen.txt" 2>&1 < /dev/null || rc=$?
+  erwarte_rc "$rc" 10 "zustimmen für ein anderes Objekt"
+  erwarte_kopf "$gut" "nichts installiert"
+  enthaelt "braucht eine neue Zustimmung" journalctl -u "zenos-kanal-zustimmen@$anderes.service" --no-pager -o cat ||
+    fehler "Grund im Journal der Unit"
+  rc=0
+  "$helfer" zustimmen "$objekt" > "$E2E/zen.txt" 2>&1 < /dev/null || rc=$?
+  erwarte_rc "$rc" 0 "zustimmen für das gezeigte Objekt"
+  erwarte_kopf "$neu" "v0.5.0-rc2 installiert"
+  [[ "$(json "$STAND/gut.json" .freigabe)" == ja ]] || fehler "gut.json: freigabe"
+  ok "gut.json: mit Zustimmung"
+
+  schritt "bedienung: dev unsigniert → zustimmen abgelehnt, installieren wartet"
+  kanal dev
+  gut=$(kopf)
+  neu=$(neuer_commit "e2e: bedienung dev unsigniert" e2e/bedienung "2")
+  "$helfer" pruefen > "$E2E/zen.txt" 2>&1 || true
+  rc=0
+  "$helfer" zustimmen "$neu" > "$E2E/zen.txt" 2>&1 < /dev/null || rc=$?
+  erwarte_rc "$rc" 3 "zustimmen auf dev"
+  rc=0
+  "$helfer" installieren > "$E2E/zen.txt" 2>&1 < /dev/null || rc=$?
+  erwarte_rc "$rc" 10 "installieren auf dev (braucht «ja»)"
+  erwarte_kopf "$gut" "nichts installiert"
+  [[ "$(systemctl is-failed "zenos-kanal-zustimmen@$neu.service")" != failed ]] || fehler "Unit «failed» bei Exit 3"
+  ok "Unit nicht «failed»"
+  kanal vorschau
+}
+
 case "${1:-}" in
   einrichten) s_einrichten ;;
   migration) s_migration ;;
@@ -705,5 +811,6 @@ case "${1:-}" in
   sperren) s_sperren ;;
   gitsperre) s_gitsperre ;;
   probelauf) s_probelauf ;;
-  *) sed -n '2,39p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  bedienung) s_bedienung ;;
+  *) sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

@@ -17,9 +17,11 @@ pruefe_kanal() {
     warnung "$programm weicht vom Stand in /opt/zenos ab (install.sh stellt ihn wieder her)"
   fi
   for einheit in zenos-kanal-holen.service zenos-kanal-pruefen.service zenos-kanal-installieren.service \
-    zenos-kanal-nachstart.service; do
+    zenos-kanal-nachstart.service zenos-kanal-jetzt.service zenos-kanal-zustimmen@.service; do
     [[ -f "/etc/systemd/system/$einheit" ]] || warnung "$einheit fehlt (install.sh)"
   done
+  [[ -f /usr/share/polkit-1/actions/org.zenos.kanal.policy ]] ||
+    warnung "polkit-Aktionen für Einstellungen › System › Updates fehlen (install.sh)"
   if [[ -f /etc/systemd/system/zenos-kanal-nachstart.service ]] &&
     [[ "$(systemctl is-enabled zenos-kanal-nachstart.service 2>/dev/null)" != enabled ]]; then
     warnung "zenos-kanal-nachstart.service ist nicht aktiviert: Nach einem Abbruch vollendet niemand die Übernahme vor dem Login (install.sh)"

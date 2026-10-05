@@ -1,0 +1,42 @@
+# zenOS: «Jetzt installieren» in den Einstellungen (zenos-kanal jetzt). Wie «zen update», aber ohne Terminal und ohne
+# Frage: holen, prüfen, bereitstellen und installieren über dieselben Units. Was ein «ja» bräuchte (unsigniert, dev
+# mit unsignierten Commits, Firewall, Netz oder Boot, gesperrt, Rückschritt), bleibt liegen (Exit 10).
+# Gestartet nur von scripts/bin/zenos-kanal-bedienen (pkexec, polkit-Aktion org.zenos.kanal.installieren: ohne
+# Passwort, nur in der aktiven Sitzung am Gerät). Als eigene Unit, damit ein Neuladen oder Neustart der Oberfläche
+# die Installation nicht mitten im Lauf abbricht.
+[Unit]
+Description=zenOS: Kanal jetzt installieren (aus den Einstellungen)
+Documentation=file:///opt/zenos/docs/image-und-releases.md
+ConditionPathExists=/usr/local/libexec/zenos/zenos-kanal
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/zenos/zenos-kanal jetzt
+Environment=LANG=C.UTF-8
+StateDirectory=zenos/kanal
+StateDirectoryMode=0755
+RuntimeDirectory=zenos-sperre
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+UMask=0022
+# 3 abgelehnt oder blockiert, 10 wartet (Zustimmung, Netz, Platz), 75 läuft schon: Zustände, keine Fehler der Unit
+SuccessExitStatus=3 10 75
+TimeoutStartSec=4h
+SyslogIdentifier=zenos-kanal
+
+# Das Programm schreibt nur den Wunsch und startet die Units; das Gewicht tragen sie
+PrivateNetwork=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes

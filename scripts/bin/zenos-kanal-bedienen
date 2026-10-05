@@ -1,0 +1,143 @@
+#!/bin/bash
+# zenos-kanal-bedienen pruefen|installieren|zustimmen OBJEKT|zeitpunkt WAHL [VON BIS] – Updates aus den Einstellungen
+# (System › Updates). Läuft nur als root: über pkexec (polkit-Aktionen in system/polkit/org.zenos.kanal.policy) oder
+# über sudo.
+#
+#   pruefen             holen (ohne Rechte) und prüfen (ohne Netz) wie «sudo zen kanal pruefen»; installiert nichts
+#   installieren        «Jetzt installieren»: startet zenos-kanal-jetzt.service (wie zen update ohne Frage; nur, was
+#                       kein «ja» braucht)
+#   zustimmen OBJEKT    «Zustimmen …»: startet zenos-kanal-zustimmen@OBJEKT.service (das «ja» für genau dieses
+#                       Tag-Objekt, nur für gültig signierte Stände, ohne neues Holen)
+#   zeitpunkt sperre|jederzeit|hand
+#   zeitpunkt fenster VON BIS
+#                       Zeitpunkt automatischer Updates nach /etc/xdg/zenos/kanal-zeitpunkt (zenos-kanal zeitpunkt;
+#                       VON und BIS als HH:MM, mindestens eine Stunde)
+#
+# Die Arbeit machen die Units bzw. /usr/local/libexec/zenos/zenos-kanal (root-eigene Kopie). Läuft die Oberfläche
+# neu an, während eine Installation läuft, endet nur dieser Helfer; die Unit läuft zu Ende.
+#
+# Sicherheit: Vom Aufrufer kommen nur die Argumente (nur diese festen Wörter, das Objekt als 40 Zeichen 0-9a-f,
+# Uhrzeiten streng als HH:MM) und PKEXEC_UID bzw. SUDO_UID (nur fürs Journal, als Zahl geprüft); der PATH ist fest
+# (pkexec räumt die Umgebung ohnehin auf). Programme nur mit Argumentlisten, keine Shell-Zeichenketten. Jeder Aufruf
+# steht im Journal (journalctl -t zenos-kanal-bedienen).
+#
+# Exit: der des Programms bzw. der Unit (zenos-kanal: 0 in Ordnung, 3 abgelehnt oder blockiert, 4 gescheitert mit
+# Rückweg, 5 kaputt, 10 wartet, 75 läuft schon), 1 Fehler, 2 falscher Aufruf. 126 (abgebrochen) und 127 (nicht
+# erlaubt) vergibt pkexec selbst.
+
+set -euo pipefail
+umask 022
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+unset IFS
+
+_name=zenos-kanal-bedienen
+_programm=/usr/local/libexec/zenos/zenos-kanal
+
+_fehler() { printf '%s: %s\n' "$_name" "$*" >&2; }
+_aufruf() { _fehler "Aufruf: zenos-kanal-bedienen pruefen|installieren|zustimmen OBJEKT|zeitpunkt sperre|jederzeit|hand|zeitpunkt fenster VON BIS"; }
+
+# Streng: zwei Stellen, 00:00 bis 23:59 (zenos-kanal prüft das Zeitfenster selbst noch einmal)
+_uhrzeit() { [[ "$1" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]]; }
+
+(( $# >= 1 )) || { _aufruf; exit 2; }
+case "$1" in
+  pruefen | installieren)
+    (( $# == 1 )) || { _aufruf; exit 2; }
+    ;;
+  zustimmen)
+    if (( $# != 2 )) || [[ ! "$2" =~ ^[0-9a-f]{40}$ ]]; then
+      _fehler "zustimmen braucht genau ein Tag-Objekt (40 Zeichen 0-9a-f)"
+      exit 2
+    fi
+    ;;
+  zeitpunkt)
+    case "${2:-}:$#" in
+      sperre:2 | jederzeit:2 | hand:2) ;;
+      fenster:4)
+        if ! _uhrzeit "$3" || ! _uhrzeit "$4"; then
+          _fehler "Uhrzeiten als HH:MM, etwa 02:00"
+          exit 2
+        fi
+        ;;
+      *)
+        _fehler "zeitpunkt sperre|jederzeit|hand oder zeitpunkt fenster VON BIS"
+        exit 2
+        ;;
+    esac
+    ;;
+  *)
+    _aufruf
+    exit 2
+    ;;
+esac
+
+if (( EUID != 0 )); then
+  _fehler "läuft nur als root (über pkexec aus den Einstellungen oder mit sudo)"
+  exit 2
+fi
+if [[ ! -f "$_programm" ]]; then
+  _fehler "$_programm fehlt (install.sh)"
+  exit 1
+fi
+
+# Wer hat es ausgelöst (nur fürs Journal; pkexec und sudo setzen die Variablen selbst)
+_weg() {
+  if [[ "${PKEXEC_UID:-}" =~ ^[0-9]+$ ]]; then
+    printf 'Einstellungen über pkexec, uid %s' "$PKEXEC_UID"
+  elif [[ "${SUDO_UID:-}" =~ ^[0-9]+$ ]]; then
+    printf 'sudo, uid %s' "$SUDO_UID"
+  else
+    printf 'root'
+  fi
+}
+
+_journal() { logger -t "$_name" -- "$*" 2>/dev/null || true; }
+
+# Unit starten, auf ihr Ende warten, Exit des Programms (ExecMainStatus) zurückgeben. Scheitert schon der Start (Unit
+# fehlt, Bedingung nicht erfüllt), 1.
+_unit() {
+  local unit=$1 fehler rc
+  fehler=$(systemctl start -- "$unit" 2>&1) || true
+  rc=$(systemctl show --property=ExecMainStatus --value -- "$unit" 2>/dev/null) || rc=""
+  if [[ ! "$rc" =~ ^[0-9]+$ ]]; then
+    [[ -z "$fehler" ]] || printf '%s\n' "$fehler" >&2
+    return 1
+  fi
+  if (( rc == 0 )) && [[ -n "$fehler" ]]; then
+    # Die Unit lief nicht (ExecMainStatus wäre der eines früheren Laufs)
+    printf '%s\n' "$fehler" >&2
+    return 1
+  fi
+  return "$rc"
+}
+
+case "$1" in
+  pruefen)
+    _journal "Jetzt prüfen ($(_weg))"
+    if ! _unit zenos-kanal-holen.service; then
+      _fehler "Holen ist gescheitert (journalctl -u zenos-kanal-holen.service); geprüft wird der letzte Stand"
+    fi
+    rc=0
+    _unit zenos-kanal-pruefen.service || rc=$?
+    exit "$rc"
+    ;;
+  installieren)
+    _journal "Jetzt installieren ($(_weg))"
+    rc=0
+    _unit zenos-kanal-jetzt.service || rc=$?
+    exit "$rc"
+    ;;
+  zustimmen)
+    _journal "Zustimmung für das Tag-Objekt $2 ($(_weg))"
+    rc=0
+    _unit "zenos-kanal-zustimmen@$2.service" || rc=$?
+    exit "$rc"
+    ;;
+  zeitpunkt)
+    shift
+    rc=0
+    /usr/bin/python3 -I "$_programm" zeitpunkt "$@" || rc=$?
+    exit "$rc"
+    ;;
+esac

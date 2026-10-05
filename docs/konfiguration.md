@@ -16,10 +16,12 @@ Eine Datei unter `modi/`, `zustaende/` oder `raster/` mit ungültigem Inhalt feh
 | `~/.config/zenos/webapps.json` | Web-Apps | Einstellungen → Web-Apps (`zenos-webapp`) |
 | `~/.local/state/zenos/laufzeit.json` | was gerade gilt | die Oberfläche und `zenos-labwc`, nie von Hand |
 | `~/.local/state/zenos/energie.json` | wann und warum zenOS zuletzt selbst ausgeschaltet hat (für eine Mitteilung beim nächsten Start, danach gelöscht) | `zenos-energie`, nie von Hand |
+| `~/.local/state/zenos/kanal-meldungen.json` | welche Mitteilungen des Update-Kanals schon kamen (Schlüssel je Zustand, keine Inhalte), damit jede nur einmal kommt | die Oberfläche (`dienste/Kanal.qml`), nie von Hand; löschen meldet die aktuelle Lage einmal neu |
 | `~/Ablage` | der eine Ordner für eigene Dateien | Installer, wenn er fehlt (0700); danach nur du |
 | `~/.config/user-dirs.dirs`, `~/.config/user-dirs.conf` | Benutzerordner (Downloads, Dokumente …) → `~/Ablage` | Installer, solange die erste Zeile die zenOS-Marke trägt |
 | `~/.config/Thunar/uca.xml` | Thunar-Aktion «Terminal hier öffnen» (kitty) | Installer, solange die erste Zeile die zenOS-Marke trägt; danach Thunar (eigene Aktionen) |
 | `/etc/xdg/zenos/kanal` | Kanal für `zen update`: `stabil`, `vorschau` oder `dev` | Installer beim ersten Mal |
+| `/etc/xdg/zenos/kanal-zeitpunkt` | wann geprüfte Updates automatisch kommen: `sperre` (Standard, auch ohne Datei), `fenster` mit `von`/`bis`, `jederzeit`, `hand`; gilt für das ganze Gerät | Einstellungen → System → Updates (pkexec, ohne Passwort) oder `sudo zen kanal zeitpunkt`, nie von Hand |
 | `/etc/zenos/vertrauen/` | Vertrauensanker: öffentliche Prüfschlüssel für signierte Releases | Installer, nur wenn er fehlt oder leer ist; danach `zenos-kanal` (Tag `vertrauen/NNNN`) oder `sudo zen kanal anker ORDNER` |
 | `/etc/xdg/zenos/argon.json` | Lüfterkurve (optional) | von Hand mit sudo |
 | `/etc/xdg/zenos/argon-akkuprofil` | Freigabe: zenos-argon darf Argons Akkuprofil in den Messchip schreiben (Argon ONE UP) | `zen akku freigeben`, entfernt mit `zen akku sperren` |

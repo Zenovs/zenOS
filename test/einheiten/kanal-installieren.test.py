@@ -665,6 +665,7 @@ class Befunde(Geraet):
             f.write(f"{proc.pid}\n")
         return proc
 
+    @unittest.skipUnless(os.path.exists("/proc/self"), "der Vermerk gilt nur mit /proc (Linux)")
     def test_lauf_von_hand_haelt_den_kanal_an(self):
         """Befund 2: Die Abstimmung mit install.sh von Hand geht nicht mehr über eine Sperre in /run/lock (die jeder
         Benutzer halten konnte), sondern über einen Vermerk, den nur root schreibt. Solange er gilt: 75, nichts

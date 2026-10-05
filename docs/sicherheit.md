@@ -133,6 +133,34 @@ festen `PATH`, schreibt nur `/var/lib/zenos/luefter` (atomar, 0644) und trägt j
 (`journalctl -t zenos-luefter`, mit Weg und uid). Aus SSH geht es mit `zen luefter` und sudo. Für Programme der
 systemd-Benutzerinstanz gilt dieselbe Grenze wie bei der Firewall: polkit ordnet sie der Sitzung am Gerät zu.
 
+**Updates in den Einstellungen** (System › Updates): Die Oberfläche startet
+`pkexec /opt/zenos/scripts/bin/zenos-kanal-bedienen pruefen|installieren|zustimmen OBJEKT|zeitpunkt …` (Argumentliste,
+keine Shell). Die polkit-Aktionen in `system/polkit/org.zenos.kanal.policy` (→ `/usr/share/polkit-1/actions/`, Modul
+`14-kanal`):
+
+| Aktion | aktive Sitzung am Gerät | inaktive Sitzung | sonst (z. B. SSH) |
+|---|---|---|---|
+| `org.zenos.kanal.pruefen` | ja, ohne Passwort | nein | nein |
+| `org.zenos.kanal.installieren` | ja, ohne Passwort | nein | nein |
+| `org.zenos.kanal.zeitpunkt` | ja, ohne Passwort | nein | nein |
+| `org.zenos.kanal.zustimmen` | nur mit Passwort (`auth_admin`), jedes Mal | nein | nein |
+
+- **Ohne Passwort** (Entscheid Zeno): «Jetzt prüfen» holt und prüft nur. «Jetzt installieren» startet
+  `zenos-kanal-jetzt.service`: wie `zen update`, aber ohne Frage. Installiert wird nur ein gültig signierter,
+  geprüfter Stand, der kein «ja» braucht; was eines bräuchte (unsigniert, Firewall, Netz, Boot, gesperrt, Rückschritt),
+  bleibt liegen. Ein Angreifer mit Zugriff auf die Sitzung gewinnt damit nichts, was nicht ohnehin signiert ist. Der
+  Zeitpunkt nimmt nur `sperre`, `fenster VON BIS` (HH:MM, streng geprüft, mindestens eine Stunde), `jederzeit` und
+  `hand` an; Signatur und Rückfrage gelten bei jeder Wahl, und auf `dev` kommt nie etwas automatisch.
+- **Mit Passwort:** «Zustimmen …» erscheint nur, wenn ein gültig signierter Stand Firewall, Netz oder Boot ändert. Es
+  startet `zenos-kanal-zustimmen@OBJEKT.service`: das «ja» für genau das Tag-Objekt, das die Einstellungen zeigten,
+  ohne neues Holen. Nennt die Prüfung inzwischen ein anderes Objekt, geschieht nichts. Unsigniertes, `dev` und
+  Rollbacks bleiben beim Terminal (`zen update`, `zen rollback` mit getipptem «ja»); das prüft zenos-kanal selbst
+  (`nur_signiert` im Wunsch), nicht erst die Oberfläche.
+- Die Arbeit machen Units, nicht der Helfer: Lädt die Oberfläche neu oder endet die Sitzung, läuft die Installation zu
+  Ende. Der Helfer hat einen festen `PATH`, nimmt nur diese Wörter an (das Objekt nur als 40 Zeichen `0-9a-f`) und
+  trägt jeden Aufruf ins Journal ein (`journalctl -t zenos-kanal-bedienen`, mit Weg und uid; der Zeitpunkt unter
+  `-t zenos-kanal`). Für Programme der systemd-Benutzerinstanz gilt dieselbe Grenze wie bei der Firewall.
+
 ## polkit-Agent
 
 Die Oberfläche ist der polkit-Agent der Sitzung (`shell/polkit/Polkit.qml`, `Quickshell.Services.Polkit`). Er
@@ -417,7 +445,9 @@ stehen in `docs/image-und-releases.md`, Abschnitt «Signierte Releases».
   bereit; das Installieren (root, mit Netz) prüft es vor der Benutzung noch einmal gegen den Anker von dann und
   verlangt einen unveränderten, root-eigenen Baum. Auf dev ohne Frage nur, wenn jeder neue Commit seit dem
   installierten Stand gültig signiert ist (auch ein unsignierter Zwischencommit zählt). Das «ja» ist an die
-  Commit- bzw. Tag-Objekt-ID gebunden und gilt nur im Terminal.
+  Commit- bzw. Tag-Objekt-ID gebunden und gilt nur im Terminal. Einzige Ausnahme: «Zustimmen …» in den Einstellungen
+  (mit Passwort) für einen gültig signierten Stand, der Firewall, Netz oder Boot ändert (Abschnitt «Firewall», Updates
+  in den Einstellungen).
 - **Rückfrage vor Firewall, Netz, Boot:** Trifft ein Update einen der Rückfrage-Pfade (fest im Code von zenos-kanal,
   gleich den Gruppen in `scripts/lib/sensible-pfade`; ein neuer Stand kann keinen streichen), installiert es nur nach
   Zustimmung, auch wenn es signiert ist. Indirekte Änderungen (neue Pakete, gemeinsame Bibliotheken) fängt die Liste
