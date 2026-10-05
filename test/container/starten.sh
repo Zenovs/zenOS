@@ -28,8 +28,13 @@ if docker container inspect "$name" >/dev/null 2>&1; then
   fi
   echo "Container $name läuft schon, frische den Arbeitsstand auf."
 else
+  # Arbeitsbaum (git worktree): Sein .git verweist auf das gemeinsame Git-Verzeichnis des Haupt-Repos, das dann
+  # unter demselben Pfad im Container gebraucht wird (nur lesbar)
+  zusatz=()
+  gemeinsam=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+  if [[ -n "$gemeinsam" && "$gemeinsam" != "$repo/.git" ]]; then zusatz=(-v "$gemeinsam:$gemeinsam:ro"); fi
   docker run -d --name "$name" --hostname zenos-test --privileged --cgroupns=host \
-    -v /sys/fs/cgroup:/sys/fs/cgroup:rw -v "$repo:/repo:ro" "$bild" >/dev/null
+    -v /sys/fs/cgroup:/sys/fs/cgroup:rw -v "$repo:/repo:ro" "${zusatz[@]}" "$bild" >/dev/null
   echo "Container $name gestartet ($bild)."
 fi
 
