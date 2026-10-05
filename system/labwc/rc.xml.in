@@ -195,6 +195,13 @@
     <keybind key="XF86AudioMicMute" allowWhenLocked="yes">
       <action name="Execute" command="wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle" />
     </keybind>
+
+    <!-- Ein/Aus-Taste kurz gedrückt, auch gesperrt: sperren und Bildschirm aus, System-Menü oder (gesperrt) Bildschirm
+         an/aus, je nach Einstellung «Ein/Aus-Taste». Damit logind nicht selbst ausschaltet, hält zenos-idle den
+         Hemmer handle-power-key (ausser bei «ausschalten»). Gedrückt halten schaltet immer hart aus (Hardware). -->
+    <keybind key="XF86PowerOff" allowWhenLocked="yes">
+      <action name="Execute" command="@@BIN@@/zenos-energie taste" />
+    </keybind>
   </keyboard>
 
 </labwc_config>

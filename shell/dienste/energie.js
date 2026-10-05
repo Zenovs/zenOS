@@ -29,6 +29,9 @@ var NEUER_VERSUCH_MS = 5 * 60000;
 var VORWARNUNG_MAX_MS = 5 * 60000;
 // So lange nach dem Wecken verwirft die Sperre noch eine Taste (das Signal «an» kann vor der Taste kommen)
 var WECKEN_SCHONFRIST_MS = 1000;
+// So lange nach dem Wecken gilt ein Druck auf die Ein/Aus-Taste noch als Wecken (die Taste selbst weckt schon über
+// die Eingabe, ihr Befehl kommt etwas später an) und schaltet den Bildschirm nicht gleich wieder aus
+var TASTE_SCHONFRIST_MS = 2000;
 
 // Zahl als Text: Ziffern mit Punkt oder Komma, wie in zenos-idle (sonst keine Zahl)
 var ZAHL_TEXT = /^[+-]?(?:[0-9]+(?:[.,][0-9]*)?|[.,][0-9]+)$/;
@@ -103,15 +106,17 @@ function ausschaltenAktiv(art, akku) {
 
 // --- Zeitleiste ---------------------------------------------------------------
 
-// Was nach wie vielen Minuten ohne Eingabe geschieht: gesperrt, Bildschirm aus und (ausser bei «nie»)
-// ausgeschaltet. «aktiv» sagt beim Ausschalten, ob es gerade gilt (bei «akku» nur im Akkubetrieb).
+// Was nach wie vielen Minuten ohne Eingabe geschieht: gesperrt, Bildschirm aus und ausgeschaltet (bei «immer»,
+// bei «akku» nur mit Akku: ohne ihn schaltet zenOS nie aus). «aktiv» sagt beim Ausschalten, ob es gerade gilt (bei
+// «akku» nur im Akkubetrieb).
 function zeitleiste(einstellungen, akku) {
     var w = wirksam(einstellungen);
     var liste = [
         { was: "sperre", minuten: w.sperreMinuten, aktiv: true },
         { was: "bildschirm", minuten: w.sperreMinuten + w.bildschirmMinuten, aktiv: true }
     ];
-    if (w.ausschalten !== "nie")
+    var mitAkku = akku !== null && typeof akku === "object" && akku.vorhanden === true;
+    if (w.ausschalten === "immer" || (w.ausschalten === "akku" && mitAkku))
         liste.push({
             was: "ausschalten",
             minuten: w.sperreMinuten + w.ausschaltenMinuten,
@@ -192,7 +197,9 @@ function vorwarnungSchritt(z, jetzt) {
 // Zeichen zu viel ergäbe einen Fehlversuch bei PAM). Verworfen wird genau eine Taste: die erste, solange es
 // dunkel ist oder bis 1 s nach dem Wecken (das Signal «an» kann vor der Taste ankommen). Nie mehr als eine:
 // Bliebe «dunkel» hängen, könnte man sonst kein Passwort mehr eingeben.
-// Zustand: { dunkel, gewecktUm (ms, -1: nicht geweckt), offen (die Wecktaste steht noch aus) }
+// Ebenso während der Vorwarnung vor dem Ausschalten: Der Bildschirm ging ohne Eingabe an, die erste Taste bricht
+// die Vorwarnung ab und landet nicht im Feld (auch bis 1 s nach dem Ende, falls die Eingabe vor der Taste ankommt).
+// Zustand: { dunkel, gewecktUm (ms, -1: nicht geweckt), offen (die Wecktaste steht noch aus), vorwarnung }
 
 function weckzustand() {
     return { dunkel: false, gewecktUm: -1, offen: false };
@@ -213,11 +220,23 @@ function bildschirmHell(z, jetzt) {
     return { dunkel: false, gewecktUm: jetzt, offen: z.offen === true };
 }
 
+// Die Vorwarnung ist sichtbar (der Bildschirm ging dafür an): Die nächste Taste bricht ab und wird verworfen
+function vorwarnungGezeigt(z) {
+    return { dunkel: false, gewecktUm: -1, offen: true, vorwarnung: true };
+}
+
+// Die Vorwarnung ist vorbei. Stand die Taste noch aus, gilt sie bis 1 s danach noch als Abbruchtaste.
+function vorwarnungVorbei(z, jetzt) {
+    if (!(z && z.vorwarnung === true))
+        return z && typeof z === "object" ? z : weckzustand();
+    return { dunkel: z.dunkel === true, gewecktUm: jetzt, offen: z.offen === true };
+}
+
 // Diese Taste verwerfen? Danach immer wecktasteGesehen() aufrufen.
 function wecktasteVerwerfen(z, jetzt) {
     if (!z || typeof z !== "object" || z.offen !== true)
         return false;
-    if (z.dunkel === true)
+    if (z.dunkel === true || z.vorwarnung === true)
         return true;
     var seit = typeof z.gewecktUm === "number" && z.gewecktUm >= 0 ? jetzt - z.gewecktUm : -1;
     return seit >= 0 && seit < WECKEN_SCHONFRIST_MS;
@@ -227,4 +246,16 @@ function wecktasteVerwerfen(z, jetzt) {
 function wecktasteGesehen(z) {
     var d = !!(z && z.dunkel === true);
     return { dunkel: d, gewecktUm: z && typeof z.gewecktUm === "number" ? z.gewecktUm : -1, offen: false };
+}
+
+// --- Ein/Aus-Taste, gesperrt ----------------------------------------------------
+// Ein kurzer Druck schaltet den Bildschirm an oder aus: «an», solange er dunkel ist oder eben (2 s) geweckt wurde
+// (der Druck selbst weckt ihn schon als Eingabe), sonst «aus».
+function tasteGesperrt(z, jetzt) {
+    if (!z || typeof z !== "object")
+        return "aus";
+    if (z.dunkel === true)
+        return "an";
+    var seit = typeof z.gewecktUm === "number" && z.gewecktUm >= 0 ? jetzt - z.gewecktUm : -1;
+    return seit >= 0 && seit < TASTE_SCHONFRIST_MS ? "an" : "aus";
 }

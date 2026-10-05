@@ -1,17 +1,31 @@
 #!/usr/bin/env bash
 # 66-energie: Energie – wlopm und zenos-bildschirm, Bildschirm aus nach der Sperre (wirksame Zeit), Bildschirm
-# in der laufenden Sitzung erreichbar, Stand von zenos-idle, Bereitschaft des Kernels (nur Anzeige)
+# in der laufenden Sitzung erreichbar, Stand von zenos-idle, Ausschalten nach langer Sperre (Einstellung und was
+# gerade im Weg ist), Hemmer und Tastenkürzel für die Ein/Aus-Taste, Bereitschaft des Kernels (nur Anzeige)
 # shellcheck shell=bash
 #
-# Liest nur: zenos-idle energie (wirksame Minuten, keine Inhalte aus einstellungen.json), zenos-bildschirm
-# status und /sys/power/state.
+# Liest nur: zenos-idle energie (wirksame Werte, keine Inhalte aus einstellungen.json), zenos-bildschirm status,
+# zenos-energie status, die Hemmer von logind (busctl), ~/.config/labwc/rc.xml und /sys/power/state.
 
 pruefe_energie() {
   abschnitt "Energie"
   _energie_werkzeuge
   _energie_zeit
   _energie_sitzung
+  _energie_ausschalten
+  _energie_taste
   _energie_bereitschaft
+}
+
+# Wert NAME aus «zenos-idle energie» (leer, wenn nicht lesbar)
+_energie_wert() {
+  local name wert
+  while read -r name wert _; do
+    if [[ "$name" == "$1" ]]; then
+      printf '%s' "$wert"
+      return 0
+    fi
+  done < <(/opt/zenos/scripts/bin/zenos-idle energie 2>/dev/null)
 }
 
 _energie_werkzeuge() {
@@ -80,6 +94,70 @@ _energie_sitzung() {
       return 0
     fi
   done
+}
+
+# Ausschalten nach langer Sperre: Einstellung und was gerade im Weg ist (zenos-energie status, ohne Journal)
+_energie_ausschalten() {
+  local helfer=/opt/zenos/scripts/bin/zenos-energie wenn minuten antwort
+  if [[ ! -x "$helfer" ]]; then
+    fehler "$helfer fehlt (zen update oder install.sh)"
+    return 0
+  fi
+  wenn=$(_energie_wert ausschaltenwenn)
+  minuten=$(_energie_wert ausschalten)
+  case "$wenn" in
+    nie)
+      hinweis "Ausschalten nach langer Sperre: nie (Einstellung)"
+      return 0
+      ;;
+    akku) ok "Ausschalten nach ${minuten:-?} Min. gesperrt im Akkubetrieb, mit 60 s Vorwarnung" ;;
+    immer) ok "Ausschalten nach ${minuten:-?} Min. gesperrt, mit 60 s Vorwarnung" ;;
+    *)
+      fehler "Einstellung zum Ausschalten nicht ermittelbar (zenos-idle energie)"
+      return 0
+      ;;
+  esac
+  (( EUID != 0 )) || return 0
+  antwort=$(timeout 20 "$helfer" status 2>/dev/null | tail -n 1) || true
+  case "$antwort" in
+    ja) ok "Ausschalten zurzeit möglich (nichts im Weg)" ;;
+    "nein: "*) hinweis "Ausschalten zurzeit nicht möglich: ${antwort#nein: }" ;;
+    *) warnung "Wächter für das Ausschalten nicht prüfbar (zenos-energie status)" ;;
+  esac
+}
+
+# Ein/Aus-Taste: Tastenkürzel in labwc und, in einer laufenden Sitzung, der Hemmer von zenOS bei logind
+_energie_taste() {
+  local taste rc_xml=$HOME/.config/labwc/rc.xml laufzeit liste
+  taste=$(_energie_wert taste)
+  if [[ "$taste" == ausschalten ]]; then
+    hinweis "Ein/Aus-Taste: kurzer Druck schaltet aus (Einstellung)"
+    return 0
+  fi
+  if [[ -f "$rc_xml" ]] && ! grep -q 'key="XF86PowerOff"' "$rc_xml" 2>/dev/null; then
+    warnung "labwc kennt die Ein/Aus-Taste nicht (~/.config/labwc/rc.xml ohne XF86PowerOff, install.sh)"
+  fi
+  laufzeit=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+  if [[ ! -S "$laufzeit/bus" ]] || ! env "XDG_RUNTIME_DIR=$laufzeit" systemctl --user --quiet is-active zenos-idle.service 2>/dev/null; then
+    hinweis "Ein/Aus-Taste: Hemmer erst in einer laufenden Sitzung prüfbar"
+    return 0
+  fi
+  if ! liste=$(timeout 10 busctl --system --json=short call org.freedesktop.login1 /org/freedesktop/login1 \
+    org.freedesktop.login1.Manager ListInhibitors 2>/dev/null); then
+    warnung "Hemmer von logind nicht lesbar (busctl)"
+    return 0
+  fi
+  if python3 -c '
+import json, os, sys
+for was, wer, _, modus, uid, _ in json.loads(sys.argv[1])["data"][0]:
+    if wer == "zenOS" and modus == "block" and uid == os.getuid() and "handle-power-key" in was.split(":"):
+        sys.exit(0)
+sys.exit(1)
+' "$liste" 2>/dev/null; then
+    ok "Ein/Aus-Taste: kurzer Druck sperrt bzw. schaltet den Bildschirm (Hemmer von zenOS aktiv)"
+  else
+    warnung "Ein/Aus-Taste: kein Hemmer von zenOS, kurzer Druck schaltet aus (journalctl --user -u zenos-idle)"
+  fi
 }
 
 # Bereitschaft (Suspend) gibt es nur, wenn der Kernel einen Schlafzustand anbietet. zenOS nutzt sie nicht.

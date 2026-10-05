@@ -149,7 +149,8 @@ Die Tastenkürzel von labwc rufen dieselben Ziele auf (Liste in `docs/module/m9.
 | `zenos-thema` | Erscheinungsbild auf GTK, Qt, kitty, labwc und VS Code übertragen |
 | `zenos-labwc`, `zenos-kanshi` | `rc.xml` und kanshi-Konfiguration erzeugen |
 | `zenos-freigabe` | Bildschirmfreigabe erkennen (vom Portal aufgerufen) |
-| `zenos-idle`, `zenos-1password-sperren` | automatische Sperre, 1Password mitsperren |
+| `zenos-idle`, `zenos-1password-sperren` | automatische Sperre, Bildschirm aus nach der Sperre (swayidle), Hemmer für die Ein/Aus-Taste, 1Password mitsperren |
+| `zenos-bildschirm`, `zenos-energie` | Bildschirm aus/an (wlopm, sperrt immer zuerst); Ausschalten nach langer Sperre mit Wächtern (SSH, tmux, Updates, Hemmer) und Ein/Aus-Taste |
 | `zenos-oeffnen` | Datei, Ordner oder Programm in eigener Einheit öffnen (Ordner in Thunar, ohne Dateimanager in kitty) |
 | `zenos-bildschirmfoto`, `zenos-pipette` | Werkzeuge des Befehlsfelds |
 | `zenos-chrome`, `zenos-webapp` | Chrome im Profil des Modus, Web-Apps |

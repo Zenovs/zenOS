@@ -8,10 +8,11 @@ import qs.einstellungen.teile
 import qs.dienste as Dienste
 
 // Seite «Energie»: was ohne Eingabe geschieht (Zeitleiste), «Bildschirm aus» 1–10 Min. nach der Sperre, Ausschalten
-// nach langer Sperre und Ein/Aus-Taste (noch nicht verfügbar), Zuklappen und Bereitschaft als Anzeige, dazu die
-// Leitplanke: Nichts hier verzögert die automatische Sperre (die bleibt auf «Allgemein», sie ist Sicherheit).
+// nach langer Sperre (Nie · Im Akkubetrieb · Immer, 30–240 Min.) mit dem, was gerade im Weg ist, die Ein/Aus-Taste,
+// Zuklappen und Bereitschaft als Anzeige, dazu die Leitplanke: Nichts hier verzögert die automatische Sperre (die
+// bleibt auf «Allgemein», sie ist Sicherheit).
 // Gespeichert wird wie auf «Allgemein» 500 ms nach der letzten Änderung in ~/.config/zenos/einstellungen.json;
-// zenos-idle und die Sperre übernehmen den Wert von selbst.
+// zenos-idle, die Sperre und Dienste.Energie übernehmen die Werte von selbst.
 Item {
     id: root
 
@@ -38,6 +39,38 @@ Item {
             return "Der Kernel bietet einen Schlafzustand an (" + root._schlafzustaende + "), zenOS nutzt ihn noch nicht. Es schaltet stattdessen den Bildschirm aus.";
         return "Auf diesem Gerät nicht verfügbar: Der Kernel bietet keinen Schlafzustand an. zenOS schaltet stattdessen den Bildschirm aus.";
     }
+
+    // Was das Ausschalten gerade aufhält (zenos-energie status: «nein: Grund»), leer: nichts oder unbekannt
+    property string _blockiert: ""
+
+    readonly property var _ausschaltenOptionen: [
+        {
+            wert: "nie",
+            text: "Nie"
+        },
+        {
+            wert: "akku",
+            text: "Im Akkubetrieb"
+        },
+        {
+            wert: "immer",
+            text: "Immer"
+        }
+    ]
+    readonly property var _tastenOptionen: [
+        {
+            wert: "sperren",
+            text: "Sperren"
+        },
+        {
+            wert: "menue",
+            text: "System-Menü"
+        },
+        {
+            wert: "ausschalten",
+            text: "Ausschalten"
+        }
+    ]
 
     // Den Deckel wertet zenOS noch nicht aus. Beim Argon ONE UP (Laptop) ehrlich sagen, sonst gibt es keinen.
     readonly property string zuklappenText: Dienste.Geraet.modell === "argon-one-up" ? "Sperrt noch nicht. Bis dahin vor dem Zuklappen mit Super+L sperren." : "Kein Deckel erkannt."
@@ -71,6 +104,30 @@ Item {
 
         interval: 500
         onTriggered: root.speichern()
+    }
+
+    // Was gerade im Weg ist: beim Öffnen und alle 15 s, solange die Seite offen ist (nur lesen, ohne Journal)
+    Process {
+        id: statusProzess
+
+        command: [Dienste.Pfade.bin + "/zenos-energie", "status"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                const zeile = text.trim().split("\n").pop() ?? "";
+                root._blockiert = zeile.startsWith("nein:") ? zeile.slice(5).trim() : "";
+            }
+        }
+    }
+
+    Timer {
+        interval: 15000
+        repeat: true
+        running: root.visible
+        triggeredOnStart: true
+        onTriggered: {
+            if (!statusProzess.running)
+                statusProzess.running = true;
+        }
     }
 
     // /sys/power/state: nur lesen, einmal beim Öffnen der Seite
@@ -182,13 +239,79 @@ Item {
             }
         }
 
-        // Folgt: Ausschalten nach langer Sperre (30–240 Min., mit Vorwarnung) und die Wahl für die Ein/Aus-Taste
         Feld {
             width: parent.width
             beschriftung: "Ausschalten, wenn gesperrt"
 
-            Hinweistext {
-                text: "Noch nicht verfügbar. zenOS schaltet heute nie selbst aus."
+            Column {
+                width: parent.width
+                spacing: 12
+
+                Segmente {
+                    id: ausschaltenSegmente
+
+                    optionen: root._ausschaltenOptionen
+                    onGewaehlt: wert => root.setzen("ausschalten", wert)
+                }
+
+                // Segmente setzt «wert» bei einer Wahl selbst; das Binding folgt trotzdem weiter der Datei
+                Binding {
+                    target: ausschaltenSegmente
+                    property: "wert"
+                    value: Dienste.Energie.ausschaltenArt
+                }
+
+                Row {
+                    visible: Dienste.Energie.ausschaltenArt !== "nie"
+                    spacing: 16
+
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "Nach"
+                        color: Theme.text
+                        font.family: Theme.schriftText
+                        font.pixelSize: Theme.groesseText
+                    }
+
+                    Stufenwahl {
+                        id: ausschaltenWahl
+
+                        min: Dienste.Leitplanken.ausschaltenMinutenMin
+                        max: Dienste.Leitplanken.ausschaltenMinutenMax
+                        schritt: 30
+                        einheit: "Min."
+                        onGeaendert: wert => root.setzen("ausschaltenNachMinuten", Dienste.Leitplanken.ausschaltenMinuten(wert))
+                    }
+
+                    Binding {
+                        target: ausschaltenWahl
+                        property: "wert"
+                        value: Dienste.Energie.ausschaltenMinuten
+                    }
+
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "gesperrt ohne Eingabe"
+                        color: Theme.text
+                        font.family: Theme.schriftText
+                        font.pixelSize: Theme.groesseText
+                    }
+                }
+
+                Hinweistext {
+                    text: "Vorher steht " + Dienste.Leitplanken.vorwarnungSekunden + " s lang die Uhrzeit auf dem Sperrbildschirm, eine Taste bricht ab. Nie während einer SSH-Sitzung, mit tmux oder während eines Updates."
+                }
+
+                Hinweistext {
+                    visible: Dienste.Energie.ausschaltenArt === "akku" && !Dienste.Geraet.akkuVorhanden
+                    text: "Kein Akku erkannt: «Im Akkubetrieb» schaltet auf diesem Gerät nie aus."
+                }
+
+                Hinweistext {
+                    visible: Dienste.Energie.ausschaltenArt !== "nie" && root._blockiert.length > 0
+                    text: "Zurzeit nicht: " + root._blockiert
+                    color: Theme.text2
+                }
             }
         }
 
@@ -196,8 +319,26 @@ Item {
             width: parent.width
             beschriftung: "Ein/Aus-Taste"
 
-            Hinweistext {
-                text: "Noch nicht einstellbar. Kurz drücken schaltet heute aus, gedrückt halten schaltet immer hart aus."
+            Column {
+                width: parent.width
+                spacing: 12
+
+                Segmente {
+                    id: tastenSegmente
+
+                    optionen: root._tastenOptionen
+                    onGewaehlt: wert => root.setzen("einAusTaste", wert)
+                }
+
+                Binding {
+                    target: tastenSegmente
+                    property: "wert"
+                    value: Dienste.Energie.einAusTaste
+                }
+
+                Hinweistext {
+                    text: Dienste.Energie.einAusTaste === "ausschalten" ? "Kurz drücken schaltet sofort aus. Gedrückt halten schaltet immer hart aus." : "Kurz drücken, gesperrt: Bildschirm an oder aus. Gedrückt halten schaltet immer hart aus, am Login-Bildschirm schaltet auch ein kurzer Druck aus."
+                }
             }
         }
 

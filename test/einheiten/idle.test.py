@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Einheitentests für scripts/bin/zenos-idle (Sperre und Bildschirm aus über swayidle).
+"""Einheitentests für scripts/bin/zenos-idle (Sperre und Bildschirm aus über swayidle, Hemmer für die Ein/Aus-Taste).
 
 Ohne Sitzung und ohne echtes swayidle: Jeder Test hat einen eigenen Baum mit einer Kopie von zenos-idle, daneben
-Attrappen von zenos-bildschirm und zen, dazu ein falsches swayidle im PATH. Alle Attrappen schreiben ihre Aufrufe
-der Reihe nach in eine gemeinsame Datei. Geprüft werden die Argumente für swayidle (Reihenfolge, Sekunden, resume),
-«an» beim Start, der Neustart nur bei geänderten Werten, SIGUSR1 und SIGTERM, der neue Stand nach einem Update
-(nur gesperrt), die unveränderte Ausgabe von «pruefen» und der Abgleich der Grenzen mit zustandslogik.js,
-energie.js (über node, falls vorhanden) und dem Schema. Läuft unter Linux (GNU stat).
+Attrappen von zenos-bildschirm und zen, dazu falsche swayidle und systemd-inhibit im PATH. Alle Attrappen schreiben ihre
+Aufrufe der Reihe nach in eine gemeinsame Datei. Geprüft werden die Argumente für swayidle (Reihenfolge, Sekunden,
+resume), «an» beim Start, der Neustart nur bei geänderten Zeiten, SIGUSR1 und SIGTERM, der neue Stand nach einem Update
+(nur gesperrt), der Hemmer «handle-power-key» (nur ausser bei «ausschalten», kein verwaister Prozess nach einem Wechsel
+oder dem Ende), die unveränderte Ausgabe von «pruefen» und der Abgleich der Grenzen und Wörter mit zustandslogik.js,
+energie.js (über node, falls vorhanden) und dem Schema. Läuft unter Linux (GNU stat, /proc).
 
   python3 test/einheiten/idle.test.py
 """
@@ -42,6 +43,18 @@ if WER == "bildschirm" and sys.argv[1:] == ["status"]:
             print(f.read().strip())
     except OSError:
         print("an")
+if WER == "inhibit":
+    # Wie systemd-inhibit: den Befehl nach den Optionen als Kind starten und auf ihn warten (ohne Todessignal: Endet
+    # die Attrappe, bliebe das Kind, ausser zenos-idle räumt es weg). inhibit.exit lässt den Hemmer scheitern.
+    import subprocess
+    try:
+        with open(os.environ["IDLE_TEST_LOG"] + ".inhibit-exit", encoding="utf-8") as f:
+            sys.exit(int(f.read().strip()))
+    except OSError:
+        pass
+    argv = sys.argv[1:]
+    befehl = argv[next(i for i, a in enumerate(argv) if not a.startswith("--")):]
+    sys.exit(subprocess.call(befehl))
 if WER == "swayidle":
     def usr1(*_):
         schreiben({"signal": "USR1"})
@@ -79,6 +92,7 @@ class IdleTest(unittest.TestCase):
         self.attrappe(self.bildschirm, "bildschirm")
         self.attrappe(self.zen, "zen")
         self.attrappe(os.path.join(self.fake, "swayidle"), "swayidle")
+        self.attrappe(os.path.join(self.fake, "systemd-inhibit"), "inhibit")
         self.log = os.path.join(wurzel, "ereignisse")
         self.status = os.path.join(wurzel, "status")
         self.einstellungen = os.path.join(self.home, ".config", "zenos", "einstellungen.json")
@@ -104,9 +118,14 @@ class IdleTest(unittest.TestCase):
                 self.prozess.wait(5)
             self.prozess.stdout.close()
             self.prozess.stderr.close()
-        # Übrige Attrappen (nur Prozesse aus diesem Testordner)
+        # Übrige Attrappen und Kinder des Hemmers (nur Prozesse aus diesem Testordner)
+        for pid in self.hemmer_kinder():
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         for eintrag in self.ereignisse():
-            if eintrag.get("wer") != "swayidle":
+            if eintrag.get("wer") not in ("swayidle", "inhibit"):
                 continue
             try:
                 with open(f"/proc/{eintrag['pid']}/cmdline", "rb") as f:
@@ -146,6 +165,33 @@ class IdleTest(unittest.TestCase):
 
     def starts(self):
         return [e for e in self.ereignisse() if e["wer"] == "swayidle" and "argv" in e]
+
+    def hemmer(self):
+        return [e for e in self.ereignisse() if e["wer"] == "inhibit"]
+
+    def hemmer_kinder(self):
+        """Laufende «tail --pid=<zenos-idle>» (die Kinder des Hemmers) dieses Tests."""
+        if not self.prozess:
+            return []
+        gefunden = []
+        for eintrag in os.listdir("/proc"):
+            if not eintrag.isdigit():
+                continue
+            try:
+                with open(f"/proc/{eintrag}/cmdline", "rb") as f:
+                    argv = f.read().split(b"\0")
+                with open(f"/proc/{eintrag}/stat", encoding="utf-8") as f:
+                    zustand = f.read().rsplit(")", 1)[1].split()[0]
+            except OSError:
+                continue
+            if zustand != "Z" and argv[:2] == [b"tail", f"--pid={self.prozess.pid}".encode()]:
+                gefunden.append(int(eintrag))
+        return gefunden
+
+    def erwarteter_hemmer(self):
+        return ["--what=handle-power-key", "--mode=block", "--who=zenOS",
+                "--why=Ein/Aus-Taste: zenOS sperrt (Einstellung «Ein/Aus-Taste»)", "tail",
+                f"--pid={self.prozess.pid}", "-f", "/dev/null"]
 
     def warten(self, bedingung, frist=10.0):
         ende = time.monotonic() + frist
@@ -194,22 +240,54 @@ class IdleTest(unittest.TestCase):
                 self.assertEqual((code, aus, fehler), (0, erwartet + "\n", ""))
 
     def test_energie_werte(self):
+        rest = "ausschalten 60 standard\nausschaltenwenn akku standard\ntaste sperren standard\n"
         faelle = [
-            (None, "sperre 5 standard\nbildschirm 1 standard\n"),
-            ({"bildschirmAusNachSperre": 3}, "sperre 5 standard\nbildschirm 3 einstellung\n"),
-            ({"sperreNachMinuten": 2, "bildschirmAusNachSperre": 0}, "sperre 2 einstellung\nbildschirm 1 begrenzt\n"),
-            ({"bildschirmAusNachSperre": 25}, "sperre 5 standard\nbildschirm 10 begrenzt\n"),
-            ({"bildschirmAusNachSperre": "4,4"}, "sperre 5 standard\nbildschirm 4 einstellung\n"),
-            ({"bildschirmAusNachSperre": "nie"}, "sperre 5 standard\nbildschirm 1 ungueltig\n"),
-            ({"bildschirmAusNachSperre": None}, "sperre 5 standard\nbildschirm 1 ungueltig\n"),
-            ({"bildschirmAusNachSperre": False}, "sperre 5 standard\nbildschirm 1 ungueltig\n"),
-            ("nicht json", "sperre 5 ungueltig\nbildschirm 1 ungueltig\n"),
+            (None, "sperre 5 standard\nbildschirm 1 standard\n" + rest),
+            ({"bildschirmAusNachSperre": 3}, "sperre 5 standard\nbildschirm 3 einstellung\n" + rest),
+            ({"sperreNachMinuten": 2, "bildschirmAusNachSperre": 0}, "sperre 2 einstellung\nbildschirm 1 begrenzt\n" + rest),
+            ({"bildschirmAusNachSperre": 25}, "sperre 5 standard\nbildschirm 10 begrenzt\n" + rest),
+            ({"bildschirmAusNachSperre": "4,4"}, "sperre 5 standard\nbildschirm 4 einstellung\n" + rest),
+            ({"bildschirmAusNachSperre": "nie"}, "sperre 5 standard\nbildschirm 1 ungueltig\n" + rest),
+            ({"bildschirmAusNachSperre": None}, "sperre 5 standard\nbildschirm 1 ungueltig\n" + rest),
+            ({"bildschirmAusNachSperre": False}, "sperre 5 standard\nbildschirm 1 ungueltig\n" + rest),
+            ("nicht json", "sperre 5 ungueltig\nbildschirm 1 ungueltig\nausschalten 60 ungueltig\n"
+                           "ausschaltenwenn akku ungueltig\ntaste sperren ungueltig\n"),
         ]
         for daten, erwartet in faelle:
             with self.subTest(daten=daten):
                 if daten is not None:
                     self.schreiben(daten)
                 self.assertEqual(self.aufruf("energie"), (0, erwartet, ""))
+
+    def test_energie_ausschalten_und_taste(self):
+        def werte(daten):
+            self.schreiben(daten)
+            code, aus, fehler = self.aufruf("energie")
+            self.assertEqual((code, fehler), (0, ""))
+            return {z.split()[0]: tuple(z.split()[1:]) for z in aus.splitlines()}
+
+        faelle = [
+            ({"ausschalten": "nie", "ausschaltenNachMinuten": 90, "einAusTaste": "menue"},
+             {"ausschalten": ("90", "einstellung"), "ausschaltenwenn": ("nie", "einstellung"),
+              "taste": ("menue", "einstellung")}),
+            ({"ausschalten": "immer", "ausschaltenNachMinuten": 10, "einAusTaste": "ausschalten"},
+             {"ausschalten": ("30", "begrenzt"), "ausschaltenwenn": ("immer", "einstellung"),
+              "taste": ("ausschalten", "einstellung")}),
+            ({"ausschaltenNachMinuten": 999}, {"ausschalten": ("240", "begrenzt")}),
+            ({"ausschaltenNachMinuten": "120"}, {"ausschalten": ("120", "einstellung")}),
+            ({"ausschaltenNachMinuten": "2 Std."}, {"ausschalten": ("60", "ungueltig")}),
+            ({"ausschalten": "Immer", "einAusTaste": "menü"},
+             {"ausschaltenwenn": ("akku", "ungueltig"), "taste": ("sperren", "ungueltig")}),
+            ({"ausschalten": True, "einAusTaste": ["sperren"]},
+             {"ausschaltenwenn": ("akku", "ungueltig"), "taste": ("sperren", "ungueltig")}),
+            ({"ausschalten": "nie; reboot", "einAusTaste": "sperren menue"},
+             {"ausschaltenwenn": ("akku", "ungueltig"), "taste": ("sperren", "ungueltig")}),
+        ]
+        for daten, erwartet in faelle:
+            with self.subTest(daten=daten):
+                ergebnis = werte(daten)
+                for name, wert in erwartet.items():
+                    self.assertEqual(ergebnis[name], wert, name)
 
     def test_minuten_und_unbekannter_befehl(self):
         self.schreiben({"sperreNachMinuten": 12})
@@ -279,10 +357,60 @@ class IdleTest(unittest.TestCase):
 
     def test_term_beendet_beide(self):
         start = self.starten()
+        self.assertTrue(self.warten(lambda: self.hemmer_kinder()), "kein Hemmer")
         self.prozess.send_signal(signal.SIGTERM)
         self.assertEqual(self.prozess.wait(10), 0)
         self.assertTrue(self.warten(lambda: any(e.get("signal") == "TERM" and e["pid"] == start["pid"]
                                                 for e in self.ereignisse())))
+        self.assertTrue(self.warten(lambda: not self.hemmer_kinder()), "Hemmer verwaist")
+
+    # --- Hemmer für die Ein/Aus-Taste
+
+    def test_hemmer_ausser_bei_ausschalten(self):
+        self.starten()
+        self.assertTrue(self.warten(lambda: self.hemmer()), "kein Hemmer bei «sperren»")
+        self.assertEqual(self.hemmer()[0]["argv"], self.erwarteter_hemmer())
+        self.assertTrue(self.warten(lambda: len(self.hemmer_kinder()) == 1))
+        # Auf «ausschalten»: Hemmer weg, ohne verwaiste Prozesse, swayidle läuft weiter (kein Neustart)
+        self.schreiben({"einAusTaste": "ausschalten"})
+        self.assertTrue(self.warten(lambda: not self.hemmer_kinder()), "Hemmer nach dem Wechsel noch da")
+        time.sleep(2.5)
+        self.assertEqual(len(self.hemmer()), 1)
+        self.assertEqual(len(self.starts()), 1)
+        # Zurück auf «menue»: wieder genau ein Hemmer
+        self.schreiben({"einAusTaste": "menue"})
+        self.assertTrue(self.warten(lambda: len(self.hemmer()) == 2 and len(self.hemmer_kinder()) == 1))
+        self.assertEqual(len(self.starts()), 1)
+        self.assertIn("Ein/Aus-Taste: menue (Hemmer handle-power-key)", self.ende_der_ausgabe())
+
+    def test_kein_hemmer_bei_ausschalten_von_anfang_an(self):
+        self.schreiben({"einAusTaste": "ausschalten"})
+        self.starten()
+        time.sleep(2.5)
+        self.assertEqual(self.hemmer(), [])
+        self.assertEqual(self.hemmer_kinder(), [])
+
+    def test_hemmer_scheitert_ohne_folgen(self):
+        # polkit lehnt ab: zenos-idle läuft weiter, meldet es einmal und versucht es später still erneut
+        with open(self.log + ".inhibit-exit", "w", encoding="utf-8") as f:
+            f.write("1\n")
+        self.starten()
+        time.sleep(3.5)
+        self.assertIsNone(self.prozess.poll())
+        self.assertEqual(len(self.hemmer()), 1)
+        self.assertEqual(len(self.starts()), 1)
+        self.prozess.send_signal(signal.SIGTERM)
+        self.assertEqual(self.prozess.wait(10), 0)
+        fehler = self.prozess.stderr.read()
+        self.assertEqual(fehler.count("Hemmer für die Ein/Aus-Taste beendet (Exit 1"), 1, fehler)
+
+    def test_hemmer_endet_mit_zenos_idle_auch_nach_sigkill(self):
+        self.starten()
+        self.assertTrue(self.warten(lambda: len(self.hemmer_kinder()) == 1))
+        # SIGKILL: keine Falle in zenos-idle räumt auf, tail --pid merkt das Ende trotzdem (spätestens nach 1 s)
+        os.kill(self.prozess.pid, signal.SIGKILL)
+        self.prozess.wait(5)
+        self.assertTrue(self.warten(lambda: not self.hemmer_kinder(), 5), "tail lebt nach dem Ende von zenos-idle weiter")
 
     def test_ohne_bildschirm_helfer_nur_die_sperre(self):
         os.unlink(self.bildschirm)
@@ -323,12 +451,18 @@ class IdleTest(unittest.TestCase):
         self.assertEqual(argv, ["-w", "before-sleep", "zen lock", "lock", "zen lock", "timeout", "300", "zen lock"])
         self.assertNotIn("a b", " ".join(argv))
 
+    def ende_der_ausgabe(self):
+        self.prozess.send_signal(signal.SIGTERM)
+        self.prozess.wait(10)
+        return self.prozess.stdout.read()
+
     # --- Abgleich
 
     def test_grenzen_wie_leitplanken_und_schema(self):
         with open(IDLE, encoding="utf-8") as f:
             skript = f.read()
-        werte = {k: int(v) for k, v in re.findall(r"\b((?:BILDSCHIRM_)?(?:STANDARD|MINIMUM|MAXIMUM))=(\d+)", skript)}
+        werte = {k: int(v) for k, v in
+                 re.findall(r"\b((?:BILDSCHIRM_|AUSSCHALTEN_)?(?:STANDARD|MINIMUM|MAXIMUM))=(\d+)", skript)}
         with open(LOGIK, encoding="utf-8") as f:
             logik = {k: int(v) for k, v in re.findall(r"^\s*(\w+): (\d+),?$", f.read(), re.M)}
         with open(SCHEMA, encoding="utf-8") as f:
@@ -342,6 +476,20 @@ class IdleTest(unittest.TestCase):
                          (werte["MINIMUM"], werte["MAXIMUM"]))
         self.assertEqual((schema["bildschirmAusNachSperre"]["minimum"], schema["bildschirmAusNachSperre"]["maximum"]),
                          (werte["BILDSCHIRM_MINIMUM"], werte["BILDSCHIRM_MAXIMUM"]))
+        self.assertEqual((werte["AUSSCHALTEN_MINIMUM"], werte["AUSSCHALTEN_MAXIMUM"], werte["AUSSCHALTEN_STANDARD"]),
+                         (logik["ausschaltenMinutenMin"], logik["ausschaltenMinutenMax"],
+                          logik["ausschaltenMinutenStandard"]))
+        self.assertEqual((schema["ausschaltenNachMinuten"]["minimum"], schema["ausschaltenNachMinuten"]["maximum"]),
+                         (werte["AUSSCHALTEN_MINIMUM"], werte["AUSSCHALTEN_MAXIMUM"]))
+        # Wörter: dieselben wie im Schema, das erste ist der Standard wie in energie.js
+        woerter = dict(re.findall(r'\b(AUSSCHALTEN_WENN|TASTE)="([a-z ]+)"', skript))
+        with open(ENERGIE, encoding="utf-8") as f:
+            js = f.read()
+        standard = dict(re.findall(r"^\s*(ausschalten|einAusTaste): \"(\w+)\"", js, re.M))
+        self.assertEqual(sorted(woerter["AUSSCHALTEN_WENN"].split()), sorted(schema["ausschalten"]["enum"]))
+        self.assertEqual(sorted(woerter["TASTE"].split()), sorted(schema["einAusTaste"]["enum"]))
+        self.assertEqual(woerter["AUSSCHALTEN_WENN"].split()[0], standard["ausschalten"])
+        self.assertEqual(woerter["TASTE"].split()[0], standard["einAusTaste"])
 
     @unittest.skipUnless(node_da(), "node fehlt")
     def test_auswertung_wie_energie_js(self):

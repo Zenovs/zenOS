@@ -34,6 +34,10 @@ import "../dienste/energie.js" as EnergieLogik
 // - Wecktaste: Die Taste, die einen dunklen Bildschirm weckt, landet nicht im Passwortfeld (sonst ein Fehlversuch
 //   bei PAM). Verworfen wird genau eine Taste (Logik in dienste/energie.js). Dunkel ist die Sperre durch den
 //   eigenen Aufruf von zenos-bildschirm oder dessen Meldung «sperre bildschirm aus», nie ungesperrt.
+// - Vorwarnung vor dem Ausschalten (dienste/Energie.qml): eine ruhige Zeile mit der Uhrzeit, ohne Sekunden. Die
+//   Taste, die sie abbricht, landet ebenfalls nicht im Passwortfeld.
+// - Ein/Aus-Taste (IPC «sperre taste», von zenos-energie taste): Bildschirm an, wenn er dunkel ist oder eben geweckt
+//   wurde, sonst sofort aus.
 Scope {
     id: root
 
@@ -70,6 +74,8 @@ Scope {
     // Bildschirm und Wecktaste: { dunkel, gewecktUm, offen } aus energie.js
     property var _weck: EnergieLogik.weckzustand()
     readonly property bool dunkel: root._weck.dunkel === true
+    // Uhrzeit des Ausschaltens während der Vorwarnung, z. B. «22:41» (leer: keine Vorwarnung)
+    readonly property string ausschaltenUm: Energie.vorwarnungLaeuft && Energie.ausschaltenUm > 0 ? Qt.formatDateTime(new Date(Energie.ausschaltenUm), "HH:mm") : ""
 
     // Der Bildschirm ist aus bzw. wieder an (Meldung von zenos-bildschirm oder eigener Aufruf über Energie)
     function bildschirmGemeldet(was: string): void {
@@ -90,6 +96,21 @@ Scope {
         if (root.dunkel)
             Energie.bildschirm("an");
         return verwerfen;
+    }
+
+    // Ein/Aus-Taste kurz gedrückt, während gesperrt ist: "an" oder "aus" (wie es danach sein soll), "offen" ohne Sperre
+    function taste(): string {
+        if (!lock.locked)
+            return "offen";
+        const was = EnergieLogik.tasteGesperrt(root._weck, Date.now());
+        if (was === "an") {
+            if (root.dunkel)
+                Energie.bildschirm("an");
+        } else {
+            // Wie Super+Shift+L: über zen energie aus (zenos-idle, eine Eingabe weckt wieder)
+            Energie.aus();
+        }
+        return was;
     }
 
     function sperren(): void {
@@ -293,6 +314,41 @@ Scope {
                             color: Theme.gedaempft
                             font.family: Theme.schriftText
                             font.pixelSize: 18
+                        }
+                    }
+
+                    // Vorwarnung vor dem Ausschalten: ruhig, mit Uhrzeit statt Sekunden. Ein Systemzustand, kein Inhalt.
+                    Rectangle {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        visible: root.ausschaltenUm.length > 0
+                        implicitWidth: vorwarnungZeile.implicitWidth + 38
+                        implicitHeight: vorwarnungZeile.implicitHeight + 22
+                        radius: Theme.radiusPille
+                        color: Theme.durchsichtig
+                        border.width: 1
+                        border.color: Theme.linie2
+
+                        Row {
+                            id: vorwarnungZeile
+
+                            anchors.centerIn: parent
+                            spacing: 10
+
+                            Symbol {
+                                anchors.verticalCenter: parent.verticalCenter
+                                name: "ausschalten"
+                                groesse: 14
+                                strichbreite: 1.8
+                                farbe: Theme.text2
+                            }
+
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "zenOS schaltet um " + root.ausschaltenUm + " aus · Eine Taste bricht ab"
+                                color: Theme.text2
+                                font.family: Theme.schriftText
+                                font.pixelSize: Theme.groesseText
+                            }
                         }
                     }
 
@@ -621,6 +677,15 @@ Scope {
         function onBildschirmGeschaltet(was: string): void {
             root.bildschirmGemeldet(was);
         }
+
+        function onVorwarnungGestartet(): void {
+            if (lock.locked)
+                root._weck = EnergieLogik.vorwarnungGezeigt(root._weck);
+        }
+
+        function onVorwarnungBeendet(grund: string): void {
+            root._weck = EnergieLogik.vorwarnungVorbei(root._weck, Date.now());
+        }
     }
 
     Connections {
@@ -668,6 +733,11 @@ Scope {
         function bildschirm(was: string): string {
             root.bildschirmGemeldet(was);
             return root.dunkel ? "aus" : "an";
+        }
+
+        // Ein/Aus-Taste (zenos-energie taste): "an", "aus" oder "offen" (nicht gesperrt, nichts getan)
+        function taste(): string {
+            return root.taste();
         }
     }
 

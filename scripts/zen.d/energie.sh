@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# hilfe: energie [status|aus] – Bildschirm aus: Zeiten zeigen oder sofort sperren und ausschalten
-# «status» (Standard) zeigt ohne sudo, was ohne Eingabe geschieht: wann gesperrt wird und wann der Bildschirm ausgeht
-# (aus ~/.config/zenos/einstellungen.json, begrenzt durch die Leitplanken), dazu den Bildschirm in der laufenden
-# Sitzung und ob der Kernel Bereitschaft anbietet.
+# hilfe: energie [status|aus] – Energie: Zeiten zeigen oder sofort sperren und den Bildschirm ausschalten
+# «status» (Standard) zeigt ohne sudo, was ohne Eingabe geschieht: wann gesperrt wird, wann der Bildschirm ausgeht und
+# ob zenOS nach langer Sperre ausschaltet (aus ~/.config/zenos/einstellungen.json, begrenzt durch die Leitplanken),
+# was das Ausschalten gerade aufhält (SSH, tmux, Updates …), die Ein/Aus-Taste, den Bildschirm in der laufenden Sitzung
+# und ob der Kernel Bereitschaft anbietet.
 # «aus» sperrt sofort (zen lock) und schaltet danach den Bildschirm aus, auch per SSH. Eine Eingabe am Gerät weckt
 # ihn wieder, die Sperre bleibt. Dasselbe wie Super+Shift+L und «Bildschirm aus» im System-Menü.
 # Leitplanke: Der Bildschirm geht nie ungesperrt aus. Schlägt die Sperre fehl, bleibt er an.
@@ -44,12 +45,18 @@ _energie_status() {
   _energie_umgebung
   local idle=$ZEN_SKRIPTE/bin/zenos-idle name wert art
   local sperre=5 sperre_art=standard bildschirm=1 bildschirm_art=standard
+  local aus_min=60 aus_min_art=standard aus_wenn=akku aus_wenn_art=standard taste=sperren taste_art=standard
   if [[ -x "$idle" ]]; then
     while read -r name wert art; do
+      case "$name:$wert" in
+        ausschaltenwenn:nie | ausschaltenwenn:akku | ausschaltenwenn:immer) aus_wenn=$wert aus_wenn_art=$art ;;
+        taste:sperren | taste:menue | taste:ausschalten) taste=$wert taste_art=$art ;;
+      esac
       [[ "$wert" =~ ^[0-9]+$ ]] || continue
       case "$name" in
         sperre) sperre=$wert sperre_art=$art ;;
         bildschirm) bildschirm=$wert bildschirm_art=$art ;;
+        ausschalten) aus_min=$wert aus_min_art=$art ;;
       esac
     done < <("$idle" energie 2>/dev/null || true)
   else
@@ -62,6 +69,20 @@ _energie_status() {
   printf 'Bildschirm aus     %s Min. nach der Sperre, nie ungesperrt%s\n' \
     "$bildschirm" "$(_energie_art_text "$bildschirm_art" 1 10)"
   printf 'Video              Ein Idle-Hemmer hält die Sperre höchstens %s Min. ohne Eingabe auf\n' "$_ENERGIE_HEMMER_MINUTEN"
+  # Zwei Schlüssel (ausschalten, ausschaltenNachMinuten): ein Hinweis für beide
+  local aus_art=einstellung
+  if [[ "$aus_wenn_art" == ungueltig || "$aus_min_art" == ungueltig ]]; then
+    aus_art=ungueltig
+  elif [[ "$aus_min_art" == begrenzt ]]; then
+    aus_art=begrenzt
+  elif [[ "$aus_wenn_art" == standard && ( "$aus_min_art" == standard || "$aus_wenn" == nie ) ]]; then
+    aus_art=standard
+  fi
+  printf 'Ausschalten        %s%s\n' "$(_energie_aus_text "$aus_wenn" "$aus_min")" "$(_energie_art_text "$aus_art" 30 240)"
+  if [[ "$aus_wenn" != nie ]]; then
+    printf 'Zurzeit            %s\n' "$(_energie_zurzeit)"
+  fi
+  printf 'Ein/Aus-Taste      %s%s\n' "$(_energie_taste_text "$taste")" "$(_energie_art_text "$taste_art" 0 0)"
   printf 'Bildschirm jetzt   %s\n' "$(_energie_bildschirm_jetzt)"
   printf 'Bereitschaft       %s\n' "$(_energie_bereitschaft)"
   printf '\nSofort sperren und Bildschirm aus: zen energie aus oder Super+Shift+L\n'
@@ -72,6 +93,37 @@ _energie_art_text() { # ART MIN MAX
     begrenzt) printf ' · Wert in einstellungen.json ausserhalb von %s–%s, begrenzt' "$2" "$3" ;;
     ungueltig) printf ' · Wert in einstellungen.json ungültig, es gilt der Standard' ;;
     standard) printf ' · Standard' ;;
+  esac
+}
+
+_energie_aus_text() { # WENN MINUTEN
+  case "$1" in
+    nie) printf 'nie' ;;
+    immer) printf 'nach %s Min. gesperrt, mit 60 s Vorwarnung' "$2" ;;
+    *) printf 'nach %s Min. gesperrt im Akkubetrieb, mit 60 s Vorwarnung' "$2" ;;
+  esac
+}
+
+_energie_taste_text() { # TASTE
+  case "$1" in
+    menue) printf 'System-Menü (gesperrt: Bildschirm an oder aus)' ;;
+    ausschalten) printf 'ausschalten (logind)' ;;
+    *) printf 'sperren und Bildschirm aus (gesperrt: Bildschirm an oder aus)' ;;
+  esac
+}
+
+# Was das Ausschalten gerade aufhält (zenos-energie status, nur lesen)
+_energie_zurzeit() {
+  local helfer=$ZEN_SKRIPTE/bin/zenos-energie antwort
+  if [[ ! -x "$helfer" ]]; then
+    printf 'unbekannt (zenos-energie fehlt)'
+    return 0
+  fi
+  antwort=$(timeout 20 "$helfer" status 2>/dev/null | tail -n 1) || true
+  case "$antwort" in
+    ja) printf 'möglich, nichts im Weg' ;;
+    "nein: "*) printf 'nicht möglich: %s' "${antwort#nein: }" ;;
+    *) printf 'unbekannt (zenos-energie status)' ;;
   esac
 }
 

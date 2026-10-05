@@ -160,6 +160,10 @@ Bereiche in Prozent der nutzbaren Bildschirmfläche (ohne Leiste).
 | `sperreNachMinuten` | 1–15 | 5 | Automatische Sperre; Werte ausserhalb begrenzt der Code, abschalten geht nicht |
 | `mitteilungenStandard` | wie `mitteilungen` im Zustand | `gebuendelt-60` | Bündelung ohne aktiven Zustand |
 | `scrollTempo` | Zahl 0.25–3 | `1` | Scroll-Tempo für Touchpad und Mausrad (Faktor, siehe unten) |
+| `bildschirmAusNachSperre` | 1–10 | `1` | Minuten nach der Sperre, bis der Bildschirm ausgeht (nie ungesperrt, ein «nie» gibt es nicht) |
+| `ausschalten` | `nie` · `akku` · `immer` | `akku` | Ausschalten nach langer Sperre: `akku` nur sicher im Akkubetrieb; immer mit 60 s Vorwarnung, nie während SSH, tmux oder Updates (`docs/module/m7.md`) |
+| `ausschaltenNachMinuten` | 30–240 | `60` | Minuten gesperrt ohne Eingabe bis zur Vorwarnung; Werte ausserhalb begrenzt der Code |
+| `einAusTaste` | `sperren` · `menue` · `ausschalten` | `sperren` | Kurzer Druck auf die Ein/Aus-Taste in der Sitzung; gesperrt schaltet er den Bildschirm an oder aus, Halten schaltet immer hart aus |
 
 Weitere Schlüssel sind erlaubt und bleiben beim Speichern erhalten.
 

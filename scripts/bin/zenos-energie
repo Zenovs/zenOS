@@ -1,0 +1,423 @@
+#!/usr/bin/env bash
+# zenos-energie – Ausschalten nach langer Sperre und die Ein/Aus-Taste (als Benutzer in der Sitzung).
+#
+#   zenos-energie darf-ausschalten   «ja» (Exit 0) oder «nein: <Grund>» (Exit 1), mit Eintrag im Journal. Ändert
+#                                    nichts. Prüft die Einstellung (ausschalten: nie | akku | immer, bei «akku» den
+#                                    Akkubetrieb) und die Wächter. Die Sperre fragt das vor der Vorwarnung.
+#   zenos-energie status             dasselbe ohne Journal (für die Seite «Energie» und «zen energie»)
+#   zenos-energie ausschalten        nach der Vorwarnung: prüft Vorwarnung, Sperre, Einstellung und Wächter erneut
+#                                    und schaltet dann aus (systemctl poweroff --check-inhibitors=yes)
+#   zenos-energie taste              Ein/Aus-Taste kurz gedrückt (labwc: XF86PowerOff, auch gesperrt)
+#   zenos-energie meldung            nach einem automatischen Aus: Titel und Text der Mitteilung (je eine Zeile),
+#                                    einmal, beim ersten Aufruf nach dem nächsten Start
+#
+# Leitplanken (Code, nicht abschaltbar):
+# - Ausgeschaltet wird nur nach einer sichtbaren Vorwarnung: Den Marker $XDG_RUNTIME_DIR/zenos/vorwarnung legt die
+#   Sperre zu Beginn der Vorwarnung an. Er muss 60 s bis 5 Min. alt sein und gilt nur einmal.
+# - Nur gesperrt, nur wenn die Einstellung es erlaubt, und nie während einer SSH-Sitzung oder -Verbindung, eines
+#   tmux- oder screen-Servers, einer Installation (install.sh, zen update, zen rollback), apt oder dpkg, automatischer
+#   Updates oder wenn ein Programm das Ausschalten blockiert (logind-Hemmer «shutdown», Modus block). Was sich nicht
+#   prüfen lässt, gilt als blockiert.
+# - Nur «systemctl poweroff --check-inhibitors=yes»: nie neu starten, nie Hemmer übergehen (kein -i, kein --force).
+# - Prozesse nur mit Argumentlisten, keine Shell. Jeder Entscheid steht mit Grund im Journal (logger -t zenos-energie).
+# Exit 0 ja bzw. erledigt · 1 nein bzw. blockiert (Grund auf stdout) · 2 falscher Aufruf
+
+set -uo pipefail
+
+selbst=$(readlink -f -- "${BASH_SOURCE[0]}")
+bin=$(dirname -- "$selbst")
+zen=$(dirname -- "$bin")/zen
+idle=$bin/zenos-idle
+ipc=$bin/zenos-ipc
+bildschirm=$bin/zenos-bildschirm
+
+# Gespiegelt aus shell/modi/zustandslogik.js (vorwarnungSekunden) und shell/dienste/energie.js (VORWARNUNG_MAX_MS),
+# test/einheiten/energie.test.py gleicht ab
+readonly VORWARNUNG_MIN=60 VORWARNUNG_MAX=300
+
+# Nur für Tests: legt die festen Pfade unter /run unter diesen Ordner (wie ZENOS_ARGON_TESTWURZEL)
+testwurzel=${ZENOS_ENERGIE_TESTWURZEL:-}
+testwurzel=${testwurzel%/}
+geraet_datei=$testwurzel/run/zenos/geraet.json
+install_sperre=$testwurzel/run/lock/zenos-install.lock
+
+laufzeit=${XDG_RUNTIME_DIR:-/run/user/$EUID}
+vorwarnung=$laufzeit/zenos/vorwarnung
+gesperrt_marker=$laufzeit/zenos/gesperrt
+zustand=$HOME/.local/state/zenos/energie.json
+
+meldung() { printf 'zenos-energie: %s\n' "$*" >&2; }
+journal() { logger -t zenos-energie -- "$*" 2>/dev/null || true; }
+
+# --- Einstellungen ---------------------------------------------------------------
+
+# Setzt wenn (nie|akku|immer), minuten und taste aus «zenos-idle energie» (dort gelesen, geprüft und begrenzt, genau
+# wie in der Oberfläche). 1, wenn sich nichts lesen lässt (dann gelten die Standards).
+werte_lesen() {
+  local zeilen name wert
+  wenn=akku minuten=60 taste=sperren
+  [[ -x "$idle" ]] || return 1
+  zeilen=$("$idle" energie 2>/dev/null) || return 1
+  while read -r name wert _; do
+    case "$name:$wert" in
+      ausschaltenwenn:nie | ausschaltenwenn:akku | ausschaltenwenn:immer) wenn=$wert ;;
+      taste:sperren | taste:menue | taste:ausschalten) taste=$wert ;;
+      ausschalten:*) if [[ "$wert" =~ ^[0-9]{1,3}$ ]]; then minuten=$wert; fi ;;
+    esac
+  done <<< "$zeilen"
+}
+
+# Sicher im Akkubetrieb? Wie shell/dienste/geraet.js und energie.js: /run/zenos/geraet.json (zenos-argon) höchstens
+# 60 s alt, Akku vorhanden, Zustand «ok» mit gültigem Ladestand und sicher «lädt nicht». Alles andere gilt als Netzteil.
+im_akkubetrieb() {
+  python3 - "$geraet_datei" <<'PY'
+import datetime
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        daten = json.load(f)
+    zeit = datetime.datetime.fromisoformat(daten["zeit"])
+    alter = (datetime.datetime.now(datetime.timezone.utc) - zeit).total_seconds()
+    akku = daten["akku"]
+    prozent = akku.get("prozent")
+    sicher = (daten.get("version") == 1 and zeit.tzinfo is not None and abs(alter) <= 60
+              and akku.get("vorhanden") is True and akku.get("zustand") == "ok"
+              and isinstance(prozent, int) and not isinstance(prozent, bool) and 0 <= prozent <= 100
+              and akku.get("laedt") is False)
+except (OSError, ValueError, TypeError, KeyError, AttributeError):
+    sicher = False
+sys.exit(0 if sicher else 1)
+PY
+}
+
+pruefe_einstellung() {
+  if ! werte_lesen; then
+    grund="Einstellungen nicht lesbar (zenos-idle energie)"
+    return 1
+  fi
+  case "$wenn" in
+    immer) return 0 ;;
+    akku)
+      im_akkubetrieb && return 0
+      grund="nicht im Akkubetrieb (Netzteil oder Akku unbekannt)"
+      ;;
+    *) grund="Ausschalten ist auf «Nie» gestellt" ;;
+  esac
+  return 1
+}
+
+# --- Wächter -----------------------------------------------------------------------
+# Jeder Wächter: 0 frei, 1 blockiert (Grund in $grund). Was sich nicht prüfen lässt, gilt als blockiert.
+
+# pgrep ARGUMENTE…: 0 läuft, 1 läuft nicht, 2 nicht prüfbar
+laeuft() {
+  local rc=0
+  pgrep "$@" >/dev/null 2>&1 || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    1) return 1 ;;
+    *) return 2 ;;
+  esac
+}
+
+# laeuft_nicht GRUND ARGUMENTE…: 0, wenn kein solcher Prozess läuft
+laeuft_nicht() {
+  local text=$1 rc=0
+  shift
+  laeuft "$@" || rc=$?
+  case "$rc" in
+    1) return 0 ;;
+    0) grund=$text ;;
+    *) grund="Prozesse nicht prüfbar (pgrep)" ;;
+  esac
+  return 1
+}
+
+# Fern-Sitzungen (logind: Remote=yes, z. B. SSH) und offene SSH-Verbindungen (auch ohne Sitzung)
+pruefe_sitzungen() {
+  local liste id remote
+  if ! liste=$(loginctl list-sessions --no-legend --no-pager 2>/dev/null); then
+    grund="Sitzungen nicht prüfbar (loginctl)"
+    return 1
+  fi
+  while read -r id _; do
+    [[ -n "$id" ]] || continue
+    if [[ ! "$id" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || ! remote=$(loginctl show-session "$id" -p Remote --value 2>/dev/null); then
+      grund="Sitzungen nicht prüfbar (loginctl)"
+      return 1
+    fi
+    if [[ "$remote" == yes ]]; then
+      grund="SSH-Sitzung offen"
+      return 1
+    fi
+  done <<< "$liste"
+  laeuft_nicht "SSH-Verbindung offen" -x sshd-session
+}
+
+# tmux- und screen-Server (z. B. eine Claude-Code-Sitzung) laufen weiter, wenn niemand hinschaut
+pruefe_terminals() {
+  laeuft_nicht "tmux läuft" '^tmux' && laeuft_nicht "screen läuft" -i -x screen
+}
+
+# install.sh hält /run/lock/zenos-install.lock exklusiv. Nur lesend öffnen (ohne anzulegen: eine fremde Datei in
+# /run/lock lehnte fs.protected_regular sonst ab) und kurz geteilt sperren.
+pruefe_installation() {
+  local fd
+  if [[ -e "$install_sperre" ]]; then
+    if ! { exec {fd}<"$install_sperre"; } 2>/dev/null; then
+      grund="Installation nicht prüfbar (Sperrdatei nicht lesbar)"
+      return 1
+    fi
+    if ! flock -n -s "$fd"; then
+      exec {fd}<&-
+      grund="Installation läuft (install.sh)"
+      return 1
+    fi
+    exec {fd}<&-
+  fi
+  # zen update holt zuerst den neuen Stand (git), bevor install.sh die Sperre nimmt
+  laeuft_nicht "Update läuft (zen update)" -f '(^|[ /])zen (update|rollback)( |$)'
+}
+
+# Paketverwaltung und automatische Updates. unattended-upgrade-shutdown wartet ständig auf das Ende des Systems
+# und zählt nicht (nur unattended-upgrade selbst).
+pruefe_pakete() {
+  local zeile
+  laeuft_nicht "Paketverwaltung läuft (apt, dpkg)" -x 'apt|apt-get|aptitude|dpkg' || return 1
+  laeuft_nicht "Automatische Updates laufen" -f 'unattended-upgrade( |$)' || return 1
+  while read -r zeile; do
+    case "$zeile" in
+      active | activating | deactivating | reloading | refreshing)
+        grund="Automatische Updates laufen (apt-daily)"
+        return 1
+        ;;
+    esac
+  done < <(systemctl is-active apt-daily.service apt-daily-upgrade.service 2>/dev/null)
+  return 0
+}
+
+# Ein Programm blockiert das Ausschalten (logind-Hemmer «shutdown», Modus block). Hemmer im Modus delay (z. B.
+# unattended-upgrade-shutdown) verzögern nur und zählen nicht.
+pruefe_hemmer() {
+  local ausgabe wer
+  if ! ausgabe=$(timeout 10 busctl --system --json=short call org.freedesktop.login1 /org/freedesktop/login1 \
+    org.freedesktop.login1.Manager ListInhibitors 2>/dev/null); then
+    grund="Hemmer nicht prüfbar (logind)"
+    return 1
+  fi
+  if ! wer=$(python3 -c '
+import json, sys
+daten = json.loads(sys.argv[1])
+for eintrag in daten["data"][0]:
+    was, wer, _, modus = eintrag[0], eintrag[1], eintrag[2], eintrag[3]
+    if modus == "block" and "shutdown" in str(was).split(":"):
+        name = "".join(z for z in str(wer) if z.isprintable())[:40].strip()
+        print(name or "Ein Programm")
+        break
+' "$ausgabe" 2>/dev/null); then
+    grund="Hemmer nicht prüfbar (logind)"
+    return 1
+  fi
+  if [[ -n "$wer" ]]; then
+    grund="«$wer» verhindert das Ausschalten"
+    return 1
+  fi
+}
+
+# Einstellung und alle Wächter, der erste Grund gilt
+pruefe_alles() {
+  grund=""
+  pruefe_einstellung && pruefe_sitzungen && pruefe_terminals && pruefe_installation && pruefe_pakete && pruefe_hemmer
+}
+
+# --- Ausschalten ---------------------------------------------------------------------
+
+# Vorwarnung: Marker vorhanden, eigene Datei, 60 s bis 5 Min. alt. Er gilt einmal (wird hier immer gelöscht).
+pruefe_vorwarnung() {
+  local seit jetzt alter
+  if [[ -L "$vorwarnung" || ! -f "$vorwarnung" || ! -O "$vorwarnung" ]]; then
+    rm -f -- "$vorwarnung" 2>/dev/null
+    grund="keine Vorwarnung"
+    return 1
+  fi
+  seit=$(stat -c %Y -- "$vorwarnung" 2>/dev/null) || seit=""
+  rm -f -- "$vorwarnung" 2>/dev/null
+  jetzt=$(date +%s)
+  if [[ ! "$seit" =~ ^[0-9]+$ ]]; then
+    grund="Vorwarnung nicht lesbar"
+    return 1
+  fi
+  alter=$((jetzt - seit))
+  if (( alter < VORWARNUNG_MIN )); then
+    grund="Vorwarnung erst ${alter} s alt (mindestens ${VORWARNUNG_MIN} s)"
+    return 1
+  fi
+  if (( alter > VORWARNUNG_MAX )); then
+    grund="Vorwarnung zu alt (${alter} s)"
+    return 1
+  fi
+}
+
+# ~/.local/state/zenos/energie.json: wann und warum zenOS ausgeschaltet hat (für die Mitteilung danach)
+zustand_schreiben() {
+  python3 - "$zustand" "$minuten" "$wenn" <<'PY'
+import datetime
+import json
+import os
+import sys
+
+pfad, minuten, wenn = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+with open("/proc/sys/kernel/random/boot_id", encoding="utf-8") as f:
+    boot = f.read().strip()
+daten = {"version": 1, "ausgeschaltet": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+         "boot": boot, "minuten": minuten, "wenn": wenn}
+os.makedirs(os.path.dirname(pfad), mode=0o700, exist_ok=True)
+neu = pfad + ".neu"
+with open(neu, "w", encoding="utf-8") as f:
+    json.dump(daten, f)
+    f.write("\n")
+os.replace(neu, pfad)
+PY
+}
+
+nein() {
+  journal "Nicht ausgeschaltet: $grund"
+  printf 'nein: %s\n' "$grund"
+  return 1
+}
+
+befehl_ausschalten() {
+  local ausgabe rc=0
+  grund=""
+  pruefe_vorwarnung || { nein; return 1; }
+  if [[ ! -e "$gesperrt_marker" ]]; then
+    grund="nicht gesperrt"
+    nein
+    return 1
+  fi
+  pruefe_alles || { nein; return 1; }
+  zustand_schreiben 2>/dev/null || meldung "$zustand nicht geschrieben (keine Mitteilung beim nächsten Start)"
+  journal "Schalte aus: $minuten Min. gesperrt ohne Eingabe (Einstellung «$wenn»), nach 60 s Vorwarnung"
+  # Nur mit Hemmern im Blick, ohne Passwortabfrage (polkit: power-off ist in der aktiven Sitzung erlaubt)
+  ausgabe=$(systemctl --no-ask-password poweroff --check-inhibitors=yes 2>&1) || rc=$?
+  if (( rc != 0 )); then
+    rm -f -- "$zustand" 2>/dev/null
+    grund="systemctl poweroff abgelehnt (Exit $rc): ${ausgabe//$'\n'/ }"
+    nein
+    return 1
+  fi
+  printf 'ausgeschaltet\n'
+}
+
+befehl_darf_ausschalten() {
+  if pruefe_alles; then
+    journal "Ausschalten erlaubt: Vorwarnung beginnt"
+    printf 'ja\n'
+    return 0
+  fi
+  journal "Ausschalten blockiert: $grund"
+  printf 'nein: %s\n' "$grund"
+  return 1
+}
+
+befehl_status() {
+  if pruefe_alles; then
+    printf 'ja\n'
+    return 0
+  fi
+  printf 'nein: %s\n' "$grund"
+  return 1
+}
+
+# --- Ein/Aus-Taste -------------------------------------------------------------------
+# Gesperrt: Bildschirm an oder aus (die Sperre weiss, ob er dunkel ist oder eben geweckt wurde). Sonst bei «sperren»
+# sperren und Bildschirm aus (wie Super+Shift+L), bei «menue» das System-Menü. Bei «ausschalten» nichts: zenos-idle
+# hält dann keinen Hemmer, und logind schaltet aus.
+
+befehl_taste() {
+  local antwort=""
+  werte_lesen || true
+  if [[ "$taste" == ausschalten ]]; then
+    journal "Ein/Aus-Taste: ausschalten übernimmt logind"
+    return 0
+  fi
+  if [[ -e "$gesperrt_marker" ]]; then
+    # Die letzte Zeile ist die Antwort (davor kann Quickshell Hinweise ausgeben, z. B. zur Locale)
+    antwort=$(timeout 5 "$ipc" sperre taste 2>/dev/null | tail -n 1) || antwort=""
+    case "$antwort" in
+      an | aus) return 0 ;;
+      offen) ;;
+      *)
+        # Ohne Oberfläche (Notfall-Sperre): nach dem Zustand der Bildschirme
+        if [[ "$(timeout 5 "$bildschirm" status 2>/dev/null)" == aus ]]; then
+          "$bildschirm" an
+        else
+          "$zen" energie aus
+        fi
+        return
+        ;;
+    esac
+  fi
+  if [[ "$taste" == menue ]] && timeout 5 "$ipc" leiste menue system >/dev/null 2>&1; then
+    return 0
+  fi
+  "$zen" energie aus
+}
+
+# --- Mitteilung nach einem automatischen Aus ---------------------------------------------
+# Gibt Titel und Text aus, wenn zenOS vor dem jetzigen Start selbst ausgeschaltet hat, und löscht die Datei. Im selben
+# Start (das Ausschalten läuft gerade) bleibt sie liegen. Eine ungültige Datei wird ohne Ausgabe gelöscht.
+befehl_meldung() {
+  [[ -f "$zustand" ]] || return 0
+  python3 - "$zustand" <<'PY'
+import datetime
+import json
+import os
+import sys
+
+pfad = sys.argv[1]
+with open("/proc/sys/kernel/random/boot_id", encoding="utf-8") as f:
+    jetzt_boot = f.read().strip()
+try:
+    with open(pfad, encoding="utf-8") as f:
+        daten = json.load(f)
+    zeit = datetime.datetime.fromisoformat(daten["ausgeschaltet"]).astimezone()
+    boot, minuten, wenn = daten["boot"], daten["minuten"], daten["wenn"]
+    gueltig = (daten.get("version") == 1 and isinstance(boot, str) and isinstance(minuten, int)
+               and not isinstance(minuten, bool) and 30 <= minuten <= 240 and wenn in ("akku", "immer"))
+except (OSError, ValueError, TypeError, KeyError, AttributeError):
+    gueltig = False
+if gueltig and boot == jetzt_boot:
+    sys.exit(0)
+os.remove(pfad)
+if gueltig:
+    print("zenOS hat ausgeschaltet")
+    print(f"Am {zeit.day}.{zeit.month}. um {zeit:%H:%M}, nach {minuten} Min. gesperrt"
+          + (" im Akkubetrieb." if wenn == "akku" else "."))
+PY
+}
+
+# --- Aufruf ----------------------------------------------------------------------------
+
+if (( $# != 1 )); then
+  meldung "Aufruf: zenos-energie darf-ausschalten|status|ausschalten|taste|meldung"
+  exit 2
+fi
+case "$1" in
+  darf-ausschalten | status | ausschalten | taste | meldung) ;;
+  -h | --hilfe | --help) sed -n '2,23p' "$selbst" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  *) meldung "unbekannter Befehl «$1» (erlaubt: darf-ausschalten, status, ausschalten, taste, meldung)"; exit 2 ;;
+esac
+if (( EUID == 0 )); then
+  meldung "läuft als normaler Benutzer in der Sitzung, nicht als root"
+  exit 2
+fi
+case "$1" in
+  darf-ausschalten) befehl_darf_ausschalten ;;
+  status) befehl_status ;;
+  ausschalten) befehl_ausschalten ;;
+  taste) befehl_taste ;;
+  meldung) befehl_meldung ;;
+esac

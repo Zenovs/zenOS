@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# zenos-idle – automatische Sperre bei Inaktivität und vor dem Standby, danach Bildschirm aus (swayidle).
+# zenos-idle – automatische Sperre bei Inaktivität und vor dem Standby, danach Bildschirm aus (swayidle), dazu der
+# Hemmer für die Ein/Aus-Taste.
 #
 #   zenos-idle            läuft als Benutzerdienst zenos-idle.service: startet swayidle und startet es neu,
-#                         sobald sich die wirksamen Werte in ~/.config/zenos/einstellungen.json ändern
+#                         sobald sich die wirksamen Zeiten in ~/.config/zenos/einstellungen.json ändern
 #                         (geprüft alle 10 s, gelesen nur bei geänderter Datei). SIGUSR1 löst sofort aus:
 #                         sperren, dann Bildschirm aus; die nächste Eingabe schaltet ihn wieder an.
 #   zenos-idle minuten    wirksame Sperrzeit in Minuten
 #   zenos-idle pruefen    «<minuten> <standard|einstellung|begrenzt|ungueltig>» (für zen doctor, Format fest)
-#   zenos-idle energie    wirksame Werte, je Zeile «<name> <minuten> <art>» für sperre und bildschirm
+#   zenos-idle energie    wirksame Werte, je Zeile «<name> <wert> <art>»: sperre, bildschirm und ausschalten
+#                         (Minuten), ausschaltenwenn (nie|akku|immer) und taste (sperren|menue|ausschalten)
 #
 # Leitplanken (Code, gespiegelt aus shell/modi/zustandslogik.js, test/einheiten/idle.test.py gleicht ab):
 # Die Sperrzeit liegt immer zwischen 1 und 15 Minuten (Standard 5), die automatische Sperre lässt sich nicht
@@ -15,13 +17,24 @@
 # swayidle -w wartet, bis gesperrt ist) und auf Anforderung von logind (lock, z. B. «loginctl lock-session»).
 # Der Bildschirm geht 1–10 Minuten nach der Sperre aus (bildschirmAusNachSperre, Standard 1), nie davor:
 # zenos-bildschirm sperrt immer zuerst (dunkel heisst gesperrt). Jede Eingabe schaltet ihn wieder an (resume),
-# die Sperre bleibt. Nichts hier verzögert die Sperre: Neu gestartet wird nur bei geänderten Werten oder,
-# nach einem Update, erst gesperrt.
+# die Sperre bleibt. Nichts hier verzögert die Sperre: Neu gestartet wird nur bei geänderten Zeiten oder,
+# nach einem Update, erst gesperrt. Die übrigen Energie-Werte (Ausschalten, Ein/Aus-Taste) starten swayidle nie neu.
+#
+# Ein/Aus-Taste (einAusTaste): Ausser bei «ausschalten» hält zenos-idle einen logind-Hemmer «handle-power-key»
+# (systemd-inhibit … tail --pid=<zenos-idle>). Ein kurzer Druck schaltet dann nicht sofort aus, labwc gibt die Taste
+# an «zenos-energie taste» (rc.xml, XF86PowerOff). Der Hemmer gilt nur, solange zenos-idle läuft (tail endet mit
+# ihm, systemd-inhibit mit tail), und nur in der aktiven Sitzung (polkit: inhibit-handle-power-key). Am
+# Login-Bildschirm und an der Konsole gilt weiter logind: kurzer Druck schaltet aus. Halten schaltet immer hart aus.
 
 set -euo pipefail
 
 readonly STANDARD=5 MINIMUM=1 MAXIMUM=15
 readonly BILDSCHIRM_STANDARD=1 BILDSCHIRM_MINIMUM=1 BILDSCHIRM_MAXIMUM=10
+readonly AUSSCHALTEN_STANDARD=60 AUSSCHALTEN_MINIMUM=30 AUSSCHALTEN_MAXIMUM=240
+# Feste Wörter, das erste ist jeweils der Standard (wie shell/dienste/energie.js)
+readonly AUSSCHALTEN_WENN="akku nie immer" TASTE="sperren menue ausschalten"
+# Endet der Hemmer für die Ein/Aus-Taste unerwartet (z. B. polkit lehnt ab), so lange bis zum nächsten Versuch
+readonly HEMMER_PAUSE=60
 # Prüfintervall in Sekunden; ZENOS_IDLE_INTERVALL nur für die Einheitentests (1–60)
 PRUEFINTERVALL=10
 if [[ "${ZENOS_IDLE_INTERVALL:-}" =~ ^[1-9][0-9]?$ ]] && (( ZENOS_IDLE_INTERVALL <= 60 )); then
@@ -38,13 +51,14 @@ laufzeit=${XDG_RUNTIME_DIR:-/run/user/$EUID}
 
 meldung() { printf 'zenos-idle: %s\n' "$*" >&2; }
 
-# Gibt je Wert eine Zeile «<name> <minuten> <art>» aus (sperre, bildschirm). Fehlt die Datei oder der
-# Schlüssel: Standard. Zahlen werden gerundet und begrenzt, alles andere ergibt den Standard («ungueltig»).
-# sperre nimmt wie bisher alles, was float() als Zahl liest (auch mit Komma); bildschirm nur Ziffern mit Punkt
-# oder Komma, genau wie shell/dienste/energie.js.
+# Gibt je Wert eine Zeile «<name> <wert> <art>» aus (sperre, bildschirm, ausschalten, ausschaltenwenn, taste).
+# Fehlt die Datei oder der Schlüssel: Standard. Zahlen werden gerundet und begrenzt, Wörter müssen genau passen,
+# alles andere ergibt den Standard («ungueltig»). sperre nimmt wie bisher alles, was float() als Zahl liest (auch
+# mit Komma); bildschirm und ausschalten nur Ziffern mit Punkt oder Komma, genau wie shell/dienste/energie.js.
 auswerten() {
   python3 - "$einstellungen" "$STANDARD" "$MINIMUM" "$MAXIMUM" \
-    "$BILDSCHIRM_STANDARD" "$BILDSCHIRM_MINIMUM" "$BILDSCHIRM_MAXIMUM" <<'PY'
+    "$BILDSCHIRM_STANDARD" "$BILDSCHIRM_MINIMUM" "$BILDSCHIRM_MAXIMUM" \
+    "$AUSSCHALTEN_STANDARD" "$AUSSCHALTEN_MINIMUM" "$AUSSCHALTEN_MAXIMUM" "$AUSSCHALTEN_WENN" "$TASTE" <<'PY'
 import json
 import math
 import re
@@ -54,6 +68,12 @@ datei = sys.argv[1]
 WERTE = [
     ("sperre", "sperreNachMinuten", *map(int, sys.argv[2:5]), False),
     ("bildschirm", "bildschirmAusNachSperre", *map(int, sys.argv[5:8]), True),
+    ("ausschalten", "ausschaltenNachMinuten", *map(int, sys.argv[8:11]), True),
+]
+# Wörter: (name, schlüssel, erlaubt), das erste ist der Standard
+WOERTER = [
+    ("ausschaltenwenn", "ausschalten", sys.argv[11].split()),
+    ("taste", "einAusTaste", sys.argv[12].split()),
 ]
 ZAHL_TEXT = re.compile(r"[+-]?(?:[0-9]+(?:[.,][0-9]*)?|[.,][0-9]+)")
 
@@ -73,18 +93,21 @@ def zahl(wert, streng):
 
 
 def ausgabe(arten):
-    for (name, _, standard, *_), (minuten, art) in zip(WERTE, arten):
-        print(name, standard if minuten is None else minuten, art)
+    standards = [standard for _, _, standard, *_ in WERTE] + [erlaubt[0] for _, _, erlaubt in WOERTER]
+    namen = [w[0] for w in WERTE] + [w[0] for w in WOERTER]
+    for name, standard, (wert, art) in zip(namen, standards, arten):
+        print(name, standard if wert is None else wert, art)
     sys.exit(0)
 
 
+ANZAHL = len(WERTE) + len(WOERTER)
 try:
     with open(datei, encoding="utf-8") as f:
         daten = json.load(f)
 except FileNotFoundError:
-    ausgabe([(None, "standard")] * len(WERTE))
+    ausgabe([(None, "standard")] * ANZAHL)
 except (OSError, ValueError):
-    ausgabe([(None, "ungueltig")] * len(WERTE))
+    ausgabe([(None, "ungueltig")] * ANZAHL)
 
 arten = []
 for _, schluessel, standard, minimum, maximum, streng in WERTE:
@@ -98,17 +121,29 @@ for _, schluessel, standard, minimum, maximum, streng in WERTE:
     gerundet = math.floor(n + 0.5)
     begrenzt = min(maximum, max(minimum, gerundet))
     arten.append((begrenzt, "einstellung" if begrenzt == gerundet else "begrenzt"))
+for _, schluessel, erlaubt in WOERTER:
+    if not isinstance(daten, dict) or schluessel not in daten:
+        arten.append((None, "standard"))
+    elif isinstance(daten[schluessel], str) and daten[schluessel] in erlaubt:
+        arten.append((daten[schluessel], "einstellung"))
+    else:
+        arten.append((None, "ungueltig"))
 ausgabe(arten)
 PY
 }
 
-# Setzt sperre_min und bildschirm_min (bei jedem Fehler die Standardwerte)
+# Setzt sperre_min, bildschirm_min und taste (bei jedem Fehler die Standardwerte)
 werte_lesen() {
   local name wert zeilen
   sperre_min=$STANDARD
   bildschirm_min=$BILDSCHIRM_STANDARD
+  taste=${TASTE%% *}
   zeilen=$(auswerten 2>/dev/null) || zeilen=""
   while read -r name wert _; do
+    if [[ "$name" == taste ]] && [[ " $TASTE " == *" $wert "* ]]; then
+      taste=$wert
+      continue
+    fi
     [[ "$wert" =~ ^[0-9]+$ ]] || continue
     if [[ "$name" == sperre ]] && (( wert >= MINIMUM && wert <= MAXIMUM )); then
       sperre_min=$wert
@@ -155,6 +190,67 @@ bildschirmbefehl() { # aus|an
 
 gesperrt() { [[ -e "$laufzeit/zenos/gesperrt" ]]; }
 
+# --- Hemmer für die Ein/Aus-Taste ---------------------------------------------
+# hemmer_pid: laufendes systemd-inhibit (leer: keins) · hemmer_naechster: frühester neuer Versuch (SECONDS)
+# hemmer_gemeldet: der letzte Fehlschlag steht schon im Journal (nicht bei jedem Versuch erneut)
+
+hemmer_starten() {
+  [[ -z "$hemmer_pid" ]] || return 0
+  if ! command -v systemd-inhibit >/dev/null 2>&1; then
+    (( hemmer_gemeldet )) || meldung "systemd-inhibit fehlt: kurzer Druck auf die Ein/Aus-Taste schaltet aus"
+    hemmer_gemeldet=1 hemmer_naechster=$((SECONDS + HEMMER_PAUSE))
+    return 0
+  fi
+  local -a befehl=(systemd-inhibit --what=handle-power-key --mode=block --who=zenOS
+    --why="Ein/Aus-Taste: zenOS sperrt (Einstellung «Ein/Aus-Taste»)" tail --pid=$$ -f /dev/null)
+  # tail --pid endet spätestens 1 s nach zenos-idle (auch nach SIGKILL), systemd-inhibit mit ihm. Nach einem
+  # gemeldeten Fehlschlag still weiter versuchen (sonst stünde dieselbe Meldung jede Minute im Journal).
+  if (( hemmer_gemeldet )); then
+    "${befehl[@]}" 2>/dev/null &
+  else
+    "${befehl[@]}" &
+  fi
+  hemmer_pid=$!
+}
+
+hemmer_stoppen() {
+  [[ -n "$hemmer_pid" ]] || return 0
+  # systemd-inhibit beendet tail beim eigenen Ende (Todessignal); tail zuerst, falls nicht
+  pkill -TERM -P "$hemmer_pid" -x tail 2>/dev/null || true
+  kill "$hemmer_pid" 2>/dev/null || true
+  wait "$hemmer_pid" 2>/dev/null || true
+  hemmer_pid=""
+}
+
+# Nach jedem Lesen der Werte und in jedem Takt: Hemmer genau dann, wenn die Taste nicht «ausschalten» ist
+hemmer_pruefen() {
+  local rc=0
+  if [[ "$taste" == ausschalten ]]; then
+    if [[ -n "$hemmer_pid" ]]; then
+      hemmer_stoppen
+      printf 'Ein/Aus-Taste: ausschalten (logind), kein Hemmer\n'
+    fi
+    hemmer_naechster=0 hemmer_gemeldet=0
+    return 0
+  fi
+  if [[ -n "$hemmer_pid" ]] && ! kill -0 "$hemmer_pid" 2>/dev/null; then
+    wait "$hemmer_pid" 2>/dev/null || rc=$?
+    hemmer_pid=""
+    (( hemmer_gemeldet )) || meldung "Hemmer für die Ein/Aus-Taste beendet (Exit $rc, polkit oder logind): kurzer Druck schaltet aus, neuer Versuch in ${HEMMER_PAUSE} s"
+    hemmer_gemeldet=1 hemmer_naechster=$((SECONDS + HEMMER_PAUSE))
+  fi
+  if [[ -n "$hemmer_pid" ]] && (( hemmer_gemeldet && SECONDS >= hemmer_naechster + PRUEFINTERVALL )); then
+    printf 'Hemmer für die Ein/Aus-Taste läuft wieder\n'
+    hemmer_gemeldet=0
+  fi
+  if [[ -z "$hemmer_pid" ]] && (( SECONDS >= hemmer_naechster )); then
+    hemmer_starten
+    if [[ -n "$hemmer_pid" ]] && (( ! hemmer_gemeldet )); then
+      printf 'Ein/Aus-Taste: %s (Hemmer handle-power-key)\n' "$taste"
+    fi
+  fi
+}
+
 laufen() {
   command -v swayidle >/dev/null 2>&1 || { meldung "swayidle fehlt"; exit 1; }
   [[ -n "${WAYLAND_DISPLAY:-}" ]] || { meldung "WAYLAND_DISPLAY fehlt (keine grafische Sitzung)"; exit 1; }
@@ -169,10 +265,10 @@ laufen() {
   fi
   code=$(code_stand)
 
-  swayidle_pid=""
-  # Beim Beenden (systemctl stop, Ende der Sitzung) swayidle mitnehmen und ohne Fehler enden. SIGTERM lässt
-  # swayidle noch die offenen resume-Befehle ausführen: Ein dunkler Bildschirm geht dabei wieder an.
-  trap 'if [[ -n "$swayidle_pid" ]]; then kill "$swayidle_pid" 2>/dev/null || true; fi; exit 0' TERM INT HUP
+  swayidle_pid="" hemmer_pid="" hemmer_naechster=0 hemmer_gemeldet=0 taste=${TASTE%% *}
+  # Beim Beenden (systemctl stop, Ende der Sitzung) swayidle und den Hemmer mitnehmen und ohne Fehler enden. SIGTERM
+  # lässt swayidle noch die offenen resume-Befehle ausführen: Ein dunkler Bildschirm geht dabei wieder an.
+  trap 'if [[ -n "$swayidle_pid" ]]; then kill "$swayidle_pid" 2>/dev/null || true; fi; hemmer_stoppen; exit 0' TERM INT HUP
   # SIGUSR1 (sofort sperren und Bildschirm aus) an swayidle weiterreichen: Es löst alle Timeouts sofort aus
   # und wartet mit resume auf die nächste Eingabe
   trap 'if [[ -n "$swayidle_pid" ]] && kill -USR1 "$swayidle_pid" 2>/dev/null; then printf "Sofort: sperren und Bildschirm aus\n"; fi' USR1
@@ -186,6 +282,7 @@ laufen() {
   while true; do
     alt=$(stand)
     werte_lesen
+    hemmer_pruefen
     wirksam="$sperre_min $bildschirm_min"
     argumente=()
     if [[ -n "$aus" ]]; then
@@ -204,6 +301,7 @@ laufen() {
     while kill -0 "$swayidle_pid" 2>/dev/null; do
       sleep "$PRUEFINTERVALL" &
       wait $! || true
+      hemmer_pruefen
       # Neuer Stand nach zen update: erst übernehmen, wenn gesperrt ist (ein Neustart beginnt die Leerlaufzeit
       # von vorn und schöbe die Sperre sonst hinaus) und solange der Bildschirm an ist (er bliebe sonst nicht
       # dunkel). systemd startet den Dienst neu (Restart=always).
@@ -211,12 +309,14 @@ laufen() {
         printf 'Neuer Stand von zenos-idle, starte neu (gesperrt)\n'
         kill "$swayidle_pid" 2>/dev/null || true
         wait "$swayidle_pid" 2>/dev/null || true
+        hemmer_stoppen
         exit 0
       fi
       neu=$(stand)
       [[ "$neu" != "$alt" ]] || continue
       alt=$neu
       werte_lesen
+      hemmer_pruefen
       jetzt="$sperre_min $bildschirm_min"
       [[ "$jetzt" != "$wirksam" ]] || continue
       printf 'Einstellungen geändert: Sperre nach %s Min., Bildschirm aus %s Min. danach\n' "$sperre_min" "$bildschirm_min"
@@ -228,6 +328,7 @@ laufen() {
     rc=0
     wait "$swayidle_pid" || rc=$?
     meldung "swayidle hat sich beendet (Exit $rc)"
+    hemmer_stoppen
     # systemd startet den Dienst neu (Restart=always)
     exit 1
   done
@@ -238,6 +339,6 @@ case "${1:-}" in
   minuten) minuten ;;
   pruefen) pruefen ;;
   energie) auswerten ;;
-  -h | --hilfe | --help) sed -n '2,19p' "$selbst" | sed 's/^# \{0,1\}//' ;;
+  -h | --hilfe | --help) sed -n '2,28p' "$selbst" | sed 's/^# \{0,1\}//' ;;
   *) meldung "unbekannter Befehl «$1» (erlaubt: minuten, pruefen, energie)"; exit 2 ;;
 esac

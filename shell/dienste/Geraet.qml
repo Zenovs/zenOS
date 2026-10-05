@@ -40,6 +40,8 @@ Singleton {
     readonly property bool akkuLaedt: _daten.akku.laedt === true
     // true, solange ein sicherer Messwert da ist
     readonly property bool akkuBekannt: _daten.akku.prozent >= 0
+    // Geprüfter Akku aus geraet.js: { vorhanden, prozent, laedt, zustand } (Energie: Akkubetrieb)
+    readonly property var akku: _daten.akku
     // höchstens 10 % beim Entladen: Warnfarbe in der Leiste
     readonly property bool akkuNiedrig: Logik.akkuNiedrig(_daten.akku)
     // Symbolname für qs.komponenten/Symbol (akku-laedt, akku-voll, akku-halb, akku-wenig, akku-leer)

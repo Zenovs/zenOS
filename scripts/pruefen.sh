@@ -772,11 +772,15 @@ START_RUNDGANG=(
   "einstellungen oeffnen allgemein"
   "einstellungen oeffnen energie"
   "einstellungen oeffnen system"
-  # Energie: Zeitleiste mit den Standardwerten. Ungesperrt bleibt die Sperre hell, auch wenn zenos-bildschirm «aus»
-  # meldet (dunkel heisst gesperrt).
-  "energie status → Gesperrt nach 5 Min. · Bildschirm aus nach 6 Min."
+  # Energie: Zeitleiste mit den Standardwerten (ohne Erwartung: Mit Akku, etwa am Argon ONE UP, steht dazu «Aus nach
+  # 65 Min. im Akkubetrieb»). Ungesperrt bleibt die Sperre hell, auch wenn zenos-bildschirm «aus» meldet (dunkel heisst
+  # gesperrt).
+  "energie status"
   "sperre bildschirm aus → an"
   "sperre bildschirm an → an"
+  # Vorwarnung vor dem Ausschalten und Ein/Aus-Taste nur gesperrt: ungesperrt geschieht nichts
+  "energie vorwarnung → nicht gesperrt"
+  "sperre taste → offen"
   # App-Leiste: offen sind nur die Einstellungen, ein Fenster der Oberfläche. Es zählt nicht, die Leiste bleibt zu.
   "appleiste status → zu"
   "appleiste apps"

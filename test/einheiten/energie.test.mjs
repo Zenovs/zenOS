@@ -93,13 +93,17 @@ test("Akkubetrieb nur bei sicherer Messung; unbekannt gilt als Netzteil", () => 
 
 test("Zeitleiste: Sperre, dann Bildschirm aus, dann ausschalten", () => {
   const akku = { vorhanden: true, prozent: 40, laedt: false, zustand: "ok" };
+  // Ohne Akku schaltet «akku» (der Standard) nie aus: dann steht es auch nicht in der Zeitleiste
   assert.deepEqual(plain(E.zeitleiste({}, null)), [
     { was: "sperre", minuten: 5, aktiv: true },
     { was: "bildschirm", minuten: 6, aktiv: true },
-    { was: "ausschalten", minuten: 65, aktiv: false },
   ]);
+  assert.equal(E.zeitleiste({}, { vorhanden: false }).length, 2);
+  // Mit Akku am Netzteil: steht da, gilt aber gerade nicht
+  assert.deepEqual(plain(E.zeitleiste({}, Object.assign({}, akku, { laedt: true })))[2], { was: "ausschalten", minuten: 65, aktiv: false });
   assert.deepEqual(plain(E.zeitleiste({ ausschalten: "akku" }, akku))[2], { was: "ausschalten", minuten: 65, aktiv: true });
   assert.equal(E.zeitleiste({ ausschalten: "nie" }, akku).length, 2);
+  assert.deepEqual(plain(E.zeitleiste({ ausschalten: "immer" }, null))[2], { was: "ausschalten", minuten: 65, aktiv: true });
   const lang = plain(E.zeitleiste({ sperreNachMinuten: 15, bildschirmAusNachSperre: 10, ausschalten: "immer", ausschaltenNachMinuten: 30 }, null));
   assert.deepEqual(lang.map((e) => e.minuten), [15, 25, 45]);
   // Reihenfolge gilt für alle Werte innerhalb der Leitplanken
@@ -111,7 +115,8 @@ test("Zeitleiste: Sperre, dann Bildschirm aus, dann ausschalten", () => {
       }
     }
   }
-  assert.equal(E.zeitleisteText({}, null), "Gesperrt nach 5 Min. · Bildschirm aus nach 6 Min. · Aus nach 65 Min. im Akkubetrieb");
+  assert.equal(E.zeitleisteText({}, null), "Gesperrt nach 5 Min. · Bildschirm aus nach 6 Min.");
+  assert.equal(E.zeitleisteText({}, akku), "Gesperrt nach 5 Min. · Bildschirm aus nach 6 Min. · Aus nach 65 Min. im Akkubetrieb");
   assert.equal(E.zeitleisteText({ ausschalten: "immer", ausschaltenNachMinuten: 55 }, null), "Gesperrt nach 5 Min. · Bildschirm aus nach 6 Min. · Aus nach 1 Std.");
   assert.equal(E.zeitleisteText({ ausschalten: "immer", sperreNachMinuten: 15, ausschaltenNachMinuten: 225 }, null), "Gesperrt nach 15 Min. · Bildschirm aus nach 16 Min. · Aus nach 4 Std.");
   assert.equal(E.zeitleisteText({ ausschalten: "nie" }, null), "Gesperrt nach 5 Min. · Bildschirm aus nach 6 Min.");
@@ -193,6 +198,51 @@ test("Wecktaste: genau eine Taste wird verworfen", () => {
   assert.equal(E.wecktasteVerwerfen(z, T0 + 1), false);
   for (const kaputt of [null, undefined, "dunkel", {}])
     assert.equal(E.wecktasteVerwerfen(kaputt, T0), false);
+});
+
+test("Vorwarnung: Die Taste, die abbricht, landet nicht im Passwortfeld (genau eine)", () => {
+  // Bildschirm war dunkel, die Vorwarnung schaltet ihn ohne Eingabe an
+  let z = E.vorwarnungGezeigt(E.bildschirmDunkel(E.weckzustand()));
+  assert.equal(z.dunkel, false);
+  // Die Meldung «an» danach ändert nichts
+  assert.deepEqual(plain(E.bildschirmHell(z, T0)), plain(z));
+  // Auch nach 50 s: die erste Taste wird verworfen, die zweite nicht
+  assert.equal(E.wecktasteVerwerfen(z, T0 + 50 * S), true);
+  z = E.wecktasteGesehen(z);
+  assert.equal(E.wecktasteVerwerfen(z, T0 + 50 * S + 10), false);
+  // Danach meldet der Dienst das Ende: keine weitere Taste geht verloren
+  z = E.vorwarnungVorbei(z, T0 + 50 * S + 20);
+  assert.equal(E.wecktasteVerwerfen(z, T0 + 50 * S + 30), false);
+
+  // Umgekehrt: Die Eingabe (Ende der Vorwarnung) kommt vor der Taste. Die Taste bis 1 s danach wird verworfen.
+  z = E.vorwarnungVorbei(E.vorwarnungGezeigt(E.weckzustand()), T0);
+  assert.equal(E.wecktasteVerwerfen(z, T0 + 999), true);
+  z = E.wecktasteGesehen(z);
+  assert.equal(E.wecktasteVerwerfen(z, T0 + 1000), false);
+  // Abbruch mit der Maus: Das Passwort danach bleibt ganz
+  z = E.vorwarnungVorbei(E.vorwarnungGezeigt(E.weckzustand()), T0);
+  assert.equal(E.wecktasteVerwerfen(z, T0 + 3 * S), false);
+  // Ende ohne Vorwarnung (z. B. doppelt gemeldet): nichts ändert sich
+  const ruhig = E.wecktasteGesehen(E.weckzustand());
+  assert.deepEqual(plain(E.vorwarnungVorbei(ruhig, T0)), plain(ruhig));
+  assert.deepEqual(plain(E.vorwarnungVorbei(null, T0)), plain(E.weckzustand()));
+  // Blockiert: wieder dunkel, die nächste Taste ist wieder eine Wecktaste
+  z = E.bildschirmDunkel(E.vorwarnungVorbei(E.wecktasteGesehen(E.vorwarnungGezeigt(E.weckzustand())), T0));
+  assert.equal(E.wecktasteVerwerfen(z, T0 + 10 * MIN), true);
+});
+
+test("Ein/Aus-Taste gesperrt: dunkel oder eben geweckt heisst an, sonst aus", () => {
+  assert.equal(E.tasteGesperrt(E.bildschirmDunkel(E.weckzustand()), T0), "an");
+  // Der Druck selbst hat den Bildschirm schon geweckt (Eingabe), sein Befehl kommt danach an
+  const geweckt = E.wecktasteGesehen(E.bildschirmHell(E.bildschirmDunkel(E.weckzustand()), T0));
+  assert.equal(E.tasteGesperrt(geweckt, T0 + 300), "an");
+  assert.equal(E.tasteGesperrt(geweckt, T0 + 1999), "an");
+  assert.equal(E.tasteGesperrt(geweckt, T0 + 2000), "aus");
+  assert.equal(E.tasteGesperrt(geweckt, T0 - 1), "aus");
+  assert.equal(E.tasteGesperrt(E.weckzustand(), T0), "aus");
+  assert.equal(E.tasteGesperrt(E.vorwarnungGezeigt(E.weckzustand()), T0), "aus");
+  for (const kaputt of [null, undefined, "dunkel", 5])
+    assert.equal(E.tasteGesperrt(kaputt, T0), "aus");
 });
 
 // --- Abgleich mit Einstellungen.qml, Leitplanken.qml und dem Schema ---------------

@@ -22,7 +22,7 @@ WURZEL = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 ENERGIE = os.path.join(WURZEL, "scripts", "zen.d", "energie.sh")
 LOGIK = os.path.join(WURZEL, "shell", "modi", "zustandslogik.js")
 RC_XML = os.path.join(WURZEL, "system", "labwc", "rc.xml.in")
-WERKZEUGE = ["bash", "python3", "timeout", "sed", "head", "readlink", "dirname", "cat", "sleep", "id", "find",
+WERKZEUGE = ["bash", "python3", "timeout", "sed", "head", "tail", "readlink", "dirname", "cat", "sleep", "id", "find",
              "sort", "env"]
 
 # Attrappe: schreibt {"wer", "argv"} als JSON-Zeile. Verhalten aus Dateien im Testordner:
@@ -82,6 +82,7 @@ class ZenEnergieTest(unittest.TestCase):
             f.write(LOCK)
         self.attrappe(os.path.join(self.bin, "zenos-bildschirm"), "bildschirm")
         self.attrappe(os.path.join(self.bin, "zenos-idle"), "idle")
+        self.attrappe(os.path.join(self.bin, "zenos-energie"), "helfer")
         for name in ("systemctl", "pgrep"):
             self.attrappe(os.path.join(self.fake, name), name)
         for name in WERKZEUGE:
@@ -217,28 +218,65 @@ class ZenEnergieTest(unittest.TestCase):
     # --- status
 
     def test_status_zeitleiste_aus_zenos_idle(self):
-        self.verhalten("idle", "aus", "sperre 7 einstellung\nbildschirm 3 begrenzt\n")
+        self.verhalten("idle", "aus", "sperre 7 einstellung\nbildschirm 3 begrenzt\nausschalten 90 einstellung\n"
+                                      "ausschaltenwenn immer einstellung\ntaste menue einstellung\n")
         self.verhalten("bildschirm", "aus", "aus\n")
+        self.verhalten("helfer", "aus", "nein: tmux läuft\n")
+        self.verhalten("helfer", "exit", "1")
         rc, aus, fehler = self.zen("status")
         self.assertEqual((rc, fehler), (0, ""))
         zeilen = aus.splitlines()
         self.assertEqual(zeilen[0], "Ohne Eingabe       gesperrt nach 7 Min. · Bildschirm aus nach 10 Min.")
         self.assertIn("ausserhalb von 1–10, begrenzt", aus)
+        self.assertIn("Ausschalten        nach 90 Min. gesperrt, mit 60 s Vorwarnung", zeilen)
+        self.assertIn("Zurzeit            nicht möglich: tmux läuft", zeilen)
+        self.assertIn("Ein/Aus-Taste      System-Menü (gesperrt: Bildschirm an oder aus)", zeilen)
         self.assertIn("Bildschirm jetzt   aus", zeilen)
         self.assertTrue(any(z.startswith("Bereitschaft       ") for z in zeilen))
         self.assertIn("zen energie aus", aus)
-        # Nur lesen: kein Sperren, kein Schalten
+        # Nur lesen: kein Sperren, kein Schalten, kein Ausschalten
         self.assertNotIn("lock", self.wer())
         self.assertEqual([e["argv"] for e in self.ereignisse() if e["wer"] == "bildschirm"], [["status"]])
         self.assertEqual([e["argv"] for e in self.ereignisse() if e["wer"] == "idle"], [["energie"]])
+        self.assertEqual([e["argv"] for e in self.ereignisse() if e["wer"] == "helfer"], [["status"]])
+
+    def test_status_ausschalten(self):
+        faelle = [
+            ("ausschalten 60 standard\nausschaltenwenn akku standard\n", "ja\n",
+             ["Ausschalten        nach 60 Min. gesperrt im Akkubetrieb, mit 60 s Vorwarnung · Standard",
+              "Zurzeit            möglich, nichts im Weg"]),
+            ("ausschalten 240 begrenzt\nausschaltenwenn akku einstellung\n", "ja\n",
+             ["Ausschalten        nach 240 Min. gesperrt im Akkubetrieb, mit 60 s Vorwarnung · Wert in "
+              "einstellungen.json ausserhalb von 30–240, begrenzt"]),
+            ("ausschalten 60 standard\nausschaltenwenn akku ungueltig\n", "",
+             ["Ausschalten        nach 60 Min. gesperrt im Akkubetrieb, mit 60 s Vorwarnung · Wert in "
+              "einstellungen.json ungültig, es gilt der Standard", "Zurzeit            unbekannt (zenos-energie status)"]),
+            ("ausschalten 60 standard\nausschaltenwenn nie einstellung\ntaste ausschalten einstellung\n", "ja\n",
+             ["Ausschalten        nie", "Ein/Aus-Taste      ausschalten (logind)"]),
+        ]
+        for idle, helfer, erwartet in faelle:
+            with self.subTest(idle=idle):
+                self.vergessen("ereignisse")
+                self.verhalten("idle", "aus", "sperre 5 standard\nbildschirm 1 standard\n" + idle)
+                self.verhalten("helfer", "aus", helfer)
+                rc, aus, _ = self.zen("status")
+                self.assertEqual(rc, 0)
+                for zeile in erwartet:
+                    self.assertIn(zeile, aus.splitlines())
+                if "nie" in idle:
+                    self.assertFalse(any(z.startswith("Zurzeit") for z in aus.splitlines()))
+                    self.assertEqual([e for e in self.ereignisse() if e["wer"] == "helfer"], [])
 
     def test_status_ohne_sitzung_und_standard(self):
         self.verhalten("idle", "exit", "1")
         self.verhalten("bildschirm", "exit", "3")
+        os.remove(os.path.join(self.bin, "zenos-energie"))
         rc, aus, _ = self.zen()
         self.assertEqual(rc, 0)
         self.assertIn("gesperrt nach 5 Min. · Bildschirm aus nach 6 Min.", aus)
         self.assertIn("Bildschirm jetzt   keine laufende Sitzung", aus)
+        self.assertIn("Zurzeit            unbekannt (zenos-energie fehlt)", aus)
+        self.assertIn("Ein/Aus-Taste      sperren und Bildschirm aus (gesperrt: Bildschirm an oder aus) · Standard", aus)
 
     # --- Abgleich
 
