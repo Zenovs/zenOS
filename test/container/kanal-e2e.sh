@@ -10,7 +10,7 @@
 #   docker exec -u tester -w /home/tester/zenOS zenos-kanal-e2e ./scripts/install.sh   (alter Stand nach /opt/zenos)
 # Dann je Schritt: docker exec zenos-kanal-e2e bash /repo/test/container/kanal-e2e.sh <schritt>
 #
-# Schritte (in dieser Reihenfolge; «abbruch» und «zweimal» verlangen danach einen Neustart des Containers):
+# Schritte (in dieser Reihenfolge; nach «abbruch» und «zweimal» Neustart des Containers, danach wieder «einrichten»):
 #   einrichten   CA, Server, Schlüssel, origin mit dem Stand von ~tester/zenOS als dev (idempotent, auch nach Neustart)
 #   migration    Arbeitsstand von /repo als neuer Commit auf dev; das alte «zen update» bringt den neuen Kanal
 #   dev          Anker ohne Schlüssel: unsignierter Commit, «nein» ändert nichts, «ja» installiert; install.sh
@@ -366,7 +366,7 @@ s_abbruch() {
   printf '# alt\n' >> /opt/zenos/scripts/zen.d/version.sh
   rm -f /opt/zenos/scripts/module/11-e2e-warten.sh
   printf '%s\n' "$neu" > "$E2E/abbruch-ziel"
-  ok "jetzt den Container neu starten (docker restart), dann: nach-abbruch"
+  ok "jetzt den Container neu starten (docker restart), dann: einrichten, nach-abbruch"
 }
 
 s_nach_abbruch() {
@@ -418,7 +418,7 @@ s_zweimal() {
   [[ "$(json "$STAND/laeuft.json" .versuche.ziel)" == 2 ]] || fehler "laeuft.json nach zwei Abbrüchen"
   rm -f "$E2E/warten"
   printf '%s %s\n' "$gut" "$neu" > "$E2E/zweimal"
-  ok "zwei Abbrüche, jetzt den Container neu starten (docker restart), dann: nach-zweimal"
+  ok "zwei Abbrüche, jetzt den Container neu starten (docker restart), dann: einrichten, nach-zweimal"
 }
 
 s_nach_zweimal() {
