@@ -1067,13 +1067,15 @@ class Ablauf(Basis):
         os.chmod(ordner, 0o755)
         K.lock_or_exit().release()
         self.assertEqual(os.stat(ordner).st_mode & 0o777, 0o700, "zu weite Rechte werden wieder eng")
-        # Eine Datei, die nicht root gehört (hier: Tests laufen ohne root, also nur die eigene UID als «fremd»)
+        # Eine Datei, die nicht root gehört (hier: Tests laufen ohne root, also nur die eigene UID als «fremd»; als root,
+        # etwa in der CI, gehört die Datei root, dann entfällt dieser Teil)
         self.addCleanup(setattr, K, "TRUSTED_UIDS", K.TRUSTED_UIDS)
-        K.TRUSTED_UIDS = (0,)
-        err = io.StringIO()
-        with contextlib.redirect_stderr(err):
-            self.assertEqual(K.lock_or_exit(), 1)
-        self.assertIn("gehört nicht root", err.getvalue())
+        if os.getuid() != 0:
+            K.TRUSTED_UIDS = (0,)
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertEqual(K.lock_or_exit(), 1)
+            self.assertIn("gehört nicht root", err.getvalue())
         K.TRUSTED_UIDS = (0, os.getuid())
         os.unlink(K.LOCK_FILE)
         os.symlink(self.pfad("woanders"), K.LOCK_FILE)

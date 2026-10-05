@@ -196,11 +196,11 @@ class Geraet(B.Basis):
             return []
 
     def ohne_anker(self):
-        """Anker wie heute im Repo: nur Kommentare."""
+        """Anker wie im Repo vor den ersten Schlüsseln: nur die Kommentare, ohne Schlüssel- und Serienzeilen."""
         texte = {}
         for name in K.ANCHOR_FILES:
             with open(os.path.join(B.ANKER_REPO, name), encoding="utf-8") as f:
-                texte[name] = f.read()
+                texte[name] = "".join(z for z in f if not z.strip() or z.lstrip().startswith("#"))
         self.anker_dateien(texte)
 
     def signiert_installiert(self, name="v0.1.0-rc4"):
