@@ -5,7 +5,9 @@ Prüfschritte in .github/workflows/image.yml und pruefen.yml (Aufbau der Jobs; d
 wie GitHub ihn ausführt, gegen ein Wegwerf-Repo; ohne PyYAML übersprungen).
 
 Alles mit Wegwerf-Repos und Wegwerf-Schlüsseln im Temp-Ordner, erzeugt zur Laufzeit; signiert wird mit ssh-keygen und
-einer Schlüsseldatei, nie mit 1Password. Kein Netz, kein root nötig (als root läuft es genauso, wie in der CI).
+einer Schlüsseldatei, nie mit 1Password. tag-pruefen.sh hat den ersten Anker von zenOS (Serie 1) fest im Code: Die Tests
+laufen mit einer Kopie von image/ (tag-pruefen.sh und bauen.sh), in der dort die Fingerabdrücke des Wegwerf-Ankers
+stehen; das echte Skript prüft test_echter_anker. Kein Netz, kein root nötig (als root läuft es genauso, wie in der CI).
 tag-pruefen.sh läuft auch auf dem Mac (bash 3.2); die Tests für bauen.sh nur unter Linux (bash 4+, GNU coreutils) und
 überspringen sich sonst. Ohne /usr/bin/git oder /usr/bin/ssh-keygen wird alles übersprungen.
 
@@ -49,6 +51,21 @@ def setUpModule():
                        env={"PATH": SYSTEM_PFAD, "HOME": ordner})
         with open(pfad + ".pub", encoding="utf-8") as f:
             _modul["schluessel"][name] = " ".join(f.read().split()[:2])
+    # Kopie von image/ mit dem Wegwerf-Anker (wur, rel) als Serie 1
+    kopie = os.path.join(ordner, "kopie", "image")
+    os.makedirs(kopie)
+    shutil.copy(BAUEN, os.path.join(kopie, "bauen.sh"))
+    with open(TAG_PRUEFEN, encoding="utf-8") as f:
+        text = f.read()
+    for name, wert in (("SERIE1_WURZEL", fingerabdruck("wur")), ("SERIE1_RELEASE", fingerabdruck("rel"))):
+        alt = next(z for z in text.split("\n") if z.startswith(name + "="))
+        text = text.replace(alt + "\n", f"{name}='{wert}'\n", 1)
+    with open(os.path.join(kopie, "tag-pruefen.sh"), "w", encoding="utf-8") as f:
+        f.write(text)
+    for name in ("bauen.sh", "tag-pruefen.sh"):
+        os.chmod(os.path.join(kopie, name), 0o755)
+    _modul["tag_pruefen"] = os.path.join(kopie, "tag-pruefen.sh")
+    _modul["bauen"] = os.path.join(kopie, "bauen.sh")
 
 
 def tearDownModule():
@@ -126,8 +143,8 @@ class Basis(unittest.TestCase):
                  f"zenOS {name}", name, ref)
         return self.git("rev-parse", f"refs/tags/{name}")
 
-    def pruefen(self, name, commit=None, quelle=None, umgebung=None):
-        argv = [BASH, TAG_PRUEFEN, "--quelle", quelle or self.repo]
+    def pruefen(self, name, commit=None, quelle=None, umgebung=None, skript=None):
+        argv = [BASH, skript or _modul["tag_pruefen"], "--quelle", quelle or self.repo]
         if commit:
             argv += ["--commit", commit]
         argv.append(name)
@@ -198,7 +215,8 @@ class TagPruefen(Basis):
         self.abgelehnt("v0.2.0", "git verify-tag lehnt")
 
     def test_widerrufen(self):
-        self.anker(release=("rel2",), widerrufen=("rel",))
+        self.anker(release=("rel2",), widerrufen=("rel",), serie=2)
+        self.signieren("vertrauen/0002", schluessel="wur")
         self.signieren("v0.2.0", schluessel="rel")
         self.abgelehnt("v0.2.0", "lehnt")
         self.signieren("v0.2.1", schluessel="rel2")
@@ -313,16 +331,99 @@ class TagPruefen(Basis):
         self.abgelehnt("v0.2.0", "nicht der aus vertrauen/0002")
 
     def test_echter_anker_im_format(self):
-        """Der Anker system/vertrauen im Repo besteht die strenge Formprüfung (unsignierter Tag: Grund ist die
-        Signatur, nicht der Anker)."""
+        """Der Anker system/vertrauen im Repo besteht mit dem echten Skript die strenge Formprüfung und passt zum festen
+        Anker (unsignierter Tag: Grund ist die Signatur, nicht der Anker)."""
         dateien = {}
         for name in ("release", "wurzel", "widerrufen", "serie"):
             with open(os.path.join(ANKER_REPO, name), encoding="utf-8") as f:
                 dateien[f"system/vertrauen/{name}"] = f.read()
         self.commit("echter anker", dateien)
         self.git("tag", "-a", "-m", "zenOS v0.2.0", "v0.2.0")
-        err = self.abgelehnt("v0.2.0", "unsigniert")
+        rc, _, err = self.pruefen("v0.2.0", skript=TAG_PRUEFEN)
+        self.assertEqual(rc, 1, err)
+        self.assertIn("unsigniert", err)
         self.assertNotIn("Anker", err)
+        self.assertNotIn("Wurzel", err)
+
+    def test_echter_anker_fest_im_skript(self):
+        """Solange system/vertrauen Serie 1 ist, stehen genau seine Fingerabdrücke als fester Anker in tag-pruefen.sh."""
+        with open(os.path.join(ANKER_REPO, "serie"), encoding="utf-8") as f:
+            serie = [z.strip() for z in f if z.strip() and not z.lstrip().startswith("#")]
+        if serie != ["1"]:
+            self.skipTest("system/vertrauen ist schon eine spätere Serie")
+
+        def fingerabdruecke(datei):
+            werte = []
+            with open(os.path.join(ANKER_REPO, datei), encoding="utf-8") as f:
+                for zeile in f:
+                    if zeile.strip() and not zeile.lstrip().startswith("#"):
+                        r = subprocess.run(["/usr/bin/ssh-keygen", "-lf", "-"], input=" ".join(zeile.split()[-2:]),
+                                           capture_output=True, text=True, check=True)
+                        werte.append(r.stdout.split()[1])
+            return " ".join(sorted(werte))
+
+        with open(TAG_PRUEFEN, encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn(f"SERIE1_WURZEL='{fingerabdruecke('wurzel')}'", text)
+        self.assertIn(f"SERIE1_RELEASE='{fingerabdruecke('release')}'", text)
+
+    # -- fremder oder gewachsener Anker (die Kette wie auf dem Gerät) --
+
+    def test_fremder_anker_serie_1(self):
+        """Angriff: Ein Commit tauscht den Anker gegen einen eigenen (Serie 1) und signiert den Tag damit."""
+        self.anker(release=("fremd",), wurzel="rel2")
+        self.signieren("v9.9.9", schluessel="fremd")
+        self.abgelehnt("v9.9.9", "nicht die Wurzel von zenOS")
+
+    def test_zusaetzlicher_release_schluessel_serie_1(self):
+        """Ein gültig signiertes Release bringt ungewollt einen zusätzlichen Release-Schlüssel mit (Serie 1 bleibt)."""
+        self.anker(release=("rel", "fremd"))
+        self.signieren("v0.2.0")
+        err = self.abgelehnt("v0.2.0", "nicht die des Ankers Serie 1")
+        self.assertIn(fingerabdruck("fremd"), err)
+        self.signieren("v0.2.1", schluessel="fremd")
+        self.abgelehnt("v0.2.1", "nicht die des Ankers Serie 1")
+
+    def test_fremde_wurzel_mit_eigenem_vertrauen(self):
+        """Angriff: eigene Wurzel, Serie 2 und ein eigenes vertrauen/0002."""
+        self.anker(release=("fremd",), wurzel="rel2", serie=2)
+        self.signieren("vertrauen/0002", schluessel="rel2")
+        self.signieren("v9.9.10", schluessel="fremd")
+        self.abgelehnt("v9.9.10", "nicht die Wurzel von zenOS")
+
+    def test_serie_3_ohne_vertrauen_0002(self):
+        """Die Kette braucht jede Serie: vertrauen/0003 allein reicht nicht."""
+        self.anker(release=("rel2",), widerrufen=("rel",), serie=3)
+        self.signieren("vertrauen/0003", schluessel="wur")
+        self.signieren("v0.3.0", schluessel="rel2")
+        self.abgelehnt("v0.3.0", "vertrauen/0002")
+
+    def test_serie_3_mit_kette(self):
+        self.anker(release=("rel2",), widerrufen=("rel",), serie=2)
+        self.signieren("vertrauen/0002", schluessel="wur")
+        self.anker(release=("rel2", "fremd"), widerrufen=("rel",), serie=3)
+        self.signieren("vertrauen/0003", schluessel="wur")
+        self.commit("drei")
+        self.signieren("v0.3.0", schluessel="fremd")
+        self.assertEqual(self.gueltig("v0.3.0")["serie"], "3")
+
+    def test_widerruf_der_kette_fehlt(self):
+        """Serie 2 widerruft rel; der Anker von Serie 3 lässt den Widerruf weg (ein Gerät behält ihn)."""
+        self.anker(release=("rel2",), widerrufen=("rel",), serie=2)
+        self.signieren("vertrauen/0002", schluessel="wur")
+        self.anker(release=("rel2",), serie=3)
+        self.signieren("vertrauen/0003", schluessel="wur")
+        self.signieren("v0.3.0", schluessel="rel2")
+        self.abgelehnt("v0.3.0", "fehlt ein Widerruf")
+
+    def test_widerrufener_schluessel_kommt_zurueck(self):
+        """Serie 3 nimmt den in Serie 2 widerrufenen Schlüssel wieder als Release-Schlüssel: abgelehnt."""
+        self.anker(release=("rel2",), widerrufen=("rel",), serie=2)
+        self.signieren("vertrauen/0002", schluessel="wur")
+        self.anker(release=("rel",), serie=3)
+        self.signieren("vertrauen/0003", schluessel="wur")
+        self.signieren("v0.3.0", schluessel="rel")
+        self.abgelehnt("v0.3.0", "vertrauen/0003: ein Release-Schlüssel ist schon widerrufen")
 
     def test_github_meldung(self):
         self.commit("eins")
@@ -333,7 +434,7 @@ class TagPruefen(Basis):
 
     def test_aufruf(self):
         for argv in ([], ["--commit", "abc", "v0.1.0"], ["--unbekannt", "v0.1.0"], ["v0.1.0", "v0.2.0"]):
-            r = subprocess.run([BASH, TAG_PRUEFEN, *argv], env={"PATH": SYSTEM_PFAD, "HOME": self.home},
+            r = subprocess.run([BASH, _modul["tag_pruefen"], *argv], env={"PATH": SYSTEM_PFAD, "HOME": self.home},
                                capture_output=True, text=True, check=False, cwd=self.repo)
             self.assertEqual(r.returncode, 2, f"{argv}: {r.stderr}")
 
@@ -344,7 +445,7 @@ class BauenVorpruefung(Basis):
 
     def bauen(self, *argumente, umgebung=None):
         env = {"PATH": SYSTEM_PFAD, "HOME": self.home, "LC_ALL": "C.UTF-8", **(umgebung or {})}
-        r = subprocess.run([BASH, BAUEN, "--nur-pruefen", "--quelle", self.repo, *argumente], env=env,
+        r = subprocess.run([BASH, _modul["bauen"], "--nur-pruefen", "--quelle", self.repo, *argumente], env=env,
                            capture_output=True, text=True, check=False)
         return r.returncode, r.stdout + r.stderr
 
@@ -443,6 +544,16 @@ class BauenVorpruefung(Basis):
         aus = self.ok("--nur-mechanik")
         self.assertIn("-mechanik ", aus)
 
+    def test_mechanik_nie_in_github(self):
+        """--nur-mechanik baut auch ohne Signatur: in GitHub Actions verweigert wie --testbau-ohne-signatur."""
+        self.commit("eins")
+        self.nein("GitHub Actions", "--nur-mechanik", umgebung={"GITHUB_ACTIONS": "true"})
+
+    def test_fremder_anker_bricht_ab(self):
+        self.anker(release=("fremd",), wurzel="rel2")
+        self.signieren("v9.9.9", schluessel="fremd")
+        self.nein("nicht gültig signiert", "--ref", "v9.9.9")
+
 
 
 def workflow(name):
@@ -502,7 +613,7 @@ class Workflow(Basis):
         """Führt «Signatur prüfen» aus wie GitHub: im Checkout, mit den env-Werten des Schritts."""
         ziel = os.path.join(self.repo, "image")
         os.makedirs(ziel, exist_ok=True)
-        shutil.copy(TAG_PRUEFEN, os.path.join(ziel, "tag-pruefen.sh"))
+        shutil.copy(_modul["tag_pruefen"], os.path.join(ziel, "tag-pruefen.sh"))
         lauf = os.path.join(self.ordner, "lauf")
         os.makedirs(lauf)
         ausgabe, zusammenfassung = os.path.join(lauf, "output"), os.path.join(lauf, "summary")

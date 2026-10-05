@@ -314,8 +314,9 @@ Während einer Freigabe und bei `heute: false` blendet der Inhalt aus (200 ms).
 - Zentrale als Panel rechts (400 px). Kein Ton, kein Blinken; neue Karten kommen unten dazu, damit nichts verrutscht.
 - zenOS selbst meldet sich bei Updates (jede Mitteilung nur einmal je Zustand: «zenOS aktualisiert» still, «Update
   gescheitert» normal, «Update kaputt» und «Updates blockiert» dringend, dazu «Anker fehlt», «Update abgelehnt»,
-  «Update wartet auf deine Zustimmung», «Seit 14 Tagen keine Updates geprüft» und beim Zeitpunkt «Von Hand» «Update
-  bereit»; `docs/image-und-releases.md`) und bei niedrigem Akku (10 % und 5 % im Akkubetrieb, je einmal): Absender
+  «Update wartet auf deine Zustimmung», «Seit 14 Tagen kein Kontakt zu origin», beim Zeitpunkt «Von Hand» «Update
+  bereit» und «Zeitpunkt für Updates geändert», wenn ihn nicht die Einstellungen setzten; Verweise nennen
+  «Einstellungen › System › Updates»; `docs/image-und-releases.md`) und bei niedrigem Akku (10 % und 5 % im Akkubetrieb, je einmal): Absender
   «zenOS» mit der Bildmarke. 10 % mit Dringlichkeit normal, also nach der Regel des Zustands wie jede andere Mitteilung. 5 %
   dringend: Die Karte kommt sofort (ausser im Zustand «keine») und bleibt bis zum Schliessen, ohne Ton und ohne
   Blinken; bei 3 % schaltet zenOS kontrolliert aus, also darf sie nicht warten. Es steht immer nur eine
@@ -384,26 +385,37 @@ Darunter «Updates» (`SeiteSystem.qml`, Dienst `Kanal`; `einstellungen oeffnen 
 - Die Lage als Zeile mit Symbol (16 px) und Titel in `text`: «Aktuell» (Haken im Akzent), «Neue Version bereit»
   (Info im Akzent), «Wartet auf deine Zustimmung» (Schloss im Akzent), «Kanal dev, nur von Hand» bzw. «Neuer Stand
   auf dev» (Code), «Anker fehlt» (offenes Schloss in `warnung`), «Blockiert» und «Prüfung abgebrochen» (Warnung in
-  `warnung`), «Kein Kontakt» (Wolke), «Noch nie geprüft» (Info, `gedaempft`). Darunter ein ruhiger Satz in
-  `gedaempft` (13 px, Zeilenhöhe 1,45), nur reiner Text.
+  `warnung`), «Kein Kontakt» (Wolke), «Noch nie geprüft» (Info, `gedaempft`). Die Lage der Installation geht vor:
+  «Update läuft» (Info im Akzent, solange die Übernahme läuft), «Update kaputt» und «Update unterbrochen»
+  (Warnung in `warnung`, bis eine spätere Installation es ablöst); nach `zen rollback` «Zurückgestellt: v0.1.0-rc4
+  läuft, v0.1.0-rc5 vorhanden» (Info, `gedaempft`). Darunter ein ruhiger Satz in `gedaempft` (13 px, Zeilenhöhe
+  1,45), nur reiner Text; bei «kaputt» mit dem Weg («Zuerst den Grund beheben, dann im Terminal zen update»).
 - Werte zweispaltig, Titel 96 px in `gedaempft`, Werte in Geist Mono 13 (`text`, zu lang: am Ende gekürzt): Kanal,
-  Installiert («v0.1.0-rc4 · 1a2b3c4d5e6f»), Bereit (mit «automatisch ab morgen, 03:30», solange die 24 h auf stabil
-  laufen), Geprüft und Kontakt («heute, 14:03», «gestern, …», «3. Okt., …»), Anker «Serie 1», Wurzel und Release
-  als «SHA256:9xQZHFzU…» (die ersten 8 Zeichen, wie in 1Password abgeglichen).
+  Installiert («v0.1.0-rc4 · 1a2b3c4d5e6f»), Letztes Update (nur bei gescheitert, zurück, abgebrochen oder kaputt:
+  «gescheitert, zurück auf dem Stand davor · heute, 11:00 · v0.1.0-rc5 (…)»), Von Hand (angehaltener Stand), Bereit
+  (mit dem Wann je Zeitpunkt: «kommt bei der nächsten Sperre», «frühestens morgen, 03:30, danach zwischen 02:00 und
+  05:00», «nur über «Jetzt installieren» oder zen update»), Geprüft und Kontakt («heute, 14:03», «gestern, …»,
+  «3. Okt., …»), Anker «Serie 1», Wurzel und Release als «SHA256:9xQZHFzU…» (die ersten 8 Zeichen, wie in 1Password
+  abgeglichen). Die Zeilen bauen sich nur neu auf, wenn sich etwas ändert.
 - Knöpfe 38 px: «Jetzt prüfen» (sekundär, während des Laufs «Prüft …»), «Jetzt installieren» (primär, nur wenn es
-  etwas gibt; «Installiert …») und «Zustimmen …» (sekundär mit Schloss, nur bei Firewall, Netz oder Boot; danach
-  fragt der polkit-Dialog nach dem Passwort). Darunter in `gedaempft`, was die Zustimmung betrifft und wofür sie gilt
-  («Ändert scripts/module/35-netzwerk.sh. Zustimmen verlangt dein Passwort und gilt nur für v0.1.0-rc5 (Objekt
-  …).»), während eines Updates in `text2` «Ein Update läuft gerade. Ausschalten und Neustart warten, bis es fertig
-  ist.»
+  etwas gibt; währenddessen «Wird installiert …») und «Zustimmen …» (sekundär mit Schloss, nur bei Firewall, Netz
+  oder Boot; danach fragt der polkit-Dialog nach dem Passwort). Darunter in `gedaempft`, was die Zustimmung betrifft
+  und wofür sie gilt («Ändert scripts/module/35-netzwerk.sh. Zustimmen verlangt dein Passwort und gilt nur für
+  v0.1.0-rc5 (Objekt …).»), sonst bei «Jetzt installieren» «Installiert genau den angezeigten, schon geprüften Stand.
+  Die Oberfläche lädt danach neu, wenn sie sich geändert hat.» Während eines Updates steht dort nichts (Titel und
+  Satz oben sagen es).
 - Rückmeldungen als Hinweis nur, wo keine Mitteilung kommt («Updates geprüft», «zenOS ist schon aktuell», «Das Update
   braucht deine Zustimmung», «Gerade läuft schon ein Update …»); abgebrochene Passwortabfragen bleiben still.
 
 «Automatisch installieren»: Segmente «Bei Sperre · Zeitfenster · Jederzeit · Von Hand», beim Zeitfenster darunter
 «Von» und «bis» mit zwei Zeitfeldern (HH:MM) und «Uhr». Ein zu kurzes Fenster (unter einer Stunde) steht ruhig in
-`fehler` darunter und wird nicht gesetzt. Dann ein Satz in `gedaempft`, was die Wahl bedeutet, und dass sie für das
-ganze Gerät gilt. Ist die Datei von Hand kaputt, steht neben der Beschriftung in Mono «Datei ungültig · es gilt «Bei
-Sperre»». Während des Setzens zeigen die Segmente schon die neue Wahl; scheitert es, springen sie zurück.
+`fehler` darunter und wird nicht gesetzt. Dann ein Satz in `gedaempft`, knapp und ehrlich je Wahl («Kommt, wenn
+zenOS seit 5 Minuten gesperrt ist oder der Login-Bildschirm seit 5 Minuten wartet …», «Kommt zwischen 02:00 und
+05:00 Uhr, auch wenn du gerade arbeitest. Das Gerät muss dann laufen.», «… die Oberfläche lädt dabei kurz neu.»),
+danach, was immer gilt: ganzes Gerät, nur gültig Signiertes, Zustimmung bei Firewall, Netz oder Boot, im Akkubetrieb
+erst ab 50 %, auf dev nie. Ist die Datei von Hand kaputt, steht neben der Beschriftung in Mono «Datei ungültig · es
+gilt «Bei Sperre»» in `warnung` (ein Problem, nichts Angepasstes; nicht im Akzent), und ein Klick auf «Bei Sperre»
+schreibt sie neu. Während des Setzens zeigen die Segmente schon die neue Wahl; scheitert es, springen sie zurück.
 
 Darunter «Im Terminal» mit den Tastenkappen «zen kanal», «zen update», «zen doctor» und «Terminal öffnen».
 
@@ -447,7 +459,9 @@ Passwort (`shell/polkit/Polkit.qml`).
   jede Taste im Feld (es ist zu sehen).
 - Der Login sieht aus wie der Sperrbildschirm und ist immer dunkel. Unten mittig steht das Zeichen 48 px
   (unterer Stein `salbei`), rechts Neustart und Ausschalten. Die Pille der Vorwarnung (Leerlauf im Akkubetrieb oder
-  leerer Akku) steht dort wie auf der Sperre unter dem Datum, auf jedem Bildschirm.
+  leerer Akku) steht dort wie auf der Sperre unter dem Datum, auf jedem Bildschirm. Übernimmt ein Update aus dem Kanal
+  gerade den Code, steht dort dieselbe Pille mit dem Symbol `info` in `text2`: «zenOS wird aktualisiert. Mit
+  der Anmeldung bitte warten, bis das fertig ist.» Sie verschwindet von selbst (Takt 3 s), nichts blinkt.
 
 ### Erster Start
 

@@ -23,6 +23,7 @@ import re
 import shutil
 import sys
 import tempfile
+import threading
 import time
 import unittest
 
@@ -137,11 +138,16 @@ class Ruhe(unittest.TestCase):
         os.makedirs(os.path.join(self.ordner, "run-systemd"))
         self.laufzeit = os.path.join(self.ordner, "run-user", str(self.uid))
         os.makedirs(os.path.join(self.laufzeit, "zenos"))
+        self.proc = os.path.join(self.ordner, "proc")
+        schreiben(os.path.join(self.proc, "uptime"), "1000.00 1.00\n")
         werte = {"CODE_DIR": code, "SETPRIV": setpriv, "RUN_USER": os.path.join(self.ordner, "run-user"),
                  "LOGINCTL": os.path.join(self.ordner, "bin", "loginctl"),
                  "SYSTEMCTL": os.path.join(self.ordner, "bin", "systemctl"),
                  "TIMEDATECTL": os.path.join(self.ordner, "bin", "timedatectl"),
-                 "SYSTEMD_RUN_DIR": os.path.join(self.ordner, "run-systemd")}
+                 "SYSTEMD_RUN_DIR": os.path.join(self.ordner, "run-systemd"), "PROC": self.proc,
+                 "TIMESYNC_FLAG": os.path.join(self.ordner, "timesync-synchronized"),
+                 "POWER_STATUS": os.path.join(self.ordner, "geraet.json"),
+                 "POWER_SUPPLY_DIR": os.path.join(self.ordner, "power_supply")}
         for name, wert in werte.items():
             self.addCleanup(setattr, K, name, getattr(K, name))
             setattr(K, name, wert)
@@ -153,9 +159,12 @@ class Ruhe(unittest.TestCase):
             schreiben(os.path.join(self.attrappen, name + ".exit"), str(code))
 
     def sitzungen(self, liste, zustaende=None):
+        """Sitzungen für loginctl. zustaende: id → State (dann Type wayland, nicht fern) oder die ganze Ausgabe von
+        show-session («State=…\\nType=…»)."""
         self.verhalten("loginctl.list-sessions", json.dumps(liste))
         for sid, zustand in (zustaende or {}).items():
-            self.verhalten(f"loginctl.show-session.{sid}", zustand + "\n")
+            text = zustand if "=" in zustand else f"State={zustand}\nType=wayland\nRemote=no\n"
+            self.verhalten(f"loginctl.show-session.{sid}", text + ("" if text.endswith("\n") else "\n"))
 
     def gesperrt(self, alter_minuten=10, antwort="gesperrt"):
         marker = os.path.join(self.laufzeit, "zenos", "gesperrt")
@@ -179,7 +188,8 @@ class Ruhe(unittest.TestCase):
                         self.sitzung(session="c4", **{"class": "user-early"}),
                         self.sitzung(session="c5"), self.sitzung(session="c6", **{"class": "manager"})],
                        {"c1": "active", "c4": "online", "c5": "closing"})
-        self.assertEqual(K.seat_sessions(), [("c1", self.uid, self.name), ("c4", self.uid, self.name)])
+        self.assertEqual(K.seat_sessions(), [("c1", self.uid, self.name, "wayland"),
+                                             ("c4", self.uid, self.name, "wayland")])
 
     def test_sitzungen_nicht_pruefbar(self):
         self.verhalten("loginctl.list-sessions", "kein json\n")
@@ -190,9 +200,85 @@ class Ruhe(unittest.TestCase):
         self.assertIsNone(K.seat_sessions(), "ein seltsamer Name heisst: nicht prüfbar")
         self.assertEqual(K.quiet_now({"art": "sperre"})[0], False)
 
-    def test_ohne_sitzung_ruhig(self):
+    def test_ohne_sitzung_erst_nach_fuenf_minuten_login_bildschirm(self):
+        """Ohne Sitzung auf seat0 ist es erst ruhig, wenn der Login-Bildschirm seit 5 Min. läuft (ein beim Start
+        nachgeholter Lauf träfe sonst jemanden, der gerade das Passwort tippt)."""
         self.sitzungen([self.sitzung(session="c2", **{"class": "greeter"})])
+        self.addCleanup(setattr, K, "greeter_age", K.greeter_age)
+        alter = [None]
+        K.greeter_age = lambda: alter[0]
+        self.verhalten("systemctl.is-enabled", "enabled\n")
+        ruhig, grund = K.quiet_now({"art": "sperre"})
+        self.assertFalse(ruhig)
+        self.assertIn("Login-Bildschirm läuft nicht", grund)
+        alter[0] = 60.0
+        ruhig, grund = K.quiet_now({"art": "sperre"})
+        self.assertFalse(ruhig)
+        self.assertIn("erst seit Kurzem", grund)
+        alter[0] = 400.0
+        self.assertEqual(K.quiet_now({"art": "sperre"}), (True, "niemand angemeldet (Login-Bildschirm seit 6 Min.)"))
+        # Ohne greetd (kein Login-Bildschirm): 5 Min. nach dem Start
+        alter[0] = None
+        self.verhalten("systemctl.is-enabled", "disabled\n", code=1)
         self.assertEqual(K.quiet_now({"art": "sperre"}), (True, "niemand angemeldet"))
+        schreiben(os.path.join(self.proc, "uptime"), "100.00 1.00\n")
+        self.assertFalse(K.quiet_now({"art": "sperre"})[0])
+
+    def test_ohne_systemd_ruhig(self):
+        self.addCleanup(setattr, K, "SYSTEMD_RUN_DIR", K.SYSTEMD_RUN_DIR)
+        K.SYSTEMD_RUN_DIR = os.path.join(self.ordner, "gibt-es-nicht")
+        self.assertEqual(K.quiet_now({"art": "sperre"}), (True, "niemand angemeldet"))
+
+    def test_ssh_sitzung_nie_ruhig(self):
+        """Wer per SSH angemeldet ist (logind Remote), arbeitet: «bei Sperre» ist dann nicht ruhig, auch nicht am
+        Login-Bildschirm."""
+        self.addCleanup(setattr, K, "greeter_age", K.greeter_age)
+        K.greeter_age = lambda: 900.0
+        fern = self.sitzung(session="7", seat=None, tty="pts/0")
+        self.sitzungen([fern], {"7": "State=active\nType=tty\nRemote=yes\n"})
+        self.assertEqual(K.quiet_now({"art": "sperre"}), (False, f"{self.name} ist per SSH angemeldet"))
+        self.sitzungen([self.sitzung(), fern], {"c1": "active", "7": "State=active\nType=tty\nRemote=yes\n"})
+        self.gesperrt()
+        self.assertFalse(K.quiet_now({"art": "sperre"})[0])
+        # Ohne die SSH-Sitzung: gesperrt heisst ruhig
+        self.sitzungen([self.sitzung()], {"c1": "active"})
+        self.assertEqual(K.quiet_now({"art": "sperre"}), (True, "gesperrt"))
+        # «jederzeit» und «fenster» meinen ausdrücklich auch während der Arbeit
+        self.sitzungen([fern], {"7": "State=active\nType=tty\nRemote=yes\n"})
+        self.assertTrue(K.quiet_now({"art": "jederzeit"})[0])
+
+    def test_textkonsole_neben_gesperrter_sitzung(self):
+        """Grafische Sitzung gesperrt, dazu eine Textkonsole (Ctrl+Alt+F3) desselben Benutzers: nicht ruhig."""
+        self.sitzungen([self.sitzung(), self.sitzung(session="c3", tty="tty3")],
+                       {"c1": "active", "c3": "State=online\nType=tty\nRemote=no\n"})
+        self.gesperrt()
+        self.assertEqual(K.quiet_now({"art": "sperre"}), (False, f"{self.name} ist auf einer Textkonsole angemeldet"))
+
+    def test_fehlende_klasse_nicht_pruefbar(self):
+        """Fehlt «class» in der Liste (andere Fassung von systemd), gilt show-session; fehlt es dort auch, ist die Lage
+        nicht prüfbar (nie «niemand angemeldet»)."""
+        ohne = self.sitzung()
+        del ohne["class"]
+        self.sitzungen([ohne], {"c1": "active"})
+        self.assertIsNone(K.logind_sessions())
+        self.assertEqual(K.quiet_now({"art": "sperre"}), (False, "Sitzungen nicht prüfbar (loginctl)"))
+        self.sitzungen([ohne], {"c1": "State=active\nType=wayland\nRemote=no\nClass=user\n"})
+        self.assertEqual(K.seat_sessions(), [("c1", self.uid, self.name, "wayland")])
+
+    def test_sperre_vor_dem_abgleich_der_uhr(self):
+        """Die Sperre begann vor dem ersten Abgleich der Uhr (der Pi hat keine Uhr mit Batterie): Ihr Alter zählt erst
+        ab dem Abgleich, sonst wirkte eine eben gesetzte Sperre nach einem Sprung der Uhr sofort alt."""
+        self.sitzungen([self.sitzung()], {"c1": "active"})
+        self.gesperrt(alter_minuten=600)
+        schreiben(K.TIMESYNC_FLAG, "")
+        zeit = time.time() - 60
+        os.utime(K.TIMESYNC_FLAG, (zeit, zeit))
+        ruhig, grund = K.quiet_now({"art": "sperre"})
+        self.assertFalse(ruhig)
+        self.assertIn("erst seit Kurzem", grund)
+        zeit = time.time() - 20 * 60
+        os.utime(K.TIMESYNC_FLAG, (zeit, zeit))
+        self.assertEqual(K.quiet_now({"art": "sperre"}), (True, "gesperrt"))
 
     def test_sperre_braucht_marker_alter_und_oberflaeche(self):
         self.sitzungen([self.sitzung()], {"c1": "active"})
@@ -269,7 +355,15 @@ class Ruhe(unittest.TestCase):
         self.assertEqual(K.login_state(True), (True, "der Login-Bildschirm läuft"))
         greeter[0] = False
         self.sitzungen([self.sitzung()], {"c1": "active"})
-        self.assertEqual(K.login_state(True), (True, "eine Sitzung ist offen"))
+        self.assertEqual(K.login_state(True), (True, "eine grafische Sitzung ist offen"))
+        # Anmeldung auf der Textkonsole (Ctrl+Alt+F2), der grafische Login ist kaputt: zählt nicht
+        self.sitzungen([self.sitzung(tty="tty2")], {"c1": "State=active\nType=tty\nRemote=no\n"})
+        ok, grund = K.login_state(True)
+        self.assertFalse(ok)
+        self.assertIn("Textkonsole", grund)
+        greeter[0] = True
+        self.assertEqual(K.login_state(True), (True, "der Login-Bildschirm läuft"))
+        greeter[0] = False
         # greetd nicht aktiviert und bei der Installation auch nicht: kein Login zu prüfen
         self.sitzungen([])
         self.verhalten("systemctl.is-enabled", "disabled\n", code=1)
@@ -294,8 +388,77 @@ class Ruhe(unittest.TestCase):
         self.assertFalse(K.greeter_running(), "erst 5 s alt: ein Greeter, der abstürzt, zählt nicht")
         prozess(12, "quickshell", 900)
         self.assertTrue(K.greeter_running())
+        self.assertEqual(K.greeter_age(), 100.0, "das Alter des ältesten Greeter-Prozesses")
         K.GREETER_USER = "gibt-es-nicht-zenos"
         self.assertFalse(K.greeter_running())
+
+
+    def test_uebernahme_meldet_es_der_oberflaeche(self):
+        """Während install.sh aus dem Kanal bekommt jede Oberfläche auf seat0 Bescheid (beginn, ende): Sie lädt
+        geänderte Dateien solange nicht einzeln nach. Als Benutzer der Sitzung, mit Argumentliste."""
+        self.sitzungen([self.sitzung()], {"c1": "active"})
+        laufzeit = os.path.join(self.ordner, "run-zenos-kanal")
+        os.makedirs(laufzeit)
+        for name, wert in (("RUNTIME_DIR", laufzeit), ("TRUSTED_UIDS", (0, os.getuid())),
+                           ("PATH_CHECK_TOP", self.ordner)):
+            self.addCleanup(setattr, K, name, getattr(K, name))
+            setattr(K, name, wert)
+        flagge = os.path.join(laufzeit, "uebernahme")
+        with K.takeover_flag({"commit": "1" * 40}):
+            self.assertEqual(lesen(flagge), "1" * 40 + "\n")
+        self.assertFalse(os.path.exists(flagge))
+        aufrufe = lesen(os.path.join(self.laufzeit, "setpriv-aufrufe")).splitlines()
+        vorne = f"--reuid={self.uid} --regid={pwd.getpwuid(self.uid).pw_gid} --init-groups --no-new-privs -- "
+        self.assertEqual(aufrufe[-2:], [vorne + f"{K.CODE_DIR}/scripts/bin/zenos-ipc kanal uebernahme beginn",
+                                        vorne + f"{K.CODE_DIR}/scripts/bin/zenos-ipc kanal uebernahme ende"])
+        # Ohne Sitzung auf seat0 niemand zu fragen
+        os.unlink(os.path.join(self.laufzeit, "setpriv-aufrufe"))
+        self.sitzungen([])
+        with K.takeover_flag({"commit": "1" * 40}):
+            pass
+        self.assertFalse(os.path.exists(os.path.join(self.laufzeit, "setpriv-aufrufe")))
+
+    # -- Akku --
+
+    def geraet(self, akku, alter=0):
+        zeit = (datetime.datetime.now().astimezone() - datetime.timedelta(seconds=alter)).isoformat(timespec="seconds")
+        schreiben(K.POWER_STATUS, json.dumps({"version": 1, "zeit": zeit, "geraet": "argon-one-up", "akku": akku}))
+
+    def test_akku_aus_der_statusdatei(self):
+        self.assertEqual(K.power_state(), (None, None), "ohne Angaben: unbekannt, gilt als Netzteil")
+        self.assertIsNone(K.power_problem())
+        self.geraet({"vorhanden": True, "prozent": 20, "laedt": False, "zustand": "ok"})
+        self.assertEqual(K.power_state(), (True, 20))
+        self.assertEqual(K.power_problem(), "im Akkubetrieb mit 20 % (automatisch erst am Netzteil oder ab 50 %)")
+        self.geraet({"vorhanden": True, "prozent": 80, "laedt": False, "zustand": "ok"})
+        self.assertIsNone(K.power_problem(), "ab 50 % auch im Akkubetrieb")
+        self.geraet({"vorhanden": True, "prozent": 20, "laedt": True, "zustand": "ok"})
+        self.assertEqual(K.power_state(), (False, 20))
+        self.assertIsNone(K.power_problem())
+        # Unsicherer Messwert oder veraltete Datei: unbekannt
+        self.geraet({"vorhanden": True, "prozent": 20, "laedt": False, "zustand": "unbekannt"})
+        self.assertEqual(K.power_state(), (None, None))
+        self.geraet({"vorhanden": True, "prozent": 20, "laedt": False, "zustand": "ok"}, alter=3600)
+        self.assertEqual(K.power_state(), (None, None))
+        self.geraet({"vorhanden": False})
+        self.assertIsNone(K.power_problem())
+
+    def test_akku_aus_sys(self):
+        def eintrag(name, **werte):
+            for schluessel, wert in werte.items():
+                schreiben(os.path.join(K.POWER_SUPPLY_DIR, name, schluessel), wert + "\n")
+
+        eintrag("BAT0", type="Battery", status="Discharging", capacity="30")
+        eintrag("AC", type="Mains", online="0")
+        self.assertEqual(K.power_state(), (True, 30))
+        self.assertIn("30 %", K.power_problem())
+        eintrag("AC", type="Mains", online="1")
+        self.assertEqual(K.power_state(), (False, None))
+        self.assertIsNone(K.power_problem())
+        # Akku einer Maus (scope Device) zählt nicht
+        shutil.rmtree(K.POWER_SUPPLY_DIR)
+        eintrag("hid-maus", type="Battery", status="Discharging", capacity="5", scope="Device")
+        self.assertEqual(K.power_state(), (None, None))
 
 
 @unittest.skipUnless(B.HAT_WERKZEUGE, "git oder ssh-keygen fehlt unter /usr/bin")
@@ -385,7 +548,7 @@ class Automatik(I.Geraet):
 
     def setUp(self):
         super().setUp()
-        for name, wert in (("CLOCK_WAIT", 0), ("CONFIRM_WAIT", 0)):
+        for name, wert in (("CLOCK_WAIT", 0), ("CONFIRM_WAIT", 0), ("CONFIRM_LOCK_WAIT", 0), ("CONFIRM_POLL", 0.05)):
             self.addCleanup(setattr, K, name, getattr(K, name))
             setattr(K, name, wert)
         for name in ("quiet_now", "start_id", "login_state", "local_now", "boot_clock"):
@@ -636,6 +799,7 @@ class Automatik(I.Geraet):
         stand = self.zustand("stand.json")
         self.assertEqual(stand["zurueckgestellt"]["version"], "v0.1.0-rc5")
         self.assertIn("zurückgestellt", stand["grund"])
+        self.assertEqual(stand["hoechste"], "v0.1.0-rc5", "hoechste sinkt nicht: Das hält rc5 von der Automatik fern")
         status = io.StringIO()
         with contextlib.redirect_stdout(status):
             K.cmd_status([])
@@ -705,9 +869,12 @@ class Automatik(I.Geraet):
         self.assertEqual(letzte["ergebnis"], "zurueck")
         self.assertIn("kein Login", letzte["grund"])
         self.assertEqual(self.zustand("gut.json")["commit"], gut)
-        # Die gesperrte Version kommt automatisch nicht wieder
+        # Die gesperrte Version kommt automatisch nicht wieder, und zen update fragt nicht nach ihr
         self.assertEqual(self.automatik(), 0, self.ausgabe)
         self.assertEqual(self.kopf(), gut)
+        self.assertEqual(self.zen(), 0, self.ausgabe)
+        self.assertEqual((self.kopf(), self.fragen), (gut, []))
+        self.assertIn("gesperrt: v0.1.0-rc5; noch einmal versuchen: zen rollback v0.1.0-rc5", self.ausgabe)
 
     def test_ohne_guten_stand_kaputt(self):
         # Das allererste Update über den Kanal kam automatisch: Es gibt keinen guten Stand für den Weg zurück
@@ -767,6 +934,272 @@ class Automatik(I.Geraet):
         self.assertIn("gilt als gut nach einem Neustart mit Login", text)
         for befehl in ("automatik", "bestaetigen"):
             self.assertRegex(K.__doc__, re.compile(rf"^  zenos-kanal {befehl}\b", re.M))
+
+    # -- Befunde der Prüfung (Teil B) --
+
+    def werkbank(self):
+        """install.sh von Hand aus einem Arbeitsstand: lokaler Commit in /opt/zenos, Vermerk «angehalten» (10-code)."""
+        self.commit("werkbank", {"werkbank": "arbeit\n"}, ort=K.CODE_DIR)
+        hand = self.kopf()
+        K.write_json(self.datei("angehalten"), {"version": 1, "commit": hand, "zeit": K.iso(K.now())})
+        return hand
+
+    def test_angehalten_ruht_bis_zen_update(self):
+        """10-code: «bis zum nächsten zen update kommt nichts automatisch». Auch nicht auf vorschau ohne Wartezeit,
+        auch nicht beim Login-Bildschirm (Lauf und Gelegenheit)."""
+        self.signiert_installiert("v0.1.0-rc4")
+        hand = self.werkbank()
+        neu = self.neu_signiert("v0.1.0-rc5")
+        for art in ("lauf", "gelegenheit"):
+            self.assertEqual(self.automatik(art), 0, self.ausgabe)
+            self.assertEqual(self.kopf(), hand, art)
+            self.assertNotIn("installieren", self.units())
+            self.assertEqual(self.letzter_lauf()["ergebnis"], "wartet")
+            self.assertIn("Von Hand angehalten", self.letzter_lauf()["grund"])
+        stand = self.zustand("stand.json")
+        self.assertEqual(stand["angehalten"]["commit"], hand)
+        self.assertEqual(stand["installation_lage"]["schluessel"], "angehalten")
+        self.assertFalse(os.path.exists(self.datei(K.READY_MARK)), "die Gelegenheit läuft gar nicht erst")
+        # Auch ein Wunsch der Automatik wird abgelehnt
+        K.write_wish("automatik")
+        _, stand = self.pruefen()
+        self.assertEqual(stand["wunsch"]["ergebnis"], "abgelehnt")
+        # zen update kehrt zum Kanal zurück, danach gilt die Automatik wieder
+        self.assertEqual(self.zen(), 0, self.ausgabe)
+        self.assertEqual(self.kopf(), neu)
+        self.assertFalse(os.path.exists(self.datei("angehalten")))
+
+    def test_angehalten_zwischen_pruefen_und_installieren(self):
+        """Ein install.sh von Hand wird genau zwischen Prüfen und Installieren der Automatik fertig: Der Auftrag der
+        Automatik gilt nicht mehr."""
+        self.signiert_installiert("v0.1.0-rc4")
+        self.neu_signiert("v0.1.0-rc5")
+        echt = K.start_unit
+        hand = []
+
+        def unit(schluessel, follow=False):
+            if schluessel == "installieren" and not hand:
+                hand.append(self.werkbank())
+            return echt(schluessel, follow)
+
+        K.start_unit = unit
+        self.assertEqual(self.automatik(), 0, self.ausgabe)
+        self.assertEqual(self.kopf(), hand[0])
+        self.assertEqual(self.letzter_lauf()["ergebnis"], "wartet")
+        self.assertIn("Von Hand angehalten", self.letzter_lauf()["grund"])
+        self.assertFalse(os.path.exists(self.datei("auftrag.json")))
+        self.assertTrue(os.path.exists(self.datei("angehalten")))
+
+    def test_zeitpunkt_von_hand_waehrend_des_laufs(self):
+        """Der Zeitpunkt wird auf «von Hand» gestellt, während die Automatik prüft: Vor dem Installieren gilt der neue."""
+        self.signiert_installiert("v0.1.0-rc4")
+        vorher = self.kopf()
+        self.neu_signiert("v0.1.0-rc5")
+        echt = K.start_unit
+
+        def unit(schluessel, follow=False):
+            rc = echt(schluessel, follow)
+            if schluessel == "pruefen":
+                self.zeitpunkt("hand")
+            return rc
+
+        K.start_unit = unit
+        self.assertEqual(self.automatik(), 0, self.ausgabe)
+        self.assertEqual(self.kopf(), vorher)
+        self.assertNotIn("installieren", self.units())
+        self.assertIn("inzwischen «von Hand", self.letzter_lauf()["grund"])
+        self.assertFalse(os.path.exists(self.datei("auftrag.json")))
+
+    def unterbrochen_von_hand(self):
+        """zen update mit «ja» bzw. ohne, mittendrin abgebrochen (Strom, kill): laeuft.json bleibt."""
+        echt = K.run_visible
+
+        def ersatz(argv, env, timeout=None, cwd="/"):
+            rc = echt(argv, env, timeout, cwd)
+            if argv[0].endswith("/scripts/install.sh"):
+                K.run_visible = echt
+                raise I.Abgebrochen()
+            return rc
+
+        self.addCleanup(setattr, K, "run_visible", echt)
+        K.run_visible = ersatz
+        with self.assertRaises(I.Abgebrochen):
+            self.zen()
+        self.assertTrue(os.path.exists(self.datei("laeuft.json")))
+
+    def test_dev_unterbrochen_setzt_nur_zen_update_fort(self):
+        """Kanal dev: Ein zen update mit «ja» wurde unterbrochen. Die Automatik setzt es nicht fort (dev kommt nie
+        automatisch, und das «ja» galt dem Terminal), auch Tage später und in Ruhe nicht."""
+        self.kanal("dev")
+        self.ohne_anker()
+        self.commit("neu auf dev")
+        self.antworten = ["ja"]
+        self.unterbrochen_von_hand()
+        self.git("checkout", "-q", "--force", "--detach", self.basis, ort=K.CODE_DIR)
+        laeufe = len(self.laeufe())
+        K.quiet_now = lambda zeitpunkt: (True, "gesperrt")
+        self.assertEqual(self.automatik("gelegenheit"), 0, self.ausgabe)
+        self.assertEqual((len(self.laeufe()), self.kopf()), (laeufe, self.basis))
+        self.assertIn("von Hand wurde unterbrochen", self.letzter_lauf()["grund"])
+        self.assertIn("zen update", self.letzter_lauf()["grund"])
+        self.assertTrue(os.path.exists(self.datei("laeuft.json")), "zen update setzt fort")
+
+    def test_vorschau_von_hand_unterbrochen_nicht_automatisch(self):
+        self.signiert_installiert("v0.1.0-rc4")
+        alt = self.kopf()
+        self.neu_signiert("v0.1.0-rc5")
+        self.unterbrochen_von_hand()
+        self.git("checkout", "-q", "--force", "--detach", alt, ort=K.CODE_DIR)
+        self.assertEqual(self.automatik("gelegenheit"), 0, self.ausgabe)
+        self.assertEqual(self.kopf(), alt)
+        self.assertIn("von Hand wurde unterbrochen", self.letzter_lauf()["grund"])
+
+    def test_akku_haelt_die_automatik_auf(self):
+        """Argon ONE UP mit zugeklapptem Deckel im Akkubetrieb: unter 50 % nichts, am Netzteil schon."""
+        self.signiert_installiert("v0.1.0-rc4")
+        vorher = self.kopf()
+        neu = self.neu_signiert("v0.1.0-rc5")
+
+        def akku(prozent, laedt):
+            zeit = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+            schreiben(K.POWER_STATUS, json.dumps({"version": 1, "zeit": zeit, "akku": {
+                "vorhanden": True, "prozent": prozent, "laedt": laedt, "zustand": "ok"}}))
+
+        akku(12, False)
+        self.assertEqual(self.automatik(), 0, self.ausgabe)
+        self.assertEqual(self.kopf(), vorher)
+        self.assertIn("im Akkubetrieb mit 12 %", self.letzter_lauf()["grund"])
+        akku(12, True)
+        self.assertEqual(self.automatik("gelegenheit"), 0, self.ausgabe)
+        self.assertEqual(self.kopf(), neu)
+
+    def test_akku_haelt_auch_das_fortsetzen_auf(self):
+        self.signiert_installiert("v0.1.0-rc4")
+        gut = self.kopf()
+        neu = self.neu_signiert("v0.1.0-rc5")
+        echt = K.run_visible
+
+        def ersatz(argv, env, timeout=None, cwd="/"):
+            rc = echt(argv, env, timeout, cwd)
+            if argv[0].endswith("/scripts/install.sh"):
+                K.run_visible = echt
+                raise I.Abgebrochen()
+            return rc
+
+        self.addCleanup(setattr, K, "run_visible", echt)
+        K.run_visible = ersatz
+        with self.assertRaises(I.Abgebrochen):
+            self.automatik()
+        self.git("checkout", "-q", "--force", "--detach", gut, ort=K.CODE_DIR)
+        zeit = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+        schreiben(K.POWER_STATUS, json.dumps({"version": 1, "zeit": zeit, "akku": {
+            "vorhanden": True, "prozent": 5, "laedt": False, "zustand": "ok"}}))
+        self.assertEqual(self.automatik("gelegenheit"), 0, self.ausgabe)
+        self.assertEqual(self.kopf(), gut)
+        self.assertIn("im Akkubetrieb mit 5 %", self.letzter_lauf()["grund"])
+        os.unlink(K.POWER_STATUS)
+        self.assertEqual(self.automatik("gelegenheit"), 0, self.ausgabe)
+        self.assertEqual(self.kopf(), neu)
+
+    def test_bestaetigung_wartet_auf_die_sperre_der_bedienung(self):
+        """Beim Start läuft gerade die Automatik (Persistent): Die Bestätigung wartet darauf, statt bis zum nächsten
+        Start zu verfallen; dieser Start ohne Login zählt."""
+        self.signiert_installiert("v0.1.0-rc4")
+        self.neu_signiert("v0.1.0-rc5")
+        self.assertEqual(self.automatik(), 0, self.ausgabe)
+        K.start_id = lambda: "start-2"
+        K.login_state = lambda greetd: (False, "greetd läuft nicht (failed)")
+        lauf = K.take_lock(K.UI_LOCK_FILE)
+        K.CONFIRM_LOCK_WAIT = 30
+        freigabe = threading.Timer(0.5, os.close, (lauf,))
+        freigabe.start()
+        self.addCleanup(freigabe.join)
+        self.assertEqual(self.bestaetigen(), 10, self.ausgabe)
+        self.assertIn("wartet darauf", self.ausgabe)
+        self.assertEqual(self.zustand(K.UNCONFIRMED)["fehlstarts"], ["start-2"])
+        # Bleibt die Sperre belegt, endet es nach der Wartezeit mit 75
+        lauf = K.take_lock(K.UI_LOCK_FILE)
+        self.addCleanup(os.close, lauf)
+        K.CONFIRM_LOCK_WAIT = 0.2
+        self.assertEqual(self.bestaetigen(), 75, self.ausgabe)
+
+    def test_keine_neue_automatik_vor_der_bestaetigung(self):
+        """Ein automatisch installierter Stand aus einem früheren Start wartet auf die Bestätigung: Die Automatik
+        installiert nichts Neues (die Zählung der Starts ohne Login begänne sonst von vorn)."""
+        self.signiert_installiert("v0.1.0-rc4")
+        rc5 = self.neu_signiert("v0.1.0-rc5")
+        self.assertEqual(self.automatik(), 0, self.ausgabe)
+        self.neu_signiert("v0.1.0-rc6")
+        K.start_id = lambda: "start-2"
+        self.assertEqual(self.automatik(), 0, self.ausgabe)
+        self.assertEqual(self.kopf(), rc5)
+        self.assertIn("wartet auf die Bestätigung", self.letzter_lauf()["grund"])
+        K.login_state = lambda greetd: (True, "der Login-Bildschirm läuft")
+        self.assertEqual(self.bestaetigen(), 0, self.ausgabe)
+        self.assertEqual(self.automatik(), 0, self.ausgabe)
+        self.assertNotEqual(self.kopf(), rc5, "nach der Bestätigung geht es weiter")
+
+    def test_weg_zurueck_scheitert(self):
+        """Zweimal kein Login, und install.sh des guten Stands scheitert (etwa ohne Netz): Kein Rückweg auf den Stand
+        ohne Login, der gute Stand bleibt ungesperrt, «kaputt», und der nächste Start versucht es noch einmal."""
+        gut = self.signiert_installiert("v0.1.0-rc4")
+        neu = self.neu_signiert("v0.1.0-rc5")
+        self.assertEqual(self.automatik(), 0, self.ausgabe)
+        K.login_state = lambda greetd: (False, "greetd läuft nicht (failed)")
+        echt = K.run_visible
+        gut_ordner = os.path.join(K.STATE_DIR, "bereit", gut)
+        scheitern = [True]
+
+        def ersatz(argv, env, timeout=None, cwd="/"):
+            if scheitern[0] and argv[0] == os.path.join(gut_ordner, "scripts", "install.sh"):
+                return 1
+            return echt(argv, env, timeout, cwd)
+
+        self.addCleanup(setattr, K, "run_visible", echt)
+        K.run_visible = ersatz
+        K.start_id = lambda: "start-2"
+        self.assertEqual(self.bestaetigen(), 10, self.ausgabe)
+        K.start_id = lambda: "start-3"
+        self.assertEqual(self.bestaetigen(), 5, self.ausgabe)
+        letzte = self.zustand("letzte.json")
+        self.assertEqual(letzte["ergebnis"], "kaputt")
+        self.assertIn("Weg zurück auf den guten Stand", letzte["grund"])
+        self.assertIsNone(letzte["rueckweg"], "kein Rückweg auf den Stand ohne Login")
+        self.assertEqual(sorted(os.listdir(self.datei("gesperrt"))), ["v0.1.0-rc5"], "der gute Stand ist nicht gesperrt")
+        offen = self.zustand(K.UNCONFIRMED)
+        self.assertEqual(offen["commit"], neu)
+        self.assertTrue(K.parse_iso(offen["zurueck"]))
+        self.assertEqual(K.installation_summary()[0], "kaputt")
+        # Nächster Start, wieder kein Login: noch ein Versuch, jetzt gelingt er
+        scheitern[0] = False
+        K.start_id = lambda: "start-4"
+        self.assertEqual(self.bestaetigen(), 0, self.ausgabe)
+        self.assertEqual(self.kopf(), gut)
+        self.assertEqual(self.zustand("letzte.json")["ergebnis"], "zurueck")
+        self.assertEqual(self.zustand("gut.json")["commit"], gut)
+        self.assertFalse(os.path.exists(self.datei(K.UNCONFIRMED)))
+
+    def test_weg_zurueck_gescheitert_dann_kommt_der_login(self):
+        """Der Weg zurück scheiterte, beim nächsten Start kommt der Login doch: Der Stand ist gut, seine Sperre weg."""
+        gut = self.signiert_installiert("v0.1.0-rc4")
+        neu = self.neu_signiert("v0.1.0-rc5")
+        self.assertEqual(self.automatik(), 0, self.ausgabe)
+        K.login_state = lambda greetd: (False, "greetd läuft nicht (failed)")
+        echt = K.run_visible
+        gut_install = os.path.join(K.STATE_DIR, "bereit", gut, "scripts", "install.sh")
+        self.addCleanup(setattr, K, "run_visible", echt)
+        K.run_visible = lambda argv, env, timeout=None, cwd="/": 1 if argv[0] == gut_install else echt(argv, env,
+                                                                                                      timeout, cwd)
+        for start in ("start-2", "start-3"):
+            K.start_id = lambda s=start: s
+            self.bestaetigen()
+        self.assertEqual(self.zustand("letzte.json")["ergebnis"], "kaputt")
+        self.assertEqual(self.kopf(), neu)
+        K.start_id = lambda: "start-4"
+        K.login_state = lambda greetd: (True, "der Login-Bildschirm läuft")
+        self.assertEqual(self.bestaetigen(), 0, self.ausgabe)
+        self.assertEqual(self.zustand("gut.json")["commit"], neu)
+        self.assertFalse(os.path.exists(os.path.join(K.STATE_DIR, "gesperrt", "v0.1.0-rc5")))
 
     def test_selbsttest_probelauf_kennt_die_automatik(self):
         self.assertIn(("automatik", ["automatik"]), [tuple(x) for x in self._probelauf_schritte()])
@@ -831,6 +1264,10 @@ class Units(unittest.TestCase):
         self.assertIn(f"_KANAL_AUS={K.AUTOMATIC_OFF_FILE}", modul)
         self.assertEqual(K.TIMERS, ("zenos-kanal.timer", "zenos-kanal-gelegenheit.timer"))
         self.assertIn("_KANAL_AUTOMATIK=(zenos-kanal.timer zenos-kanal-gelegenheit.timer)", modul)
+        # Die Bestätigung nur aktivieren, nie im Betrieb starten: Nach dem Start feuerte sie sofort und hielte nach
+        # jedem install.sh kurz die Sperre der Bedienung (im Ende-zu-Ende-Test endete die Automatik so mit 75)
+        self.assertIn("dienst_aktivieren zenos-kanal-bestaetigen.timer", modul)
+        self.assertNotIn("_kanal_timer_an zenos-kanal-bestaetigen.timer", modul)
         zen = lesen(ZEN_KANAL)
         self.assertIn('automatik "$1"', zen)
 

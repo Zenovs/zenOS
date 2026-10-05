@@ -27,7 +27,8 @@
 #   rollback     zen rollback auf einen signierten Tag (ohne Frage) und auf einen unsignierten (nur mit «ja»), dann
 #                zurück mit dem alten zen update dieses Stands
 #   werkbank     install.sh von Hand aus ~/zenOS mit einem nicht gepushten Commit: wartet auf die Kanal-Sperre,
-#                «angehalten»; zen update kehrt nur mit «ja» zum Kanal zurück
+#                «angehalten»; die Automatik ruht darüber (vorschau, jederzeit); zen update kehrt nur mit «ja» zum
+#                Kanal zurück
 #   stopp        SIGTERM an den Dienst während install.sh (Ausschalten): install.sh läuft zu Ende, Ergebnis gesund
 #   notweg       zenos-kanal fehlt: zen update verweist auf ANLEITUNG F; der Notweg ohne zen bringt ihn zurück: mit
 #                Anker ein signierter Tag, gegen den Anker des Geräts geprüft (ein unsignierter fällt durch), ohne
@@ -39,8 +40,8 @@
 #                fällt auf: Rückweg (ohne Probelauf), danach geht zen update wieder
 #   bedienung    (zuletzt, braucht nur «einrichten» und dieses Programm in /opt/zenos) Einstellungen › System › Updates
 #                ohne Oberfläche: zenos-kanal-bedienen als root wie über pkexec. polkit kennt die Aktionen, Zeitpunkt
-#                setzen (ein zu kurzes Fenster nicht), «Jetzt prüfen», «Jetzt installieren» (signiert, ohne Frage,
-#                danach neu geprüft), ein Stand, der Netz trifft (installieren wartet, zustimmen für ein anderes Objekt
+#                setzen (ein zu kurzes Fenster nicht), «Jetzt prüfen», «Jetzt installieren» (nur für den angezeigten
+#                Stand, signiert, ohne Frage, danach neu geprüft), ein Stand, der Netz trifft (installieren wartet, zustimmen für ein anderes Objekt
 #                nichts, für das gezeigte installiert), dev unsigniert (zustimmen abgelehnt, installieren wartet);
 #                der Helfer liest Exit 3 und 10 und lässt keine Unit «failed» zurück
 #   automatik    (braucht «einrichten», «bedienung» oder einen Anker und dieses Programm in /opt/zenos; vor dem ersten
@@ -636,6 +637,22 @@ s_werkbank() {
   [[ "$(json "$STAND/angehalten" .commit)" == "$lokal" ]] || fehler "angehalten fehlt"
   /usr/bin/python3 -I /usr/local/libexec/zenos/zenos-kanal status --installation > "$E2E/zen.txt"
   erwarte_text "^angehalten " "Status «angehalten»"
+  # Die Automatik ruht über einem Stand von Hand, auch auf vorschau zum Zeitpunkt «jederzeit» (Prüfung Teil B)
+  if [[ -f /etc/systemd/system/zenos-kanal-gelegenheit.service ]]; then
+    kanal vorschau
+    /usr/bin/python3 -I /usr/local/libexec/zenos/zenos-kanal zeitpunkt jederzeit > /dev/null
+    # Der Notschalter (für «automatik» gesetzt) hielte die Automatik vor dem Blick auf «angehalten» an
+    if [[ -e "$AUS" ]]; then mv -f -- "$AUS" "$AUS.e2e"; fi
+    rc=0
+    /usr/bin/python3 -I /usr/local/libexec/zenos/zenos-kanal automatik gelegenheit > "$E2E/zen.txt" 2>&1 || rc=$?
+    if [[ -e "$AUS.e2e" ]]; then mv -f -- "$AUS.e2e" "$AUS"; fi
+    erwarte_rc "$rc" 0 "Automatik über einem Stand von Hand"
+    erwarte_text "Von Hand angehalten" "die Automatik ruht"
+    erwarte_kopf "$lokal" "der Arbeitsstand bleibt"
+    /usr/bin/python3 -I /usr/local/libexec/zenos/zenos-kanal zeitpunkt sperre > /dev/null
+    kanal dev
+    rc=0
+  fi
   zen_als_tester "ja" zen update || rc=$?
   erwarte_rc "$rc" 0 "zen update"
   erwarte_text "liegt nicht in origin/dev" "Grund: Stand nicht auf origin (aus /opt/zenos verglichen)"
@@ -723,7 +740,7 @@ s_bedienung() {
   pkaction --action-id org.zenos.kanal.installieren --verbose > "$E2E/zen.txt" 2>&1
   erwarte_text "implicit active: *yes$" "polkit: installieren ohne Passwort"
   erwarte_text "implicit any: *no$" "polkit: nicht aus SSH"
-  systemd-analyze verify /etc/systemd/system/zenos-kanal-jetzt.service \
+  systemd-analyze verify /etc/systemd/system/zenos-kanal-jetzt@.service \
     "/etc/systemd/system/zenos-kanal-zustimmen@.service" > "$E2E/verify.txt" 2>&1 ||
     { cat "$E2E/verify.txt" >&2; fehler "systemd-analyze verify"; }
   ok "systemd-analyze verify ohne Befund"
@@ -755,8 +772,14 @@ s_bedienung() {
   erwarte_rc "$rc" 0 "pruefen"
   [[ "$(json "$STAND/stand.json" .zustand)" == bereit ]] || fehler "stand.json: $(json "$STAND/stand.json" .zustand)"
   ok "stand.json: bereit $(json "$STAND/stand.json" .bereit.version)"
+  objekt=$(json "$STAND/stand.json" .bereit.objekt)
   rc=0
-  "$helfer" installieren > "$E2E/zen.txt" 2>&1 < /dev/null || rc=$?
+  "$helfer" installieren "$(printf '%040d' 0)" > "$E2E/zen.txt" 2>&1 < /dev/null || rc=$?
+  erwarte_rc "$rc" 10 "installieren für einen anderen Stand als den angezeigten"
+  [[ "$(json "$STAND/stand.json" .wunsch.grund)" == "Angezeigt war "* ]] || fehler "Grund: $(json "$STAND/stand.json" .wunsch.grund)"
+  ok "nichts installiert: angezeigt war ein anderer Stand"
+  rc=0
+  "$helfer" installieren "$objekt" > "$E2E/zen.txt" 2>&1 < /dev/null || rc=$?
   erwarte_rc "$rc" 0 "installieren"
   erwarte_kopf "$neu" "v0.5.0-rc1 installiert"
   [[ "$(json "$STAND/letzte.json" .ergebnis)" == installiert ]] || fehler "letzte.json"
@@ -775,10 +798,10 @@ s_bedienung() {
   objekt=$(json "$STAND/stand.json" .bereit.objekt)
   ok "stand.json: zustimmung für ${objekt:0:12}"
   rc=0
-  "$helfer" installieren > "$E2E/zen.txt" 2>&1 < /dev/null || rc=$?
+  "$helfer" installieren "$objekt" > "$E2E/zen.txt" 2>&1 < /dev/null || rc=$?
   erwarte_rc "$rc" 10 "installieren wartet"
   erwarte_kopf "$gut" "nichts installiert"
-  [[ "$(systemctl is-failed zenos-kanal-jetzt.service)" != failed ]] || fehler "jetzt «failed» bei Exit 10"
+  [[ "$(systemctl is-failed "zenos-kanal-jetzt@$objekt.service")" != failed ]] || fehler "jetzt «failed» bei Exit 10"
   ok "Unit nicht «failed»"
   anderes=$(printf '%040d' 0)
   rc=0
@@ -803,7 +826,7 @@ s_bedienung() {
   "$helfer" zustimmen "$neu" > "$E2E/zen.txt" 2>&1 < /dev/null || rc=$?
   erwarte_rc "$rc" 3 "zustimmen auf dev"
   rc=0
-  "$helfer" installieren > "$E2E/zen.txt" 2>&1 < /dev/null || rc=$?
+  "$helfer" installieren "$neu" > "$E2E/zen.txt" 2>&1 < /dev/null || rc=$?
   erwarte_rc "$rc" 10 "installieren auf dev (braucht «ja»)"
   erwarte_kopf "$gut" "nichts installiert"
   [[ "$(systemctl is-failed "zenos-kanal-zustimmen@$neu.service")" != failed ]] || fehler "Unit «failed» bei Exit 3"

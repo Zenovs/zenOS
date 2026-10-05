@@ -107,6 +107,10 @@ class Basis(unittest.TestCase):
             "TRUSTED_UIDS": (0, os.getuid()),
             "PATH_CHECK_TOP": self.ordner,
             "ALLOWED_SCHEMES": ("https", "file"),
+            # Akku und Uhr des Rechners, auf dem der Test läuft, zählen nicht
+            "POWER_STATUS": self.pfad("run", "zenos", "geraet.json"),
+            "POWER_SUPPLY_DIR": self.pfad("gibt-es-nicht", "power_supply"),
+            "TIMESYNC_FLAG": self.pfad("gibt-es-nicht", "synchronized"),
         }
         for name, wert in werte.items():
             self.addCleanup(setattr, K, name, getattr(K, name))

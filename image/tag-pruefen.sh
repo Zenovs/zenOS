@@ -9,14 +9,23 @@
 #     der Name, type ist commit, und er zeigt auf einen Commit (mit --commit genau auf diesen).
 #   - Am Ende steht genau eine SSH-Signatur, kein OpenPGP und kein X.509.
 #   - Der Anker system/vertrauen im Commit des Tags ist vollständig und streng im Format (wie release-signieren.sh).
+#   - Er ist der Anker, den ein Gerät über das Netz hätte: Die Wurzel ist die von zenOS, fest in diesem Skript (unten
+#     SERIE1_WURZEL; sie ändert sich nie). In Serie 1 sind die Release-Schlüssel genau die festen von Serie 1
+#     (SERIE1_RELEASE). Ab Serie 2 braucht jede Serie K von 2 bis zur Serie des Stands den Tag vertrauen/KKKK, mit der
+#     Wurzel gültig signiert (Prinzipal zenos-wurzel, gegen die Widerrufe der Serien davor), auf einem Commit mit Serie
+#     K und derselben Wurzel; seine Release-Schlüssel sind nicht widerrufen. Der Stand trägt genau den Anker aus
+#     vertrauen/NNNN der letzten Serie und alle Widerrufe der Kette.
 #   - «git verify-tag» nimmt den Tag gegen release und widerrufen dieses Ankers für den Prinzipal zenos-release an,
 #     und «ssh-keygen -Y verify» nimmt die Signatur unabhängig davon ebenso an (Namespace git, mit den Widerrufen).
 #     git läuft mit leerer Umgebung, ohne System- und Benutzer-config, ohne Ersatzobjekte, Hooks und fsmonitor, mit
 #     gpg.ssh.program=/usr/bin/ssh-keygen und abgeschaltetem OpenPGP und X.509. Was die config des Repos zu Signaturen
 #     sagt, überschreibt die Befehlszeile.
-#   - Ab Serie 2 gibt es den Tag vertrauen/NNNN (NNNN = Serie), mit der Wurzel dieses Ankers gültig signiert
-#     (Prinzipal zenos-wurzel), und sein Commit trägt genau diesen Anker. Ein Image bekommt so nie einen Anker, den ein
-#     Gerät nicht auch über das Netz übernommen hätte.
+#
+# Grenze: Das fängt einen Anker, der in einem Release ungewollt mitkam (etwa ein zusätzlicher Release-Schlüssel), und
+# einen fremden Anker mit fremder Wurzel. Gegen jemanden, der Tags pushen kann, schützt es in GitHub Actions nicht: Der
+# Workflow und dieses Skript kommen aus dem Tag selbst. Dagegen helfen nur die Regeln auf GitHub (Tag-Rulesets für v*
+# und vertrauen/*, unveränderliche Releases) und die Prüfung der Prüfsummen vor dem Flashen
+# (docs/image-und-releases.md, «GitHub absichern»).
 #
 # Ausgabe nur bei Exit 0, auf stdout, eine Zeile «schluessel=wert» je Wert (für $GITHUB_OUTPUT und bauen.sh):
 #   tag, version (ohne «v»), kanal (stabil oder vorschau), release (true ohne -rc, sonst false), commit, objekt
@@ -39,6 +48,13 @@ VERSION_ERE='^v(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})(-rc
 ED25519_ERE='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI[A-Za-z0-9+/]{43}'
 OID_ERE='^[0-9a-f]{40}$'
 ANKER_DATEIEN="release wurzel widerrufen serie"
+
+# Der erste Anker von zenOS (Serie 1), fest im Code (Leitplanke, keine Konfiguration): Fingerabdruck der Wurzel und
+# der Release-Schlüssel, wie in system/vertrauen. Öffentliche Prüfschlüssel, keine Geheimnisse. Eine neue Serie kommt
+# über vertrauen/NNNN dazu, die Wurzel ändert sich nie. Die Einheitentests prüfen mit einer Kopie, in der hier die
+# Fingerabdrücke ihres Wegwerf-Ankers stehen.
+SERIE1_WURZEL='SHA256:9xQZHFzUT4CF87GQ2VrCo6oGEC1DimrsHOtEmnB5pDk'
+SERIE1_RELEASE='SHA256:6CAhnfU9qHJz36663u/A/HxmZkKxao0r2QxT3oy+DzI'
 
 hilfe() {
   sed -n '2,4p' "$0" | sed 's/^# \{0,1\}//'
@@ -79,6 +95,14 @@ pg() {
 # fingerabdruck «ssh-ed25519 AAAA…» → SHA256:…
 fingerabdruck() {
   printf '%s\n' "$1" | env -i PATH=/usr/bin:/bin "$SSH_KEYGEN" -lf - 2>/dev/null | cut -d' ' -f2
+}
+
+# fingerabdruecke DATEI → sortierte Fingerabdrücke der Schlüssel in DATEI (eine Zeile «ssh-ed25519 AAAA…» je Schlüssel)
+fingerabdruecke() {
+  local zeile
+  while IFS= read -r zeile; do
+    if [[ -n "$zeile" ]]; then fingerabdruck "$zeile"; fi
+  done < "$1" | sort -u
 }
 
 # --- Anker -----------------------------------------------------------------------------------------------------
@@ -304,25 +328,54 @@ COMMIT=$(pg rev-parse --verify --quiet "refs/tags/$NAME^{commit}" 2>/dev/null) |
 anker_lesen "$COMMIT" "$TMP/anker" || ungueltig "Anker im Stand von $NAME unbrauchbar: $GRUND"
 SERIE=$(cat "$TMP/anker/serie.wert")
 
+# Die Wurzel ist die von zenOS (fest), sonst gilt nichts davon
+WURZEL_FP=$(fingerabdruck "$(cat "$TMP/anker/wurzel.schluessel")")
+[[ "$WURZEL_FP" == "$SERIE1_WURZEL" ]] ||
+  ungueltig "Die Wurzel im Stand von $NAME ($WURZEL_FP) ist nicht die Wurzel von zenOS ($SERIE1_WURZEL); sie ändert sich nie"
+
+# Kette der Anker wie auf dem Gerät: Serie 1 fest, dann vertrauen/0002 bis vertrauen/NNNN, jeweils mit der Wurzel
+# signiert (gegen die Widerrufe bis dahin). Ergebnis: Release-Schlüssel (Fingerabdrücke) und alle Widerrufe (Schlüssel)
+# shellcheck disable=SC2086 # SERIE1_RELEASE ist eine Liste von Fingerabdrücken ohne Leerraum darin
+printf '%s\n' $SERIE1_RELEASE | sort -u > "$TMP/kette.release"
+: > "$TMP/kette.widerrufen"
+K=2
+while (( K <= SERIE )); do
+  VERTRAUEN=vertrauen/$(printf '%04d' "$K")
+  tag_pruefen "$VERTRAUEN" zenos-wurzel "$TMP/anker/wurzel.signers" "$TMP/kette.widerrufen" ||
+    ungueltig "Anker Serie $SERIE ohne gültigen Tag $VERTRAUEN: $GRUND"
+  anker_lesen "$TAG_COMMIT" "$TMP/vertrauen$K" || ungueltig "Anker im Commit von $VERTRAUEN unbrauchbar: $GRUND"
+  [[ "$(cat "$TMP/vertrauen$K/serie.wert")" == "$K" ]] ||
+    ungueltig "Serie im Commit von $VERTRAUEN ist $(cat "$TMP/vertrauen$K/serie.wert"), nicht $K"
+  cmp -s -- "$TMP/vertrauen$K/wurzel.schluessel" "$TMP/anker/wurzel.schluessel" ||
+    ungueltig "Anker im Commit von $VERTRAUEN hat eine andere Wurzel (die ändert sich nie)"
+  sort -u "$TMP/kette.widerrufen" "$TMP/vertrauen$K/widerrufen.schluessel" > "$TMP/kette.neu"
+  mv -f -- "$TMP/kette.neu" "$TMP/kette.widerrufen"
+  [[ -z "$(comm -12 "$TMP/vertrauen$K/release.schluessel" "$TMP/kette.widerrufen")" ]] ||
+    ungueltig "$VERTRAUEN: ein Release-Schlüssel ist schon widerrufen"
+  fingerabdruecke "$TMP/vertrauen$K/release.schluessel" > "$TMP/kette.release"
+  K=$((K + 1))
+done
+if (( SERIE >= 2 )); then
+  anker_gleich "$TMP/anker" "$TMP/vertrauen$SERIE" ||
+    ungueltig "Der Anker im Stand von $NAME ist nicht der aus $VERTRAUEN (Serie $SERIE)"
+fi
+fingerabdruecke "$TMP/anker/release.schluessel" > "$TMP/stand.release"
+if ! cmp -s -- "$TMP/stand.release" "$TMP/kette.release"; then
+  NEU=$(comm -23 "$TMP/stand.release" "$TMP/kette.release" | tr '\n' ' ')
+  ungueltig "Die Release-Schlüssel im Stand von $NAME sind nicht die des Ankers Serie $SERIE (dazu: ${NEU:-keiner})." \
+    "Ein neuer Schlüssel braucht eine neue Serie mit vertrauen/NNNN"
+fi
+[[ -z "$(comm -23 "$TMP/kette.widerrufen" "$TMP/anker/widerrufen.schluessel")" ]] ||
+  ungueltig "Im Anker des Stands von $NAME fehlt ein Widerruf aus den Tags vertrauen/NNNN"
+
 tag_pruefen "$NAME" zenos-release "$TMP/anker/release.signers" "$TMP/anker/widerrufen" "$SOLL" ||
   ungueltig "$GRUND"
 OBJEKT=$TAG_OBJEKT
 SCHLUESSEL=$TAG_SCHLUESSEL
 
-# Ab Serie 2: der Tag vertrauen/NNNN, mit der Wurzel signiert, auf einem Commit mit genau diesem Anker
-if (( SERIE >= 2 )); then
-  VERTRAUEN=vertrauen/$(printf '%04d' "$SERIE")
-  tag_pruefen "$VERTRAUEN" zenos-wurzel "$TMP/anker/wurzel.signers" "$TMP/anker/widerrufen" ||
-    ungueltig "Anker Serie $SERIE ohne gültigen Tag $VERTRAUEN: $GRUND"
-  anker_lesen "$TAG_COMMIT" "$TMP/vertrauen" || ungueltig "Anker im Commit von $VERTRAUEN unbrauchbar: $GRUND"
-  anker_gleich "$TMP/anker" "$TMP/vertrauen" ||
-    ungueltig "Der Anker im Stand von $NAME ist nicht der aus $VERTRAUEN (Serie $SERIE)"
-fi
-
 KANAL=stabil
 RELEASE=true
 case "$NAME" in *-rc*) KANAL=vorschau; RELEASE=false ;; esac
-WURZEL_FP=$(fingerabdruck "$(cat "$TMP/anker/wurzel.schluessel")")
 
 meldung "$NAME (${COMMIT:0:12}) ist gültig signiert: $SCHLUESSEL, Anker Serie $SERIE, Kanal $KANAL"
 printf 'tag=%s\nversion=%s\nkanal=%s\nrelease=%s\ncommit=%s\nobjekt=%s\nschluessel=%s\nserie=%s\nwurzel=%s\n' \

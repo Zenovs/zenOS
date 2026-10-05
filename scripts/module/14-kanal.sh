@@ -11,12 +11,15 @@
 #   (root, ohne Netz), zenos-kanal-installieren.service (root, mit Netz, Inhibitor) sind statisch: «zen update»,
 #   «zen rollback», «sudo zen kanal pruefen», die Einstellungen und die Automatik starten sie.
 #   zenos-kanal-nachstart.service ist aktiviert und läuft beim Start vor greetd, aber nur nach einer unterbrochenen
-#   Installation. zenos-kanal-jetzt.service und zenos-kanal-zustimmen@.service (statisch) startet nur die Oberfläche
-#   über scripts/bin/zenos-kanal-bedienen: «Jetzt installieren» und «Zustimmen …» in Einstellungen › System › Updates.
+#   Installation. zenos-kanal-jetzt@.service und zenos-kanal-zustimmen@.service (statisch) startet nur die Oberfläche
+#   über scripts/bin/zenos-kanal-bedienen: «Jetzt installieren» und «Zustimmen …» in Einstellungen › System › Updates
+#   (die Instanz ist der angezeigte Stand). Die frühere zenos-kanal-jetzt.service ohne Instanz fliegt weg.
 # - Automatik: zenos-kanal.timer (alle 6 h holen, prüfen, nach dem Zeitpunkt installieren) und
 #   zenos-kanal-gelegenheit.timer (alle 15 Min., nur wenn etwas bereit ist) sind ab Werk an (Entscheid Zeno), ausser
 #   der Notschalter /etc/xdg/zenos/kanal-automatik-aus ist gesetzt (sudo zen kanal automatik aus): dann schaltet
-#   install.sh sie nicht ein, sondern aus. zenos-kanal-bestaetigen.timer (2 Min. nach dem Start) ist immer an; seine
+#   install.sh sie nicht ein, sondern aus. zenos-kanal-bestaetigen.timer (2 Min. nach dem Start) ist immer aktiviert,
+#   wird aber nie im laufenden Betrieb gestartet: Nach dem Start feuerte er sofort (OnBootSec ist vorbei) und hielte
+#   nach jedem install.sh kurz die Sperre der Bedienung (ein zen update oder die Automatik endete dann mit 75). Seine
 #   Unit läuft nur, wenn ein automatisch installierter Stand auf die Bestätigung wartet.
 # - polkit-Aktionen für diesen Helfer (system/polkit/org.zenos.kanal.policy): prüfen, jetzt installieren und den
 #   Zeitpunkt setzen ohne Passwort, zustimmen jedes Mal mit Passwort; alles nur in der aktiven Sitzung am Gerät.
@@ -25,7 +28,7 @@
 
 _KANAL_PROGRAMM=/usr/local/libexec/zenos/zenos-kanal
 _KANAL_EINHEITEN=(zenos-kanal-holen.service zenos-kanal-pruefen.service zenos-kanal-installieren.service
-  zenos-kanal-nachstart.service zenos-kanal-jetzt.service zenos-kanal-zustimmen@.service
+  zenos-kanal-nachstart.service zenos-kanal-jetzt@.service zenos-kanal-zustimmen@.service
   zenos-kanal-automatik.service zenos-kanal.timer zenos-kanal-gelegenheit.service zenos-kanal-gelegenheit.timer
   zenos-kanal-bestaetigen.service zenos-kanal-bestaetigen.timer)
 _KANAL_AUTOMATIK=(zenos-kanal.timer zenos-kanal-gelegenheit.timer)
@@ -46,10 +49,11 @@ modul_system() {
   for einheit in "${_KANAL_EINHEITEN[@]}"; do
     datei_installieren "$ZENOS_CODE/system/systemd/system/$einheit" "/etc/systemd/system/$einheit" 0644 root:root
   done
+  datei_entfernen /etc/systemd/system/zenos-kanal-jetzt.service
   ordner_sicherstellen /var/lib/zenos 0755 root:root
   ordner_sicherstellen /var/lib/zenos/kanal 0755 root:root
   dienst_aktivieren zenos-kanal-nachstart.service
-  _kanal_timer_an zenos-kanal-bestaetigen.timer
+  dienst_aktivieren zenos-kanal-bestaetigen.timer
   for einheit in "${_KANAL_AUTOMATIK[@]}"; do
     if [[ -e "$_KANAL_AUS" ]]; then
       _kanal_timer_aus "$einheit"

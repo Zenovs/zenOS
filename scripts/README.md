@@ -16,7 +16,7 @@
 | `pruefen.sh` | Selbsttest des Repos (Linux, nicht auf dem Mac) |
 | `release-signieren.sh` | signiert ein Release oder einen Tag `vertrauen/NNNN` mit 1Password (Mac, bash 3.2) |
 | `bin/zenos-kanal` | signierter Kanal auf dem Gerät: holen (ohne Rechte), prüfen und bereitstellen (root, ohne Netz), installieren mit Gesundheitsprüfung und Rückweg, nachstart, Status, Anker, Zeitpunkt, `jetzt` und `zustimmen` für die Einstellungen, `automatik` (Timer, Notschalter) und `bestaetigen` (nach dem Start); Kern von `zen update` und `zen rollback` |
-| `bin/zenos-kanal-bedienen` | Updates aus den Einstellungen (root über pkexec, polkit `org.zenos.kanal.*`): `pruefen`, `installieren`, `zustimmen OBJEKT` starten die Units des Kanals, `zeitpunkt …` setzt den Zeitpunkt; nur feste Wörter, Journal `-t zenos-kanal-bedienen` |
+| `bin/zenos-kanal-bedienen` | Updates aus den Einstellungen (root über pkexec, polkit `org.zenos.kanal.*`): `pruefen`, `installieren ZIEL`, `zustimmen OBJEKT` starten die Units des Kanals (ZIEL und OBJEKT: der angezeigte Stand), `zeitpunkt …` setzt den Zeitpunkt; nur feste Wörter, Journal `-t zenos-kanal-bedienen` |
 
 ## install.sh
 

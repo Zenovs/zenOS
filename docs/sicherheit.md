@@ -142,21 +142,33 @@ festen `PATH`, schreibt nur `/var/lib/zenos/luefter` (atomar, 0644) und trägt j
 systemd-Benutzerinstanz gilt dieselbe Grenze wie bei der Firewall: polkit ordnet sie der Sitzung am Gerät zu.
 
 **Updates in den Einstellungen** (System › Updates): Die Oberfläche startet
-`pkexec /opt/zenos/scripts/bin/zenos-kanal-bedienen pruefen|installieren|zustimmen OBJEKT|zeitpunkt …` (Argumentliste,
-keine Shell). Die polkit-Aktionen in `system/polkit/org.zenos.kanal.policy` (→ `/usr/share/polkit-1/actions/`, Modul
+`pkexec /opt/zenos/scripts/bin/zenos-kanal-bedienen pruefen|installieren ZIEL|zustimmen OBJEKT|zeitpunkt …`
+(Argumentliste, keine Shell). Die polkit-Aktionen in `system/polkit/org.zenos.kanal.policy` (→ `/usr/share/polkit-1/actions/`, Modul
 `14-kanal`):
 
-| Aktion | aktive Sitzung am Gerät | inaktive Sitzung | sonst (z. B. SSH) |
+| Aktion | jeder Prozess des Benutzers, solange seine Sitzung am Gerät aktiv ist (auch gesperrt) | inaktive Sitzung | ohne Sitzung am Gerät |
 |---|---|---|---|
 | `org.zenos.kanal.pruefen` | ja, ohne Passwort | nein | nein |
 | `org.zenos.kanal.installieren` | ja, ohne Passwort | nein | nein |
 | `org.zenos.kanal.zeitpunkt` | ja, ohne Passwort | nein | nein |
 | `org.zenos.kanal.zustimmen` | nur mit Passwort (`auth_admin`), jedes Mal | nein | nein |
 
+«Aktive Sitzung am Gerät» heisst nicht «nur die Oberfläche»: logind lässt die Sitzung auch bei gesperrtem Bildschirm
+aktiv, und polkit ordnet Prozesse des Benutzerdienstes (systemd `--user`) dieser Sitzung zu. Wer per SSH als derselbe
+Benutzer angemeldet ist (gestohlener Schlüssel, Code in einer tmux-Sitzung), erreicht die Aktionen ohne Passwort über
+`systemd-run` im Benutzerdienst und `pkexec`, solange die Sitzung am Gerät aktiv ist (Prüfung, selbst nachgestellt).
+Direkt aus SSH ohne diesen Umweg verweigert pkexec (Exit 127). Was das öffnet, ist begrenzt: prüfen, den angezeigten,
+schon geprüften und signierten Stand installieren und den Zeitpunkt setzen, also die Automatik auf «von Hand»
+stellen oder sie auf «jederzeit» vorziehen. Eine Änderung des Zeitpunkts, die nicht aus den Einstellungen kam, meldet
+die Oberfläche deshalb als Mitteilung mit dem Weg (pkexec oder sudo, uid). Eine Schleife mit «prüfen» kann die
+Automatik aufhalten, nichts installieren. Den Aufrufer an der cgroup von `zenos-shell.service` festzumachen, wäre
+nicht dicht und unterbleibt. Das Abschalten der Automatik («von Hand») bleibt nach Zenos Entscheid ohne Passwort.
+
 - **Ohne Passwort** (Entscheid Zeno): «Jetzt prüfen» holt und prüft nur. «Jetzt installieren» startet
-  `zenos-kanal-jetzt.service`: wie `zen update`, aber ohne Frage. Installiert wird nur ein gültig signierter,
-  geprüfter Stand, der kein «ja» braucht; was eines bräuchte (unsigniert, Firewall, Netz, Boot, gesperrt, Rückschritt),
-  bleibt liegen. Ein Angreifer mit Zugriff auf die Sitzung gewinnt damit nichts, was nicht ohnehin signiert ist. Der
+  `zenos-kanal-jetzt@ZIEL.service`: wie `zen update`, aber ohne Frage und ohne neues Holen, nur für genau den Stand,
+  den die Einstellungen zeigten (sein Tag-Objekt, auf dev der Commit). Installiert wird nur ein gültig signierter,
+  schon geprüfter Stand, der kein «ja» braucht; was eines bräuchte (unsigniert, Firewall, Netz, Boot, gesperrt,
+  Rückschritt) oder ein anderes Ziel wäre, bleibt liegen. Ein Angreifer mit Zugriff auf die Sitzung gewinnt damit nichts, was nicht ohnehin signiert ist. Der
   Zeitpunkt nimmt nur `sperre`, `fenster VON BIS` (HH:MM, streng geprüft, mindestens eine Stunde), `jederzeit` und
   `hand` an; Signatur und Rückfrage gelten bei jeder Wahl, und auf `dev` kommt nie etwas automatisch. Er gilt für das
   ganze Gerät, weil die Automatik als root ihn liest.
@@ -439,7 +451,12 @@ Telemetrie).
   wenn auch `scripts/pruefen.sh` im selben Lauf grün ist. Einen lokalen Testbau ohne Signatur gibt es nur mit
   `--testbau-ohne-signatur`; GitHub Actions verweigert ihn. Grenze: Workflow und `bauen.sh` kommen aus dem Stand des
   Tags; wer auf GitHub einen eigenen Tag mit eigenem Workflow pushen kann, kann die Prüfung dort ändern. Dagegen
-  helfen die Regeln auf GitHub, und die Geräte prüfen ohnehin selbst.
+  helfen die Regeln auf GitHub, und die Geräte prüfen ohnehin selbst. Der Anker im Stand muss ausserdem der sein, den
+  ein Gerät über das Netz hätte: Wurzel und Release-Schlüssel von Serie 1 stehen fest in `tag-pruefen.sh`, jede
+  spätere Serie braucht die ganze Kette `vertrauen/0002…NNNN`, mit der Wurzel signiert, und alle Widerrufe. So kommt
+  ein Release-Schlüssel, der in einem echten Release ungewollt mitkam, nicht ins Image (frisch geflashte Geräte
+  übernähmen ihn, solche, die über das Netz aktualisieren, nicht). `--nur-mechanik` (Testbau ohne Signatur) verweigert
+  GitHub Actions ebenso.
 - Im Image hat der Standardbenutzer (`user`, nur ohne Einstellungen aus dem Imager) **kein sudo ohne Passwort**
   (`/etc/cloud/cloud.cfg.d/90-zenos-benutzer.cfg`, `sudo: null`), sein Startpasswort ist abgelaufen und muss zuerst
   geändert werden, SSH nimmt nur Schlüssel an. Ubuntus Vorgabe wäre `NOPASSWD:ALL`; damit wären Passwortabfragen
@@ -486,16 +503,21 @@ stehen in `docs/image-und-releases.md`, Abschnitt «Signierte Releases».
   Fassung `zenos-kanal.vorher` zurück, dann `zen rollback`. Erst danach kommt der git-Notweg in `ANLEITUNG.md`,
   Abschnitt F; er prüft den Tag gegen den Anker des Geräts und nimmt `dev` nur, solange der Anker fehlt. Ein Fehler,
   der erst nach einem Neustart auftritt (Login, PAM), fällt der Gesundheitsprüfung nicht auf: Ein automatisch
-  installierter Stand gilt deshalb erst als gut, wenn nach einem Neustart der Login kommt; fehlt das bei zwei Starts,
-  geht es auf den guten Stand zurück, und die Version ist gesperrt (Bestätigung nach dem Start).
+  installierter Stand gilt deshalb erst als gut, wenn nach einem Neustart der Login kommt (Login-Bildschirm oder eine
+  grafische Sitzung; eine Anmeldung auf der Textkonsole zählt nicht); fehlt das bei zwei Starts, geht es auf den guten
+  Stand zurück (ohne Rückweg auf den Stand ohne Login), und die Version ist gesperrt (Bestätigung nach dem Start).
+  Scheitert der Weg zurück, ist das «kaputt», der gute Stand bleibt ungesperrt, und der nächste Start versucht es
+  noch einmal.
 - **Automatik** (Entscheid Zeno): Automatisch installiert wird nur auf `stabil` und `vorschau`, nie auf `dev`, nur ein
   gültig signierter Stand ohne Rückfrage-Pfade (sonst «wartet auf Zustimmung» mit Mitteilung) und nur zum Zeitpunkt
   des Geräts: «bei Sperre» (Standard) heisst, jede Sitzung auf seat0 ist seit 5 Minuten gesperrt, und die Oberfläche
-  bestätigt die Sperre selbst (ext-session-lock), oder niemand ist angemeldet; dazu «Zeitfenster», «jederzeit» und
-  «von Hand» (nie). Die Wartezeit auf stabil (24 h, gegen einen gestohlenen Release-Schlüssel: Widerruf und Löschen
+  bestätigt die Sperre selbst (ext-session-lock), oder der Login-Bildschirm wartet seit 5 Minuten; nie, solange
+  jemand per SSH angemeldet ist oder eine Textkonsole offen ist. Dazu «Zeitfenster», «jederzeit» und «von Hand»
+  (nie). Bei jeder Wahl nur am Netzteil oder ab 50 % Akku, nie über einen Stand von Hand («angehalten», bis
+  `zen update`), und eine unterbrochene Installation von Hand setzt nur `zen update` fort. Die Wartezeit auf stabil (24 h, gegen einen gestohlenen Release-Schlüssel: Widerruf und Löschen
   kommen so noch rechtzeitig an) beginnt erst mit synchronisierter Uhr und zählt im selben Start nach der Zeit seit dem
-  Start; ein Sprung der Uhr durch NTP verkürzt sie nicht (ein dauerhaft lügendes NTP schon, Restrisiko). Ein
-  `zen rollback` stellt die verlassene Version für die Automatik zurück. Das Programm, das die Sperre prüft, läuft als
+  Start; ein Sprung der Uhr durch NTP verkürzt sie nicht (ein dauerhaft lügendes NTP schon, Restrisiko). Nach
+  `zen rollback` bringt die Automatik die verlassene Version nicht wieder (`hoechste` sinkt nicht). Das Programm, das die Sperre prüft, läuft als
   root in einer Sandbox ohne Netz und fragt die Oberfläche als der Benutzer der Sitzung (setpriv, Argumentliste); ein
   Benutzer kann so höchstens seine eigene Sitzung als gesperrt ausgeben, und auch dann kommt nur Signiertes. Der
   Notschalter (`sudo zen kanal automatik aus`) schaltet die Automatik ab, nie die Prüfung.

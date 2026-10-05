@@ -15,8 +15,10 @@ an; eine Version entspricht einem Tag `v…` im Repo.
   bisher dev), der Anker kommt aus `system/vertrauen`, und `zenos-kanal image <tag>` prüft im chroot ein drittes Mal
   und legt den Zustand ab Werk an (`gut.json`, `hoechste`, `gesehen.json` aus dem Tag). Ein Release gibt es nur, wenn
   `scripts/pruefen.sh` im selben Lauf grün ist (`pruefen.yml` als aufgerufener Workflow); `pruefen.yml` läuft auch für
-  jeden Tag `v*`. Lokale Testbauten ohne Signatur nur mit `--testbau-ohne-signatur` (Version `-testbau`, in GitHub
-  Actions verweigert), `bauen.sh --nur-pruefen` prüft ohne root und ohne Bau. ANLEITUNG G: GitHub-Rulesets für `v*`
+  jeden Tag `v*`. Der Anker im Stand muss der sein, den ein Gerät über das Netz hätte: Wurzel und Release-Schlüssel
+  von Serie 1 stehen fest in `tag-pruefen.sh`, jede spätere Serie braucht die ganze Kette `vertrauen/0002…NNNN`.
+  Lokale Testbauten ohne Signatur nur mit `--testbau-ohne-signatur` (Version `-testbau`) oder `--nur-mechanik`, beide
+  in GitHub Actions verweigert; `bauen.sh --nur-pruefen` prüft ohne root und ohne Bau. ANLEITUNG G: GitHub-Rulesets für `v*`
   und `vertrauen/*`, kein Force-Push auf `dev` und `main`, Immutable Releases, Release signieren mit
   `scripts/release-signieren.sh` (`image/README.md`, «Signatur des Tags»; `docs/image-und-releases.md`, «Vom Tag zum
   Image»).
@@ -24,13 +26,16 @@ an; eine Version entspricht einem Tag `v…` im Repo.
   und danach alle 6 h. Installiert wird nur auf stabil und vorschau (nie auf dev), nur gültig signiert und ohne
   Änderung an Firewall, Netz oder Boot (sonst «wartet auf Zustimmung»), nach der Wartezeit (stabil 24 h ab dem ersten
   Sehen, vorschau sofort) und zum eingestellten Zeitpunkt: «Bei Sperre» heisst, jede Sitzung am Gerät ist seit
-  5 Min. gesperrt (die Oberfläche bestätigt es) oder niemand ist angemeldet; dazu Zeitfenster (auch über
-  Mitternacht), Jederzeit und Von Hand (nie, nur «Update bereit»). `zenos-kanal-gelegenheit.timer` schaut dafür alle
-  15 Min. ohne Holen. «Erstmals gesehen» entsteht nur mit synchronisierter Uhr, und im selben Start zählt die Zeit
-  seit dem Start: Ein Sprung der Uhr verkürzt die Wartezeit nicht. Ein `zen rollback` stellt die verlassene Version
-  für die Automatik zurück, bis ein Update von Hand gelingt. Ein automatisch installierter Stand gilt erst als gut,
-  wenn nach einem Neustart der Login kommt (`zenos-kanal-bestaetigen.timer`); fehlt er bei zwei Starts, geht es
-  zurück auf den guten Stand, und die Version ist gesperrt. Notschalter: `sudo zen kanal automatik an|aus`
+  5 Min. gesperrt (die Oberfläche bestätigt es) oder der Login-Bildschirm wartet seit 5 Min., nie während einer
+  SSH-Sitzung oder mit offener Textkonsole; dazu Zeitfenster (auch über Mitternacht, auch während der Arbeit),
+  Jederzeit und Von Hand (nie, nur «Update bereit»). Bei jeder Wahl nur am Netzteil oder ab 50 % Akku und nie über
+  einen Stand von Hand («angehalten», bis `zen update`). `zenos-kanal-gelegenheit.timer` schaut dafür alle 15 Min.
+  ohne Holen. «Erstmals gesehen» entsteht nur mit synchronisierter Uhr, und im selben Start zählt die Zeit seit dem
+  Start: Ein Sprung der Uhr verkürzt die Wartezeit nicht. Nach `zen rollback` bringt die Automatik die verlassene
+  Version nicht wieder. Ein automatisch installierter Stand gilt erst als gut, wenn nach einem Neustart der Login
+  kommt (Login-Bildschirm oder grafische Sitzung, `zenos-kanal-bestaetigen.timer`); fehlt er bei zwei Starts, geht es
+  zurück auf den guten Stand, und die Version ist gesperrt. Scheitert der Weg zurück, ist das «kaputt», und der
+  nächste Start versucht es noch einmal. Notschalter: `sudo zen kanal automatik an|aus`
   (`/etc/xdg/zenos/kanal-automatik-aus`, install.sh hält sich daran); `zen kanal automatik` zeigt den Stand. Das
   Ausschalten nach langer Sperre wartet, solange eine Unit des Kanals läuft. Einstellungen › System › Updates zeigen
   Notschalter, Bestätigung und Rückstellung (`docs/image-und-releases.md`, «Automatik»; GitHub als automatische
@@ -38,7 +43,7 @@ an; eine Version entspricht einem Tag `v…` im Repo.
 - **Updates in den Einstellungen:** Einstellungen › System › Updates zeigt den signierten Kanal: Zustand mit
   Erklärung, Kanal, installierte und bereite Version, letzte Prüfung, Kontakt mit origin und den Anker mit kurzen
   Fingerabdrücken. «Jetzt prüfen» und «Jetzt installieren» gehen ohne Passwort, aber nur in der aktiven Sitzung am
-  Gerät und nur für einen gültig signierten, geprüften Stand; ändert er Firewall, Netz oder Boot, erscheint
+  Gerät und nur für genau den angezeigten, gültig signierten, schon geprüften Stand; ändert er Firewall, Netz oder Boot, erscheint
   «Zustimmen …» mit Passwort, gebunden an das gezeigte Tag-Objekt. Der Zeitpunkt automatischer Updates ist wählbar
   («Bei Sperre» als Standard, Zeitfenster von–bis, Jederzeit, Von Hand) und gilt für das ganze Gerät
   (`/etc/xdg/zenos/kanal-zeitpunkt`, auch `sudo zen kanal zeitpunkt`). Der Satz «zenOS aktualisiert sich nicht von
@@ -46,8 +51,8 @@ an; eine Version entspricht einem Tag `v…` im Repo.
   (dringend), Anker fehlt, abgelehnt, wartet auf Zustimmung, 14 Tage ohne Kontakt und beim Zeitpunkt «Von Hand»
   «Update bereit». Im System-Menü steht bei Neustart und Ausschalten «Update läuft», solange install.sh aus dem Kanal
   läuft. Neu: `scripts/bin/zenos-kanal-bedienen` (pkexec), `system/polkit/org.zenos.kanal.policy`,
-  `zenos-kanal-jetzt.service`, `zenos-kanal-zustimmen@.service`, `zenos-kanal jetzt|zustimmen|zeitpunkt`, IPC
-  `zenos-ipc kanal status|zeitpunkt|laeuft` (`docs/image-und-releases.md`, «In der Oberfläche»).
+  `zenos-kanal-jetzt@.service`, `zenos-kanal-zustimmen@.service`, `zenos-kanal jetzt|zustimmen|zeitpunkt`, IPC
+  `zenos-ipc kanal status|zeitpunkt|laeuft|uebernahme` (`docs/image-und-releases.md`, «In der Oberfläche»).
 - **Energie:** Neue Seite «Energie» in den Einstellungen. Der Bildschirm geht 1–10 Min. nach der Sperre aus
   (Standard 1 Min.), nie vorher: Dunkel heisst immer gesperrt. Eine Taste oder das Touchpad weckt ihn, die Taste
   landet nicht im Passwortfeld. «Bildschirm aus» im System-Menü, im Befehlsfeld und mit Super+Shift+L sperrt und
@@ -254,6 +259,36 @@ an; eine Version entspricht einem Tag `v…` im Repo.
   Rückweg: Pin löschen, `sudo apt install snapd landscape-common` (dann bleiben sie).
 
 ### Behoben
+
+- **Prüfung der Automatik und der Updates-Seite (Teil B):**
+  - Die Automatik installiert nicht mehr über einen Stand von Hand («angehalten»), auch nicht, wenn ein `install.sh`
+    von Hand genau zwischen Prüfen und Installieren fertig wird.
+  - Am Login-Bildschirm erst nach 5 Minuten (nicht gleich beim Start, wenn der Timer einen Lauf nachholt), nie während
+    einer SSH-Sitzung, nie neben einer offenen Textkonsole; die Sperre zählt erst ab dem ersten Abgleich der Uhr.
+  - Nur am Netzteil oder ab 50 % Akku, auch fürs Fortsetzen.
+  - Den Zeitpunkt liest die Automatik vor dem Installieren neu («von Hand» bremst einen laufenden Lauf).
+  - Eine unterbrochene Installation von Hand (etwa auf dev mit «ja») setzt nur `zen update` fort, nie die Automatik.
+  - Bestätigung nach dem Start: Eine Anmeldung auf der Textkonsole zählt nicht als Login; die Bestätigung wartet auf
+    eine laufende Automatik, statt bis zum nächsten Start zu verfallen; die Automatik installiert nichts Neues, solange
+    ein Stand aus einem früheren Start auf sie wartet. Der Weg zurück nimmt keinen Rückweg auf den Stand ohne Login
+    mehr und sperrt den guten Stand nicht; scheitert er, «kaputt», und der nächste Start versucht es noch einmal.
+  - `zen update` und «Jetzt installieren» zielen nicht mehr auf eine gesperrte höhere Version; der Knopf gilt nur dem
+    angezeigten, schon geprüften Stand (ohne neues Holen).
+  - Updates in einer offenen Sitzung: Während der Übernahme lädt die Oberfläche nicht Datei für Datei nach, die Sperre
+    lädt nicht mitten hinein neu; danach richtet die Oberfläche die Benutzerteile ein und startet neu, wenn sich QML
+    geändert hat. Der Login-Bildschirm zeigt «zenOS wird aktualisiert».
+  - Die Seite zeigt «Update kaputt», «Update unterbrochen», «Update läuft», «Letztes Update» und «Von Hand» auch nach
+    der Prüfung danach; «Bereit» sagt je Zeitpunkt, wann es kommt; ehrliche Sätze zum Zeitpunkt; «Datei ungültig» in
+    der Warnfarbe, und «Bei Sperre» repariert sie; «Wird installiert …»; die Zeilen bauen sich nur neu auf, wenn sich
+    etwas ändert.
+  - Mitteilungen: gescheitert und zurück auch nach mehr als 24 h genau einmal; «Seit N Tagen kein Kontakt zu origin»;
+    Verweise auf «Einstellungen › System › Updates»; eine Änderung des Zeitpunkts, die nicht aus den Einstellungen
+    kam, meldet sich mit dem Weg (pkexec oder sudo, uid).
+  - `image/tag-pruefen.sh` nimmt keinen fremden oder ohne neue Serie gewachsenen Anker mehr an; `--nur-mechanik` gibt
+    es in GitHub Actions nicht.
+  - `install.sh` startet `zenos-kanal-bestaetigen.timer` nicht mehr im laufenden Betrieb (nur aktivieren): Er feuerte
+    sonst nach jedem install.sh sofort und hielt kurz die Sperre der Bedienung (im Ende-zu-Ende-Test endete die
+    Automatik so mit 75).
 
 - **`zen update` bricht nicht mehr an einem verschobenen Tag ab:** Wurde ein Tag auf GitHub auf einen anderen Commit
   gesetzt (so bei `v0.1.0-rc1`), scheiterte `zen update` mit «git fetch ist fehlgeschlagen», ohne Grund. Jetzt holt

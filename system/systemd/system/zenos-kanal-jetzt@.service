@@ -1,17 +1,19 @@
-# zenOS: «Jetzt installieren» in den Einstellungen (zenos-kanal jetzt). Wie «zen update», aber ohne Terminal und ohne
-# Frage: holen, prüfen, bereitstellen und installieren über dieselben Units. Was ein «ja» bräuchte (unsigniert, dev
-# mit unsignierten Commits, Firewall, Netz oder Boot, gesperrt, Rückschritt), bleibt liegen (Exit 10).
+# zenOS: «Jetzt installieren» in den Einstellungen (zenos-kanal jetzt %i). Die Instanz ist das Ziel, das die
+# Einstellungen zeigten (40 Zeichen 0-9a-f: das Tag-Objekt der bereiten Version, auf dev der Commit). Wie «zen update»,
+# aber ohne Terminal, ohne Frage und ohne neues Holen: nur der Stand, den die letzte Prüfung schon geprüft hat, über
+# dieselben Units. Nennt die Prüfung ein anderes Ziel, oder bräuchte es ein «ja» (unsigniert, dev mit unsignierten
+# Commits, Firewall, Netz oder Boot, gesperrt, Rückschritt), bleibt es liegen (Exit 10).
 # Gestartet nur von scripts/bin/zenos-kanal-bedienen (pkexec, polkit-Aktion org.zenos.kanal.installieren: ohne
 # Passwort, nur in der aktiven Sitzung am Gerät). Als eigene Unit, damit ein Neuladen oder Neustart der Oberfläche
 # die Installation nicht mitten im Lauf abbricht.
 [Unit]
-Description=zenOS: Kanal jetzt installieren (aus den Einstellungen)
+Description=zenOS: Kanal jetzt installieren (aus den Einstellungen, %i)
 Documentation=file:///opt/zenos/docs/image-und-releases.md
 ConditionPathExists=/usr/local/libexec/zenos/zenos-kanal
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 -I /usr/local/libexec/zenos/zenos-kanal jetzt
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/zenos/zenos-kanal jetzt %i
 Environment=LANG=C.UTF-8
 StateDirectory=zenos/kanal
 StateDirectoryMode=0755

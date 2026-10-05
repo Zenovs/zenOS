@@ -505,7 +505,10 @@ systemctl --user start zenos-shell.service
   «Prüft …» und danach «Updates geprüft»; «Geprüft» steht dann auf «heute, …». Ein abgebrochener Dialog bleibt still.
 - [ ] «Automatisch installieren»: «Bei Sperre» ist gewählt. «Von Hand» setzt ohne Passwort, `zen kanal zeitpunkt`
   zeigt es; «Zeitfenster» zeigt 02:00 bis 05:00, ein Fenster unter einer Stunde (etwa 03:00 bis 03:30) steht rot
-  darunter und wird nicht gesetzt. Zum Schluss wieder «Bei Sperre».
+  darunter und wird nicht gesetzt. Der Satz darunter sagt je Wahl, wann es kommt (beim Zeitfenster «auch wenn du
+  gerade arbeitest. Das Gerät muss dann laufen.»). Ist die Datei ungültig (zum Probieren: `echo zeitpunkt=x | sudo tee
+  /etc/xdg/zenos/kanal-zeitpunkt`), steht «Datei ungültig» in der Warnfarbe, und ein Klick auf «Bei Sperre» repariert
+  sie. Zum Schluss wieder «Bei Sperre».
 - [ ] Mitteilungen: Nach dem ersten Start mit dieser Oberfläche kommt «Updates: Anker fehlt» einmal (solange der
   Anker fehlt), nach einem Neustart nicht noch einmal. Nach einem `zen update` mit Installation kommt «zenOS
   aktualisiert» still in die Zentrale.
@@ -524,6 +527,24 @@ systemctl --user start zenos-shell.service
   sagt `/opt/zenos/scripts/bin/zenos-energie status` «nein: Update läuft (zenos-kanal-…)».
 - [ ] Notschalter: `sudo zen kanal automatik aus`, dann `systemctl list-timers 'zenos-kanal*'`: nur noch die
   Bestätigung. `zen doctor` nennt «Automatik aus». Wieder an: `sudo zen kanal automatik an`.
+- [ ] Stand von Hand: Nach einem `install.sh` aus `~/zenOS` sagt `zen kanal automatik` bei «zuletzt» «Von Hand
+  angehalten …», und die Einstellungen zeigen die Zeile «Von Hand · … · Automatik ruht bis zen update». Auch gesperrt
+  kommt dann kein automatisches Update. Ein `zen update` hebt das auf.
+- [ ] Per SSH angemeldet (etwa Claude in tmux) und am Gerät gesperrt oder am Login-Bildschirm: `zen kanal automatik`
+  sagt «Nicht jetzt: … ist per SSH angemeldet». Nach dem Abmelden von SSH geht es wieder.
+- [ ] Nach einem Neustart steht der Login-Bildschirm keine 5 Minuten: Ein Lauf der Automatik sagt «der
+  Login-Bildschirm läuft erst seit Kurzem». Läuft ein Update, während der Login-Bildschirm da ist, steht dort «zenOS
+  wird aktualisiert. Mit der Anmeldung bitte warten, bis das fertig ist.»
+- [ ] Argon ONE UP im Akkubetrieb unter 50 %, gesperrt, ein Update bereit: `zen kanal automatik` sagt «Nicht jetzt:
+  im Akkubetrieb mit … %». Mit Netzteil kommt es beim nächsten Lauf.
+- [ ] «Jetzt installieren» mit offener Sitzung, wenn das Update QML ändert: Während der Übernahme steht oben «Update
+  läuft»; die Oberfläche lädt nicht stückweise nach, sondern startet danach einmal neu (Leiste und Mitteilungen sind
+  da). Der Knopf heisst währenddessen «Wird installiert …».
+- [ ] Einstellungen › System › Updates nach einem gescheiterten Update (`zen kanal status`: «Gescheitert, zurück …»):
+  Die Zeile «Letztes Update» nennt es mit Zeit und Version, auch nach «Jetzt prüfen». Nach einer kaputten Installation
+  heisst der Titel «Update kaputt» (Warnfarbe), bis ein späteres `zen update` gelingt.
+- [ ] `sudo zen kanal zeitpunkt hand` per SSH: In der Sitzung kommt «Zeitpunkt für Updates geändert · Jetzt: Von Hand
+  (gesetzt über sudo, uid …)». Aus den Einstellungen gesetzt kommt keine Mitteilung. Zum Schluss wieder «Bei Sperre».
 - [ ] Die Temperatur steht in der Leiste, der Lüfter im System-Menü (Argon ONE). Unter Last (in kitty viermal
   `yes > /dev/null &`, danach `pkill yes`) wird der Lüfter hörbar schneller und später wieder leiser.
 - [ ] Argon-Knopf: Doppeltipp startet neu, drei Sekunden halten schaltet aus, einmal kurz drücken tut nichts.
@@ -628,7 +649,7 @@ Abbrüchen derselben Version geht es von selbst auf den Stand davor zurück.
 
 `zen update` endet mit «Gescheitert, zurück auf dem Stand davor»: Die neue Version war nicht gesund (Grund in der
 Meldung und in `zen kanal status`), der alte Stand läuft wieder, die Version ist gesperrt. Ein späteres `zen update`
-versucht sie nur nach «ja» noch einmal. Schick Claude die Meldung.
+lässt sie aus; noch einmal versuchen geht bewusst mit `zen rollback <version>` und «ja». Schick Claude die Meldung.
 
 `zen update` fragt nach «ja», obwohl alles signiert ist: Die Änderung betrifft Firewall, Netz oder Boot (die Pfade
 stehen dabei). Das ist gewollt; mit «nein» bleibt alles, wie es ist.

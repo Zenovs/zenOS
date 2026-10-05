@@ -4,6 +4,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import qs.dienste
 import qs.greeter
 
@@ -11,6 +12,10 @@ import qs.greeter
 // Immer dunkel, überträgt nichts nach aussen. Kein Autologin.
 ShellRoot {
     id: root
+
+    // Ein Update aus dem Kanal übernimmt gerade den Code (zenos-kanal: /run/zenos-kanal/uebernahme, für alle lesbar).
+    // Die Automatik installiert am Login-Bildschirm erst, wenn er seit 5 Min. wartet; wer sich dann anmeldet, sieht es.
+    property bool updateLaeuft: false
 
     Konten {
         id: kontoliste
@@ -35,9 +40,28 @@ ShellRoot {
             konten: kontoliste
             ablauf: anmeldung
             leerlauf: leerlauf
+            updateLaeuft: root.updateLaeuft
             // Formular und Tastaturfokus auf dem ersten Bildschirm
             mitFormular: Quickshell.screens.length === 0 || Quickshell.screens[0] === modelData
         }
+    }
+
+    FileView {
+        id: uebernahme
+
+        path: "/run/zenos-kanal/uebernahme"
+        blockLoading: true
+        printErrors: false
+        onLoaded: root.updateLaeuft = true
+        onLoadFailed: root.updateLaeuft = false
+    }
+
+    // Der Ordner besteht nur während der Installation: kein watchChanges, nur ein ruhiger Takt
+    Timer {
+        interval: 3000
+        running: true
+        repeat: true
+        onTriggered: uebernahme.reload()
     }
 
     Component.onCompleted: {

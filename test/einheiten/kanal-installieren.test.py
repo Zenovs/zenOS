@@ -351,8 +351,14 @@ class Signiert(Geraet):
         self.assertTrue(os.path.exists(os.path.join(K.STATE_DIR, "gesperrt", "v0.2.0-rc1")))
         self.assertEqual(self.zustand("gut.json")["commit"], gut)
         self.assertEqual(self.hoechste(), "v0.1.0-rc4", "eine gescheiterte Version hebt hoechste nicht")
-        # Noch einmal: nur mit «ja» (gesperrt), ohne bleibt alles
-        self.assertEqual(self.zen(), 10)
+        # zen update lässt die gesperrte Version aus (wie die Anzeige); noch einmal versuchen geht bewusst mit
+        # zen rollback und nur mit «ja», ohne bleibt alles
+        self.assertEqual(self.zen(), 0, self.ausgabe)
+        self.assertIn("Schon installiert", self.ausgabe)
+        self.assertIn("v0.2.0-rc1 ist gesperrt (eine Installation scheiterte) und kein Ziel; noch einmal versuchen: "
+                      "zen rollback v0.2.0-rc1", self.ausgabe)
+        self.assertEqual((self.kopf(), self.fragen), (gut, []))
+        self.assertEqual(self.zen("rollback", "v0.2.0-rc1"), 10)
         self.assertIn("gesperrt", self.ausgabe)
         self.assertEqual(self.kopf(), gut)
 

@@ -302,7 +302,7 @@ Item {
                         visible: Dienste.Kanal.kannInstallieren || Dienste.Kanal.laeuft === "installieren"
                         implicitHeight: 38
                         variante: "primaer"
-                        text: Dienste.Kanal.laeuft === "installieren" ? "Installiert …" : "Jetzt installieren"
+                        text: Dienste.Kanal.laeuft === "installieren" ? "Wird installiert …" : "Jetzt installieren"
                         enabled: Dienste.Kanal.laeuft === "" && !Dienste.Kanal.updateLaeuft
                         onClicked: Dienste.Kanal.installieren()
                     }
@@ -321,12 +321,13 @@ Item {
                 Text {
                     visible: text !== ""
                     width: parent.width
-                    text: Dienste.Kanal.updateLaeuft ? "Ein Update läuft gerade. Ausschalten und Neustart warten, bis es fertig ist." : Dienste.Kanal.zustimmungText
+                    // Läuft ein Update, sagen es Titel und Erklärung oben schon
+                    text: Dienste.Kanal.updateLaeuft ? "" : Dienste.Kanal.zustimmungText !== "" ? Dienste.Kanal.zustimmungText : Dienste.Kanal.installierenHinweis
                     textFormat: Text.PlainText
                     wrapMode: Text.Wrap
                     lineHeightMode: Text.FixedHeight
                     lineHeight: Math.round(font.pixelSize * 1.45)
-                    color: Dienste.Kanal.updateLaeuft ? Theme.text2 : Theme.gedaempft
+                    color: Theme.gedaempft
                     font.family: Theme.schriftText
                     font.pixelSize: Theme.groesseLabel
                 }
@@ -337,7 +338,9 @@ Item {
             width: parent.width
             beschriftung: "Automatisch installieren"
             hinweis: Dienste.Kanal.zeitpunkt.problem !== "" ? "Datei ungültig · es gilt «Bei Sperre»" : ""
+            // Ein Problem, nichts Angepasstes: in der Warnfarbe, nicht im Akzent
             hinweisBetont: true
+            akzent: Theme.warnung
 
             Column {
                 width: parent.width
@@ -424,7 +427,7 @@ Item {
 
                 Text {
                     width: parent.width
-                    text: Dienste.Kanal.zeitpunktErklaerung(root._zeitpunktArt, Dienste.Kanal.zeitpunkt.von, Dienste.Kanal.zeitpunkt.bis) + " Gilt für das ganze Gerät. Signatur und Zustimmung bei Firewall, Netz oder Boot gelten bei jeder Wahl; auf dev kommt nie etwas automatisch."
+                    text: Dienste.Kanal.zeitpunktErklaerung(root._zeitpunktArt, Dienste.Kanal.zeitpunkt.von, Dienste.Kanal.zeitpunkt.bis) + " " + Dienste.Kanal.zeitpunktImmer
                     wrapMode: Text.Wrap
                     lineHeightMode: Text.FixedHeight
                     lineHeight: Math.round(font.pixelSize * 1.45)

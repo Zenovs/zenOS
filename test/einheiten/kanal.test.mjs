@@ -92,7 +92,10 @@ test("zeitpunktLesen: dieselben Fälle wie parse_schedule in zenos-kanal (kanal-
   }
   // Ohne Datei: «sperre» ohne Problem
   for (const leer of [null, undefined, "", "  \n"])
-    assert.deepEqual(roh(L.zeitpunktLesen(leer)), { art: "sperre", von: "02:00", bis: "05:00", problem: "" });
+    assert.deepEqual(roh(L.zeitpunktLesen(leer)), { art: "sperre", von: "02:00", bis: "05:00", problem: "", seit: "", ueber: "" });
+  // Wann und über welchen Weg gesetzt (zenos-kanal schreibt seit und ueber)
+  const z = roh(L.zeitpunktLesen("zeitpunkt=hand\nseit=2026-10-05T10:00:00Z\nueber=sudo, uid 1000\n"));
+  assert.deepEqual([z.art, z.seit, z.ueber], ["hand", "2026-10-05T10:00:00Z", "sudo, uid 1000"]);
 });
 
 test("fensterProblem: mindestens 60 Minuten, über Mitternacht erlaubt", () => {
@@ -175,7 +178,7 @@ test("zeilen: Kanal, Versionen, Prüfung, Anker mit kurzen Fingerabdrücken", ()
   assert.deepEqual(roh(L.zeilen(s, z, JETZT)), [
     { titel: "Kanal", wert: "vorschau" },
     { titel: "Installiert", wert: "v0.1.0-rc4 · 111111111111" },
-    { titel: "Bereit", wert: "v0.1.0-rc5 · 222222222222 · automatisch ab morgen, 04:00" },
+    { titel: "Bereit", wert: "v0.1.0-rc5 · 222222222222 · frühestens morgen, 04:00, danach bei der nächsten Sperre" },
     { titel: "Geprüft", wert: "heute, 12:00" },
     { titel: "Kontakt", wert: "heute, 12:00" },
     { titel: "Anker", wert: "Serie 1" },
@@ -203,7 +206,7 @@ test("zeilen: Automatik aus, Bestätigung nach dem Neustart, zurückgestellt, Wa
   assert.deepEqual(roh(s.unbestaetigt), { commit: C1, version: "v0.1.0-rc4", seitMs: JETZT - H });
   assert.deepEqual(roh(s.zurueckgestellt), { version: "v0.1.0-rc6", seitMs: JETZT - 3 * H });
   const zeilen = roh(L.zeilen(s, z, JETZT));
-  assert.deepEqual(zeilen.find((x) => x.titel === "Bereit"), { titel: "Bereit", wert: "v0.1.0-rc5 · 222222222222 · automatisch erst mit synchronisierter Uhr" });
+  assert.deepEqual(zeilen.find((x) => x.titel === "Bereit"), { titel: "Bereit", wert: "v0.1.0-rc5 · 222222222222 · erst mit synchronisierter Uhr, danach bei der nächsten Sperre" });
   assert.deepEqual(zeilen.find((x) => x.titel === "Bestätigung"), { titel: "Bestätigung", wert: "v0.1.0-rc4 · automatisch installiert, gilt als gut nach dem nächsten Neustart mit Login" });
   assert.deepEqual(zeilen.find((x) => x.titel === "Zurückgestellt"), { titel: "Zurückgestellt", wert: "v0.1.0-rc6 · nach zen rollback, kommt nicht automatisch wieder" });
   assert.equal(zeilen.find((x) => x.titel === "Automatik"), undefined);
@@ -223,6 +226,72 @@ test("zeilen: Automatik aus, Bestätigung nach dem Neustart, zurückgestellt, Wa
   assert.equal(unsinn.unbestaetigt, null);
   assert.equal(unsinn.zurueckgestellt, null);
   assert.equal(unsinn.automatikAn, true);
+});
+
+test("zeilen: «Bereit» sagt je Zeitpunkt, wann das Update kommt", () => {
+  const wann = (zeitpunkt, bereit, extra = {}) => roh(L.zeilen(L.standLesen(stand(Object.assign({ zustand: "bereit", bereit }, extra))), L.zeitpunktLesen(zeitpunkt), JETZT)).find((x) => x.titel === "Bereit").wert.replace("v0.1.0-rc5 · 222222222222", "").replace(/^ · /, "");
+  const frei = BEREIT;
+  const wartet = Object.assign({}, BEREIT, { frei_ab: iso(JETZT + 14 * H), frei: false });
+  // Ohne Wartezeit (vorschau)
+  assert.equal(wann(null, frei), "kommt bei der nächsten Sperre");
+  assert.equal(wann("zeitpunkt=fenster\nvon=02:00\nbis=05:00\n", frei), "kommt zwischen 02:00 und 05:00");
+  assert.equal(wann("zeitpunkt=jederzeit\n", frei), "kommt bald");
+  assert.equal(wann("zeitpunkt=hand\n", frei), "nur über «Jetzt installieren» oder zen update");
+  // Mit Wartezeit (stabil, 24 h): erst die Wartezeit, dann der Zeitpunkt
+  assert.equal(wann(null, wartet), "frühestens morgen, 04:00, danach bei der nächsten Sperre");
+  assert.equal(wann("zeitpunkt=fenster\nvon=02:00\nbis=05:00\n", wartet), "frühestens morgen, 04:00, danach zwischen 02:00 und 05:00");
+  assert.equal(wann("zeitpunkt=jederzeit\n", wartet), "frühestens morgen, 04:00");
+  assert.equal(wann("zeitpunkt=hand\n", wartet), "nur über «Jetzt installieren» oder zen update");
+  // Stand von Hand: die Automatik ruht
+  assert.equal(wann(null, frei, { angehalten: { commit: C1, seit: iso(JETZT - H) } }), "Automatik ruht (Stand von Hand)");
+});
+
+test("Lage der Installation: kaputt, zurück, unterbrochen und von Hand bleiben sichtbar", () => {
+  // letzte.json «kaputt» ist älter als die Prüfung danach (zenos-kanal prüft gleich nach dem Lauf): nicht «Aktuell»
+  const sText = stand({ geprueft: iso(JETZT - 4 * 60000), installation_lage: { schluessel: "kaputt", text: "am …: Auch der Rückweg scheiterte" } });
+  const s = L.standLesen(sText);
+  const l = L.letzteLesen(letzte("kaputt", JETZT - 5 * 60000, "v0.1.0-rc5 (222222222222): install.sh endete mit Exit 1; Rückweg: Exit 1. Zuerst den Grund beheben (Platz, Netz, Sperre), dann zen update."));
+  assert.equal(L.veraltet(s, l), false);
+  assert.equal(L.zustandTitel(s, false, l), "Update kaputt");
+  assert.deepEqual(roh(L.zustandSymbol(s, false, l)), { symbol: "warnung", ton: "warnung" });
+  assert.match(L.grundText(s, false, l), /^v0\.1\.0-rc5 .*Zuerst den Grund beheben \(Platz, Netz, Sperre\), dann zen update\. Zuerst den Grund beheben, dann im Terminal zen update \(ANLEITUNG\.md, Abschnitt F\)\.$/);
+  // Nennt der Grund den Weg schon (wie broken() in zenos-kanal), steht er nur einmal da
+  const lAnleitung = L.letzteLesen(letzte("kaputt", JETZT - 5 * 60000, "Rückweg: Exit 1. Zuerst den Grund beheben (Platz, Netz, Sperre), dann zen update; mehr in ANLEITUNG.md, Abschnitt F («Kaputt»)."));
+  assert.equal(L.grundText(s, false, lAnleitung), "Rückweg: Exit 1. Zuerst den Grund beheben (Platz, Netz, Sperre), dann zen update; mehr in ANLEITUNG.md, Abschnitt F («Kaputt»).");
+  assert.deepEqual(roh(L.zeilen(s, L.zeitpunktLesen(null), JETZT, l)).find((x) => x.titel === "Letztes Update"),
+    { titel: "Letztes Update", wert: "kaputt · heute, 13:55 · v0.1.0-rc5 (222222222222)" });
+  // Ältere stand.json ohne das Feld: aus letzte.json
+  const alt = L.standLesen(stand({ geprueft: iso(JETZT - 4 * 60000) }));
+  assert.equal(L.zustandTitel(alt, false, l), "Update kaputt");
+  // Ein späteres «installiert» löst es ab
+  const gut = L.standLesen(stand({ installation_lage: { schluessel: "gut", text: "v0.1.0-rc6 …" } }));
+  assert.equal(L.zustandTitel(gut, false, L.letzteLesen(letzte("installiert", JETZT - 3 * H))), "Aktuell");
+  // zurück: Titel bleibt, Zeile «Letztes Update»
+  const z = L.standLesen(stand({ installation_lage: { schluessel: "zurueck", text: "…" } }));
+  const lz = L.letzteLesen(letzte("zurueck", JETZT - 3 * H, "v0.1.0-rc5: install.sh endete mit Exit 1. Zurück auf v0.1.0-rc4, gesund."));
+  assert.equal(L.zustandTitel(z, false, lz), "Aktuell");
+  assert.deepEqual(roh(L.zeilen(z, L.zeitpunktLesen(null), JETZT, lz)).find((x) => x.titel === "Letztes Update"),
+    { titel: "Letztes Update", wert: "gescheitert, zurück auf dem Stand davor · heute, 11:00 · v0.1.0-rc5 (222222222222)" });
+  // unterbrochen (laeuft.json): Titel und Weg
+  const u = L.standLesen(stand({ installation_lage: { schluessel: "unterbrochen", text: "Installation von … unterbrochen" } }));
+  assert.equal(L.zustandTitel(u, false, null), "Update unterbrochen");
+  assert.match(L.grundText(u, false, null), /zen update/);
+  // von Hand
+  const h = L.standLesen(stand({ angehalten: { commit: C1, seit: iso(JETZT - 2 * H) }, installation_lage: { schluessel: "angehalten", text: "…" } }));
+  assert.deepEqual(roh(L.zeilen(h, L.zeitpunktLesen(null), JETZT, null)).find((x) => x.titel === "Von Hand"),
+    { titel: "Von Hand", wert: "111111111111 · seit heute, 12:00 · Automatik ruht bis zen update" });
+  // Update läuft hat Vorrang
+  assert.equal(L.zustandTitel(s, false, l, true), "Update läuft");
+  assert.deepEqual(roh(L.zustandSymbol(s, false, l, true)), { symbol: "info", ton: "akzent" });
+  // Unsinn im Feld zählt nicht
+  assert.equal(L.standLesen(stand({ installation_lage: { schluessel: "boese" } })).installationLage, null);
+});
+
+test("nach zen rollback: ehrlicher Titel, solange die neuere Version vorhanden ist", () => {
+  const s = L.standLesen(stand({ zurueckgestellt: { version: "v0.1.0-rc5", seit: iso(JETZT - H) }, hoechste: "v0.1.0-rc5" }));
+  assert.equal(L.zustandTitel(s, false, null), "Zurückgestellt: v0.1.0-rc4 läuft, v0.1.0-rc5 vorhanden");
+  assert.deepEqual(roh(L.zustandSymbol(s, false, null)), { symbol: "info", ton: "gedaempft" });
+  assert.match(L.grundText(s, false, null), /bringt die Automatik v0\.1\.0-rc5 nicht wieder\. Zurück dorthin: zen update\./);
 });
 
 test("Titel, Symbol und Erklärung je Zustand", () => {
@@ -252,6 +321,9 @@ test("Titel, Symbol und Erklärung je Zustand", () => {
 
 test("Jetzt installieren und Zustimmen: nur, wenn es etwas gibt", () => {
   assert.equal(L.kannInstallieren(L.standLesen(stand({ zustand: "bereit", bereit: BEREIT }))), true);
+  assert.equal(L.installierenZiel(L.standLesen(stand({ zustand: "bereit", bereit: BEREIT }))), OBJ, "das gezeigte Tag-Objekt");
+  assert.equal(L.installierenZiel(L.standLesen(stand({ kanal: "dev", zustand: "dev", dev: { commit: C2, neu: true, vorfahre: true, commits: 2, signiert: true, braucht_ja: false } }))), C2, "auf dev der Commit");
+  assert.equal(L.installierenZiel(L.standLesen(stand())), "");
   assert.equal(L.kannInstallieren(L.standLesen(stand({ zustand: "zustimmung", bereit: BEREIT }))), false);
   assert.equal(L.kannInstallieren(L.standLesen(stand())), false);
   assert.equal(L.kannInstallieren(null), false);
@@ -269,11 +341,16 @@ test("Jetzt installieren und Zustimmen: nur, wenn es etwas gibt", () => {
   assert.equal(L.zustimmungObjekt(L.standLesen(stand({ zustand: "bereit", bereit: BEREIT }))), "");
 });
 
-test("zeitpunktText", () => {
-  assert.match(L.zeitpunktText(L.zeitpunktLesen(null)), /gesperrt ist oder niemand angemeldet/);
-  assert.equal(L.zeitpunktText(L.zeitpunktLesen("zeitpunkt=fenster\nvon=22:00\nbis=06:00\n")), "Geprüfte Updates kommen nur zwischen 22:00 und 06:00 Uhr.");
-  assert.match(L.zeitpunktText({ art: "hand" }), /Nie automatisch/);
-  assert.match(L.zeitpunktText({ art: "jederzeit" }), /auch während du arbeitest/);
+test("zeitpunktText: knapp und ehrlich je Wahl", () => {
+  assert.equal(L.zeitpunktText(L.zeitpunktLesen(null)), "Kommt, wenn zenOS seit 5 Minuten gesperrt ist oder der Login-Bildschirm seit 5 Minuten wartet, nicht während jemand per SSH angemeldet ist (Standard).");
+  assert.equal(L.zeitpunktText(L.zeitpunktLesen("zeitpunkt=fenster\nvon=22:00\nbis=06:00\n")), "Kommt zwischen 22:00 und 06:00 Uhr, auch wenn du gerade arbeitest. Das Gerät muss dann laufen.");
+  assert.equal(L.zeitpunktText({ art: "jederzeit" }), "Kommt, sobald es bereit ist, auch während du arbeitest; die Oberfläche lädt dabei kurz neu.");
+  assert.match(L.zeitpunktText({ art: "hand" }), /^Nie automatisch\./);
+  assert.equal(L.ZEITPUNKT_IMMER, "Gilt für das ganze Gerät. Installiert wird immer nur, was gültig signiert ist. Was Firewall, Netz oder Boot ändert, wartet auf deine Zustimmung. Im Akkubetrieb kommt es erst ab 50 % Ladung. Auf dev kommt nie etwas automatisch.");
+  // Die Grenzen im Text sind die aus zenos-kanal
+  const kanal = lesen("scripts", "bin", "zenos-kanal");
+  assert.match(kanal, /^MIN_BATTERY = 50$/m);
+  assert.match(kanal, /^MIN_LOCKED = datetime\.timedelta\(minutes=5\)$/m);
 });
 
 // --- Mitteilungen --------------------------------------------------------------
@@ -309,10 +386,16 @@ test("meldungen: Installationen (still, zurück, kaputt) und Frische", () => {
   const kaputt = melden(lage(s, letzte("kaputt", JETZT - 30 * 24 * H, "Auch der Rückweg scheiterte. ANLEITUNG.md, Abschnitt F")));
   assert.deepEqual(kaputt.neu.map((m) => [m.schluessel, m.dringlichkeit]), [["kaputt", "critical"]], "kaputt meldet sich auch alt");
 
-  // Älter als 24 h (etwa beim ersten Start mit dieser Oberfläche): nur merken
+  // Ein «installiert» älter als 24 h (etwa beim ersten Start mit dieser Oberfläche): nur merken
   const alt = melden(lage(s, letzte("installiert", JETZT - 25 * H)));
   assert.deepEqual(alt.neu, []);
   assert.match(alt.gemeldet.installation, /^installiert@/);
+  // Gescheitert am Freitagabend, die nächste Anmeldung ist am Montag: trotzdem genau einmal
+  for (const ergebnis of ["zurueck", "gescheitert", "fehler"]) {
+    const spaet = melden(lage(s, letzte(ergebnis, JETZT - 60 * H, "Grund")));
+    assert.deepEqual(spaet.neu.map((m) => m.schluessel), [ergebnis], ergebnis);
+    assert.deepEqual(melden(lage(s, letzte(ergebnis, JETZT - 60 * H, "Grund")), spaet.gemeldet).neu, [], ergebnis);
+  }
   // Wartet, abgelehnt, nichts: keine Mitteilung
   assert.deepEqual(melden(lage(s, letzte("wartet", JETZT - H))).neu, []);
 });
@@ -326,6 +409,7 @@ test("meldungen: Anker fehlt, Zustimmung, Update bereit nur «von Hand»", () =>
   const zustimmung = lage(stand({ zustand: "zustimmung", bereit: BEREIT }));
   const z1 = melden(zustimmung);
   assert.deepEqual(z1.neu.map((m) => m.titel), ["Update wartet auf deine Zustimmung"]);
+  assert.match(z1.neu[0].text, /Einstellungen › System › Updates\.$/);
   assert.deepEqual(melden(zustimmung, z1.gemeldet).neu, []);
   // Ein neues Objekt (anderer Stand) meldet sich neu
   const anderes = lage(stand({ zustand: "zustimmung", bereit: Object.assign({}, BEREIT, { objekt: "cd".repeat(20) }) }));
@@ -335,7 +419,7 @@ test("meldungen: Anker fehlt, Zustimmung, Update bereit nur «von Hand»", () =>
   assert.deepEqual(melden(lage(bereit)).neu, [], "Bei Sperre: die Automatik installiert, keine Mitteilung");
   assert.deepEqual(melden(lage(bereit, null, "zeitpunkt=jederzeit\n")).neu, []);
   const hand = melden(lage(bereit, null, "zeitpunkt=hand\n"));
-  assert.deepEqual(hand.neu, [{ schluessel: "bereit", titel: "Update bereit", text: "v0.1.0-rc5 ist geprüft und bereit. Installieren: Einstellungen › System oder zen update.", dringlichkeit: "normal" }]);
+  assert.deepEqual(hand.neu, [{ schluessel: "bereit", titel: "Update bereit", text: "v0.1.0-rc5 ist geprüft und bereit. Installieren: Einstellungen › System › Updates oder zen update.", dringlichkeit: "normal" }]);
   assert.deepEqual(melden(lage(bereit, null, "zeitpunkt=hand\n"), hand.gemeldet).neu, []);
 });
 
@@ -361,11 +445,28 @@ test("meldungen: 14 Tage ohne Kontakt, einmal je Kontaktzeit", () => {
   const tag = 24 * H;
   assert.deepEqual(melden(lage(stand({ letzter_kontakt: iso(JETZT - 13 * tag) }))).neu, []);
   const e = melden(lage(stand({ letzter_kontakt: iso(JETZT - 15 * tag) })));
-  assert.deepEqual(e.neu.map((m) => [m.schluessel, m.titel]), [["kontakt", "Seit 15 Tagen keine Updates geprüft"]]);
-  assert.match(e.neu[0].text, /Letzter Kontakt mit origin: 20\. Sept\., 14:00/);
+  assert.deepEqual(e.neu.map((m) => [m.schluessel, m.titel]), [["kontakt", "Seit 15 Tagen kein Kontakt zu origin"]]);
+  assert.match(e.neu[0].text, /Letzter Kontakt: 20\. Sept\., 14:00/);
+  assert.match(e.neu[0].text, /Einstellungen › System › Updates «Jetzt prüfen»\.$/);
   assert.deepEqual(melden(lage(stand({ letzter_kontakt: iso(JETZT - 15 * tag) })), e.gemeldet, JETZT + 3 * tag).neu, []);
   // Nie Kontakt: keine Zeit, ab der es zählt
   assert.deepEqual(melden(lage(stand({ letzter_kontakt: null }))).neu, []);
+});
+
+test("meldungen: Zeitpunkt geändert, nicht aus den Einstellungen", () => {
+  const s = stand();
+  const erst = melden(lage(s, null, "zeitpunkt=sperre\nseit=2026-10-05T08:00:00Z\nueber=pkexec, uid 1000\n"));
+  assert.deepEqual(erst.neu, [], "beim ersten Mal nur merken");
+  // Über SSH auf «von Hand» gestellt
+  const l = lage(s, null, "zeitpunkt=hand\nseit=2026-10-05T11:00:00Z\nueber=sudo, uid 1000\n");
+  const geaendert = melden(l, erst.gemeldet);
+  assert.deepEqual(geaendert.neu, [{ schluessel: "zeitpunkt", titel: "Zeitpunkt für Updates geändert", text: "Jetzt: Von Hand (gesetzt über sudo, uid 1000). Ansehen: Einstellungen › System › Updates.", dringlichkeit: "normal" }]);
+  assert.deepEqual(melden(l, geaendert.gemeldet).neu, [], "einmal je Änderung");
+  // Aus den Einstellungen selbst: still
+  const selbst = Object.assign(lage(s, null, "zeitpunkt=jederzeit\nseit=2026-10-05T11:30:00Z\nueber=pkexec, uid 1000\n"), { zeitpunktSelbst: true });
+  const still = melden(selbst, geaendert.gemeldet);
+  assert.deepEqual(still.neu, []);
+  assert.deepEqual(melden(selbst, still.gemeldet).neu, []);
 });
 
 test("meldungen: veralteter Stand meldet nichts aus der Prüfung", () => {
@@ -394,7 +495,8 @@ test("mitteilungBefehl: Argumentliste für notify-send", () => {
 test("befehl: nur feste Wörter, Objekt und Uhrzeiten geprüft", () => {
   const h = "/opt/zenos/scripts/bin/zenos-kanal-bedienen";
   assert.deepEqual(roh(L.befehl(h, "pruefen")), ["pkexec", h, "pruefen"]);
-  assert.deepEqual(roh(L.befehl(h, "installieren")), ["pkexec", h, "installieren"]);
+  assert.deepEqual(roh(L.befehl(h, "installieren", OBJ)), ["pkexec", h, "installieren", OBJ]);
+  assert.equal(L.befehl(h, "installieren"), null, "nur mit dem gezeigten Ziel");
   assert.deepEqual(roh(L.befehl(h, "zustimmen", OBJ)), ["pkexec", h, "zustimmen", OBJ]);
   assert.deepEqual(roh(L.befehl(h, "zeitpunkt", "hand")), ["pkexec", h, "zeitpunkt", "hand"]);
   assert.deepEqual(roh(L.befehl(h, "zeitpunkt", "fenster", "22:00", "06:00")), ["pkexec", h, "zeitpunkt", "fenster", "22:00", "06:00"]);
@@ -409,6 +511,9 @@ test("rueckmeldung: Hinweise nach dem Helfer", () => {
   assert.equal(L.rueckmeldung("installieren", 0, { installiert: true }), null, "die Mitteilung kommt ohnehin");
   assert.deepEqual(roh(L.rueckmeldung("installieren", 0, {})), { text: "zenOS ist schon aktuell", art: "" });
   assert.deepEqual(roh(L.rueckmeldung("installieren", 10, { zustand: "zustimmung" })), { text: "Das Update braucht deine Zustimmung", art: "warnung" });
+  assert.match(L.rueckmeldung("installieren", 10, { zustand: "bereit", wunsch: { ergebnis: "wartet", grund: "Angezeigt war abababababab, die Prüfung nennt jetzt v0.1.0-rc6 (…). Nichts installiert; bitte noch einmal ansehen." } }).text, /noch einmal ansehen/);
+  assert.deepEqual(roh(L.rueckmeldung("installieren", 10, { zustand: "bereit", wunsch: { ergebnis: "wartet", grund: "Nur 200 MB frei unter /var." } })), { text: "Update wartet: Nur 200 MB frei unter /var.", art: "warnung" });
+  assert.deepEqual(roh(L.rueckmeldung("installieren", 3, { wunsch: { ergebnis: "abgelehnt", grund: "Kanal blockiert: ALARM" } })), { text: "Nichts installiert: Kanal blockiert: ALARM", art: "warnung" });
   assert.match(L.rueckmeldung("zustimmen", 10, {}).text, /noch einmal ansehen/);
   assert.match(L.rueckmeldung("zustimmen", 3, {}).text, /nur für gültig signierte/);
   assert.equal(L.rueckmeldung("installieren", 5, {}), null);

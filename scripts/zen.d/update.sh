@@ -6,9 +6,9 @@
 #   stabil, vorschau  nur gültig signierte Tags, die höchste Version des Kanals (nie unter «hoechste»)
 #   dev               origin/dev. Ohne Frage nur, wenn jeder neue Commit gültig signiert ist; sonst (auch solange der
 #                     Anker fehlt) zeigt zen update die Commits und installiert nur nach «ja» für genau diesen Commit
-# Ein «ja» braucht es ausserdem für Firewall, Netz und Boot (Rückfrage-Pfade), für einen gesperrten Stand (scheiterte
-# schon einmal) und für einen Rückschritt. Danach Gesundheitsprüfung; scheitert sie, geht es automatisch zurück auf den
-# Stand davor. Eine unterbrochene Installation setzt zen update zuerst fort. Zum Schluss die Benutzerteile.
+# Ein «ja» braucht es ausserdem für Firewall, Netz und Boot (Rückfrage-Pfade) und für einen Rückschritt. Gesperrte
+# Versionen (scheiterten schon einmal) lässt zen update aus; noch einmal versuchen: zen rollback mit «ja». Danach
+# Gesundheitsprüfung; scheitert sie, geht es automatisch zurück auf den Stand davor. Eine unterbrochene Installation setzt zen update zuerst fort. Zum Schluss die Benutzerteile.
 # Notweg, falls zen update selbst nicht mehr geht: ANLEITUNG.md, Abschnitt F.
 # shellcheck shell=bash
 

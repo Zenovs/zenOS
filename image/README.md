@@ -97,8 +97,16 @@ Updates (`docs/image-und-releases.md`, «Automatik»).
   fsmonitor aus, `gpg.ssh.program=/usr/bin/ssh-keygen`, OpenPGP und X.509 aus; was die config des Repos zu Signaturen
   sagt, überschreibt die Befehlszeile. Unabhängig davon nimmt `ssh-keygen -Y verify` die Signatur über die Nutzlast an
   (Namespace `git`, mit den Widerrufen), und beide nennen denselben Schlüssel.
-- Ab Serie 2 gibt es `vertrauen/NNNN`, mit der Wurzel desselben Ankers gültig signiert, auf einem Commit mit genau
-  diesem Anker. So bekommt ein Image nie einen Anker, den ein Gerät nicht auch über das Netz übernommen hätte.
+- Der Anker ist der, den ein Gerät über das Netz hätte. Die Wurzel ist die von zenOS: Ihr Fingerabdruck steht fest
+  im Skript (`SERIE1_WURZEL`), sie ändert sich nie. In Serie 1 sind die Release-Schlüssel genau die festen von Serie 1
+  (`SERIE1_RELEASE`). Ab Serie 2 braucht jede Serie K von 2 bis zur Serie des Stands den Tag `vertrauen/KKKK`, mit der
+  Wurzel gültig signiert (gegen die Widerrufe der Serien davor), auf einem Commit mit Serie K und derselben Wurzel,
+  ohne einen schon widerrufenen Release-Schlüssel. Der Stand trägt genau den Anker aus `vertrauen/NNNN` der letzten
+  Serie und alle Widerrufe der Kette. So fängt die Prüfung einen fremden Anker (fremde Wurzel, auch mit eigenem
+  `vertrauen/0002`) und einen Release-Schlüssel, der in einem echten Release ohne neue Serie mitkam.
+- Grenze: In GitHub Actions kommen Workflow und Skript aus dem Tag selbst. Wer Tags pushen kann, kann beides ändern;
+  dagegen helfen nur die Regeln auf GitHub (Tag-Rulesets, unveränderliche Releases, `docs/image-und-releases.md`).
+  Ein frisch geflashtes Gerät übernimmt den Anker des Images; Geräte, die über das Netz aktualisieren, nicht.
 
 Ausgabe bei Exit 0 auf stdout: `tag`, `version`, `kanal`, `release`, `commit`, `objekt`, `schluessel`, `serie`,
 `wurzel` (je `schluessel=wert`, für `$GITHUB_OUTPUT`). Exit 1 heisst ungültig (Grund auf stderr), 2 falscher Aufruf.
@@ -107,9 +115,13 @@ Geprüft in `test/einheiten/image-signatur.test.py` mit Wegwerf-Schlüsseln: gü
 unsigniert, leichter Tag, fremder Schlüssel, Wurzel statt Release, widerrufen, falscher Name im Objekt, zwei
 Signaturen, keine Release-Version, Anker leer, unvollständig, mit Option oder nur im Arbeitsbaum, fremde config mit
 eigenem Prüfprogramm, Schlüsselliste, Hooks und fsmonitor, Serie 2 mit und ohne `vertrauen/0002` (auch mit dem
-Release-Schlüssel signiert oder auf einem anderen Anker), der echte Anker im Format; dazu `bauen.sh --nur-pruefen`
-(unter Linux): Kanal und Version aus dem Tag, Abbruch ohne Tag, unsigniert, fremd signiert, mit anderem Kanal oder
-anderer Version, Testbau und Testbau in GitHub Actions. `zenos-kanal image` in `test/einheiten/kanal.test.py`
+Release-Schlüssel signiert oder auf einem anderen Anker), der echte Anker im Format und als fester Anker im Skript,
+ein fremder Anker in Serie 1 und mit eigener Wurzel und eigenem `vertrauen/0002`, ein zusätzlicher Release-Schlüssel
+ohne neue Serie, Serie 3 ohne `vertrauen/0002`, die ganze Kette bis Serie 3, ein fehlender Widerruf der Kette und ein
+widerrufener Schlüssel, der zurückkommt (die Tests laufen mit einer Kopie des Skripts, in der der Wegwerf-Anker als
+Serie 1 steht); dazu `bauen.sh --nur-pruefen` (unter Linux): Kanal und Version aus dem Tag, Abbruch ohne Tag,
+unsigniert, fremd signiert, fremder Anker, mit anderem Kanal oder anderer Version, Testbau sowie Testbau und
+`--nur-mechanik` in GitHub Actions. `zenos-kanal image` in `test/einheiten/kanal.test.py`
 (Klasse `Image`).
 
 ## Lokal ausführen
@@ -125,7 +137,7 @@ sudo apt-get install curl gpgv xz-utils e2fsprogs fdisk util-linux mount git ope
 image/bauen.sh --nur-pruefen --ref v0.2.0              # nur Tag, Signatur, Kanal, Version (ohne root)
 sudo image/bauen.sh --ref v0.2.0 --cache /var/tmp/zenos-cache
 sudo image/bauen.sh --testbau-ohne-signatur            # Testbau von HEAD, Kanal dev, Version …-testbau
-sudo image/bauen.sh --nur-mechanik --xz-stufe 1        # Schnelltest ohne install.sh
+sudo image/bauen.sh --nur-mechanik --xz-stufe 1        # Schnelltest ohne install.sh (nur lokal)
 ```
 
 Ein Testbau (`--testbau-ohne-signatur`) baut auch einen Zweig, einen Commit oder einen unsignierten Tag und erlaubt
@@ -148,7 +160,7 @@ ein Release kommt nie aus einem Testbau.
 | `--reserve-mib N` | `256` | Luft nach dem Verkleinern |
 | `--xz-stufe N` | `9` | Kompression |
 | `--testbau-ohne-signatur` | – | lokaler Testbau ohne gültig signierten Tag; Version bekommt `-testbau`, kein Zustand ab Werk ohne Signatur; nie in GitHub Actions |
-| `--nur-mechanik` | – | Test: im chroot nur Prüfbefehle (Architektur, `apt-get update`, `install.sh --hilfe`, `/var/tmp`, git) statt `install.sh`; Version bekommt `-mechanik`; ohne Pflicht zur Signatur |
+| `--nur-mechanik` | – | Test: im chroot nur Prüfbefehle (Architektur, `apt-get update`, `install.sh --hilfe`, `/var/tmp`, git) statt `install.sh`; Version bekommt `-mechanik`; ohne Pflicht zur Signatur, deshalb in GitHub Actions verweigert |
 | `--nur-pruefen` | – | nur Tag, Signatur, Kanal und Version prüfen und zeigen, dann Ende (ohne root, baut nichts) |
 
 Auf dem Mac in einem privilegierten Container (grosse Dateien bleiben im Container):

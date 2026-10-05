@@ -1,11 +1,12 @@
 #!/bin/bash
-# zenos-kanal-bedienen pruefen|installieren|zustimmen OBJEKT|zeitpunkt WAHL [VON BIS] – Updates aus den Einstellungen
-# (System › Updates). Läuft nur als root: über pkexec (polkit-Aktionen in system/polkit/org.zenos.kanal.policy) oder
-# über sudo.
+# zenos-kanal-bedienen pruefen|installieren ZIEL|zustimmen OBJEKT|zeitpunkt WAHL [VON BIS] – Updates aus den
+# Einstellungen (System › Updates). Läuft nur als root: über pkexec (polkit-Aktionen in
+# system/polkit/org.zenos.kanal.policy) oder über sudo.
 #
 #   pruefen             holen (ohne Rechte) und prüfen (ohne Netz) wie «sudo zen kanal pruefen»; installiert nichts
-#   installieren        «Jetzt installieren»: startet zenos-kanal-jetzt.service (wie zen update ohne Frage; nur, was
-#                       kein «ja» braucht)
+#   installieren ZIEL   «Jetzt installieren»: startet zenos-kanal-jetzt@ZIEL.service (wie zen update ohne Frage und
+#                       ohne neues Holen; nur der angezeigte Stand, ZIEL ist sein Tag-Objekt bzw. auf dev der Commit,
+#                       und nur, was kein «ja» braucht)
 #   zustimmen OBJEKT    «Zustimmen …»: startet zenos-kanal-zustimmen@OBJEKT.service (das «ja» für genau dieses
 #                       Tag-Objekt, nur für gültig signierte Stände, ohne neues Holen)
 #   zeitpunkt sperre|jederzeit|hand
@@ -16,7 +17,7 @@
 # Die Arbeit machen die Units bzw. /usr/local/libexec/zenos/zenos-kanal (root-eigene Kopie). Läuft die Oberfläche
 # neu an, während eine Installation läuft, endet nur dieser Helfer; die Unit läuft zu Ende.
 #
-# Sicherheit: Vom Aufrufer kommen nur die Argumente (nur diese festen Wörter, das Objekt als 40 Zeichen 0-9a-f,
+# Sicherheit: Vom Aufrufer kommen nur die Argumente (nur diese festen Wörter, Ziel und Objekt als 40 Zeichen 0-9a-f,
 # Uhrzeiten streng als HH:MM) und PKEXEC_UID bzw. SUDO_UID (nur fürs Journal, als Zahl geprüft); der PATH ist fest
 # (pkexec räumt die Umgebung ohnehin auf). Programme nur mit Argumentlisten, keine Shell-Zeichenketten. Jeder Aufruf
 # steht im Journal (journalctl -t zenos-kanal-bedienen).
@@ -35,15 +36,23 @@ _name=zenos-kanal-bedienen
 _programm=/usr/local/libexec/zenos/zenos-kanal
 
 _fehler() { printf '%s: %s\n' "$_name" "$*" >&2; }
-_aufruf() { _fehler "Aufruf: zenos-kanal-bedienen pruefen|installieren|zustimmen OBJEKT|zeitpunkt WAHL [VON BIS]"; }
+_aufruf() {
+  _fehler "Aufruf: zenos-kanal-bedienen pruefen|installieren ZIEL|zustimmen OBJEKT|zeitpunkt WAHL [VON BIS]"
+}
 
 # Streng: zwei Stellen, 00:00 bis 23:59 (zenos-kanal prüft das Zeitfenster selbst noch einmal)
 _uhrzeit() { [[ "$1" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]]; }
 
 (( $# >= 1 )) || { _aufruf; exit 2; }
 case "$1" in
-  pruefen | installieren)
+  pruefen)
     (( $# == 1 )) || { _aufruf; exit 2; }
+    ;;
+  installieren)
+    if (( $# != 2 )) || [[ ! "$2" =~ ^[0-9a-f]{40}$ ]]; then
+      _fehler "installieren braucht genau ein Ziel (40 Zeichen 0-9a-f: Tag-Objekt bzw. Commit)"
+      exit 2
+    fi
     ;;
   zustimmen)
     if (( $# != 2 )) || [[ ! "$2" =~ ^[0-9a-f]{40}$ ]]; then
@@ -132,9 +141,9 @@ case "$1" in
     exit "$rc"
     ;;
   installieren)
-    _journal "Jetzt installieren ($(_weg))"
+    _journal "Jetzt installieren: $2 ($(_weg))"
     rc=0
-    _unit zenos-kanal-jetzt.service || rc=$?
+    _unit "zenos-kanal-jetzt@$2.service" || rc=$?
     _pruefung_zuruecksetzen
     exit "$rc"
     ;;

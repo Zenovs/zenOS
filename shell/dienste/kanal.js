@@ -15,15 +15,27 @@ var FENSTER_STANDARD = Object.freeze({ von: "02:00", bis: "05:00" });
 var FENSTER_MIN_MINUTEN = 60;
 // Ohne Kontakt zu origin so lange: einmal eine Mitteilung
 var KONTAKT_TAGE = 14;
-// Installationsergebnisse, die älter sind, meldet die Oberfläche nicht mehr (etwa beim ersten Start nach Tagen).
-// «kaputt» gilt unabhängig davon: Es bleibt, bis jemand handelt.
+// Ein «installiert», das älter ist, meldet die Oberfläche nicht mehr (etwa beim ersten Start nach Tagen). Gescheitert,
+// zurück, abgebrochen und kaputt melden sich immer genau einmal, auch nach einem langen Wochenende.
 var ERGEBNIS_FRISCH_MS = 24 * 3600 * 1000;
+// Akku: so viel Ladung braucht ein automatisches Update im Akkubetrieb (MIN_BATTERY in zenos-kanal)
+var AKKU_MIN_PROZENT = 50;
 // Gemerkte abgelehnte Tags (je Name einmal gemeldet)
 var ABGELEHNT_MERKEN = 50;
 
 var ZUSTAENDE = Object.freeze(["aktuell", "bereit", "zustimmung", "dev", "anker_fehlt", "blockiert", "kein_kontakt", "fehler"]);
 var KANAELE = Object.freeze(["stabil", "vorschau", "dev"]);
 var ERGEBNISSE = Object.freeze(["installiert", "zurueck", "gescheitert", "kaputt", "fehler", "wartet", "abgelehnt", "nichts", "unterbrochen"]);
+// Lage der Installation (installation_summary in zenos-kanal, Feld installation_lage in stand.json)
+var LAGEN = Object.freeze(["unterbrochen", "kaputt", "angehalten", "zurueck", "gescheitert", "fehler", "unbestaetigt", "gut", "keine"]);
+// Ergebnisse, die als «Letztes Update» stehen bleiben, bis eine spätere Installation sie ablöst
+var PROBLEME = Object.freeze(["kaputt", "zurueck", "gescheitert", "fehler"]);
+var ERGEBNIS_TEXT = Object.freeze({
+    kaputt: "kaputt",
+    zurueck: "gescheitert, zurück auf dem Stand davor",
+    gescheitert: "gescheitert",
+    fehler: "abgebrochen"
+});
 
 var OBJEKT_RE = /^[0-9a-f]{40}$/;
 var ZEIT_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$/;
@@ -160,12 +172,27 @@ function standLesen(json) {
     var zurueckgestellt = null;
     if (d.zurueckgestellt && typeof d.zurueckgestellt === "object" && _version(d.zurueckgestellt.version) !== "")
         zurueckgestellt = { version: d.zurueckgestellt.version, seitMs: zeitMs(d.zurueckgestellt.seit) };
+    // Stand von Hand (install.sh aus einem Arbeitsstand): Die Automatik ruht bis zen update
+    var angehalten = null;
+    if (d.angehalten && typeof d.angehalten === "object")
+        angehalten = { commit: _commit(d.angehalten.commit), seitMs: zeitMs(d.angehalten.seit) };
+    // Lage der Installation zur Zeit der Prüfung; null in älteren stand.json
+    var installationLage = null;
+    if (d.installation_lage && typeof d.installation_lage === "object" && LAGEN.indexOf(d.installation_lage.schluessel) >= 0)
+        installationLage = { schluessel: d.installation_lage.schluessel, text: text(d.installation_lage.text, 400) };
+    // Antwort auf den Wunsch dieser Prüfung (zen update, «Jetzt installieren», Automatik), für die Rückmeldung
+    var wunsch = null;
+    if (d.wunsch && typeof d.wunsch === "object" && typeof d.wunsch.ergebnis === "string")
+        wunsch = { ergebnis: text(d.wunsch.ergebnis, 40), grund: text(d.wunsch.grund, 300) };
     return {
         kanal: KANAELE.indexOf(d.kanal) >= 0 ? d.kanal : "",
         // Notschalter (sudo zen kanal automatik aus); ohne Angabe (ältere stand.json) gilt an
         automatikAn: !(d.automatik && typeof d.automatik === "object" && d.automatik.an === false),
         unbestaetigt: unbestaetigt,
         zurueckgestellt: zurueckgestellt,
+        angehalten: angehalten,
+        installationLage: installationLage,
+        wunsch: wunsch,
         zustand: zustand,
         grund: text(d.grund, 400),
         geprueftMs: zeitMs(d.geprueft),
@@ -210,11 +237,11 @@ function fensterProblem(von, bis) {
     return "";
 }
 
-// /etc/xdg/zenos/kanal-zeitpunkt wie parse_schedule in zenos-kanal: { art, von, bis, problem }. Fehlt die Datei
-// (json null oder leer), gilt «sperre» ohne Problem; ist sie ungültig, ebenfalls «sperre», mit Problem.
+// /etc/xdg/zenos/kanal-zeitpunkt wie parse_schedule in zenos-kanal: { art, von, bis, problem, seit, ueber }. Fehlt die
+// Datei (json null oder leer), gilt «sperre» ohne Problem; ist sie ungültig, ebenfalls «sperre», mit Problem.
 // von und bis sind immer gesetzt (bei «fenster» die gültigen, sonst der Standard fürs Formular).
 function zeitpunktLesen(inhalt) {
-    var standard = { art: "sperre", von: FENSTER_STANDARD.von, bis: FENSTER_STANDARD.bis, problem: "" };
+    var standard = { art: "sperre", von: FENSTER_STANDARD.von, bis: FENSTER_STANDARD.bis, problem: "", seit: "", ueber: "" };
     if (typeof inhalt !== "string" || inhalt.trim() === "")
         return standard;
     var werte = {};
@@ -229,21 +256,26 @@ function zeitpunktLesen(inhalt) {
             return standard;
         }
         var schluessel = zeile.slice(0, gleich).trim();
-        if (schluessel === "zeitpunkt" || schluessel === "von" || schluessel === "bis")
+        if (["zeitpunkt", "von", "bis", "seit", "ueber"].indexOf(schluessel) >= 0)
             werte[schluessel] = zeile.slice(gleich + 1).trim();
     }
+    // Wann und über welchen Weg gesetzt (nur zur Anzeige in der Mitteilung, wenn es nicht die Einstellungen waren)
+    var seit = typeof werte.seit === "string" && ZEIT_RE.test(werte.seit) ? werte.seit : "";
+    var ueber = text(werte.ueber || "", 40);
+    standard.seit = seit;
+    standard.ueber = ueber;
     if (ZEITPUNKTE.indexOf(werte.zeitpunkt) < 0) {
         standard.problem = "unbekannter Zeitpunkt";
         return standard;
     }
     if (werte.zeitpunkt !== "fenster")
-        return { art: werte.zeitpunkt, von: FENSTER_STANDARD.von, bis: FENSTER_STANDARD.bis, problem: "" };
+        return { art: werte.zeitpunkt, von: FENSTER_STANDARD.von, bis: FENSTER_STANDARD.bis, problem: "", seit: seit, ueber: ueber };
     var problem = fensterProblem(werte.von, werte.bis);
     if (problem !== "") {
         standard.problem = problem;
         return standard;
     }
-    return { art: "fenster", von: werte.von, bis: werte.bis, problem: "" };
+    return { art: "fenster", von: werte.von, bis: werte.bis, problem: "", seit: seit, ueber: ueber };
 }
 
 // --- Versionen ----------------------------------------------------------------
@@ -324,6 +356,18 @@ function veraltet(stand, letzte) {
     return !!stand && !!letzte && isFinite(letzte.endeMs) && (!isFinite(stand.geprueftMs) || letzte.endeMs > stand.geprueftMs + 2000);
 }
 
+// Lage der Installation wie «zen kanal status --installation»: unterbrochen, kaputt, angehalten, zurueck,
+// gescheitert, fehler, unbestaetigt, gut, keine oder "". Aus stand.json (installation_lage, zur Zeit der Prüfung); ist
+// seither installiert worden (veraltet) oder fehlt das Feld (ältere stand.json), aus letzte.json. So bleibt «kaputt»
+// sichtbar, auch wenn die Prüfung danach jünger ist als letzte.json.
+function installationLage(stand, letzte, istVeraltet) {
+    if (stand && stand.installationLage && !istVeraltet)
+        return stand.installationLage.schluessel;
+    if (letzte && (PROBLEME.indexOf(letzte.ergebnis) >= 0 || letzte.ergebnis === "unterbrochen"))
+        return letzte.ergebnis;
+    return "";
+}
+
 var _TITEL = {
     aktuell: "Aktuell",
     bereit: "Neue Version bereit",
@@ -335,20 +379,45 @@ var _TITEL = {
     fehler: "Prüfung abgebrochen"
 };
 
-// Titel der Lage in den Einstellungen
-function zustandTitel(stand, istVeraltet) {
+// Nach «zen rollback» läuft eine ältere Version als die zurückgestellte: «v0.1.0-rc5» (sonst "")
+function _zurueckgestelltOffen(stand) {
+    if (!stand || stand.zustand !== "aktuell" || !stand.zurueckgestellt)
+        return "";
+    var inst = stand.installiert && stand.installiert.version !== "" ? stand.installiert.version : "";
+    return inst === "" || versionVergleich(stand.zurueckgestellt.version, inst) > 0 ? stand.zurueckgestellt.version : "";
+}
+
+// Titel der Lage in den Einstellungen. letzte: letzteLesen; laeuft: install.sh aus dem Kanal läuft gerade
+function zustandTitel(stand, istVeraltet, letzte, laeuft) {
+    if (laeuft)
+        return "Update läuft";
+    var lage = installationLage(stand, letzte, istVeraltet);
+    if (lage === "kaputt")
+        return "Update kaputt";
+    if (lage === "unterbrochen")
+        return "Update unterbrochen";
     if (!stand)
         return "Noch nie geprüft";
     if (istVeraltet)
         return "Seit der letzten Prüfung installiert";
     if (stand.zustand === "dev" && stand.dev && stand.dev.neu)
         return stand.dev.brauchtJa ? "Neuer Stand auf dev" : "Neuer Stand auf dev, signiert";
+    var zurueck = _zurueckgestelltOffen(stand);
+    if (zurueck !== "")
+        return "Zurückgestellt: " + (stand.installiert && stand.installiert.version !== "" ? stand.installiert.version : "älterer Stand") + " läuft, " + zurueck + " vorhanden";
     return _TITEL[stand.zustand] ?? "Prüfung abgebrochen";
 }
 
 // Symbol und Ton der Lage: { symbol, ton: "akzent" | "warnung" | "gedaempft" }
-function zustandSymbol(stand, istVeraltet) {
+function zustandSymbol(stand, istVeraltet, letzte, laeuft) {
+    if (laeuft)
+        return { symbol: "info", ton: "akzent" };
+    var lage = installationLage(stand, letzte, istVeraltet);
+    if (lage === "kaputt" || lage === "unterbrochen")
+        return { symbol: "warnung", ton: "warnung" };
     if (!stand || istVeraltet)
+        return { symbol: "info", ton: "gedaempft" };
+    if (_zurueckgestelltOffen(stand) !== "")
         return { symbol: "info", ton: "gedaempft" };
     switch (stand.zustand) {
     case "aktuell":
@@ -369,11 +438,26 @@ function zustandSymbol(stand, istVeraltet) {
 }
 
 // Erklärung unter dem Titel (reiner Text)
-function grundText(stand, istVeraltet, letzte) {
+function grundText(stand, istVeraltet, letzte, laeuft) {
+    if (laeuft)
+        return "zenOS installiert gerade ein geprüftes Update. Ausschalten und Neustart warten, bis es fertig ist; danach lädt die Oberfläche neu, wenn sie sich geändert hat.";
+    var lage = installationLage(stand, letzte, istVeraltet);
+    if (lage === "kaputt") {
+        var warum = letzte && letzte.ergebnis === "kaputt" && letzte.grund !== "" ? letzte.grund : stand && stand.installationLage ? stand.installationLage.text : "";
+        // Der Grund von zenos-kanal nennt den Weg meist schon (ANLEITUNG F): dann nicht noch einmal
+        if (/ANLEITUNG/.test(warum))
+            return warum;
+        return (warum !== "" ? warum + " " : "") + "Zuerst den Grund beheben, dann im Terminal zen update (ANLEITUNG.md, Abschnitt F).";
+    }
+    if (lage === "unterbrochen")
+        return "Eine Installation wurde unterbrochen (Strom oder Neustart). Fortsetzen im Terminal: zen update.";
     if (!stand)
         return "Mit «Jetzt prüfen» holt zenOS die signierten Versionen von origin und prüft sie gegen den Anker des Geräts. Installiert wird dabei nichts.";
     if (istVeraltet)
         return (letzte && letzte.grund !== "" ? letzte.grund + " " : "") + "«Jetzt prüfen» zeigt den neuen Stand.";
+    var zurueck = _zurueckgestelltOffen(stand);
+    if (zurueck !== "")
+        return "Nach «zen rollback» bringt die Automatik " + zurueck + " nicht wieder. Zurück dorthin: zen update.";
     switch (stand.zustand) {
     case "aktuell":
         return "Keine neuere gültig signierte Version im Kanal " + stand.kanal + ".";
@@ -394,8 +478,27 @@ function grundText(stand, istVeraltet, letzte) {
     }
 }
 
-// Zeilen unter der Lage: [{ titel, wert }] (Werte in Mono)
-function zeilen(stand, zeitpunkt, jetztMs) {
+// Wann ein bereites Update automatisch kommt, abgestimmt auf den Zeitpunkt: «kommt bei der nächsten Sperre»,
+// «frühestens morgen, 10:54, danach zwischen 02:00 und 05:00», «nur über Jetzt installieren» … ("" ohne Automatik)
+function bereitWann(stand, zeitpunkt, jetztMs) {
+    if (!stand || !stand.bereit || stand.zustand !== "bereit" || !stand.automatikAn || stand.kanal === "dev")
+        return "";
+    var z = zeitpunkt || zeitpunktLesen(null);
+    if (z.art === "hand")
+        return "nur über «Jetzt installieren» oder zen update";
+    if (stand.angehalten)
+        return "Automatik ruht (Stand von Hand)";
+    // Bei «jederzeit» kommt es gleich nach der Wartezeit; sonst zum nächsten passenden Moment danach
+    var danach = z.art === "fenster" ? ", danach zwischen " + z.von + " und " + z.bis : z.art === "jederzeit" ? "" : ", danach bei der nächsten Sperre";
+    if (isFinite(stand.bereit.freiAbMs) && stand.bereit.freiAbMs > jetztMs)
+        return "frühestens " + zeitText(stand.bereit.freiAbMs, jetztMs) + danach;
+    if (!stand.bereit.frei)
+        return "erst mit synchronisierter Uhr" + danach;
+    return z.art === "fenster" ? "kommt zwischen " + z.von + " und " + z.bis : z.art === "jederzeit" ? "kommt bald" : "kommt bei der nächsten Sperre";
+}
+
+// Zeilen unter der Lage: [{ titel, wert }] (Werte in Mono). letzte: letzteLesen (für «Letztes Update»)
+function zeilen(stand, zeitpunkt, jetztMs, letzte) {
     if (!stand)
         return [];
     var aus = [];
@@ -403,14 +506,15 @@ function zeilen(stand, zeitpunkt, jetztMs) {
     var inst = stand.installiert;
     if (inst)
         aus.push({ titel: "Installiert", wert: (inst.version !== "" ? inst.version + " · " : "") + inst.commit.slice(0, 12) + (inst.version === "" ? " · ohne signierte Version" : "") });
+    // Gescheitert, zurück, abgebrochen oder kaputt: bis eine spätere Installation es ablöst
+    var lage = installationLage(stand, letzte, veraltet(stand, letzte));
+    if (PROBLEME.indexOf(lage) >= 0 && letzte && letzte.ergebnis === lage)
+        aus.push({ titel: "Letztes Update", wert: ERGEBNIS_TEXT[lage] + " · " + zeitText(letzte.endeMs, jetztMs) + (letzte.ziel ? " · " + zielText(letzte.ziel) : "") });
+    if (stand.angehalten)
+        aus.push({ titel: "Von Hand", wert: (stand.angehalten.commit !== "" ? stand.angehalten.commit.slice(0, 12) + " · " : "") + "seit " + zeitText(stand.angehalten.seitMs, jetztMs) + " · Automatik ruht bis zen update" });
     if (stand.bereit && (stand.zustand === "bereit" || stand.zustand === "zustimmung")) {
-        var bereit = stand.bereit.version + " · " + stand.bereit.commit.slice(0, 12);
-        var automatisch = stand.zustand === "bereit" && stand.automatikAn && zeitpunkt && zeitpunkt.art !== "hand";
-        if (automatisch && isFinite(stand.bereit.freiAbMs) && stand.bereit.freiAbMs > jetztMs)
-            bereit += " · automatisch ab " + zeitText(stand.bereit.freiAbMs, jetztMs);
-        else if (automatisch && !stand.bereit.frei)
-            bereit += " · automatisch erst mit synchronisierter Uhr";
-        aus.push({ titel: "Bereit", wert: bereit });
+        var wann = bereitWann(stand, zeitpunkt, jetztMs);
+        aus.push({ titel: "Bereit", wert: stand.bereit.version + " · " + stand.bereit.commit.slice(0, 12) + (wann !== "" ? " · " + wann : "") });
     }
     if (stand.unbestaetigt)
         aus.push({ titel: "Bestätigung", wert: (stand.unbestaetigt.version !== "" ? stand.unbestaetigt.version : stand.unbestaetigt.commit.slice(0, 12)) + " · automatisch installiert, gilt als gut nach dem nächsten Neustart mit Login" });
@@ -435,11 +539,19 @@ function zeilen(stand, zeitpunkt, jetztMs) {
 
 // Kann «Jetzt installieren» etwas tun, ohne dass es ein «ja» braucht?
 function kannInstallieren(stand) {
+    return installierenZiel(stand) !== "";
+}
+
+// Ziel für «Jetzt installieren»: das Tag-Objekt der bereiten Version, auf dev (jeder Commit signiert) der Commit von
+// origin/dev, sonst "". Installiert wird nur genau dieser, schon geprüfte Stand.
+function installierenZiel(stand) {
     if (!stand)
-        return false;
+        return "";
     if (stand.zustand === "bereit")
-        return stand.bereit !== null && stand.kanal !== "dev";
-    return stand.zustand === "dev" && !!stand.dev && stand.dev.neu && !stand.dev.brauchtJa && !!stand.anker;
+        return stand.bereit !== null && stand.kanal !== "dev" ? stand.bereit.objekt : "";
+    if (stand.zustand === "dev" && !!stand.dev && stand.dev.neu && !stand.dev.brauchtJa && !!stand.anker)
+        return stand.dev.commit;
+    return "";
 }
 
 // Tag-Objekt, dem «Zustimmen …» gilt (nur gültig signierte Versionen auf stabil und vorschau), sonst ""
@@ -458,17 +570,34 @@ function zustimmungText(stand) {
     return (was !== "" ? was + " " : "") + "Zustimmen verlangt dein Passwort und gilt nur für " + b.version + " (Objekt " + b.objekt.slice(0, 12) + ").";
 }
 
-// Erklärung zum gewählten Zeitpunkt
+// Erklärung zum gewählten Zeitpunkt: knapp und ehrlich, was die Automatik dann tut (zenos-kanal quiet_now)
 function zeitpunktText(z) {
     switch (z ? z.art : "") {
     case "fenster":
-        return "Geprüfte Updates kommen nur zwischen " + z.von + " und " + z.bis + " Uhr.";
+        return "Kommt zwischen " + z.von + " und " + z.bis + " Uhr, auch wenn du gerade arbeitest. Das Gerät muss dann laufen.";
     case "jederzeit":
-        return "Geprüfte Updates kommen, sobald sie bereit sind, auch während du arbeitest.";
+        return "Kommt, sobald es bereit ist, auch während du arbeitest; die Oberfläche lädt dabei kurz neu.";
     case "hand":
         return "Nie automatisch. Ist ein Update bereit, kommt eine Mitteilung; installiert wird mit «Jetzt installieren» oder zen update.";
     default:
-        return "Geprüfte Updates kommen nur, wenn zenOS gesperrt ist oder niemand angemeldet ist (Standard).";
+        return "Kommt, wenn zenOS seit 5 Minuten gesperrt ist oder der Login-Bildschirm seit 5 Minuten wartet, nicht während jemand per SSH angemeldet ist (Standard).";
+    }
+}
+
+// Was für jeden Zeitpunkt gilt (unter der Erklärung)
+var ZEITPUNKT_IMMER = "Gilt für das ganze Gerät. Installiert wird immer nur, was gültig signiert ist. Was Firewall, Netz oder Boot ändert, wartet auf deine Zustimmung. Im Akkubetrieb kommt es erst ab " + AKKU_MIN_PROZENT + " % Ladung. Auf dev kommt nie etwas automatisch.";
+
+// Kurz für die Mitteilung: «Bei Sperre», «Zeitfenster 02:00–05:00», «Jederzeit», «Von Hand»
+function zeitpunktKurz(z) {
+    switch (z ? z.art : "") {
+    case "fenster":
+        return "Zeitfenster " + z.von + "–" + z.bis;
+    case "jederzeit":
+        return "Jederzeit";
+    case "hand":
+        return "Von Hand";
+    default:
+        return "Bei Sperre";
     }
 }
 
@@ -487,6 +616,7 @@ function gemeldetLesen(json) {
         zustimmung: s(d.zustimmung),
         kontakt: s(d.kontakt),
         bereit: s(d.bereit),
+        zeitpunkt: s(d.zeitpunkt),
         abgelehnt: _liste(d.abgelehnt, ABGELEHNT_MERKEN, function (t) {
             return _tag(t) || null;
         })
@@ -494,7 +624,7 @@ function gemeldetLesen(json) {
 }
 
 function gemeldetText(g) {
-    return JSON.stringify({ version: 1, installation: g.installation, blockiert: g.blockiert, anker: g.anker, zustimmung: g.zustimmung, kontakt: g.kontakt, bereit: g.bereit, abgelehnt: g.abgelehnt }, null, 1) + "\n";
+    return JSON.stringify({ version: 1, installation: g.installation, blockiert: g.blockiert, anker: g.anker, zustimmung: g.zustimmung, kontakt: g.kontakt, bereit: g.bereit, zeitpunkt: g.zeitpunkt, abgelehnt: g.abgelehnt }, null, 1) + "\n";
 }
 
 // Abgelehnte Tags, die eine Mitteilung wert sind: auf stabil und vorschau mit Anker, ein Tag im Kanal über allem, was
@@ -524,19 +654,22 @@ function _meldung(schluessel, titel, inhalt, dringlichkeit) {
     return { schluessel: schluessel, titel: text(titel, 120), text: text(inhalt, 400), dringlichkeit: dringlichkeit };
 }
 
-// Welche Mitteilungen jetzt fällig sind. lage: { stand, letzte, zeitpunkt, veraltet } (gelesen wie oben),
-// gemeldet: aus gemeldetLesen. Rückgabe: { neu: [{ schluessel, titel, text, dringlichkeit }], gemeldet } – gemeldet
-// ist der neue Stand zum Merken. Jede Mitteilung kommt nur einmal je Zustand: Ein Zustand meldet sich erst wieder,
-// wenn er vorher sicher vorbei war (ein anderer Zustand der Prüfung, nicht nur «kein Kontakt» oder «fehler»).
+// Welche Mitteilungen jetzt fällig sind. lage: { stand, letzte, zeitpunkt, veraltet, zeitpunktSelbst } (gelesen wie
+// oben; zeitpunktSelbst: die Einstellungen haben den Zeitpunkt eben selbst gesetzt), gemeldet: aus gemeldetLesen.
+// Rückgabe: { neu: [{ schluessel, titel, text, dringlichkeit }], gemeldet } – gemeldet ist der neue Stand zum Merken.
+// Jede Mitteilung kommt nur einmal je Zustand: Ein Zustand meldet sich erst wieder, wenn er vorher sicher vorbei war
+// (ein anderer Zustand der Prüfung, nicht nur «kein Kontakt» oder «fehler»).
 //   installiert  still (low)      eine Installation über den Kanal ist fertig und gesund (höchstens 24 h alt)
-//   zurueck      normal           gescheitert, zurück auf dem Stand davor (ebenso «gescheitert», «fehler»)
-//   kaputt       dringend         auch der Rückweg scheiterte
+//   zurueck      normal           gescheitert, zurück auf dem Stand davor (ebenso «gescheitert», «fehler»; auch alt)
+//   kaputt       dringend         auch der Rückweg scheiterte (auch alt)
 //   blockiert    dringend         ALARM im Hauptbuch u. a.
 //   anker        normal           Anker fehlt
 //   abgelehnt    normal           ein neuer Tag im Kanal ist nicht gültig signiert (je Tag einmal)
 //   zustimmung   normal           wartet auf Zustimmung (je Tag-Objekt einmal)
 //   kontakt      normal           14 Tage ohne Kontakt zu origin (je Kontaktzeit einmal)
 //   bereit       normal           Zeitpunkt «hand»: ein Update ist bereit (je Tag-Objekt einmal)
+//   zeitpunkt    normal           der Zeitpunkt wurde geändert, nicht aus den Einstellungen (etwa sudo oder pkexec aus
+//                                 einer anderen Anmeldung), mit dem Weg aus der Datei
 function meldungen(lage, gemeldet, jetztMs) {
     var g = gemeldetLesen(gemeldet ? gemeldetText(gemeldet) : "");
     var neu = [];
@@ -553,8 +686,8 @@ function meldungen(lage, gemeldet, jetztMs) {
             var ziel = letzte.ziel ? (letzte.ziel.tag !== "" ? letzte.ziel.tag : zielText(letzte.ziel)) : "Das Update";
             if (letzte.ergebnis === "kaputt")
                 neu.push(_meldung("kaputt", "Update kaputt", letzte.grund !== "" ? letzte.grund : "Auch der Rückweg scheiterte. Mehr: zen kanal", "critical"));
-            else if (!frisch)
-                ; // zu alt: nur merken
+            else if (letzte.ergebnis === "installiert" && !frisch)
+                ; // ein altes «installiert» (etwa beim ersten Start nach Tagen): nur merken
             else if (letzte.ergebnis === "installiert")
                 neu.push(_meldung("installiert", "zenOS aktualisiert", ziel + " ist installiert.", "low"));
             else if (letzte.ergebnis === "zurueck")
@@ -580,7 +713,7 @@ function meldungen(lage, gemeldet, jetztMs) {
         var objekt = zustimmungObjekt(stand);
         var zustimmung = objekt !== "" ? "zustimmung:" + objekt : stand.zustand === "zustimmung" ? g.zustimmung : "";
         if (objekt !== "" && zustimmung !== g.zustimmung)
-            neu.push(_meldung("zustimmung", "Update wartet auf deine Zustimmung", stand.bereit.version + " ändert Firewall, Netz oder Boot. Ansehen und zustimmen: Einstellungen › System.", "normal"));
+            neu.push(_meldung("zustimmung", "Update wartet auf deine Zustimmung", stand.bereit.version + " ändert Firewall, Netz oder Boot. Ansehen und zustimmen: Einstellungen › System › Updates.", "normal"));
         g.zustimmung = zustimmung;
 
         var wichtig = abgelehntWichtig(stand).filter(function (e) {
@@ -599,7 +732,7 @@ function meldungen(lage, gemeldet, jetztMs) {
 
         var bereit = zeitpunkt.art === "hand" && stand.zustand === "bereit" && stand.bereit ? "bereit:" + stand.bereit.objekt : "";
         if (bereit !== "" && bereit !== g.bereit)
-            neu.push(_meldung("bereit", "Update bereit", stand.bereit.version + " ist geprüft und bereit. Installieren: Einstellungen › System oder zen update.", "normal"));
+            neu.push(_meldung("bereit", "Update bereit", stand.bereit.version + " ist geprüft und bereit. Installieren: Einstellungen › System › Updates oder zen update.", "normal"));
         if (bereit !== "" || stand.zustand !== "bereit")
             g.bereit = bereit;
     }
@@ -609,10 +742,17 @@ function meldungen(lage, gemeldet, jetztMs) {
         var kontakt = "kontakt@" + new Date(stand.kontaktMs).toISOString();
         if (kontakt !== g.kontakt) {
             var tage = Math.floor((jetztMs - stand.kontaktMs) / 86400000);
-            neu.push(_meldung("kontakt", "Seit " + tage + " Tagen keine Updates geprüft", "Letzter Kontakt mit origin: " + zeitText(stand.kontaktMs, jetztMs) + ". Netz prüfen, dann in Einstellungen › System «Jetzt prüfen».", "normal"));
+            neu.push(_meldung("kontakt", "Seit " + tage + " Tagen kein Kontakt zu origin", "Geprüft wird weiter, aber nur der zuletzt geholte Stand. Letzter Kontakt: " + zeitText(stand.kontaktMs, jetztMs) + ". Netz prüfen, dann in Einstellungen › System › Updates «Jetzt prüfen».", "normal"));
             g.kontakt = kontakt;
         }
     }
+
+    // Zeitpunkt geändert, ohne dass es die Einstellungen waren (allow_active gilt für jeden Prozess des Benutzers,
+    // solange seine Sitzung am Gerät aktiv ist; sudo aus SSH ebenso): einmal je Änderung, mit dem Weg
+    var zKey = [zeitpunkt.art, zeitpunkt.von, zeitpunkt.bis, zeitpunkt.seit || "", zeitpunkt.problem !== "" ? "ungueltig" : ""].join("|");
+    if (g.zeitpunkt !== "" && zKey !== g.zeitpunkt && !(lage && lage.zeitpunktSelbst))
+        neu.push(_meldung("zeitpunkt", "Zeitpunkt für Updates geändert", "Jetzt: " + zeitpunktKurz(zeitpunkt) + (zeitpunkt.ueber ? " (gesetzt über " + zeitpunkt.ueber + ")" : "") + ". Ansehen: Einstellungen › System › Updates.", "normal"));
+    g.zeitpunkt = zKey;
     return { neu: neu, gemeldet: g };
 }
 
@@ -624,17 +764,17 @@ function mitteilungBefehl(m) {
 
 // --- Bedienung ----------------------------------------------------------------
 
-// pkexec-Aufruf für den Helfer, null bei falschen Werten. aktion: pruefen | installieren | zustimmen (a: Objekt) |
-// zeitpunkt (a: Wahl, b/c: von/bis bei «fenster»)
+// pkexec-Aufruf für den Helfer, null bei falschen Werten. aktion: pruefen | installieren (a: Ziel aus
+// installierenZiel) | zustimmen (a: Objekt) | zeitpunkt (a: Wahl, b/c: von/bis bei «fenster»)
 function befehl(helfer, aktion, a, b, c) {
     if (typeof helfer !== "string" || helfer.charAt(0) !== "/")
         return null;
     switch (aktion) {
     case "pruefen":
-    case "installieren":
         return ["pkexec", helfer, aktion];
+    case "installieren":
     case "zustimmen":
-        return typeof a === "string" && OBJEKT_RE.test(a) ? ["pkexec", helfer, "zustimmen", a] : null;
+        return typeof a === "string" && OBJEKT_RE.test(a) ? ["pkexec", helfer, aktion, a] : null;
     case "zeitpunkt":
         if (a === "fenster")
             return fensterProblem(b, c) === "" ? ["pkexec", helfer, "zeitpunkt", "fenster", b, c] : null;
@@ -646,7 +786,8 @@ function befehl(helfer, aktion, a, b, c) {
 
 // Rückmeldung nach einem Aufruf als { text, art: "" (Bestätigung) | "warnung" } oder null (nichts zeigen: die Seite
 // oder eine Mitteilung sagt es schon). info: { fehler: letzte Zeile von stderr, installiert: true, wenn letzte.json
-// seit dem Start neu ist, zustand: Zustand der Prüfung danach }
+// seit dem Start neu ist, zustand: Zustand der Prüfung danach, wunsch: Antwort der Prüfung auf diesen Aufruf
+// ({ ergebnis, grund } aus stand.json) }
 function rueckmeldung(aktion, code, info) {
     var i = info || {};
     var fehler = text(i.fehler || "", 160).replace(/^zenos-kanal(-bedienen)?( [a-z]+)?:\s*/, "");
@@ -671,12 +812,17 @@ function rueckmeldung(aktion, code, info) {
             return null; // die Mitteilung zur Installation kommt ohnehin
         if (code === 0)
             return { text: "zenOS ist schon aktuell", art: "" };
-        if (code === 10 && aktion === "zustimmen")
+        var grund = i.wunsch && typeof i.wunsch.grund === "string" ? text(i.wunsch.grund, 160) : "";
+        if (code === 10 && (aktion === "zustimmen" || /^Angezeigt war/.test(grund)))
             return { text: "Der Stand hat sich geändert: bitte noch einmal ansehen", art: "warnung" };
+        if (code === 10 && i.zustand === "zustimmung")
+            return { text: "Das Update braucht deine Zustimmung", art: "warnung" };
         if (code === 10)
-            return { text: i.zustand === "zustimmung" ? "Das Update braucht deine Zustimmung" : "Update wartet (Netz oder Platz) · mehr: zen kanal", art: "warnung" };
+            return { text: grund !== "" ? "Update wartet: " + grund : "Update wartet (Netz oder Platz) · mehr: zen kanal", art: "warnung" };
+        if (code === 3 && aktion === "zustimmen")
+            return { text: "Zustimmen geht hier nur für gültig signierte Versionen · sonst zen update", art: "warnung" };
         if (code === 3)
-            return { text: aktion === "zustimmen" ? "Zustimmen geht hier nur für gültig signierte Versionen · sonst zen update" : "Nichts installiert: kein gültig signierter Stand · mehr: zen kanal", art: "warnung" };
+            return { text: "Nichts installiert: " + (grund !== "" ? grund : "kein gültig signierter Stand · mehr: zen kanal"), art: "warnung" };
         if (code === 4 || code === 5)
             return null;
         return { text: "Update gescheitert" + (fehler !== "" ? ": " + fehler : " · mehr: zen kanal"), art: "warnung" };

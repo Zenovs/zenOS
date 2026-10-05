@@ -11,6 +11,12 @@ import "kanal.js" as Logik
 // Update-Kanal in der Oberfläche: Lage für Einstellungen › System › Updates, Mitteilungen und «Update läuft» im
 // System-Menü. Die Logik steht in kanal.js und ist dort getestet.
 //
+// - Übernahme (install.sh aus dem Kanal): zenos-kanal meldet Beginn und Ende über IPC («kanal uebernahme beginn|ende»,
+//   als dieser Benutzer). Solange lädt Quickshell geänderte Dateien nicht einzeln nach (watchFiles aus, sonst womöglich
+//   ein Mischstand, dem Leiste oder Mitteilungen fehlen). Danach richtet install.sh --nur-benutzer die Benutzerteile
+//   ein (über systemd-run, ausserhalb der Oberfläche) und startet sie neu, wenn sich QML geändert hat; ist gesperrt,
+//   erst nach dem Entsperren. Läuft beim Start der Oberfläche gerade eine Übernahme, gilt dasselbe.
+//
 // - Gelesen wird ohne Rechte, was root schreibt: /var/lib/zenos/kanal/stand.json (letzte Prüfung) und letzte.json
 //   (letzte Installation), /etc/xdg/zenos/kanal-zeitpunkt (Zeitpunkt automatischer Updates) und
 //   /run/zenos-kanal/uebernahme (gibt es nur, solange install.sh aus dem Kanal läuft, mit Block-Inhibitor:
@@ -45,18 +51,26 @@ Singleton {
     // Zustand der Prüfung (aktuell, bereit, zustimmung, dev, anker_fehlt, blockiert, kein_kontakt, fehler) oder
     // «ungeprueft»
     readonly property string zustand: _stand ? _stand.zustand : "ungeprueft"
-    readonly property string zustandTitel: Logik.zustandTitel(_stand, veraltet)
-    readonly property var zustandSymbol: Logik.zustandSymbol(_stand, veraltet)
-    readonly property string grundText: Logik.grundText(_stand, veraltet, _letzte)
-    // [{ titel, wert }] für die Einstellungen
-    readonly property var zeilen: Logik.zeilen(_stand, _zeitpunkt, _jetzt)
+    readonly property string zustandTitel: Logik.zustandTitel(_stand, veraltet, _letzte, updateLaeuft)
+    readonly property var zustandSymbol: Logik.zustandSymbol(_stand, veraltet, _letzte, updateLaeuft)
+    readonly property string grundText: Logik.grundText(_stand, veraltet, _letzte, updateLaeuft)
+    // [{ titel, wert }] für die Einstellungen (neu nur, wenn sich etwas geändert hat: der Repeater baut sonst bei jedem
+    // Takt alle Zeilen neu auf)
+    readonly property var zeilen: _zeilen
     readonly property bool kannInstallieren: !veraltet && Logik.kannInstallieren(_stand)
+    // Satz unter den Knöpfen, wenn «Jetzt installieren» etwas tun kann
+    readonly property string installierenHinweis: kannInstallieren ? "Installiert genau den angezeigten, schon geprüften Stand. Die Oberfläche lädt danach neu, wenn sie sich geändert hat." : ""
     // Tag-Objekt, dem «Zustimmen …» gilt, sonst leer
     readonly property string zustimmungObjekt: veraltet ? "" : Logik.zustimmungObjekt(_stand)
     readonly property string zustimmungText: veraltet ? "" : Logik.zustimmungText(_stand)
     readonly property string zeitpunktText: Logik.zeitpunktText(_zeitpunkt)
-    // install.sh aus dem Kanal läuft (Block-Inhibitor): System-Menü «Update läuft»
-    readonly property bool updateLaeuft: _uebernahme
+    // Was für jeden Zeitpunkt gilt (Signatur, Zustimmung, Akku, dev)
+    readonly property string zeitpunktImmer: Logik.ZEITPUNKT_IMMER
+    // install.sh aus dem Kanal läuft (Block-Inhibitor): System-Menü und Einstellungen «Update läuft»
+    readonly property bool updateLaeuft: _uebernahme || _pausiert
+    // Die Übernahme läuft (gemeldet über IPC oder beim Lesen gesehen), Quickshell lädt solange nicht nach: Die Sperre
+    // schaltet das Nachladen nach dem Entsperren dann nicht ein und lädt nicht selbst neu
+    readonly property bool uebernahmeLaeuft: _pausiert
     // Laufende Bedienung: "", "pruefen", "installieren", "zustimmen", "zeitpunkt"
     readonly property string laeuft: _laeuft
     // Während «zeitpunkt» läuft: die gewählte Art (die Segmente zeigen sie schon)
@@ -73,9 +87,10 @@ Singleton {
         _starten("pruefen", Logik.befehl(helfer, "pruefen"));
     }
 
+    // Nur für den Stand, den die Einstellungen gerade zeigen (Tag-Objekt bzw. auf dev der Commit)
     function installieren(): void {
         if (kannInstallieren)
-            _starten("installieren", Logik.befehl(helfer, "installieren"));
+            _starten("installieren", Logik.befehl(helfer, "installieren", Logik.installierenZiel(_stand)));
     }
 
     // Nur für das Objekt, das die Einstellungen gerade zeigen
@@ -89,9 +104,12 @@ Singleton {
         const argv = art === "fenster" ? Logik.befehl(helfer, "zeitpunkt", art, von, bis) : Logik.befehl(helfer, "zeitpunkt", art);
         if (argv === null)
             return;
-        if (_zeitpunkt.art === art && (art !== "fenster" || (_zeitpunkt.von === von && _zeitpunkt.bis === bis)))
+        // Gleiche Wahl: nichts zu tun, ausser die Datei ist ungültig (dann schreibt der Helfer sie neu)
+        if (_zeitpunkt.problem === "" && _zeitpunkt.art === art && (art !== "fenster" || (_zeitpunkt.von === von && _zeitpunkt.bis === bis)))
             return;
         _zielArt = art;
+        // Die Einstellungen ändern ihn selbst: keine Mitteilung «Zeitpunkt geändert»
+        _zeitpunktSelbst = true;
         _starten("zeitpunkt", argv);
     }
 
@@ -123,8 +141,50 @@ Singleton {
     property real _beginn: 0
     property int _code: -1
     property real _jetzt: Date.now()
+    property var _zeilen: []
     // Gemerkte Mitteilungen; geladen erst nach dem Start (der Mitteilungsdienst braucht einen Moment)
     property var _gemeldet: null
+    property bool _zeitpunktSelbst: false
+    // Übernahme läuft (watchFiles aus) bzw. danach sind die Benutzerteile noch einzurichten
+    property bool _pausiert: false
+    property bool _benutzerteileFaellig: false
+
+    function _zeilenNeu(): void {
+        const z = Logik.zeilen(_stand, _zeitpunkt, _jetzt, _letzte);
+        if (JSON.stringify(z) !== JSON.stringify(_zeilen))
+            _zeilen = z;
+    }
+
+    // Beginn der Übernahme: Quickshell lädt geänderte Dateien nicht einzeln nach
+    function _pausieren(): void {
+        if (_pausiert)
+            return;
+        console.info("Kanal: Übernahme läuft, Oberfläche lädt währenddessen nicht nach");
+        _pausiert = true;
+        Quickshell.watchFiles = false;
+    }
+
+    // Ende der Übernahme: Benutzerteile einrichten (startet die Oberfläche neu, wenn sich QML geändert hat). Gesperrt
+    // bleibt watchFiles aus; die Sperre schaltet es nach dem Entsperren wieder ein.
+    function _fortsetzen(): void {
+        if (!_pausiert)
+            return;
+        _pausiert = false;
+        _uebernahme = false;
+        _benutzerteileFaellig = true;
+        if (!Oberflaeche.gesperrt)
+            Quickshell.watchFiles = true;
+        _benutzerteileStarten();
+    }
+
+    function _benutzerteileStarten(): void {
+        if (!_benutzerteileFaellig || _pausiert || Oberflaeche.gesperrt || !Konfig.verfuegbar)
+            return;
+        _benutzerteileFaellig = false;
+        console.info("Kanal: Übernahme fertig, richte die Benutzerteile ein (install.sh --nur-benutzer)");
+        // Ausserhalb der Oberfläche (eigene Unit): Ein Neustart von zenos-shell beendet den Lauf so nicht
+        Quickshell.execDetached(["systemd-run", "--user", "--collect", "--quiet", "--unit=zenos-benutzerteile-" + Date.now(), "--", Pfade.code + "/scripts/install.sh", "--nur-benutzer"]);
+    }
 
     function _starten(aktion: string, argv: var): void {
         if (_laeuft !== "" || Oberflaeche.gesperrt || argv === null)
@@ -154,7 +214,8 @@ Singleton {
         const antwort = Logik.rueckmeldung(aktion, _code, {
             fehler: zeilen.join("\n"),
             installiert: neu,
-            zustand: root.zustand
+            zustand: root.zustand,
+            wunsch: _stand ? _stand.wunsch : null
         });
         // 3 abgelehnt, 10 wartet, 75 läuft schon und 126 abgebrochen sind Zustände, keine Fehler
         if ([0, 3, 10, 75, 126].indexOf(_code) < 0)
@@ -179,6 +240,7 @@ Singleton {
             if (JSON.stringify(z) !== JSON.stringify(_zeitpunkt))
                 _zeitpunkt = z;
         }
+        _zeilenNeu();
         _auswertenBald();
     }
 
@@ -197,8 +259,11 @@ Singleton {
             stand: _stand,
             letzte: _letzte,
             zeitpunkt: _zeitpunkt,
-            veraltet: veraltet
+            veraltet: veraltet,
+            zeitpunktSelbst: _zeitpunktSelbst
         }, _gemeldet, Date.now());
+        if (_laeuft !== "zeitpunkt")
+            _zeitpunktSelbst = false;
         const text = Logik.gemeldetText(ergebnis.gemeldet);
         if (text !== Logik.gemeldetText(_gemeldet)) {
             _gemeldet = ergebnis.gemeldet;
@@ -267,8 +332,23 @@ Singleton {
         path: root.uebernahmePfad
         blockLoading: true
         printErrors: false
-        onLoaded: root._uebernahme = true
-        onLoadFailed: root._uebernahme = false
+        // Auch ohne Nachricht über IPC (etwa nach einem Neustart der Oberfläche mitten in der Übernahme)
+        onLoaded: {
+            root._uebernahme = true;
+            root._pausieren();
+        }
+        onLoadFailed: {
+            root._uebernahme = false;
+            root._fortsetzen();
+        }
+    }
+
+    Connections {
+        target: Oberflaeche
+
+        function onGesperrtChanged(): void {
+            root._benutzerteileStarten();
+        }
     }
 
     // Gelesen wird nur beim Start (der Timer danach übernimmt den Inhalt), dann nur geschrieben
@@ -317,6 +397,7 @@ Singleton {
         onTriggered: {
             root._jetzt = Date.now();
             root.aktualisieren();
+            root._zeilenNeu();
             root._auswertenBald();
         }
     }
@@ -345,6 +426,17 @@ Singleton {
         function laeuft(): string {
             root.aktualisieren();
             return root.updateLaeuft ? "ja" : "nein";
+        }
+
+        // Von zenos-kanal (als dieser Benutzer) vor und nach install.sh: «beginn» oder «ende»
+        function uebernahme(was: string): string {
+            if (was === "beginn")
+                root._pausieren();
+            else if (was === "ende")
+                root._fortsetzen();
+            else
+                return "unbekannt";
+            return "ok";
         }
     }
 }

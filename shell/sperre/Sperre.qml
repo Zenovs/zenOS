@@ -24,7 +24,9 @@ import "../dienste/energie.js" as EnergieLogik
 // - Während der Sperre ruht das automatische Neuladen der Oberfläche: Quickshell v0.3.1 stürzt ab, wenn es
 //   bei gesetzter Sperre neu lädt (neue Sperrflächen vor dem Abbau der alten). Wurde die Oberfläche in der
 //   Zwischenzeit geändert (z. B. zen update), lädt sie nach dem Entsperren neu und hält den Zeitpunkt in
-//   $XDG_RUNTIME_DIR/zenos/oberflaeche-geladen fest (install.sh startet sie dann nicht nochmals neu).
+//   $XDG_RUNTIME_DIR/zenos/oberflaeche-geladen fest (install.sh startet sie dann nicht nochmals neu). Läuft beim
+//   Entsperren gerade eine Übernahme aus dem Kanal (Kanal.uebernahmeLaeuft), bleibt das Nachladen aus, und die Sperre
+//   lädt nicht neu: Nach der Übernahme richtet Kanal die Benutzerteile ein und startet die Oberfläche neu, wenn nötig.
 // - Leitplanke (Code): Der Sperrbildschirm zeigt nie Inhalte, nur die Anzahl der Mitteilungen – keine
 //   Vorschau, keine App-Namen.
 // - Bildschirm aus (Leitplanke: dunkel heisst gesperrt): bildschirmAusNachSperre Min. (1–10) nach der Sperre ohne
@@ -631,8 +633,11 @@ Scope {
                 markerDatei.setText(new Date().toISOString() + "\n");
                 return;
             }
-            Quickshell.watchFiles = true;
-            if (root._neuLaden) {
+            // Während einer Übernahme aus dem Kanal nicht: sonst lüde sie einen halben Stand
+            Quickshell.watchFiles = !Kanal.uebernahmeLaeuft;
+            if (root._neuLaden && Kanal.uebernahmeLaeuft) {
+                console.info("Sperre: Oberfläche geändert, aber die Übernahme läuft noch; neu geladen wird danach");
+            } else if (root._neuLaden) {
                 console.info("Sperre: Oberfläche während der Sperre geändert, lade neu");
                 zustand.geladenAb = root._suchBeginn;
                 Quickshell.reload(false);

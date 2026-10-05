@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Einheitentests für die Bedienung des Kanals aus den Einstellungen (System › Updates): «Jetzt installieren»
-(zenos-kanal jetzt), «Zustimmen …» (zenos-kanal zustimmen OBJEKT), der Zeitpunkt automatischer Updates
+(zenos-kanal jetzt ZIEL), «Zustimmen …» (zenos-kanal zustimmen OBJEKT), der Zeitpunkt automatischer Updates
 (zenos-kanal zeitpunkt, /etc/xdg/zenos/kanal-zeitpunkt), dazu der pkexec-Helfer scripts/bin/zenos-kanal-bedienen
 (nur Aufrufe, die nichts ändern), die polkit-Aktionen und die Units.
 
@@ -107,7 +107,8 @@ class Zeitpunkt(B.Basis):
         self.assertEqual(self.befehl("fenster", "22:00", "06:00"), 0, self.ausgabe)
         self.assertEqual(K.read_schedule(), ({"art": "fenster", "von": "22:00", "bis": "06:00"}, None))
         text = lesen(K.SCHEDULE_FILE)
-        self.assertRegex(text, r"(?m)^zeitpunkt=fenster\nvon=22:00\nbis=06:00\nseit=\d{4}-\d\d-\d\dT[\d:]+Z$")
+        self.assertRegex(text, r"(?m)^zeitpunkt=fenster\nvon=22:00\nbis=06:00\nseit=\d{4}-\d\d-\d\dT[\d:]+Z\n"
+                               r"ueber=(root|(pkexec|sudo), uid \d+)$")
         self.assertEqual(os.stat(K.SCHEDULE_FILE).st_mode & 0o777, 0o644)
         self.assertEqual(self.befehl("fenster", "22:00", "06:00"), 0)
         self.assertIn("schon zwischen 22:00 und 06:00", self.ausgabe)
@@ -156,6 +157,28 @@ class Zeitpunkt(B.Basis):
         self.assertEqual(zeitpunkt, {"art": "sperre"})
         self.assertIn("es gilt «sperre»", hinweis)
 
+    def test_ungueltige_datei_wird_ersetzt(self):
+        """Die Datei ist ungültig (es gilt «sperre»): Auch die Wahl «sperre» schreibt sie neu (sonst bliebe der Hinweis
+        «Datei ungültig» stehen, und ein Klick auf «Bei Sperre» täte nichts)."""
+        with open(K.SCHEDULE_FILE, "w", encoding="utf-8") as f:
+            f.write("zeitpunkt=fenster\nvon=02:00\nbis=02:30\n")
+        self.assertEqual(K.read_schedule()[0], {"art": "sperre"})
+        self.assertIsNotNone(K.read_schedule()[1])
+        self.assertEqual(self.befehl("sperre"), 0, self.ausgabe)
+        self.assertNotIn("schon", self.ausgabe)
+        self.assertEqual(K.read_schedule(), ({"art": "sperre"}, None))
+
+    def test_weg_steht_in_der_datei(self):
+        alt = dict(os.environ)
+        self.addCleanup(lambda: (os.environ.clear(), os.environ.update(alt)))
+        os.environ.pop("SUDO_UID", None)
+        os.environ["PKEXEC_UID"] = "1000"
+        self.assertEqual(self.befehl("hand"), 0, self.ausgabe)
+        self.assertIn("\nueber=pkexec, uid 1000\n", lesen(K.SCHEDULE_FILE))
+        os.environ["PKEXEC_UID"] = "1000;x"
+        self.assertEqual(self.befehl("jederzeit"), 0, self.ausgabe)
+        self.assertIn("\nueber=root\n", lesen(K.SCHEDULE_FILE), "nur eine Zahl gilt als uid")
+
     def test_status_zeigt_zeitpunkt(self):
         self.befehl("fenster", "02:00", "05:00")
         aus = io.StringIO()
@@ -199,20 +222,68 @@ class Bedienung(I.Geraet):
 
     def test_jetzt_installiert_signiert_ohne_frage(self):
         self.commit("neu")
-        self.signieren("v0.1.0-rc4")
+        objekt = self.signieren("v0.1.0-rc4")
         neu = self.git("rev-parse", "HEAD")
-        self.assertEqual(self.bedienen(K.cmd_now), 0, self.ausgabe)
+        _, stand = self.lauf()
+        self.assertEqual(stand["bereit"]["objekt"], objekt)
+        self.assertEqual(self.bedienen(K.cmd_now, objekt), 0, self.ausgabe)
         self.assertEqual((self.fragen, self.kopf()), ([], neu))
         self.assertEqual(self.zustand("letzte.json")["ergebnis"], "installiert")
-        self.assertIn(("holen", False), self.folgen, "jetzt holt wie zen update")
+        self.assertNotIn(("holen", False), self.folgen, "jetzt holt nicht neu: es gilt der gezeigte, geprüfte Stand")
         self.assertIn(("installieren", False), self.folgen, "ohne Terminal folgt es dem Journal nicht")
         self.assertEqual(self.folgen[-1], ("pruefen", False), "danach ist der Stand neu geprüft")
         self.assertEqual(self.zustand("stand.json")["zustand"], "aktuell")
 
-    def test_jetzt_laesst_rueckfrage_liegen(self):
-        self.rueckfrage_bereit()
+    def test_jetzt_nur_der_angezeigte_stand(self):
+        """Zwischen Anzeige und Klick kam rc5 dazu (etwa durch die Automatik geholt): Der Knopf galt rc4, nichts."""
+        self.commit("neu")
+        objekt = self.signieren("v0.1.0-rc4")
+        self.lauf()
         vorher = self.kopf()
-        self.assertEqual(self.bedienen(K.cmd_now), 10, self.ausgabe)
+        self.commit("noch neuer")
+        self.signieren("v0.1.0-rc5")
+        self.lauf()
+        self.assertEqual(self.bedienen(K.cmd_now, objekt), 10, self.ausgabe)
+        self.assertIn("Angezeigt war", self.ausgabe)
+        self.assertEqual((self.kopf(), self.laeufe()), (vorher, []))
+        self.assertFalse(os.path.exists(os.path.join(K.STATE_DIR, "auftrag.json")))
+        self.assertEqual(self.zustand("stand.json")["wunsch"]["ergebnis"], "wartet")
+
+    def test_jetzt_mit_gesperrter_hoeherer_version(self):
+        """rc6 ist nach einer gescheiterten Installation gesperrt, rc5 ist bereit: Knopf und zen update nehmen rc5
+        (wie die Anzeige), nicht die gesperrte höhere Version."""
+        self.signiert_installiert("v0.1.0-rc4")
+        rc5 = self.commit("stand rc5")
+        objekt = self.signieren("v0.1.0-rc5", ref=rc5)
+        rc6 = self.commit("stand rc6")
+        self.signieren("v0.1.0-rc6", ref=rc6)
+        K.lock_target({"version": "v0.1.0-rc6", "commit": rc6}, "Test: gescheitert")
+        _, stand = self.lauf()
+        self.assertEqual((stand["zustand"], stand["bereit"]["version"]), ("bereit", "v0.1.0-rc5"))
+        self.assertEqual(self.bedienen(K.cmd_now, objekt), 0, self.ausgabe)
+        self.assertEqual((self.kopf(), self.fragen), (rc5, []))
+        self.assertEqual(self.zustand("letzte.json")["ziel"]["tag"], "v0.1.0-rc5")
+
+    def test_zen_update_mit_gesperrter_hoeherer_version(self):
+        """Wie die Anzeige: zen update installiert die bereite rc5 ohne Frage, statt nach der gesperrten rc6 zu fragen.
+        Die gesperrte Version noch einmal versuchen geht bewusst mit zen rollback und «ja»."""
+        self.signiert_installiert("v0.1.0-rc4")
+        rc5 = self.commit("stand rc5")
+        self.signieren("v0.1.0-rc5", ref=rc5)
+        rc6 = self.commit("stand rc6")
+        self.signieren("v0.1.0-rc6", ref=rc6)
+        K.lock_target({"version": "v0.1.0-rc6", "commit": rc6}, "Test: gescheitert")
+        self.assertEqual(self.zen(), 0, self.ausgabe)
+        self.assertEqual((self.kopf(), self.fragen), (rc5, []))
+        self.antworten = ["ja"]
+        self.assertEqual(self.zen("rollback", "v0.1.0-rc6"), 0, self.ausgabe)
+        self.assertEqual(self.kopf(), rc6)
+        self.assertIn("v0.1.0-rc6 ist gesperrt", self.ausgabe)
+
+    def test_jetzt_laesst_rueckfrage_liegen(self):
+        _, objekt = self.rueckfrage_bereit()
+        vorher = self.kopf()
+        self.assertEqual(self.bedienen(K.cmd_now, objekt), 10, self.ausgabe)
         self.assertIn("Das braucht deine Zustimmung", self.ausgabe)
         self.assertEqual((self.fragen, self.kopf()), ([], vorher))
         self.assertFalse(os.path.exists(os.path.join(K.STATE_DIR, "auftrag.json")))
@@ -220,8 +291,9 @@ class Bedienung(I.Geraet):
     def test_jetzt_auf_dev_unsigniert_nichts(self):
         self.kanal("dev")
         self.ohne_anker()
-        self.commit("neu")
-        self.assertEqual(self.bedienen(K.cmd_now), 10, self.ausgabe)
+        neu = self.commit("neu")
+        self.lauf()
+        self.assertEqual(self.bedienen(K.cmd_now, neu), 10, self.ausgabe)
         self.assertEqual((self.fragen, self.kopf(), self.laeufe()), ([], self.basis, []))
 
     def test_zustimmen_gilt_fuer_das_gezeigte_objekt(self):
@@ -260,7 +332,8 @@ class Bedienung(I.Geraet):
         self.assertEqual(self.kopf(), self.basis, "kein gültiges Ziel: nichts installiert")
 
     def test_falsche_aufrufe(self):
-        for befehl, argumente in ((K.cmd_now, ["x"]), (K.cmd_consent, []), (K.cmd_consent, ["abc"]),
+        for befehl, argumente in ((K.cmd_now, []), (K.cmd_now, ["x"]), (K.cmd_now, ["A" * 40]),
+                                  (K.cmd_now, ["0" * 40, "x"]), (K.cmd_consent, []), (K.cmd_consent, ["abc"]),
                                   (K.cmd_consent, ["A" * 40]), (K.cmd_consent, ["0" * 40, "x"])):
             with self.subTest(argumente=argumente):
                 self.assertEqual(self.bedienen(befehl, *argumente), 2)
@@ -300,7 +373,8 @@ class Helfer(unittest.TestCase):
         self.assertTrue(os.access(HELFER, os.X_OK))
 
     def test_falsche_aufrufe(self):
-        for argumente in ((), ("pruefen", "x"), ("installieren", "jetzt"), ("Pruefen",), ("update",), ("status",),
+        for argumente in ((), ("pruefen", "x"), ("installieren",), ("installieren", "jetzt"), ("installieren", "A" * 40),
+                          ("installieren", "0" * 40, "x"), ("Pruefen",), ("update",), ("status",),
                           ("zustimmen",), ("zustimmen", "abc"), ("zustimmen", "A" * 40), ("zustimmen", "0" * 41),
                           ("zustimmen", "0" * 40, "x"), ("zustimmen", "0" * 39 + ";"), ("zeitpunkt",),
                           ("zeitpunkt", "nachts"), ("zeitpunkt", "sperre", "x"), ("zeitpunkt", "fenster"),
@@ -316,7 +390,7 @@ class Helfer(unittest.TestCase):
 
     @unittest.skipIf(os.geteuid() == 0, "als root würde der Helfer wirklich prüfen, installieren oder setzen")
     def test_nur_als_root(self):
-        for argumente in (("pruefen",), ("installieren",), ("zustimmen", "0" * 40), ("zeitpunkt", "sperre"),
+        for argumente in (("pruefen",), ("installieren", "0" * 40), ("zustimmen", "0" * 40), ("zeitpunkt", "sperre"),
                           ("zeitpunkt", "fenster", "22:00", "06:00"), ("zeitpunkt", "hand"), ("zeitpunkt", "jederzeit")):
             with self.subTest(argumente=argumente):
                 e = self.lauf(*argumente)
@@ -328,6 +402,7 @@ class Helfer(unittest.TestCase):
         self.assertNotRegex(text, r"\b(eval|sh -c|bash -c)\b")
         self.assertIn('/usr/bin/python3 -I "$_programm" zeitpunkt "$@"', text)
         self.assertIn('_unit "zenos-kanal-zustimmen@$2.service"', text)
+        self.assertIn('_unit "zenos-kanal-jetzt@$2.service"', text)
         self.assertIn('systemctl reset-failed -- "$unit"', text)
 
 
@@ -357,8 +432,9 @@ class Units(unittest.TestCase):
         return [z.strip() for z in lesen(os.path.join(UNITS, name)).splitlines()]
 
     def test_jetzt_und_zustimmen(self):
-        jetzt = self.zeilen("zenos-kanal-jetzt.service")
-        self.assertIn("ExecStart=/usr/bin/python3 -I /usr/local/libexec/zenos/zenos-kanal jetzt", jetzt)
+        jetzt = self.zeilen("zenos-kanal-jetzt@.service")
+        self.assertIn("ExecStart=/usr/bin/python3 -I /usr/local/libexec/zenos/zenos-kanal jetzt %i", jetzt)
+        self.assertFalse(os.path.exists(os.path.join(UNITS, "zenos-kanal-jetzt.service")))
         zustimmen = self.zeilen("zenos-kanal-zustimmen@.service")
         self.assertIn("ExecStart=/usr/bin/python3 -I /usr/local/libexec/zenos/zenos-kanal zustimmen %i", zustimmen)
         for zeilen in (jetzt, zustimmen):
@@ -374,10 +450,13 @@ class Units(unittest.TestCase):
 
     def test_modul_und_doctor(self):
         modul = lesen(MODUL)
-        for name in ("zenos-kanal-jetzt.service", "zenos-kanal-zustimmen@.service", "org.zenos.kanal.policy"):
+        for name in ("zenos-kanal-jetzt@.service", "zenos-kanal-zustimmen@.service", "org.zenos.kanal.policy"):
             self.assertIn(name, modul)
+        self.assertIn("datei_entfernen /etc/systemd/system/zenos-kanal-jetzt.service", modul,
+                      "die frühere Unit ohne Instanz fliegt weg")
         doctor = lesen(os.path.join(WURZEL, "scripts", "doctor.d", "15-kanal.sh"))
         self.assertIn("zenos-kanal-zustimmen@.service", doctor)
+        self.assertIn("zenos-kanal-jetzt@.service", doctor)
 
 
 if __name__ == "__main__":

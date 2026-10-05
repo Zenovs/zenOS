@@ -17,7 +17,7 @@ pruefe_kanal() {
     warnung "$programm weicht vom Stand in /opt/zenos ab (install.sh stellt ihn wieder her)"
   fi
   for einheit in zenos-kanal-holen.service zenos-kanal-pruefen.service zenos-kanal-installieren.service \
-    zenos-kanal-nachstart.service zenos-kanal-jetzt.service zenos-kanal-zustimmen@.service \
+    zenos-kanal-nachstart.service zenos-kanal-jetzt@.service zenos-kanal-zustimmen@.service \
     zenos-kanal-automatik.service zenos-kanal.timer zenos-kanal-gelegenheit.service zenos-kanal-gelegenheit.timer \
     zenos-kanal-bestaetigen.service zenos-kanal-bestaetigen.timer; do
     [[ -f "/etc/systemd/system/$einheit" ]] || warnung "$einheit fehlt (install.sh)"

@@ -296,7 +296,7 @@ Die Logik läuft in Quickshell selbst, ohne eigenen Hintergrunddienst.
 | Zeitpunkt automatischer Updates | `/etc/xdg/zenos/kanal-zeitpunkt` (`zeitpunkt=sperre\|fenster\|jederzeit\|hand`, bei `fenster` `von=` und `bis=` als HH:MM, `seit=…`; root, 0644; fehlt = `sperre`). Setzen: Einstellungen › System › Updates oder `sudo zen kanal zeitpunkt` | nie |
 | Notschalter der Automatik | `/etc/xdg/zenos/kanal-automatik-aus` (root, 0644): Timer aus, `install.sh` lässt sie aus. Setzen und entfernen: `sudo zen kanal automatik aus\|an` | nie |
 | Vertrauensanker | `/etc/zenos/vertrauen/{release,wurzel,widerrufen,serie}` (root, 0644). Mit Schlüsseln gefüllt nur im Image (aus `system/vertrauen/`) oder von Hand (`sudo zen kanal anker ORDNER`, Fingerabdrücke aus 1Password eintippen), danach nur über `vertrauen/NNNN` | im Image ja (`system/vertrauen/`), sonst nein |
-| Signierter Kanal | Programm `/usr/local/libexec/zenos/zenos-kanal` (Kopie, root, 0755; die vorige Fassung als `zenos-kanal.vorher`), Units `zenos-kanal-holen`, `-pruefen`, `-installieren`, `-jetzt`, `-zustimmen@`, `-automatik`, `-gelegenheit` und `-bestaetigen` (statisch) und `-nachstart` (aktiviert, vor greetd), Timer `zenos-kanal.timer` und `zenos-kanal-gelegenheit.timer` (aktiviert, ausser mit Notschalter) und `zenos-kanal-bestaetigen.timer` (aktiviert); Zustand `/var/lib/zenos/kanal/` (`stand.json`, `gesehen.json`, `hoechste`, `gesperrt/`, `wunsch.json`, `auftrag.json`, `laeuft.json`, `gut.json`, `unbestaetigt.json`, `zurueckgestellt.json`, `automatik-bereit`, `automatik.json`, `letzte.json`, `angehalten`, `bereit/<commit>`); Spiegel und Bundle des Holers `/var/lib/zenos-kanal-holen/`; Sperren und Vermerk eines `install.sh` von Hand `/run/zenos-sperre/` (nur root, 0700) | Programm und Units ja (Kopien), Zustand nie |
+| Signierter Kanal | Programm `/usr/local/libexec/zenos/zenos-kanal` (Kopie, root, 0755; die vorige Fassung als `zenos-kanal.vorher`), Units `zenos-kanal-holen`, `-pruefen`, `-installieren`, `-jetzt@`, `-zustimmen@`, `-automatik`, `-gelegenheit` und `-bestaetigen` (statisch) und `-nachstart` (aktiviert, vor greetd), Timer `zenos-kanal.timer` und `zenos-kanal-gelegenheit.timer` (aktiviert, ausser mit Notschalter) und `zenos-kanal-bestaetigen.timer` (aktiviert); Zustand `/var/lib/zenos/kanal/` (`stand.json`, `gesehen.json`, `hoechste`, `gesperrt/`, `wunsch.json`, `auftrag.json`, `laeuft.json`, `gut.json`, `unbestaetigt.json`, `zurueckgestellt.json`, `automatik-bereit`, `automatik.json`, `letzte.json`, `angehalten`, `bereit/<commit>`); Spiegel und Bundle des Holers `/var/lib/zenos-kanal-holen/`; Sperren und Vermerk eines `install.sh` von Hand `/run/zenos-sperre/` (nur root, 0700) | Programm und Units ja (Kopien), Zustand nie |
 | Lüfterkurve (optional) | `/etc/xdg/zenos/argon.json` | nie |
 | Freigabe Akkuprofil (ONE UP) | `/etc/xdg/zenos/argon-akkuprofil` (`zen akku freigeben`) | nie |
 | Gerätewerte (Akku, Lüfter) | `/run/zenos/geraet.json` (flüchtig, Ordner gehört `zenos-argon`) | nie |
@@ -407,14 +407,17 @@ Mac (Claude Code, Tests im Container) ── push ──▶ GitHub dev ──▶
   Netz und Boot fragen immer. Solange der Anker leer ist, geht nur dev von Hand. Zum Schluss richtet `zen update`
   die Benutzerteile als Benutzer ein (`install.sh --nur-benutzer`).
 - **`zen rollback <tag>`:** derselbe Weg mit einem Tag als Ziel, signiert ohne Frage, unsigniert nur nach «ja» für
-  genau dieses Tag-Objekt. `hoechste` bleibt; das nächste `zen update` kehrt auf den Kanal zurück. Die verlassene
-  Version ist für die Automatik zurückgestellt.
+  genau dieses Tag-Objekt. `hoechste` bleibt; das nächste `zen update` kehrt auf den Kanal zurück. Die Automatik
+  bringt die verlassene Version nicht wieder (sie liegt nicht über `hoechste`). Eine gesperrte Version noch einmal
+  versuchen geht nur so, mit «ja»; `zen update` lässt gesperrte Versionen aus.
 - **Automatik:** `zenos-kanal.timer` holt und prüft alle 6 h, `zenos-kanal-gelegenheit.timer` schaut alle 15 Min.
   ohne Holen. Installiert wird über dieselben Units, nur auf `stabil` und `vorschau`, nur gültig signiert ohne
   Rückfrage-Pfade, nach der Wartezeit (stabil 24 h, mit synchronisierter Uhr) und zum Zeitpunkt des Geräts
-  (`/etc/xdg/zenos/kanal-zeitpunkt`: gesperrt oder niemand angemeldet, Zeitfenster, jederzeit, nie). Ein automatisch
-  installierter Stand gilt erst als gut, wenn nach einem Neustart der Login kommt (`zenos-kanal-bestaetigen.timer`);
-  sonst geht es nach zwei Starts zurück. Notschalter: `sudo zen kanal automatik aus`.
+  (`/etc/xdg/zenos/kanal-zeitpunkt`: seit 5 Min. gesperrt oder Login-Bildschirm seit 5 Min., ohne SSH-Sitzung;
+  Zeitfenster; jederzeit; nie), nur am Netzteil oder ab 50 % Akku und nicht über einen Stand von Hand
+  («angehalten»). Ein automatisch installierter Stand gilt erst als gut, wenn nach einem Neustart der Login kommt
+  (`zenos-kanal-bestaetigen.timer`); sonst geht es nach zwei Starts zurück. Notschalter:
+  `sudo zen kanal automatik aus`.
 - **Abbruch:** Strom weg oder hart beendet hinterlässt `/var/lib/zenos/kanal/laeuft.json`. Beim Start vollendet
   `zenos-kanal-nachstart.service` vor greetd die Übernahme des Codes (`install.sh --nur-code`, ohne Netz), damit der
   Login keinen Mischstand sieht; `zen update` setzt den Rest fort. Nach zwei unterbrochenen Versuchen wird die

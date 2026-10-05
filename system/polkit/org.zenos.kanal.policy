@@ -8,11 +8,17 @@
   - pkexec ordnet einen Aufruf über den echten Pfad des Programms (exec.path) und das erste Argument (exec.argv1)
     einer dieser Aktionen zu. Andere Argumente fallen auf org.freedesktop.policykit.exec (Administrator-Passwort);
     der Helfer nimmt ohnehin nur pruefen, installieren, zustimmen und zeitpunkt an.
-  - Nur in der aktiven Sitzung am Gerät. Aus SSH oder einer inaktiven Sitzung nie: dort gelten «zen update» und
-    «sudo zen kanal …».
-  - Ohne Passwort: prüfen (holt und prüft, installiert nichts), jetzt installieren (nur ein gültig signierter,
-    geprüfter Stand, der kein «ja» braucht; installiert wird über dieselben Units wie bei zen update) und den
-    Zeitpunkt setzen (feste Wörter, Uhrzeiten streng geprüft; die Signaturprüfung bleibt in jedem Fall).
+  - allow_active heisst: jeder Prozess des Benutzers, solange seine Sitzung am Gerät aktiv ist, auch bei gesperrtem
+    Bildschirm (logind lässt die Sitzung dabei aktiv). polkit ordnet auch Prozesse seines Benutzerdienstes dieser
+    Sitzung zu: Wer per SSH als derselbe Benutzer angemeldet ist, erreicht die Aktionen ohne Passwort über
+    «systemd-run» im Benutzerdienst und pkexec, solange die Sitzung am Gerät aktiv ist. Ohne aktive Sitzung am Gerät
+    nie; dort gelten «zen update» und «sudo zen kanal …». Darum ist ohne Passwort nur, was nichts Ungeprüftes
+    installiert.
+  - Ohne Passwort: prüfen (holt und prüft, installiert nichts), jetzt installieren (nur der angezeigte, gültig
+    signierte und schon geprüfte Stand, der kein «ja» braucht; installiert wird über dieselben Units wie bei
+    zen update) und den Zeitpunkt setzen (feste Wörter, Uhrzeiten streng geprüft; die Signaturprüfung bleibt in jedem
+    Fall). Ändert sich der Zeitpunkt, ohne dass es die Einstellungen waren, meldet die Oberfläche das mit dem Weg
+    (pkexec oder sudo, uid).
   - Mit Passwort, jedes Mal (auth_admin, nicht auth_admin_keep): zustimmen, wenn ein signierter Stand Firewall, Netz
     oder Boot ändert. Das «ja» gilt nur für das angezeigte Tag-Objekt.
 -->

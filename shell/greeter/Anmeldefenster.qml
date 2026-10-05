@@ -15,6 +15,8 @@ PanelWindow {
     required property Ablauf ablauf
     required property Leerlauf leerlauf
     property bool mitFormular: true
+    // Ein Update aus dem Kanal läuft gerade: ruhige Zeile über dem Formular
+    property bool updateLaeuft: false
 
     readonly property var _konto: konten.liste.length === 1 ? konten.liste[0] : null
 
@@ -112,6 +114,42 @@ PanelWindow {
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
                     text: root.leerlauf.text
+                    textFormat: Text.PlainText
+                    color: Theme.text2
+                    font.family: Theme.schriftText
+                    font.pixelSize: Theme.groesseText
+                }
+            }
+        }
+
+        // Update läuft (zenos-kanal übernimmt gerade den Code): dieselbe ruhige Pille, auf jedem Bildschirm
+        Rectangle {
+            anchors.horizontalCenter: parent.horizontalCenter
+            visible: root.updateLaeuft
+            implicitWidth: updateZeile.implicitWidth + 38
+            implicitHeight: updateZeile.implicitHeight + 22
+            radius: Theme.radiusPille
+            color: Theme.durchsichtig
+            border.width: 1
+            border.color: Theme.linie2
+
+            Row {
+                id: updateZeile
+
+                anchors.centerIn: parent
+                spacing: 10
+
+                Symbol {
+                    anchors.verticalCenter: parent.verticalCenter
+                    name: "info"
+                    groesse: 14
+                    strichbreite: 1.8
+                    farbe: Theme.text2
+                }
+
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "zenOS wird aktualisiert. Mit der Anmeldung bitte warten, bis das fertig ist."
                     textFormat: Text.PlainText
                     color: Theme.text2
                     font.family: Theme.schriftText

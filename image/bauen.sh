@@ -59,7 +59,7 @@ Aufruf: sudo image/bauen.sh --ref vX.Y.Z[-rcN] [optionen]
                      und ein anderer Kanal sind erlaubt; die Version endet auf «-testbau». Ohne gültige Signatur
                      gibt es keinen Zustand ab Werk. In GitHub Actions verweigert, nie für Releases
   --nur-mechanik     Test: im chroot nur Prüfbefehle statt install.sh (Image nicht für Releases, Version
-                     «-mechanik», ohne Pflicht zur Signatur)
+                     «-mechanik», ohne Pflicht zur Signatur). In GitHub Actions verweigert
   --nur-pruefen      nur Stand, Tag, Signatur, Kanal und Version prüfen und zeigen, dann Ende (ohne root, baut nichts)
   -h, --hilfe        diese Hilfe
 EOF
@@ -1007,6 +1007,10 @@ resolve_source() {
   if (( opt_unsigned_test || opt_mechanics )); then TEST_BUILD=1; fi
   if (( opt_unsigned_test )) && [[ "${GITHUB_ACTIONS:-}" == true ]]; then
     die "--testbau-ohne-signatur gibt es in GitHub Actions nicht: Ein Image von dort kommt nur aus einem gültig signierten Tag"
+  fi
+  # --nur-mechanik ist ebenso ein Testbau (ohne Signatur möglich): nur lokal
+  if (( opt_mechanics )) && [[ "${GITHUB_ACTIONS:-}" == true ]]; then
+    die "--nur-mechanik gibt es in GitHub Actions nicht: Ein Image von dort kommt nur aus einem gültig signierten Tag"
   fi
   command -v git >/dev/null || die "git fehlt"
   opt_source=$(realpath -e -- "$opt_source") || die "Quelle «$opt_source» gibt es nicht"
