@@ -1,0 +1,11 @@
+{
+  "eingerichtet": true,
+  "erscheinungsbild": "tageszeit",
+  "tagAb": "07:00",
+  "nachtAb": "19:00",
+  "sperreNachMinuten": 5,
+  "bildschirmAusNachSperre": 2,
+  "ausschalten": "akku",
+  "ausschaltenNachMinuten": 90,
+  "einAusTaste": "sperren"
+}

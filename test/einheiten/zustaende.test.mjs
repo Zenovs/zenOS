@@ -59,6 +59,46 @@ test("Leitplanken sind fest und unveränderbar", () => {
   assert.equal(L.LEITPLANKEN.sperreAbschaltbar, false);
 });
 
+test("Leitplanken der Energie: fest, nicht änderbar", () => {
+  assert.equal(L.LEITPLANKEN.bildschirmNurGesperrt, true);
+  assert.equal(L.LEITPLANKEN.bildschirmAusNachSperreMin, 1);
+  assert.equal(L.LEITPLANKEN.bildschirmAusNachSperreMax, 10);
+  assert.equal(L.LEITPLANKEN.bildschirmAusNachSperreStandard, 1);
+  assert.equal(L.LEITPLANKEN.ausschaltenMinutenMin, 30);
+  assert.equal(L.LEITPLANKEN.ausschaltenMinutenMax, 240);
+  assert.equal(L.LEITPLANKEN.ausschaltenMinutenStandard, 60);
+  assert.equal(L.LEITPLANKEN.vorwarnungSekunden, 60);
+  assert.equal(L.LEITPLANKEN.sperreTrotzHemmerMinuten, 60);
+  assert.equal(L.LEITPLANKEN.akkuAusschaltenProzent, 3);
+  // Ausschalten kommt immer nach Sperre und Bildschirm aus, auch bei den längsten Zeiten
+  assert.ok(L.LEITPLANKEN.ausschaltenMinutenMin > L.LEITPLANKEN.sperreMinutenMax + L.LEITPLANKEN.bildschirmAusNachSperreMax);
+  assert.throws(() => {
+    "use strict";
+    L.LEITPLANKEN.bildschirmNurGesperrt = false;
+  });
+  assert.throws(() => {
+    "use strict";
+    L.LEITPLANKEN.vorwarnungSekunden = 0;
+  });
+  assert.equal(L.LEITPLANKEN.bildschirmNurGesperrt, true);
+  assert.equal(L.LEITPLANKEN.vorwarnungSekunden, 60);
+  assert.ok(Object.isFrozen(L.GESPERRT));
+});
+
+test("Zustände dürfen die Energie-Schlüssel nicht setzen", () => {
+  for (const k of ["bildschirmAusNachSperre", "ausschalten", "ausschaltenNachMinuten", "einAusTaste"])
+    assert.ok(L.GESPERRT.includes(k), k);
+  const boese = Object.assign({}, fokus, { bildschirmAusNachSperre: 0, ausschalten: "nie", einAusTaste: "ausschalten" });
+  const boeserModus = { anpassungen: { fokus: { ausschaltenNachMinuten: 1, bildschirmAusNachSperre: 99 } } };
+  const w = plain(L.wirksam(boese, boeserModus, {}));
+  for (const k of ["bildschirmAusNachSperre", "ausschalten", "ausschaltenNachMinuten", "einAusTaste"])
+    assert.equal(w[k], undefined, k);
+  // leitplankenAnwenden entfernt sie auch, wenn sie direkt im Zustand stehen
+  const direkt = plain(L.leitplankenAnwenden({ id: "x", ausschalten: "immer", bildschirmAusNachSperre: 0 }, {}));
+  assert.equal(direkt.ausschalten, undefined);
+  assert.equal(direkt.bildschirmAusNachSperre, undefined);
+});
+
 test("sperreMinuten begrenzt auf 1–15, Standard 5", () => {
   assert.equal(L.sperreMinuten(5), 5);
   assert.equal(L.sperreMinuten(0), 1);

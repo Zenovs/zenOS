@@ -27,6 +27,26 @@
       "type": "number",
       "minimum": 0.25,
       "maximum": 3
+    },
+    "bildschirmAusNachSperre": {
+      "description": "Bildschirm aus nach so vielen Minuten nach der Sperre (zenos-idle, später auch die Sperre selbst). Leitplanke: immer 1–10, nie vor der Sperre und nur gesperrt (dunkel heisst gesperrt). Ungültige Werte ergeben 1.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10
+    },
+    "ausschalten": {
+      "description": "Ausschalten nach langer Sperre: nie, akku (nur im Akkubetrieb, Standard) oder immer. Immer mit 60 s Vorwarnung, nie während SSH, tmux oder Updates.",
+      "enum": ["nie", "akku", "immer"]
+    },
+    "ausschaltenNachMinuten": {
+      "description": "Ausschalten, wenn zenOS so viele Minuten gesperrt war, ohne Eingabe. Leitplanke: immer 30–240 (Standard 60).",
+      "type": "integer",
+      "minimum": 30,
+      "maximum": 240
+    },
+    "einAusTaste": {
+      "description": "Kurzer Druck auf die Ein/Aus-Taste in der Sitzung: sperren (Standard, sperrt und schaltet den Bildschirm aus), menue (System-Menü) oder ausschalten. Gedrückt halten schaltet immer hart aus.",
+      "enum": ["sperren", "menue", "ausschalten"]
     }
   },
   "$defs": {

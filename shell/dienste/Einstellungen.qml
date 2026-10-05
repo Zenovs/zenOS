@@ -37,6 +37,12 @@ Singleton {
     property alias mitteilungenStandard: json.mitteilungenStandard
     // Faktor für Touchpad und Mausrad, wie er in der Datei steht (Zahl, ungeprüft)
     property alias scrollTempo: json.scrollTempo
+    // Energie, wie in der Datei (ungeprüft). Wirksam sind sie nur durch die Leitplanken bzw. energie.js
+    // (Leitplanken.bildschirmMinuten, Leitplanken.ausschaltenMinuten), genauso liest sie zenos-idle.
+    property alias bildschirmAusNachSperre: json.bildschirmAusNachSperre
+    property alias ausschalten: json.ausschalten
+    property alias ausschaltenNachMinuten: json.ausschaltenNachMinuten
+    property alias einAusTaste: json.einAusTaste
 
     // Grenzen wie config/schema/einstellungen.schema.json und zenos-labwc (der Einheitentest gleicht sie ab)
     readonly property real scrollTempoStandard: 1.0
@@ -71,8 +77,16 @@ Singleton {
             nachtAb: "19:00",
             sperreNachMinuten: 5,
             mitteilungenStandard: "gebuendelt-60",
-            scrollTempo: 1.0
+            scrollTempo: 1.0,
+            bildschirmAusNachSperre: 1,
+            ausschalten: "akku",
+            ausschaltenNachMinuten: 60,
+            einAusTaste: "sperren"
         })
+
+    // Schlüssel, die auch Skripte lesen (zenos-labwc, zenos-idle): Fehlen sie in der Datei, gilt dort der
+    // Standard, also hier auch (der JsonAdapter behielte sonst den alten Wert)
+    readonly property var _skriptSchluessel: ["scrollTempo", "bildschirmAusNachSperre", "ausschalten", "ausschaltenNachMinuten", "einAusTaste"]
 
     // Gültiges Scroll-Tempo oder der Standard, wie zenos-labwc: Zahl von scrollTempoMin bis scrollTempoMax,
     // auf zwei Nachkommastellen gerundet (so zeigt die Seite denselben Wert, den labwc bekommt)
@@ -180,6 +194,10 @@ Singleton {
         property string mitteilungenStandard: "gebuendelt-60"
         // var: Ein ungültiger Wert von Hand (z. B. Text) bleibt beim Speichern so stehen, statt NaN zu werden
         property var scrollTempo: 1.0
+        property var bildschirmAusNachSperre: 1
+        property var ausschalten: "akku"
+        property var ausschaltenNachMinuten: 60
+        property var einAusTaste: "sperren"
     }
 
     FileView {
@@ -201,9 +219,11 @@ Singleton {
             } else {
                 root._zuletztGueltig = daten;
                 // Schlüssel von Hand entfernt: Der JsonAdapter behielte den alten Wert, die Seite zeigte ihn, und das
-                // nächste speichern() schriebe ihn zurück. Wie zenos-labwc gilt dann der Standard.
-                if (!("scrollTempo" in daten) && json.scrollTempo !== root.scrollTempoStandard)
-                    json.scrollTempo = root.scrollTempoStandard;
+                // nächste speichern() schriebe ihn zurück. Wie in zenos-labwc und zenos-idle gilt dann der Standard.
+                for (const key of root._skriptSchluessel) {
+                    if (!(key in daten) && json[key] !== root._defaults[key])
+                        json[key] = root._defaults[key];
+                }
                 root._scrollTempoDatei = root.scrollTempoPruefen(daten.scrollTempo);
                 root._ausDatei = true;
                 root._fehlerhaft = false;

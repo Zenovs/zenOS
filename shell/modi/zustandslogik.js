@@ -9,13 +9,31 @@
 //   vorher: Eintrag, der nach einer automatischen Sitzung zurückkommt (oder null).
 
 // Leitplanken sind Code, nicht Konfiguration. Kein Modus, kein Zustand und keine Einstellung ändert sie.
+// Die Grenzen der Sperre und des Bildschirms stehen gespiegelt in scripts/bin/zenos-idle
+// (test/einheiten/idle.test.py gleicht sie ab).
 var LEITPLANKEN = Object.freeze({
     inhalteBeiFreigabe: false,
     sperreZeigtInhalte: false,
     sperreAbschaltbar: false,
     sperreMinutenMin: 1,
     sperreMinutenMax: 15,
-    sperreMinutenStandard: 5
+    sperreMinutenStandard: 5,
+    // Ein Idle-Hemmer (z. B. ein Video) hält die Sperre höchstens so lange auf, dann sperrt zenOS trotzdem
+    sperreTrotzHemmerMinuten: 60,
+    // Dunkel heisst gesperrt: Der Bildschirm geht nur aus, wenn die Sitzung gesperrt ist, und erst
+    // 1–10 Minuten nach der Sperre (nie davor, ein «nie» gibt es nicht)
+    bildschirmNurGesperrt: true,
+    bildschirmAusNachSperreMin: 1,
+    bildschirmAusNachSperreMax: 10,
+    bildschirmAusNachSperreStandard: 1,
+    // Ausschalten frühestens 30 Minuten nach der Sperre (also immer nach Sperre und Bildschirm aus),
+    // immer mit sichtbarer Vorwarnung, die jede Eingabe abbricht
+    ausschaltenMinutenMin: 30,
+    ausschaltenMinutenMax: 240,
+    ausschaltenMinutenStandard: 60,
+    vorwarnungSekunden: 60,
+    // Bei so wenig Akku (im Akkubetrieb) schaltet zenOS kontrolliert aus, statt hart abzuschalten
+    akkuAusschaltenProzent: 3
 });
 
 var WERTE = Object.freeze({
@@ -29,9 +47,11 @@ var WERTE = Object.freeze({
 var ANPASSBAR = Object.freeze(["mitteilungen", "leiste", "fenster", "heute", "widgets", "ausloeser", "ende"]);
 
 // Schlüssel, mit denen eine Datei die Leitplanken aushebeln könnte. Im wirksamen Zustand werden sie
-// entfernt und durch die festen Werte ersetzt.
+// entfernt und durch die festen Werte ersetzt. Die Energie-Schlüssel gelten nur aus einstellungen.json,
+// ein Zustand darf sie nicht setzen.
 var GESPERRT = Object.freeze(["inhalteBeiFreigabe", "sperreZeigtInhalte", "sperreAbschaltbar", "sperre",
-    "sperreAktiv", "sperreNachMinuten", "inhalteVerbergen", "leitplanken"]);
+    "sperreAktiv", "sperreNachMinuten", "inhalteVerbergen", "leitplanken",
+    "bildschirmAusNachSperre", "ausschalten", "ausschaltenNachMinuten", "einAusTaste"]);
 
 var ID_MUSTER = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 var UHRZEIT_MUSTER = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
