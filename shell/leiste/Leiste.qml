@@ -58,6 +58,7 @@ Scope {
         if (name === "system") {
             System.aktualisieren();
             Geraet.aktualisieren();
+            Kanal.aktualisieren();
             _nmPruefen();
         }
     }

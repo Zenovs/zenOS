@@ -178,8 +178,8 @@ Was ein Gerät prüft (`zenos-kanal`, siehe «Auf dem Gerät»):
 
 `scripts/bin/zenos-kanal` (Python, nur Standardbibliothek, `python3 -I`) liegt als root-eigene Kopie unter
 `/usr/local/libexec/zenos/zenos-kanal` (Modul `14-kanal`). Die Units und `zen update` führen diese Kopie aus, nie
-`/opt/zenos`. Automatisch installiert diese Fassung nichts: nur `zen update` und `zen rollback` (die Automatik folgt
-später, der Zeitpunkt wird am Gerät eingestellt).
+`/opt/zenos`. Automatisch installiert diese Fassung nichts: nur `zen update`, `zen rollback` und die Knöpfe in
+Einstellungen › System › Updates (die Automatik folgt; ihren Zeitpunkt stellt der Benutzer am Gerät schon ein).
 
 | Befehl | Wer | Was |
 |---|---|---|
@@ -188,6 +188,8 @@ später, der Zeitpunkt wird am Gerät eingestellt).
 | `zen kanal status` | alle | Kanal, Zustand, Anker mit Fingerabdrücken, installierter Stand, `hoechste`, gültige und abgelehnte Tags, letzter Kontakt, letzte Installation, guter Stand, gesperrte Stände |
 | `sudo zen kanal pruefen` | root | startet `zenos-kanal-holen.service`, dann `zenos-kanal-pruefen.service`, zeigt danach den Status. Installiert nichts |
 | `zen kanal anker` | alle | zeigt den Anker des Geräts |
+| `zen kanal zeitpunkt` | alle | zeigt, wann geprüfte Updates automatisch kommen (`/etc/xdg/zenos/kanal-zeitpunkt`, ohne Datei `sperre`) |
+| `sudo zen kanal zeitpunkt sperre\|jederzeit\|hand`, `… fenster VON BIS` | root | setzt ihn (dasselbe wie in den Einstellungen; VON und BIS als HH:MM, mindestens eine Stunde, über Mitternacht erlaubt) |
 | `sudo zen kanal anker ORDNER` | root, nur im Terminal | setzt den Anker von Hand: den Fingerabdruck der Wurzel und von jedem Release-Schlüssel die ersten 8 Zeichen nach `SHA256:` aus 1Password eintippen. Die Werte aus dem Ordner zeigt es erst danach (auch nach einer falschen Eingabe nicht), damit niemand abtippt, was auf dem Bildschirm steht. Bei gleicher Wurzel nie mit kleinerer Serie, Widerrufe des Geräts bleiben |
 
 Ablauf:
@@ -356,7 +358,7 @@ wenn der Commit gleich ist.
 
 | Datei in `/var/lib/zenos/kanal` | Inhalt |
 |---|---|
-| `wunsch.json` | Wunsch von `zen update` bzw. `zen rollback` (0600, das Prüfen entfernt ihn) |
+| `wunsch.json` | Wunsch von `zen update`, `zen rollback` oder aus den Einstellungen (`jetzt`, `zustimmen` mit `nur_signiert`; 0600, das Prüfen entfernt ihn) |
 | `auftrag.json` | bereitgestelltes Ziel für das Installieren |
 | `bereit/<commit>/` | Bereitstellungen: das Ziel und der gute Stand |
 | `laeuft.json` | laufende oder unterbrochene Installation |
@@ -398,6 +400,43 @@ zwei Abbrüche (Rückweg schon beim Start); SIGTERM während install.sh (läuft 
 fehlendes zenos-kanal und Notweg (signierter Tag gegen den Anker); Sperren nur für root (ein Benutzer hält die alten
 Sperren in `/run/lock`, `zen update` läuft trotzdem; ein `install.sh` von Hand hält den Kanal an); eine
 zurückgebliebene `index.lock`.
+
+#### In der Oberfläche (Einstellungen › System › Updates)
+
+`shell/dienste/Kanal.qml` liest ohne Rechte `stand.json`, `letzte.json`, `/etc/xdg/zenos/kanal-zeitpunkt` und
+`/run/zenos-kanal/uebernahme` (Logik in `kanal.js`, getestet mit `test/einheiten/kanal.test.mjs`). Die Seite zeigt den
+Zustand mit Erklärung, Kanal, installierte und bereite Version, letzte Prüfung, letzten Kontakt mit origin und den Anker
+mit Serie und den ersten 8 Zeichen der Fingerabdrücke (wie Zeno sie beim Setzen aus 1Password abtippt). Wurde seit der
+letzten Prüfung installiert, sagt sie das, statt alte Angaben zu zeigen.
+
+| Knopf | Helfer (pkexec) | was passiert |
+|---|---|---|
+| «Jetzt prüfen» | `zenos-kanal-bedienen pruefen` (ohne Passwort) | holen und prüfen wie `sudo zen kanal pruefen`; installiert nichts |
+| «Jetzt installieren» (nur bei `bereit`, auf dev bei einem neuen, ganz signierten Stand) | `… installieren` (ohne Passwort) | `zenos-kanal-jetzt.service`: `zenos-kanal jetzt`, wie `zen update` ohne Terminal und ohne Frage; was ein «ja» bräuchte, bleibt liegen (Exit 10) |
+| «Zustimmen …» (nur bei `zustimmung` auf stabil und vorschau) | `… zustimmen OBJEKT` (Passwort, jedes Mal) | `zenos-kanal-zustimmen@OBJEKT.service`: `zenos-kanal zustimmen OBJEKT`, ohne neues Holen, das «ja» nur für dieses Tag-Objekt und nur für gültig signierte Ziele (`nur_signiert` im Wunsch). Nennt die Prüfung ein anderes Objekt: nichts (Exit 10) |
+| Segmente «Bei Sperre · Zeitfenster · Jederzeit · Von Hand», beim Zeitfenster von–bis | `… zeitpunkt …` (ohne Passwort) | `zenos-kanal zeitpunkt` schreibt `/etc/xdg/zenos/kanal-zeitpunkt` (root, 0644, atomar); gilt für das ganze Gerät, weil root-Dienste ihn lesen |
+
+Die Units laufen unabhängig von der Oberfläche: Lädt sie neu (etwa weil das Update QML bringt), endet nur der Helfer.
+Exit 3, 10 und 75 sind für die Units Zustände, keine Fehler (`SuccessExitStatus`). Danach prüft `jetzt` wie
+`zen update` neu, die Seite zeigt den neuen Stand.
+
+Mitteilungen (Absender zenOS, jede nur einmal je Zustand, gemerkt in `~/.local/state/zenos/kanal-meldungen.json`):
+
+| Anlass | Dringlichkeit | Wann wieder |
+|---|---|---|
+| installiert (`letzte.json`, höchstens 24 h alt) | still (low) | bei der nächsten Installation |
+| zurück auf dem Stand davor, gescheitert, abgebrochen | normal | ebenso |
+| kaputt (auch der Rückweg scheiterte; auch älter) | dringend | ebenso |
+| blockiert (etwa ALARM) | dringend | wenn der Zustand sicher vorbei war (ein anderer Zustand der Prüfung, nicht nur «kein Kontakt» oder «fehler») oder der Grund ein anderer ist |
+| Anker fehlt | normal | ebenso |
+| abgelehnt: ein Tag im Kanal über allem, was schon gilt, oder ein auf origin verschobener Tag (stabil und vorschau, mit Anker) | normal | je Tag-Name einmal |
+| wartet auf Zustimmung | normal | je Tag-Objekt einmal |
+| 14 Tage ohne Kontakt zu origin | normal | je Kontaktzeit einmal |
+| Update bereit, nur beim Zeitpunkt «Von Hand» | normal | je Tag-Objekt einmal |
+
+Im System-Menü steht bei Neustart und Ausschalten «Update läuft», solange `/run/zenos-kanal/uebernahme` besteht
+(install.sh aus dem Kanal mit Block-Inhibitor; systemctl lehnte dann ab). Ein Klick sagt das als Hinweis, statt
+still nichts zu tun. Der Sperrbildschirm zeigt nichts davon.
 
 ### Einmalig einrichten (Zeno)
 

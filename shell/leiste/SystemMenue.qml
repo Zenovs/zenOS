@@ -8,7 +8,9 @@ import qs.komponenten
 // System-Menü unter dem System-Knopf der Leiste: Netz mit WLAN (WlanAbschnitt: Netz wählen, verbinden,
 // vergessen, WLAN ein/aus über NetworkManager), Lautstärke mit Regler und Stumm, 1Password, dann das Gerät
 // (Akku und CPU-Temperatur als Anzeige; Lüfter mit aufklappbarer Wahl «Auto · 1 · 2 · 3 · 4», LuefterAbschnitt),
-// dann Sperren, Bildschirm aus, Einstellungen, Abmelden, Neustart und Ausschalten.
+// dann Sperren, Bildschirm aus, Einstellungen, Abmelden, Neustart und Ausschalten. Läuft gerade ein Update aus dem
+// Kanal (install.sh mit Block-Inhibitor), steht bei Neustart und Ausschalten «Update läuft»: Beides wartet dann,
+// bis es fertig ist (meist wenige Minuten), statt dpkg mittendrin abzubrechen.
 Menuekarte {
     id: root
 
@@ -233,15 +235,22 @@ Menuekarte {
         }
     }
 
+    // Während eines Updates aus dem Kanal hält zenos-kanal einen Block-Inhibitor: systemctl lehnte ab. Darum hier
+    // ehrlich sagen, dass es wartet, statt still nichts zu tun.
     MenueEintrag {
         width: parent.width
         symbol: "neustart"
         text: "Neustart"
-        bestaetigen: true
+        wert: Kanal.updateLaeuft ? "Update läuft" : ""
+        // Während des Updates ohne Rückfrage: Der Klick sagt nur, warum es wartet
+        bestaetigen: !Kanal.updateLaeuft
         frage: "Wirklich neu starten?"
         onAusgeloest: {
             root.schliessen();
-            Aktionen.neustarten();
+            if (Kanal.updateLaeuft)
+                Oberflaeche.hinweis("Update läuft: Neustart geht erst danach (meist wenige Minuten)", "warnung");
+            else
+                Aktionen.neustarten();
         }
     }
 
@@ -249,11 +258,16 @@ Menuekarte {
         width: parent.width
         symbol: "ausschalten"
         text: "Ausschalten"
-        bestaetigen: true
+        wert: Kanal.updateLaeuft ? "Update läuft" : ""
+        // Während des Updates ohne Rückfrage: Der Klick sagt nur, warum es wartet
+        bestaetigen: !Kanal.updateLaeuft
         frage: "Wirklich ausschalten?"
         onAusgeloest: {
             root.schliessen();
-            Aktionen.ausschalten();
+            if (Kanal.updateLaeuft)
+                Oberflaeche.hinweis("Update läuft: Ausschalten geht erst danach (meist wenige Minuten)", "warnung");
+            else
+                Aktionen.ausschalten();
         }
     }
 }

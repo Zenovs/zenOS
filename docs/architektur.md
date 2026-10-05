@@ -102,6 +102,7 @@ erscheint erst nach dem Neustart, und eine SSH-Verbindung bleibt während der In
 | `System` | Temperatur, Netz, Ton (PipeWire), 1Password |
 | `Geraet` | Akku und Lüfter aus `/run/zenos/geraet.json` (`zenos-argon`) samt Lüfterwunsch, Mitteilung bei niedrigem Akku |
 | `Luefter` | Lüfter einstellen («auto» oder Mindeststufe 1–4) über `pkexec zenos-luefter`, Bestätigung über `Geraet` |
+| `Kanal` | Update-Kanal: Lage aus `/var/lib/zenos/kanal/stand.json` und `letzte.json`, Zeitpunkt aus `/etc/xdg/zenos/kanal-zeitpunkt`, «Update läuft» aus `/run/zenos-kanal/uebernahme`; prüfen, jetzt installieren, zustimmen und Zeitpunkt über `pkexec zenos-kanal-bedienen`; Mitteilungen je einmal (Logik in `kanal.js`) |
 | `Mitteilungen` | Mitteilungsdienst (`NotificationServer`), Bündelung, Zentrale |
 | `Konfig` | Modi, Zustände, Raster, Bildschirme, Web-Apps lesen; schreiben über `zenos-konfig` |
 | `Modi` | aktiver Modus, Wechsel (Akzent, Raster, Apps, Chrome-Profil) |
@@ -126,6 +127,7 @@ selbst endet in v0.3.1 auch bei Fehlern mit 0; `zenos-ipc` wertet die Ausgabe au
 | `befehlsfeld` | `umschalten`, `oeffnen`, `schliessen`, `werkzeuge`, `apps` (App-Übersicht), `status` (`offen`/`zu`), `ansicht` (`apps`/`suche`) |
 | `sperre` | `sperren`, `status` (`gesperrt`/`offen`), `bildschirm(aus\|an)` (Meldung von `zenos-bildschirm`; ungesperrt bleibt es hell), `taste` (Ein/Aus-Taste, gesperrt: Bildschirm an oder aus) |
 | `energie` | `aus` (sperren und Bildschirm aus), `status` (Zeitleiste), `vorwarnung` (Probe der Vorwarnung, schaltet nie aus, nur gesperrt) |
+| `kanal` | `status` (Zustand der letzten Prüfung oder `ungeprueft`), `zeitpunkt` (`sperre`, `jederzeit`, `hand` oder `fenster 02:00-05:00`), `laeuft` (`ja`, solange install.sh aus dem Kanal läuft) |
 | `thema` | `wechseln`, `setzen(hell\|dunkel\|tageszeit)`, `status` |
 | `modus` | `waehlen`, `wechseln(id)`, `aktiv` |
 | `zustand` | `waehlen`, `starten(id)`, `beenden`, `aktiv` |
@@ -159,6 +161,7 @@ Die Tastenkürzel von labwc rufen dieselben Ziele auf (Liste in `docs/module/m9.
 | `zenos-apps` | proprietäre Apps installieren (`zen apps`) |
 | `zenos-argon` | Argon ONE: Lüfter und Power-Button (V3), Akku-Messchip, Deckel und kontrolliertes Ausschalten bei 3 % (ONE UP), Mindeststufe für den Lüfter, Werte für die Leiste |
 | `zenos-luefter` | Lüfterwunsch schreiben («auto» oder Mindeststufe 1–4; root: über pkexec oder sudo, `zen luefter`) |
+| `zenos-kanal-bedienen` | Updates aus den Einstellungen (root über pkexec): prüfen, jetzt installieren und zustimmen starten Units des Kanals, Zeitpunkt setzen über `zenos-kanal zeitpunkt` |
 | `zenos-netzwerk` | Netz von netplan/systemd-networkd auf NetworkManager umstellen und zurück (`zen netzwerk`) |
 | `zenos-firewall` | Firewall ein- und ausschalten (root: über pkexec, sudo oder `install.sh`), bewussten Zustand merken |
 | `zenos-sicherheitsquelle` | prüft mit unattended-upgrades selbst, ob die Ubuntu-Sicherheitsquelle erlaubt ist (nur lesend, für `zen doctor` und die Vorab-Prüfung von `72-kennung`) |
@@ -290,14 +293,15 @@ Die Logik läuft in Quickshell selbst, ohne eigenen Hintergrunddienst.
 | Erzeugte Konfiguration | `~/.config/labwc/rc.xml` und `themerc-override`, `~/.config/kanshi/config`, `~/.config/kitty/*-theme.auto.conf` | nein, erzeugt |
 | `zen` | `/usr/local/bin/zen` verweist auf `/opt/zenos/scripts/zen` | ja |
 | Kanal für `zen update` | `/etc/xdg/zenos/kanal` (`dev` oder `main`; der signierte Kanal kennt `stabil`, `vorschau`, `dev`, `main` gilt als `stabil`) | nein, vom Installer |
+| Zeitpunkt automatischer Updates | `/etc/xdg/zenos/kanal-zeitpunkt` (`zeitpunkt=sperre\|fenster\|jederzeit\|hand`, bei `fenster` `von=` und `bis=` als HH:MM, `seit=…`; root, 0644; fehlt = `sperre`). Setzen: Einstellungen › System › Updates oder `sudo zen kanal zeitpunkt` | nie |
 | Vertrauensanker | `/etc/zenos/vertrauen/{release,wurzel,widerrufen,serie}` (root, 0644). Mit Schlüsseln gefüllt nur im Image (aus `system/vertrauen/`) oder von Hand (`sudo zen kanal anker ORDNER`, Fingerabdrücke aus 1Password eintippen), danach nur über `vertrauen/NNNN` | im Image ja (`system/vertrauen/`), sonst nein |
-| Signierter Kanal | Programm `/usr/local/libexec/zenos/zenos-kanal` (Kopie, root, 0755; die vorige Fassung als `zenos-kanal.vorher`), Units `zenos-kanal-holen`, `-pruefen`, `-installieren` (statisch) und `-nachstart` (aktiviert, vor greetd); Zustand `/var/lib/zenos/kanal/` (`stand.json`, `gesehen.json`, `hoechste`, `gesperrt/`, `wunsch.json`, `auftrag.json`, `laeuft.json`, `gut.json`, `letzte.json`, `angehalten`, `bereit/<commit>`); Spiegel und Bundle des Holers `/var/lib/zenos-kanal-holen/`; Sperren und Vermerk eines `install.sh` von Hand `/run/zenos-sperre/` (nur root, 0700) | Programm und Units ja (Kopien), Zustand nie |
+| Signierter Kanal | Programm `/usr/local/libexec/zenos/zenos-kanal` (Kopie, root, 0755; die vorige Fassung als `zenos-kanal.vorher`), Units `zenos-kanal-holen`, `-pruefen`, `-installieren`, `-jetzt` und `-zustimmen@` (statisch) und `-nachstart` (aktiviert, vor greetd); Zustand `/var/lib/zenos/kanal/` (`stand.json`, `gesehen.json`, `hoechste`, `gesperrt/`, `wunsch.json`, `auftrag.json`, `laeuft.json`, `gut.json`, `letzte.json`, `angehalten`, `bereit/<commit>`); Spiegel und Bundle des Holers `/var/lib/zenos-kanal-holen/`; Sperren und Vermerk eines `install.sh` von Hand `/run/zenos-sperre/` (nur root, 0700) | Programm und Units ja (Kopien), Zustand nie |
 | Lüfterkurve (optional) | `/etc/xdg/zenos/argon.json` | nie |
 | Freigabe Akkuprofil (ONE UP) | `/etc/xdg/zenos/argon-akkuprofil` (`zen akku freigeben`) | nie |
 | Gerätewerte (Akku, Lüfter) | `/run/zenos/geraet.json` (flüchtig, Ordner gehört `zenos-argon`) | nie |
 | Lüfterwunsch | `/var/lib/zenos/luefter` (`modus=auto\|mindest`, `stufe=1…4`, `seit=…`; root, 0644; fehlt = auto) | nie |
 | Firewall, bewusster Zustand | `/var/lib/zenos/firewall` (`zustand=an\|aus`, `seit=…`; root, 0644; fehlt = Standard an) | nie |
-| polkit-Aktionen | `/usr/share/polkit-1/actions/org.zenos.firewall.policy`, `org.zenos.luefter.policy` | ja (Kopie von `system/polkit/`) |
+| polkit-Aktionen | `/usr/share/polkit-1/actions/org.zenos.firewall.policy`, `org.zenos.luefter.policy`, `org.zenos.kanal.policy` | ja (Kopie von `system/polkit/`) |
 | Quickshell | `/usr/local/bin/quickshell`, Stempel `/usr/local/share/zenos/quickshell.version` | nein, Quellbau |
 | Systemkennung | `/usr/lib/os-release`, `/etc/issue`, `/etc/legal` (umgelenkt, Ubuntu-Fassung jeweils als `<datei>.ubuntu`), `/etc/update-motd.d/00-zenos`, statoverrides für Ubuntus motd-Skripte, Verweise `zenos.info`/`zenos.mirrors`/`zenos.csv`, Version `/usr/local/share/zenos/version`, Merker `/var/lib/zenos/kennung` (nur nach `zenos-kennung ubuntu`) | nein, von `zenos-kennung` |
 | `zenos-kennung` und Hook | `/usr/local/sbin/zenos-kennung` (Kopie, root, 0755), `/etc/apt/apt.conf.d/60zenos-kennung` | ja (Kopien) |

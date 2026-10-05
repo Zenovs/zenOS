@@ -7,6 +7,19 @@ an; eine Version entspricht einem Tag `v…` im Repo.
 
 ### Neu
 
+- **Updates in den Einstellungen:** Einstellungen › System › Updates zeigt den signierten Kanal: Zustand mit
+  Erklärung, Kanal, installierte und bereite Version, letzte Prüfung, Kontakt mit origin und den Anker mit kurzen
+  Fingerabdrücken. «Jetzt prüfen» und «Jetzt installieren» gehen ohne Passwort, aber nur in der aktiven Sitzung am
+  Gerät und nur für einen gültig signierten, geprüften Stand; ändert er Firewall, Netz oder Boot, erscheint
+  «Zustimmen …» mit Passwort, gebunden an das gezeigte Tag-Objekt. Der Zeitpunkt automatischer Updates ist wählbar
+  («Bei Sperre» als Standard, Zeitfenster von–bis, Jederzeit, Von Hand) und gilt für das ganze Gerät
+  (`/etc/xdg/zenos/kanal-zeitpunkt`, auch `sudo zen kanal zeitpunkt`). Der Satz «zenOS aktualisiert sich nicht von
+  selbst» ist weg. Mitteilungen, jede nur einmal je Zustand: installiert (still), zurück, kaputt und blockiert
+  (dringend), Anker fehlt, abgelehnt, wartet auf Zustimmung, 14 Tage ohne Kontakt und beim Zeitpunkt «Von Hand»
+  «Update bereit». Im System-Menü steht bei Neustart und Ausschalten «Update läuft», solange install.sh aus dem Kanal
+  läuft. Neu: `scripts/bin/zenos-kanal-bedienen` (pkexec), `system/polkit/org.zenos.kanal.policy`,
+  `zenos-kanal-jetzt.service`, `zenos-kanal-zustimmen@.service`, `zenos-kanal jetzt|zustimmen|zeitpunkt`, IPC
+  `zenos-ipc kanal status|zeitpunkt|laeuft` (`docs/image-und-releases.md`, «In der Oberfläche»).
 - **Energie:** Neue Seite «Energie» in den Einstellungen. Der Bildschirm geht 1–10 Min. nach der Sperre aus
   (Standard 1 Min.), nie vorher: Dunkel heisst immer gesperrt. Eine Taste oder das Touchpad weckt ihn, die Taste
   landet nicht im Passwortfeld. «Bildschirm aus» im System-Menü, im Befehlsfeld und mit Super+Shift+L sperrt und

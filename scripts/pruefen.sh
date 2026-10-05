@@ -51,8 +51,8 @@
 #   Die Testsitzung ist abgeschottet: eigenes HOME, eigene XDG-Ordner und eigener Sitzungsbus ohne Dienste im
 #   Temp-Ordner, ZENOS_CODE zeigt auf dieses Repo, PipeWire-Client ohne Echtzeit über RTKit (module-rt aus,
 #   Begründung bei start_lauf). In shell.qml folgt ein Rundgang über IPC (Thema hin und zurück, Einrichtung
-#   zu, Befehlsfeld mit Apps-Ansicht, Zentrale, Umschalter, jede Einstellungen-Seite, App-Leiste, Einrichtung auf,
-#   Hinweis, Bildschirmfreigabe, zuletzt die Sperre).
+#   zu, Befehlsfeld mit Apps-Ansicht, Zentrale, Umschalter, jede Einstellungen-Seite, Updates, App-Leiste,
+#   Einrichtung auf, Hinweis, Bildschirmfreigabe, zuletzt die Sperre).
 #   Fehler: kein «Configuration Loaded» im Zeitlimit, Absturz, ERROR-Zeilen, «Type … unavailable», «is not a
 #   type», ReferenceError/TypeError, «Cannot assign», «Binding loop», Warnungen aus Dateien unter shell/,
 #   console.warn/console.error, ein gescheiterter IPC-Aufruf, eine andere als die erwartete Antwort (z. B.
@@ -772,6 +772,12 @@ START_RUNDGANG=(
   "einstellungen oeffnen allgemein"
   "einstellungen oeffnen energie"
   "einstellungen oeffnen system"
+  # Updates (Dienst Kanal): Lage, Zeitpunkt und «Update läuft» ohne Erwartung (auf dem Pi echt, im Container und in
+  # der CI meist «ungeprueft» und «sperre»), dann die Seite System mit gescrolltem Abschnitt «Updates»
+  "kanal status"
+  "kanal zeitpunkt"
+  "kanal laeuft"
+  "einstellungen oeffnen system/updates"
   # Energie: Zeitleiste mit den Standardwerten (ohne Erwartung: Mit Akku, etwa am Argon ONE UP, steht dazu «Aus nach
   # 65 Min. im Akkubetrieb»). Ungesperrt bleibt die Sperre hell, auch wenn zenos-bildschirm «aus» meldet (dunkel heisst
   # gesperrt).

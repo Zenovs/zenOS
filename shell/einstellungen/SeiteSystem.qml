@@ -8,12 +8,61 @@ import qs.einstellungen.teile
 import qs.dienste as Dienste
 
 // Seite «System»: Schalter «Firewall» (Dienst Firewall: Einschalten ohne, Ausschalten nur mit Passwort über
-// polkit), Ausgabe von «zen version», Kurzprüfung mit «zen doctor --kurz» auf Knopfdruck und Hinweise auf
-// zen update und zen doctor. Nichts läuft automatisch.
+// polkit), «Updates» (Dienst Kanal: Lage des signierten Kanals, «Jetzt prüfen», «Jetzt installieren», bei Firewall,
+// Netz oder Boot «Zustimmen …» mit Passwort) und «Automatisch installieren» (Zeitpunkt: Bei Sperre · Zeitfenster ·
+// Jederzeit · Von Hand, gilt für das ganze Gerät), Ausgabe von «zen version», Kurzprüfung mit «zen doctor --kurz» auf
+// Knopfdruck und Hinweise aufs Terminal. unterauswahl «updates» scrollt zu den Updates.
 Item {
     id: root
 
     property string unterauswahl
+
+    // Zeitpunkt, wie ihn die Segmente zeigen: während des Setzens die neue Wahl, sonst die Datei
+    readonly property string _zeitpunktArt: Dienste.Kanal.zeitpunktZiel !== "" ? Dienste.Kanal.zeitpunktZiel : Dienste.Kanal.zeitpunkt.art
+    // Formularfehler unter dem Zeitfenster (nicht als Hinweis)
+    property string _fensterFehler: ""
+
+    readonly property var _zeitpunktOptionen: [
+        {
+            wert: "sperre",
+            text: "Bei Sperre"
+        },
+        {
+            wert: "fenster",
+            text: "Zeitfenster"
+        },
+        {
+            wert: "jederzeit",
+            text: "Jederzeit"
+        },
+        {
+            wert: "hand",
+            text: "Von Hand"
+        }
+    ]
+
+    function _zeitpunktWaehlen(art: string): void {
+        _fensterFehler = "";
+        const z = Dienste.Kanal.zeitpunkt;
+        Dienste.Kanal.zeitpunktSetzen(art, z.von, z.bis);
+    }
+
+    function _fensterSetzen(von: string, bis: string): void {
+        const problem = Dienste.Kanal.fensterProblem(von, bis);
+        _fensterFehler = problem !== "" ? problem + "." : "";
+        if (problem === "")
+            Dienste.Kanal.zeitpunktSetzen("fenster", von, bis);
+    }
+
+    // «einstellungen oeffnen system/updates»: die Updates oben im sichtbaren Bereich
+    function _zuUpdates(): void {
+        if (root.unterauswahl !== "updates")
+            return;
+        const p = updatesFeld.mapToItem(seite.flick.contentItem, 0, 0);
+        seite.flick.contentY = Math.max(0, Math.min(seite.flick.contentHeight - seite.flick.height, p.y - 12));
+    }
+
+    onUnterauswahlChanged: scrollen.restart()
 
     readonly property string _zen: Dienste.Pfade.code + "/scripts/zen"
     property string versionText: ""
@@ -48,7 +97,19 @@ Item {
         return "Eingehende Verbindungen sind nicht gesperrt. Einschalten geht ohne Passwort; sonst schaltet zen update sie ein.";
     }
 
-    Component.onCompleted: Dienste.Firewall.aktualisieren()
+    Component.onCompleted: {
+        Dienste.Firewall.aktualisieren();
+        Dienste.Kanal.aktualisieren();
+    }
+
+    // Erst nach dem Aufbau der Seite (die Spalte setzt die Positionen verzögert)
+    Timer {
+        id: scrollen
+
+        interval: 100
+        running: true
+        onTriggered: root._zuUpdates()
+    }
 
     Process {
         id: version
@@ -147,6 +208,234 @@ Item {
         }
 
         Feld {
+            id: updatesFeld
+
+            width: parent.width
+            beschriftung: "Updates"
+
+            Column {
+                width: parent.width
+                spacing: 12
+
+                Row {
+                    spacing: 10
+
+                    Symbol {
+                        anchors.verticalCenter: parent.verticalCenter
+                        name: Dienste.Kanal.zustandSymbol.symbol
+                        groesse: 16
+                        farbe: Dienste.Kanal.zustandSymbol.ton === "akzent" ? Theme.akzent : Dienste.Kanal.zustandSymbol.ton === "warnung" ? Theme.warnung : Theme.gedaempft
+                    }
+
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: Dienste.Kanal.zustandTitel
+                        textFormat: Text.PlainText
+                        color: Theme.text
+                        font.family: Theme.schriftText
+                        font.pixelSize: Theme.groesseText
+                    }
+                }
+
+                Text {
+                    width: parent.width
+                    text: Dienste.Kanal.grundText
+                    textFormat: Text.PlainText
+                    wrapMode: Text.Wrap
+                    lineHeightMode: Text.FixedHeight
+                    lineHeight: Math.round(font.pixelSize * 1.45)
+                    color: Theme.gedaempft
+                    font.family: Theme.schriftText
+                    font.pixelSize: Theme.groesseLabel
+                }
+
+                // Kanal, installierte und bereite Version, letzte Prüfung, Kontakt, Anker mit kurzen Fingerabdrücken
+                Column {
+                    width: parent.width
+                    spacing: 4
+                    visible: Dienste.Kanal.zeilen.length > 0
+
+                    Repeater {
+                        model: Dienste.Kanal.zeilen
+
+                        Row {
+                            id: zeile
+
+                            required property var modelData
+
+                            spacing: 12
+
+                            Text {
+                                width: 96
+                                text: zeile.modelData.titel
+                                textFormat: Text.PlainText
+                                color: Theme.gedaempft
+                                font.family: Theme.schriftText
+                                font.pixelSize: Theme.groesseLabel
+                            }
+
+                            Text {
+                                width: updatesFeld.width - 108
+                                text: zeile.modelData.wert
+                                textFormat: Text.PlainText
+                                elide: Text.ElideRight
+                                color: Theme.text
+                                font.family: Theme.schriftMono
+                                font.pixelSize: Theme.groesseLabel
+                            }
+                        }
+                    }
+                }
+
+                Row {
+                    spacing: 12
+
+                    Knopf {
+                        implicitHeight: 38
+                        variante: "sekundaer"
+                        text: Dienste.Kanal.laeuft === "pruefen" ? "Prüft …" : "Jetzt prüfen"
+                        enabled: Dienste.Kanal.laeuft === "" && !Dienste.Kanal.updateLaeuft
+                        onClicked: Dienste.Kanal.pruefen()
+                    }
+
+                    Knopf {
+                        visible: Dienste.Kanal.kannInstallieren || Dienste.Kanal.laeuft === "installieren"
+                        implicitHeight: 38
+                        variante: "primaer"
+                        text: Dienste.Kanal.laeuft === "installieren" ? "Installiert …" : "Jetzt installieren"
+                        enabled: Dienste.Kanal.laeuft === "" && !Dienste.Kanal.updateLaeuft
+                        onClicked: Dienste.Kanal.installieren()
+                    }
+
+                    Knopf {
+                        visible: Dienste.Kanal.zustimmungObjekt !== "" || Dienste.Kanal.laeuft === "zustimmen"
+                        implicitHeight: 38
+                        variante: "sekundaer"
+                        symbol: "schloss"
+                        text: Dienste.Kanal.laeuft === "zustimmen" ? "Läuft …" : "Zustimmen …"
+                        enabled: Dienste.Kanal.laeuft === "" && !Dienste.Kanal.updateLaeuft
+                        onClicked: Dienste.Kanal.zustimmen(Dienste.Kanal.zustimmungObjekt)
+                    }
+                }
+
+                Text {
+                    visible: text !== ""
+                    width: parent.width
+                    text: Dienste.Kanal.updateLaeuft ? "Ein Update läuft gerade. Ausschalten und Neustart warten, bis es fertig ist." : Dienste.Kanal.zustimmungText
+                    textFormat: Text.PlainText
+                    wrapMode: Text.Wrap
+                    lineHeightMode: Text.FixedHeight
+                    lineHeight: Math.round(font.pixelSize * 1.45)
+                    color: Dienste.Kanal.updateLaeuft ? Theme.text2 : Theme.gedaempft
+                    font.family: Theme.schriftText
+                    font.pixelSize: Theme.groesseLabel
+                }
+            }
+        }
+
+        Feld {
+            width: parent.width
+            beschriftung: "Automatisch installieren"
+            hinweis: Dienste.Kanal.zeitpunkt.problem !== "" ? "Datei ungültig · es gilt «Bei Sperre»" : ""
+            hinweisBetont: true
+
+            Column {
+                width: parent.width
+                spacing: 10
+
+                Segmente {
+                    id: zeitpunktSegmente
+
+                    optionen: root._zeitpunktOptionen
+                    aktiv: Dienste.Kanal.laeuft === ""
+                    onGewaehlt: wert => root._zeitpunktWaehlen(wert)
+                }
+
+                // Segmente setzen «wert» bei einer Wahl selbst; das Binding folgt trotzdem weiter der Datei (und springt
+                // zurück, wenn das Setzen scheitert)
+                Binding {
+                    target: zeitpunktSegmente
+                    property: "wert"
+                    value: root._zeitpunktArt
+                }
+
+                Row {
+                    visible: root._zeitpunktArt === "fenster"
+                    spacing: 10
+
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "Von"
+                        color: Theme.text2
+                        font.family: Theme.schriftText
+                        font.pixelSize: Theme.groesseLabel
+                    }
+
+                    Zeitfeld {
+                        id: vonFeld
+
+                        onGesetzt: zeit => root._fensterSetzen(zeit, bisFeld.zeit)
+                    }
+
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "bis"
+                        color: Theme.text2
+                        font.family: Theme.schriftText
+                        font.pixelSize: Theme.groesseLabel
+                    }
+
+                    Zeitfeld {
+                        id: bisFeld
+
+                        onGesetzt: zeit => root._fensterSetzen(vonFeld.zeit, zeit)
+                    }
+
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "Uhr"
+                        color: Theme.text2
+                        font.family: Theme.schriftText
+                        font.pixelSize: Theme.groesseLabel
+                    }
+                }
+
+                Binding {
+                    target: vonFeld
+                    property: "zeit"
+                    value: Dienste.Kanal.zeitpunkt.von
+                }
+
+                Binding {
+                    target: bisFeld
+                    property: "zeit"
+                    value: Dienste.Kanal.zeitpunkt.bis
+                }
+
+                Text {
+                    visible: root._zeitpunktArt === "fenster" && root._fensterFehler !== ""
+                    width: parent.width
+                    text: root._fensterFehler
+                    wrapMode: Text.Wrap
+                    color: Theme.fehler
+                    font.family: Theme.schriftText
+                    font.pixelSize: Theme.groesseLabel
+                }
+
+                Text {
+                    width: parent.width
+                    text: Dienste.Kanal.zeitpunktErklaerung(root._zeitpunktArt, Dienste.Kanal.zeitpunkt.von, Dienste.Kanal.zeitpunkt.bis) + " Gilt für das ganze Gerät. Signatur und Zustimmung bei Firewall, Netz oder Boot gelten bei jeder Wahl; auf dev kommt nie etwas automatisch."
+                    wrapMode: Text.Wrap
+                    lineHeightMode: Text.FixedHeight
+                    lineHeight: Math.round(font.pixelSize * 1.45)
+                    color: Theme.gedaempft
+                    font.family: Theme.schriftText
+                    font.pixelSize: Theme.groesseLabel
+                }
+            }
+        }
+
+        Feld {
             width: parent.width
             beschriftung: "zen version"
 
@@ -220,7 +509,7 @@ Item {
 
         Feld {
             width: parent.width
-            beschriftung: "Aktualisieren"
+            beschriftung: "Im Terminal"
 
             Column {
                 width: parent.width
@@ -228,7 +517,7 @@ Item {
 
                 Text {
                     width: parent.width
-                    text: "zenOS aktualisiert sich nicht von selbst. Im Terminal holt «zen update» den neuen Stand und installiert ihn; «zen rollback <tag>» geht zu einem früheren zurück."
+                    text: "«zen kanal» zeigt den ganzen Stand mit allen Fingerabdrücken. «zen update» installiert sofort, auch was dein «ja» braucht (etwa auf dev); «zen rollback <tag>» geht zu einem früheren Stand zurück."
                     wrapMode: Text.WordWrap
                     lineHeightMode: Text.FixedHeight
                     lineHeight: Math.round(font.pixelSize * 1.4)
@@ -241,15 +530,15 @@ Item {
                     spacing: 8
 
                     Kbd {
+                        text: "zen kanal"
+                    }
+
+                    Kbd {
                         text: "zen update"
                     }
 
                     Kbd {
                         text: "zen doctor"
-                    }
-
-                    Kbd {
-                        text: "zen version"
                     }
                 }
 

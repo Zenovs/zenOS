@@ -187,6 +187,10 @@ Reichweite»; sonst bleibt sie reine Anzeige ohne Zusatz.
   ruhig als Hinweis (Warnung), die Wahl springt zurück. Kein Passwort (polkit, `docs/sicherheit.md`), während der
   Sperre nie.
 
+Läuft gerade ein Update aus dem Kanal (install.sh mit Block-Inhibitor), steht bei «Neustart» und «Ausschalten» rechts
+in Mono «Update läuft»; beide fragen dann nicht nach, ein Klick schliesst das Menü und zeigt den Hinweis (Warnung)
+«Update läuft: Ausschalten geht erst danach (meist wenige Minuten)».
+
 Solange die Firewall aus ist, steht im System-Menü unter «Einstellungen» der Eintrag «Firewall» mit dem Wert «aus»
 und dem offenen Schloss, ohne Farbe; er öffnet die Einstellungen (System). Ist sie an, fehlt er.
 
@@ -308,8 +312,11 @@ Während einer Freigabe und bei `heute: false` blendet der Inhalt aus (200 ms).
   Bildschirm ein Menü der Leiste offen ist, treten die Karten zurück und kommen danach wieder (120 ms, nur
   Deckkraft); die 10 s der Sammelkarte beginnen dann von vorn.
 - Zentrale als Panel rechts (400 px). Kein Ton, kein Blinken; neue Karten kommen unten dazu, damit nichts verrutscht.
-- zenOS selbst meldet sich nur bei niedrigem Akku (10 % und 5 % im Akkubetrieb, je einmal): Absender «zenOS» mit
-  der Bildmarke. 10 % mit Dringlichkeit normal, also nach der Regel des Zustands wie jede andere Mitteilung. 5 %
+- zenOS selbst meldet sich bei Updates (jede Mitteilung nur einmal je Zustand: «zenOS aktualisiert» still, «Update
+  gescheitert» normal, «Update kaputt» und «Updates blockiert» dringend, dazu «Anker fehlt», «Update abgelehnt»,
+  «Update wartet auf deine Zustimmung», «Seit 14 Tagen keine Updates geprüft» und beim Zeitpunkt «Von Hand» «Update
+  bereit»; `docs/image-und-releases.md`) und bei niedrigem Akku (10 % und 5 % im Akkubetrieb, je einmal): Absender
+  «zenOS» mit der Bildmarke. 10 % mit Dringlichkeit normal, also nach der Regel des Zustands wie jede andere Mitteilung. 5 %
   dringend: Die Karte kommt sofort (ausser im Zustand «keine») und bleibt bis zum Schliessen, ohne Ton und ohne
   Blinken; bei 3 % schaltet zenOS kontrolliert aus, also darf sie nicht warten. Es steht immer nur eine
   Akku-Mitteilung da (5 % ersetzt 10 %), und am Netzteil verschwindet sie. Bei 3 % (drei Messungen) ersetzt sie die
@@ -371,6 +378,34 @@ Apps, Allgemein, Energie, System), Titel in Instrument Serif, Felder zweispaltig
 Auf der Seite System steht zuoberst der Schalter «Firewall» mit Zustand («An», «Aus», «Wartet auf dein
 Passwort …») und einer Zeile Erklärung in `gedaempft`. Beim Ausschalten zeigt der Schalter sofort «aus»; bricht die
 Passwortabfrage ab, springt er zurück.
+
+Darunter «Updates» (`SeiteSystem.qml`, Dienst `Kanal`; `einstellungen oeffnen system/updates` scrollt dorthin):
+
+- Die Lage als Zeile mit Symbol (16 px) und Titel in `text`: «Aktuell» (Haken im Akzent), «Neue Version bereit»
+  (Info im Akzent), «Wartet auf deine Zustimmung» (Schloss im Akzent), «Kanal dev, nur von Hand» bzw. «Neuer Stand
+  auf dev» (Code), «Anker fehlt» (offenes Schloss in `warnung`), «Blockiert» und «Prüfung abgebrochen» (Warnung in
+  `warnung`), «Kein Kontakt» (Wolke), «Noch nie geprüft» (Info, `gedaempft`). Darunter ein ruhiger Satz in
+  `gedaempft` (13 px, Zeilenhöhe 1,45), nur reiner Text.
+- Werte zweispaltig, Titel 96 px in `gedaempft`, Werte in Geist Mono 13 (`text`, zu lang: am Ende gekürzt): Kanal,
+  Installiert («v0.1.0-rc4 · 1a2b3c4d5e6f»), Bereit (mit «automatisch ab morgen, 03:30», solange die 24 h auf stabil
+  laufen), Geprüft und Kontakt («heute, 14:03», «gestern, …», «3. Okt., …»), Anker «Serie 1», Wurzel und Release
+  als «SHA256:9xQZHFzU…» (die ersten 8 Zeichen, wie in 1Password abgeglichen).
+- Knöpfe 38 px: «Jetzt prüfen» (sekundär, während des Laufs «Prüft …»), «Jetzt installieren» (primär, nur wenn es
+  etwas gibt; «Installiert …») und «Zustimmen …» (sekundär mit Schloss, nur bei Firewall, Netz oder Boot; danach
+  fragt der polkit-Dialog nach dem Passwort). Darunter in `gedaempft`, was die Zustimmung betrifft und wofür sie gilt
+  («Ändert scripts/module/35-netzwerk.sh. Zustimmen verlangt dein Passwort und gilt nur für v0.1.0-rc5 (Objekt
+  …).»), während eines Updates in `text2` «Ein Update läuft gerade. Ausschalten und Neustart warten, bis es fertig
+  ist.»
+- Rückmeldungen als Hinweis nur, wo keine Mitteilung kommt («Updates geprüft», «zenOS ist schon aktuell», «Das Update
+  braucht deine Zustimmung», «Gerade läuft schon ein Update …»); abgebrochene Passwortabfragen bleiben still.
+
+«Automatisch installieren»: Segmente «Bei Sperre · Zeitfenster · Jederzeit · Von Hand», beim Zeitfenster darunter
+«Von» und «bis» mit zwei Zeitfeldern (HH:MM) und «Uhr». Ein zu kurzes Fenster (unter einer Stunde) steht ruhig in
+`fehler` darunter und wird nicht gesetzt. Dann ein Satz in `gedaempft`, was die Wahl bedeutet, und dass sie für das
+ganze Gerät gilt. Ist die Datei von Hand kaputt, steht neben der Beschriftung in Mono «Datei ungültig · es gilt «Bei
+Sperre»». Während des Setzens zeigen die Segmente schon die neue Wahl; scheitert es, springen sie zurück.
+
+Darunter «Im Terminal» mit den Tastenkappen «zen kanal», «zen update», «zen doctor» und «Terminal öffnen».
 
 ### Sitzung
 

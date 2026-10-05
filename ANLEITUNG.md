@@ -499,6 +499,19 @@ systemctl --user start zenos-shell.service
   Fingerabdrücke.
   `sudo zen kanal pruefen` holt von GitHub und listet `v0.1.0-rc1` bis `rc3` als «unsigniert». An `/opt/zenos`
   ändert sich dabei nichts (`zen version` zeigt danach denselben Commit).
+- [ ] Einstellungen › System › Updates, in hell und dunkel: Die Lage («Anker fehlt», «Kanal dev, nur von Hand» oder
+  «Aktuell») mit einem ruhigen Satz, darunter Kanal, Installiert, Geprüft, Kontakt und der Anker mit den ersten 8
+  Zeichen der Fingerabdrücke (mit 1Password vergleichen). «Jetzt prüfen» fragt nach keinem Passwort, zeigt
+  «Prüft …» und danach «Updates geprüft»; «Geprüft» steht dann auf «heute, …». Ein abgebrochener Dialog bleibt still.
+- [ ] «Automatisch installieren»: «Bei Sperre» ist gewählt. «Von Hand» setzt ohne Passwort, `zen kanal zeitpunkt`
+  zeigt es; «Zeitfenster» zeigt 02:00 bis 05:00, ein Fenster unter einer Stunde (etwa 03:00 bis 03:30) steht rot
+  darunter und wird nicht gesetzt. Zum Schluss wieder «Bei Sperre».
+- [ ] Mitteilungen: Nach dem ersten Start mit dieser Oberfläche kommt «Updates: Anker fehlt» einmal (solange der
+  Anker fehlt), nach einem Neustart nicht noch einmal. Nach einem `zen update` mit Installation kommt «zenOS
+  aktualisiert» still in die Zentrale.
+- [ ] Während `zen update` installiert (im System-Menü schauen, solange «install.sh aus …» läuft): Bei Neustart und
+  Ausschalten steht «Update läuft»; ein Klick schliesst das Menü und sagt, dass es erst danach geht. Danach ist der
+  Wert wieder weg. Gesperrt zeigt der Sperrbildschirm nichts davon.
 - [ ] Die Temperatur steht in der Leiste, der Lüfter im System-Menü (Argon ONE). Unter Last (in kitty viermal
   `yes > /dev/null &`, danach `pkill yes`) wird der Lüfter hörbar schneller und später wieder leiser.
 - [ ] Argon-Knopf: Doppeltipp startet neu, drei Sekunden halten schaltet aus, einmal kurz drücken tut nichts.

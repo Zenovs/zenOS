@@ -99,9 +99,10 @@ ShellRoot {
     }
 
     // Dienste, die unabhängig von einer Oberfläche von Anfang an laufen müssen
-    // (Übertragung des Erscheinungsbilds, Mitteilungsdienst, Auslöser, IPC, Höchstdauer der Sperre trotz Video).
+    // (Übertragung des Erscheinungsbilds, Mitteilungsdienst, Auslöser, IPC, Höchstdauer der Sperre trotz Video,
+    // Mitteilungen des Update-Kanals).
     Component.onCompleted: {
-        const dienste = [() => Erscheinung.dunkel, () => Mitteilungen.anzahlWartend, () => Modi.aktivId, () => Zustaende.aktivId, () => Freigabe.aktiv, () => Raster.aktivId, () => Energie.sperreTrotzHemmerMinuten];
+        const dienste = [() => Erscheinung.dunkel, () => Mitteilungen.anzahlWartend, () => Modi.aktivId, () => Zustaende.aktivId, () => Freigabe.aktiv, () => Raster.aktivId, () => Energie.sperreTrotzHemmerMinuten, () => Kanal.zustand];
         for (const starten of dienste) {
             try {
                 starten();
