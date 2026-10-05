@@ -23,6 +23,22 @@ import tempfile
 import time
 import unittest
 
+
+# Als root (CI im Container) laufen die Helfer als nobody, denn sie verweigern root bewusst. Dafür gehört der
+# Testordner vor jedem Aufruf nobody; ohne root bleibt alles, wie es ist.
+NOBODY = 65534
+
+
+def als_benutzer(argv, ordner):
+    if os.geteuid() != 0:
+        return argv
+    for wurzel, unterordner, dateien in os.walk(ordner):
+        for name in [wurzel] + [os.path.join(wurzel, n) for n in unterordner + dateien]:
+            os.lchown(name, NOBODY, NOBODY)
+    # Absoluter Pfad: Die Tests geben dem Helfer einen eigenen, knappen PATH
+    return ["/usr/bin/setpriv", f"--reuid={NOBODY}", f"--regid={NOBODY}", "--clear-groups", "--", *argv]
+
+
 WURZEL = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ENERGIE = os.path.join(WURZEL, "scripts", "bin", "zenos-energie")
 IDLE = os.path.join(WURZEL, "scripts", "bin", "zenos-idle")
@@ -97,6 +113,8 @@ KEIN_HEMMER = {"type": "a(ssssuu)", "data": [[["shutdown", "Unattended Upgrades 
                                               0, 124]]]}
 
 
+@unittest.skipUnless(os.path.exists("/proc/self"),
+                     "nur unter Linux (bash 5, /proc), etwa im Testcontainer oder in der CI")
 class EnergieTest(unittest.TestCase):
     def setUp(self):
         self.wurzel = tempfile.mkdtemp(prefix="zenos-energie-test.")
@@ -213,7 +231,7 @@ class EnergieTest(unittest.TestCase):
             f.write("2026-10-05T20:00:00Z\n")
 
     def aufruf(self, *args):
-        lauf = subprocess.run([self.programm, *args], capture_output=True, text=True, env=self.umgebung, timeout=60,
+        lauf = subprocess.run(als_benutzer([self.programm, *args], self.wurzel), capture_output=True, text=True, env=self.umgebung, timeout=60,
                               check=False)
         return lauf.returncode, lauf.stdout, lauf.stderr
 

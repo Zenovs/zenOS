@@ -20,6 +20,22 @@ import tempfile
 import time
 import unittest
 
+
+# Als root (CI im Container) laufen die Helfer als nobody, denn sie verweigern root bewusst. Dafür gehört der
+# Testordner vor jedem Aufruf nobody; ohne root bleibt alles, wie es ist.
+NOBODY = 65534
+
+
+def als_benutzer(argv, ordner):
+    if os.geteuid() != 0:
+        return argv
+    for wurzel, unterordner, dateien in os.walk(ordner):
+        for name in [wurzel] + [os.path.join(wurzel, n) for n in unterordner + dateien]:
+            os.lchown(name, NOBODY, NOBODY)
+    # Absoluter Pfad: Die Tests geben dem Helfer einen eigenen, knappen PATH
+    return ["/usr/bin/setpriv", f"--reuid={NOBODY}", f"--regid={NOBODY}", "--clear-groups", "--", *argv]
+
+
 WURZEL = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BILDSCHIRM = os.path.join(WURZEL, "scripts", "bin", "zenos-bildschirm")
 WERKZEUGE = ["bash", "python3", "timeout", "sed", "head", "readlink", "dirname", "cat", "sleep"]
@@ -59,6 +75,8 @@ def status_json(*modi):
     return json.dumps([{"output": f"HDMI-A-{i + 1}", "power-mode": m} for i, m in enumerate(modi)])
 
 
+@unittest.skipUnless(os.path.exists("/proc/self"),
+                     "nur unter Linux (bash 5, /proc), etwa im Testcontainer oder in der CI")
 class BildschirmTest(unittest.TestCase):
     def setUp(self):
         self.wurzel = tempfile.mkdtemp(prefix="zenos-bildschirm-test.")
@@ -122,7 +140,7 @@ class BildschirmTest(unittest.TestCase):
         self.sockets.append(s)
 
     def aufruf(self, *args, cwd=None):
-        ergebnis = subprocess.run([self.programm, *args], capture_output=True, text=True, env=self.umgebung,
+        ergebnis = subprocess.run(als_benutzer([self.programm, *args], self.wurzel), capture_output=True, text=True, env=self.umgebung,
                                   timeout=30, check=False, cwd=cwd or self.wurzel)
         return ergebnis.returncode, ergebnis.stdout, ergebnis.stderr
 

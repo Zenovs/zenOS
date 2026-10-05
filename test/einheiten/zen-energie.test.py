@@ -18,6 +18,22 @@ import subprocess
 import tempfile
 import unittest
 
+
+# Als root (CI im Container) laufen die Helfer als nobody, denn sie verweigern root bewusst. Dafür gehört der
+# Testordner vor jedem Aufruf nobody; ohne root bleibt alles, wie es ist.
+NOBODY = 65534
+
+
+def als_benutzer(argv, ordner):
+    if os.geteuid() != 0:
+        return argv
+    for wurzel, unterordner, dateien in os.walk(ordner):
+        for name in [wurzel] + [os.path.join(wurzel, n) for n in unterordner + dateien]:
+            os.lchown(name, NOBODY, NOBODY)
+    # Absoluter Pfad: Die Tests geben dem Helfer einen eigenen, knappen PATH
+    return ["/usr/bin/setpriv", f"--reuid={NOBODY}", f"--regid={NOBODY}", "--clear-groups", "--", *argv]
+
+
 WURZEL = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ENERGIE = os.path.join(WURZEL, "scripts", "zen.d", "energie.sh")
 LOGIK = os.path.join(WURZEL, "shell", "modi", "zustandslogik.js")
@@ -62,6 +78,8 @@ befehl_lock() {
 '''
 
 
+@unittest.skipUnless(os.path.exists("/proc/self"),
+                     "nur unter Linux (bash 5, /proc), etwa im Testcontainer oder in der CI")
 class ZenEnergieTest(unittest.TestCase):
     def setUp(self):
         self.wurzel = tempfile.mkdtemp(prefix="zenos-zen-energie-test.")
@@ -119,7 +137,8 @@ class ZenEnergieTest(unittest.TestCase):
             "ZENOS_ENERGIE_PAUSE": "0",
             "LANG": "C.UTF-8",
         }
-        lauf = subprocess.run([os.path.join(self.skripte, "zen"), "energie", *argumente], env=umgebung,
+        lauf = subprocess.run(als_benutzer([os.path.join(self.skripte, "zen"), "energie", *argumente], self.wurzel),
+                              env=umgebung,
                               capture_output=True, text=True, timeout=30)
         return lauf.returncode, lauf.stdout, lauf.stderr
 
