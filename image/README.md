@@ -1,11 +1,14 @@
 # image
 
-Bau des Pi-Images: `zenos-<version>-pi5-arm64.img.xz` und `SHA256SUMS`. Grundlage ist das offizielle
+Bau des Pi-Images: `zenos-<version>-pi5-arm64.img.xz`, Paketliste und `SHA256SUMS`, dazu der Quellcode aller
+Pakete für die Release-Seite. Grundlage ist das offizielle
 Ubuntu 26.04 LTS Server-Image für den Raspberry Pi. Zielbild: `docs/image-und-releases.md`.
 
 | Datei | Zweck |
 |---|---|
 | `image/bauen.sh` | baut das Image (lokal und in GitHub Actions, als root auf arm64-Linux) |
+| `image/erststart/` | erster Start ohne Imager: `user-data`, `90-zenos-benutzer.cfg`, README der Startpartition |
+| `image/quellen.sh` | holt den Quellcode aller Pakete einer Paketliste und packt ihn in Teile unter 2 GiB |
 | `.github/workflows/image.yml` | baut bei jedem Tag `v*`, veröffentlicht Releases |
 
 ## Ablauf von `bauen.sh`
@@ -34,13 +37,25 @@ Ubuntu 26.04 LTS Server-Image für den Raspberry Pi. Zielbild: `docs/image-und-r
    `zenos-sicherheitsquelle` mit Exit 0, `zenos-kennung pruefen` und kein Ubuntu in `PRETTY_NAME`. Fehlt eines,
    bricht der Bau ab (kein Image ohne nachgewiesene Ubuntu-Sicherheitsupdates). Weicht `ZENOS_VERSION` von der
    Version im Dateinamen ab (`--version`), gibt es eine Warnung. Mit `--nur-mechanik` entfällt der Schritt.
+   Dann «Erster Start und Paketliste» (ebenfalls nicht mit `--nur-mechanik`):
+   - `user-data` und `README` aus `image/erststart/` auf die Startpartition, `90-zenos-benutzer.cfg` nach
+     `/etc/cloud/cloud.cfg.d/`: Benutzer `user` mit Passwort `user` (abgelaufen), sudo nur mit Passwort,
+     SSH ohne Passwörter. Die beiden Dateien gehören zusammen (chpasswd setzt das Passwort für den Benutzer aus
+     `default_user`).
+   - `/etc/hostname` `zenos`, in `/etc/hosts` eine Zeile `127.0.1.1 ubuntu` auf `zenos`.
+   - `config.txt`: `[cm5]` mit `dtoverlay=dwc2,dr_mode=host` (USB-2 des Compute Module 5 im Host-Modus, nötig für
+     Tastatur, Touchpad und USB am Argon ONE UP), danach wieder `[all]`; nur, wenn es dort noch fehlt.
+   - Paketliste über `dpkg-query` im chroot (installierte Pakete: Paket, Version, Quellpaket, Quellversion), nach
+     `<arbeit>/pakete.txt` und ins Image unter `/usr/local/share/doc/zenos/pakete.txt`.
 6. **Aufräumen im Image.** `apt-get clean`, `policy-rc.d` weg, SSH-Hostschlüssel löschen, `machine-id`
    leeren, `random-seed` löschen, Logs leeren (rotierte löschen, `/var/log/zenos/install.log` löschen),
    Verlauf und Caches von root, `/opt/zenos` sauber (sonst Warnung und Zurücksetzen), `fstrim` (gelöschte
    Daten verschwinden, xz packt Nullen; ohne fstrim nullt `zerofree` nach dem Verkleinern).
 7. **Verkleinern.** `e2fsck`, `resize2fs -M`, dazu 256 MiB Luft, Partition und Datei kürzen, Gegenprobe
    mit `e2fsck -n`. Beim ersten Start wächst die Partition über cloud-init auf die ganze Karte.
-8. **Packen.** `xz -T0 -9`, `xz -t`, `SHA256SUMS`, Hinweis bei 2 GiB und mehr.
+8. **Packen.** Grösse und SHA-256 des entpackten Images (für das Manifest des Imagers, in `basis.txt`), `xz -T0 -9`,
+   `xz -t`, die Paketliste als `zenos-<version>-pi5-arm64.pakete.txt` daneben, `SHA256SUMS` über beide, Hinweis
+   bei 2 GiB und mehr.
 
 Bricht der Bau ab (Fehler, Ctrl+C, `SIGTERM`), beendet ein Trap die Prozesse im chroot, hängt alles aus und
 löst die Loop-Geräte. Nach einem harten Abbruch (`SIGKILL`) räumt der nächste Lauf im selben Arbeitsordner
@@ -75,7 +90,7 @@ sudo image/bauen.sh --nur-mechanik --xz-stufe 1        # Schnelltest ohne instal
 | `--kanal K` | `dev` | Kanal für `zen update` |
 | `--ubuntu V` | `26.04` | Ubuntu-Version auf cdimage.ubuntu.com |
 | `--arbeit ORDNER` | `/var/tmp/zenos-image` | Arbeitsordner |
-| `--ausgabe ORDNER` | `<arbeit>/ausgabe` | Ziel für `.img.xz` und `SHA256SUMS` |
+| `--ausgabe ORDNER` | `<arbeit>/ausgabe` | Ziel für `.img.xz`, Paketliste und `SHA256SUMS` |
 | `--cache ORDNER` | – | Ubuntu-Image dort behalten und wiederverwenden |
 | `--zusatz-mib N` | `6144` | Vergrösserung vor dem chroot |
 | `--reserve-mib N` | `256` | Luft nach dem Verkleinern |
@@ -98,16 +113,28 @@ die Rechte sind minimal (`contents: read` beim Bau, `contents: write` nur im Rel
 
 - **Image bauen** (`ubuntu-24.04-arm`, nativ arm64, für öffentliche Repos kostenlos, Timeout 180 min): Form des
   Tags prüfen, auschecken (ganze Geschichte, ohne gespeicherte Zugangsdaten), `bauen.sh --ref refs/tags/<tag>`,
-  `SHA256SUMS` und Grösse unter 2 GiB prüfen, Zusammenfassung im Lauf. Image, `SHA256SUMS` und
-  Versionshinweise gehen als Artefakt `zenos-<version>-pi5-arm64` mit (Release-Tags 3 Tage, `-rc` 14 Tage),
-  das Install-Log als eigenes Artefakt, auch wenn der Bau scheitert.
+  `SHA256SUMS` (Image und Paketliste) und Grösse unter 2 GiB prüfen, Zusammenfassung im Lauf. Danach die
+  Herkunftsbestätigung (`actions/attest-build-provenance` über `SHA256SUMS`; dafür hat nur dieser Job
+  `id-token: write` und `attestations: write`), das Manifest für den Raspberry Pi Imager (mit `jq` aus
+  `basis.txt`: Grösse und SHA-256 des entpackten Images) und die zweisprachigen Versionshinweise. Image,
+  Paketliste, `SHA256SUMS`, Manifest und Versionshinweise gehen als Artefakt `zenos-<version>-pi5-arm64` mit
+  (Release-Tags 3 Tage, `-rc` 14 Tage), die Paketliste zusätzlich als kleines Artefakt `zenos-<version>-pakete`
+  für den Quellen-Job, das Install-Log als eigenes Artefakt, auch wenn der Bau scheitert.
+- **Quellcode** (Job «quellen», `ubuntu-24.04-arm` im Container `ubuntu:26.04` mit festem Digest wie
+  `pruefen.yml`, Timeout 240 min): `image/quellen.sh <paketliste> <ziel>` holt zu jedem Paar aus Quellpaket und
+  Version die `.dsc` samt Dateien, zuerst mit `apt-get source --download-only --only-source` aus dem
+  Ubuntu-Archiv (eigene apt-Konfiguration, apt prüft Signatur und Prüfsummen), sonst über die API von Launchpad
+  (jede Datei gegen `Checksums-Sha256` der `.dsc` geprüft). Dazu Quickshell als `git archive` am Commit aus
+  `25-quickshell.sh`. Gepackt in ganze Quellpakete je Teil unter 1900 MiB, mit `zenos-<version>-QUELLEN.txt` und
+  `SHA256SUMS-quellen`; Artefakt `zenos-<version>-quellen`. Fehlt eine Quelle, scheitert der Job.
 - **Annotationen:** `bauen.sh` läuft mit `sudo --preserve-env=GITHUB_ACTIONS`. sudo setzt die Umgebung zurück
   (`env_reset`), ohne diese eine Variable stünden Warnungen und Fehler von `bauen.sh` nur im Log und nicht als
   `::warning::`/`::error::` im Lauf. Weitere Variablen reicht der Workflow nicht durch, der chroot bekommt
   ohnehin eine leere Umgebung.
 - **Tags mit `-rc`** (z. B. `v0.1.0-rc1`): nur das Artefakt, kein Release.
-- **Andere Tags**: Job «Release» (`ubuntu-24.04`) prüft das Artefakt erneut und erstellt mit
-  `gh release create --verify-tag` das Release mit `zenos-<version>-pi5-arm64.img.xz` und `SHA256SUMS`. Tags mit
+- **Andere Tags**: Job «Release» (`ubuntu-24.04`, braucht «Image bauen» und «Quellcode») prüft beide Artefakte
+  erneut und erstellt mit `gh release create --verify-tag` das Release mit Image, Paketliste, `SHA256SUMS`,
+  Manifest, allen Quellen-Teilen, dem Quickshell-Archiv, `QUELLEN.txt` und `SHA256SUMS-quellen`. Tags mit
   Bindestrich (z. B. `v0.2.0-beta1`) werden als Vorabversion markiert. Gibt es das Release schon (Workflow neu
   gestartet), werden die Dateien ersetzt.
 
@@ -122,9 +149,12 @@ Die Grundlage (Ubuntu-Datei und SHA-256) steht in den Versionshinweisen und in `
   ergibt etwa 1,5 GB. Was zenOS dazu bringt, zeigt `bauen.sh` unter «Grösste Ordner».
 - **Kein `apt upgrade` beim Bau.** flash-kernel läuft im chroot nicht, ein neuer Kernel käme nicht nach
   `/boot/firmware`. Sicherheitsupdates holt unattended-upgrades nach dem ersten Start.
-- **Keine Signatur der Release-Dateien**, nur `SHA256SUMS`.
-- **Marke:** Das Image heisst zenOS und «basiert auf Ubuntu». Vor dem ersten Release die Markenrichtlinie von
-  Canonical prüfen.
+- **Signatur:** Image und Paketliste haben eine Herkunftsbestätigung von GitHub (Sigstore, ohne eigenen Schlüssel),
+  geprüft mit `gh attestation verify`. Einen eigenen Signaturschlüssel gibt es nicht.
+- **Marke:** Das Image heisst zenOS und «basiert auf Ubuntu» (geprüft am 04.10.2026, `docs/image-und-releases.md`,
+  «Name und Marke»).
+- **Quellen:** etwa 3 GB je Release, so lange online wie das Image (GPL). Sie hängen an der Paketliste aus genau
+  diesem Bau.
 - **Schlüsselwechsel bei Ubuntu:** Signiert cdimage.ubuntu.com einmal mit einem anderen Schlüssel, bricht
   `bauen.sh` ab. Dann Schlüssel und Fingerabdruck in `bauen.sh` ersetzen (Quelle: keyserver.ubuntu.com,
   Fingerabdruck mit der Ubuntu-Dokumentation abgleichen).
@@ -140,11 +170,12 @@ Die Grundlage (Ubuntu-Datei und SHA-256) steht in den Versionshinweisen und in `
   `sudo dpkg-reconfigure keyboard-configuration`, danach neu starten).
 - **Bootloader:** Ubuntu 26.04 verlangt auf dem Pi 5 einen Bootloader (EEPROM) vom 11.02.2025 oder neuer
   (`sudo rpi-eeprom-update` zeigt den Stand). Das Image fasst die Firmware nicht an.
-- **Ohne Einstellungen** (balenaEtcher, oder der Imager bietet keine an) legt cloud-init `ubuntu`/`ubuntu` mit
-  abgelaufenem Passwort an. Im zenOS-Login lässt sich das Passwort nicht ändern: greetd 0.10 ruft kein
-  `pam_chauthtok` auf und lehnt ab (`pam_acct_mgmt: NEW_AUTHTOK_REQD`); der Login weist darauf hin. Der
-  Wechsel geht an der Textkonsole (`Ctrl + Alt + F2`, mit `ubuntu`/`ubuntu` anmelden, neues Passwort setzen,
-  `exit`, zurück mit `Ctrl + Alt + F7`) oder per SSH. greetd läuft auf VT 7, die Textkonsolen auf den anderen. Die
+- **Ohne Einstellungen** (balenaEtcher, oder der Imager ohne Manifest-Datei) legt cloud-init den Benutzer `user`
+  («Default User») mit dem abgelaufenen Passwort `user` an (`image/erststart/user-data` und
+  `90-zenos-benutzer.cfg`, sudo nur mit Passwort). Im zenOS-Login lässt sich das Passwort nicht ändern: greetd 0.10
+  ruft kein `pam_chauthtok` auf und lehnt ab (`pam_acct_mgmt: NEW_AUTHTOK_REQD`); der Login weist darauf hin. Der
+  Wechsel geht an der Textkonsole (`Ctrl + Alt + F2`, mit `user`/`user` anmelden, neues Passwort setzen, `exit`,
+  zurück mit `Ctrl + Alt + F7`); SSH nimmt nur Schlüssel an. greetd läuft auf VT 7, die Textkonsolen auf den anderen. Die
   Versionshinweise jedes Releases beschreiben das. Die erzwungene Passwortänderung bleibt bewusst, sonst
   bliebe das Standardpasswort bestehen.
 - Die Benutzerteile von zenOS kommen beim ersten Login (`zenos-sitzung` ruft `install.sh --nur-benutzer`).

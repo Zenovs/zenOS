@@ -7,8 +7,9 @@
 # Prüfsumme kontrollieren, entpacken, vergrössern, Boot- und Root-Partition über Loop-Geräte einhängen,
 # /opt/zenos als Git-Checkout des gewünschten Stands anlegen, im chroot
 # «ZENOS_KANAL=dev /opt/zenos/scripts/install.sh --image» ausführen, die Kennung zenOS und die Ubuntu-Sicherheitsquelle
-# prüfen (sonst Abbruch), aufräumen, verkleinern, mit xz packen
-# und SHA256SUMS schreiben. Ergebnis: <ausgabe>/zenos-<version>-pi5-arm64.img.xz und <ausgabe>/SHA256SUMS.
+# prüfen (sonst Abbruch), den ersten Start einrichten (Benutzer «user», Rechner «zenos», image/erststart/), die
+# Paketliste schreiben, aufräumen, verkleinern, mit xz packen und SHA256SUMS schreiben. Ergebnis in <ausgabe>:
+# zenos-<version>-pi5-arm64.img.xz, zenos-<version>-pi5-arm64.pakete.txt und SHA256SUMS.
 # Läuft als root auf arm64-Linux (GitHub-Runner ubuntu-24.04-arm oder lokal). Mehr in image/README.md.
 
 set -Eeuo pipefail
@@ -36,7 +37,7 @@ Aufruf: sudo image/bauen.sh [optionen]
   --kanal K          Kanal für «zen update» (Standard: dev)
   --ubuntu V         Ubuntu-Version auf cdimage.ubuntu.com (Standard: 26.04, neueste Punktversion)
   --arbeit ORDNER    Arbeitsordner (Standard: /var/tmp/zenos-image)
-  --ausgabe ORDNER   Ziel für .img.xz und SHA256SUMS (Standard: <arbeit>/ausgabe)
+  --ausgabe ORDNER   Ziel für .img.xz, Paketliste und SHA256SUMS (Standard: <arbeit>/ausgabe)
   --cache ORDNER     Ubuntu-Image dort behalten und wiederverwenden (sonst nach dem Entpacken gelöscht)
   --zusatz-mib N     Root-Partition vor dem chroot um N MiB vergrössern (Standard: 6144)
   --reserve-mib N    nach dem Verkleinern frei lassen (Standard: 256)
@@ -142,6 +143,9 @@ RESOLV_LINK=""
 RESOLV_BACKUP=""
 LOG_SAVED=0
 DONE=0
+# Entpacktes Image (compress_image), für das Manifest des Raspberry Pi Imagers
+IMAGE_SIZE=""
+IMAGE_SHA=""
 
 cleanup() {
   local rc=$?
@@ -698,6 +702,53 @@ check_identity() {
   fi
 }
 
+# Erster Start ohne Einstellungen aus dem Imager: Standardbenutzer «user» (sudo nur mit Passwort), Rechnername
+# «zenos», README von zenOS auf der Startpartition, USB-2 im Host-Modus für das Compute Module 5. Die Dateien
+# kommen aus image/erststart/ des gebauten Stands. user-data und 90-zenos-benutzer.cfg gehören zusammen: chpasswd
+# setzt das Passwort für den Benutzer, den cloud-init aus default_user anlegt.
+prepare_first_boot() {
+  local r=$ROOT_MNT boot="$ROOT_MNT/boot/firmware" code="$ROOT_MNT/opt/zenos/image/erststart" datei
+  for datei in user-data 90-zenos-benutzer.cfg README; do
+    [[ -f "$code/$datei" ]] || die "image/erststart/$datei fehlt"
+  done
+  [[ -f "$boot/user-data" && -f "$boot/config.txt" ]] || die "user-data oder config.txt fehlt auf der Startpartition"
+  grep -qE '^[[:space:]]*- name: ubuntu$' -- "$boot/user-data" ||
+    warn "Die user-data von Ubuntu sieht anders aus als erwartet (Benutzer ubuntu); sie wird trotzdem ersetzt"
+
+  # Startpartition (vfat: ohne Rechte und Besitzer)
+  cp -- "$code/user-data" "$boot/user-data"
+  cp -- "$code/README" "$boot/README"
+  if grep -qx 'dtoverlay=dwc2,dr_mode=host' -- <(sed -n '/^\[cm5\]$/,/^\[/p' -- "$boot/config.txt"); then
+    info "config.txt: [cm5] mit USB-2 im Host-Modus ist schon da"
+  else
+    printf '\n[cm5]\n# zenOS: USB-2-Anschluss im Host-Modus (Argon ONE UP: Tastatur, Touchpad, USB)\n%s\n\n[all]\n' \
+      'dtoverlay=dwc2,dr_mode=host' >> "$boot/config.txt"
+    info "config.txt: [cm5] dtoverlay=dwc2,dr_mode=host"
+  fi
+
+  install -D -m 0644 -o root -g root -- "$code/90-zenos-benutzer.cfg" "$r/etc/cloud/cloud.cfg.d/90-zenos-benutzer.cfg"
+  printf 'zenos\n' > "$r/etc/hostname"
+  if grep -qE '^127\.0\.1\.1[[:space:]]+ubuntu([[:space:]]|$)' -- "$r/etc/hosts" 2>/dev/null; then
+    sed -i -E 's/^(127\.0\.1\.1[[:space:]]+)ubuntu([[:space:]]|$)/\1zenos\2/' -- "$r/etc/hosts"
+  fi
+  info "Erster Start ohne Imager: Benutzer user (Passwort user, muss geändert werden), Rechner zenos"
+}
+
+# Paketliste des Images: je Zeile Paket, Version, Quellpaket, Quellversion (Tab). Release-Datei für das
+# Quellcode-Angebot und im Image unter /usr/local/share/doc/zenos/pakete.txt (Stand bei Auslieferung).
+write_package_list() {
+  local file="$WORK/pakete.txt" count
+  # shellcheck disable=SC2016 # ${…} ist das Format von dpkg-query, keine Shell-Variable
+  in_chroot dpkg-query -W \
+    -f='${db:Status-Status}\t${binary:Package}\t${Version}\t${source:Package}\t${source:Version}\n' |
+    awk -F '\t' -v OFS='\t' '$1 == "installed" { print $2, $3, $4, $5 }' | LC_ALL=C sort > "$file.teil"
+  mv -- "$file.teil" "$file"
+  count=$(wc -l < "$file")
+  (( count > 100 )) || die "Paketliste mit nur $count Einträgen"
+  install -D -m 0644 -o root -g root -- "$file" "$ROOT_MNT/usr/local/share/doc/zenos/pakete.txt"
+  info "Paketliste: $count Pakete aus $(cut -f 3 -- "$file" | sort -u | wc -l) Quellpaketen"
+}
+
 # --- Aufräumen im Image ----------------------------------------------------
 
 clean_image() {
@@ -818,15 +869,23 @@ shrink_image() {
 }
 
 compress_image() {
-  local name="zenos-$VERSION-pi5-arm64.img.xz" size
+  local name="zenos-$VERSION-pi5-arm64.img.xz" list="zenos-$VERSION-pi5-arm64.pakete.txt" size
+  local -a files=("$name")
   OUTPUT_FILE="$OUTPUT/$name"
   mkdir -p -- "$OUTPUT"
-  rm -f -- "$OUTPUT_FILE" "$OUTPUT_FILE.teil" "$OUTPUT/SHA256SUMS"
+  rm -f -- "$OUTPUT_FILE" "$OUTPUT_FILE.teil" "$OUTPUT/SHA256SUMS" "$OUTPUT/$list"
+  # Für das Manifest des Raspberry Pi Imagers (extract_size, extract_sha256)
+  IMAGE_SIZE=$(stat -c %s -- "$IMG")
+  IMAGE_SHA=$(sha256sum -- "$IMG" | cut -d ' ' -f 1)
   info "xz -T0 -$opt_xz_level → $name"
   xz -T0 "-$opt_xz_level" -c -- "$IMG" > "$OUTPUT_FILE.teil"
   xz -t -T0 -- "$OUTPUT_FILE.teil"
   mv -- "$OUTPUT_FILE.teil" "$OUTPUT_FILE"
-  (cd -- "$OUTPUT" && sha256sum -- "$name" > SHA256SUMS && sha256sum --check --quiet SHA256SUMS)
+  if [[ -f "$WORK/pakete.txt" ]]; then
+    cp -- "$WORK/pakete.txt" "$OUTPUT/$list"
+    files+=("$list")
+  fi
+  (cd -- "$OUTPUT" && sha256sum -- "${files[@]}" > SHA256SUMS && sha256sum --check --quiet SHA256SUMS)
   size=$(stat -c %s -- "$OUTPUT_FILE")
   info "$(mib "$size"), SHA256SUMS geprüft"
   if (( size >= RELEASE_LIMIT )); then
@@ -981,6 +1040,9 @@ else
   run_install
   step "Kennung und Sicherheitsquelle prüfen"
   check_identity
+  step "Erster Start und Paketliste"
+  prepare_first_boot
+  write_package_list
 fi
 
 step "Aufräumen im Image"
@@ -1000,6 +1062,8 @@ compress_image
   printf 'zenos_version=%s\n' "$VERSION"
   printf 'zenos_commit=%s\n' "$COMMIT"
   printf 'kanal=%s\n' "$opt_channel"
+  printf 'image_groesse=%s\n' "$IMAGE_SIZE"
+  printf 'image_sha256=%s\n' "$IMAGE_SHA"
 } > "$WORK/basis.txt"
 rm -f -- "$IMG"
 rm -rf -- "$WORK/vartmp"
@@ -1007,5 +1071,6 @@ DONE=1
 
 step "Fertig"
 info "$OUTPUT_FILE"
+if [[ -f "$OUTPUT/zenos-$VERSION-pi5-arm64.pakete.txt" ]]; then info "$OUTPUT/zenos-$VERSION-pi5-arm64.pakete.txt"; fi
 info "$OUTPUT/SHA256SUMS"
 if (( WARNINGS > 0 )); then info "$WARNINGS Warnung(en), siehe oben"; fi

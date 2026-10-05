@@ -1,6 +1,8 @@
 # Image-Bau für den Raspberry Pi 5, nur bei Tags v*.
-# Tags mit «-rc» (z. B. v0.1.0-rc1): Image bauen und als Workflow-Artefakt ablegen, kein Release.
-# Andere v*-Tags: dazu ein GitHub-Release mit zenos-<version>-pi5-arm64.img.xz und SHA256SUMS.
+# Tags mit «-rc» (z. B. v0.1.0-rc1): Image und Quellcode bauen und als Workflow-Artefakte ablegen, kein Release.
+# Andere v*-Tags: dazu ein GitHub-Release mit Image, Paketliste, SHA256SUMS, Manifest für den Raspberry Pi Imager
+# und dem Quellcode aller enthaltenen Pakete (image/quellen.sh). Ohne vollständige Quellen kein Release (GPL).
+# Image, Paketliste und SHA256SUMS bekommen eine Herkunftsbestätigung von GitHub (Artifact Attestation, Sigstore).
 # Ablauf und Grenzen: image/README.md und docs/image-und-releases.md.
 name: Image
 
@@ -26,6 +28,9 @@ jobs:
     timeout-minutes: 180
     permissions:
       contents: read
+      # Herkunftsbestätigung (attest-build-provenance): OIDC-Token und Ablage der Bestätigung
+      id-token: write
+      attestations: write
     outputs:
       version: ${{ steps.tag.outputs.version }}
       release: ${{ steps.tag.outputs.release }}
@@ -77,6 +82,7 @@ jobs:
         run: |
           datei="zenos-$VERSION-pi5-arm64.img.xz"
           sha256sum --check SHA256SUMS
+          grep -q "  zenos-$VERSION-pi5-arm64.pakete.txt\$" SHA256SUMS || { echo "::error::Paketliste fehlt"; exit 1; }
           groesse=$(stat -c %s "$datei")
           if (( groesse >= 2147483648 )); then
             echo "::error::$datei ist $(( groesse / 1048576 )) MiB gross, GitHub nimmt Release-Dateien nur unter 2 GiB an"
@@ -90,23 +96,85 @@ jobs:
             sed -n 's/^ubuntu_datei=/- Grundlage: /p' "$RUNNER_TEMP/image/basis.txt"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Herkunft bestätigen
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: ${{ runner.temp }}/ausgabe/SHA256SUMS
+
+      - name: Manifest für den Raspberry Pi Imager
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+          TAG: ${{ github.ref_name }}
+          DOWNLOAD: ${{ github.server_url }}/${{ github.repository }}/releases/download
+        run: |
+          # Der Imager 2.x wendet Benutzer, SSH und WLAN bei eigenen Images nur über ein Manifest mit
+          # init_format «cloudinit» an (docs/image-und-releases.md).
+          basis="$RUNNER_TEMP/image/basis.txt"
+          datei="zenos-$VERSION-pi5-arm64.img.xz"
+          groesse=$(sed -n 's/^image_groesse=//p' "$basis")
+          sha=$(sed -n 's/^image_sha256=//p' "$basis")
+          [[ "$groesse" =~ ^[0-9]+$ && "$sha" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::basis.txt ohne Image-Werte"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/hinweise"
+          jq -n --arg name "zenOS $VERSION" --arg beschreibung "zenOS $VERSION, basiert auf Ubuntu 26.04 LTS" \
+            --arg url "$DOWNLOAD/$TAG/$datei" --argjson groesse "$groesse" --arg sha "$sha" \
+            --argjson xz_groesse "$(stat -c %s "$RUNNER_TEMP/ausgabe/$datei")" \
+            --arg xz_sha "$(sha256sum "$RUNNER_TEMP/ausgabe/$datei" | cut -d ' ' -f 1)" \
+            --arg datum "$(date -u +%Y-%m-%d)" '{
+              imager: { devices: [ {
+                name: "Raspberry Pi 5", tags: ["pi5-64bit"],
+                icon: "https://downloads.raspberrypi.com/imager/icons/RPi_5.png",
+                description: "Raspberry Pi 5, 500 / 500+, and Compute Module 5",
+                matching_type: "exclusive", default: true, capabilities: [] } ] },
+              os_list: [ {
+                name: $name, description: $beschreibung, icon: "", url: $url,
+                extract_size: $groesse, extract_sha256: $sha,
+                image_download_size: $xz_groesse, image_download_sha256: $xz_sha,
+                release_date: $datum, init_format: "cloudinit", devices: ["pi5-64bit"], capabilities: [] } ]
+            }' > "$RUNNER_TEMP/hinweise/zenos-$VERSION.rpi-imager-manifest"
+          jq . "$RUNNER_TEMP/hinweise/zenos-$VERSION.rpi-imager-manifest"
+
       - name: Versionshinweise
         env:
           VERSION: ${{ steps.tag.outputs.version }}
+          REPO: ${{ github.repository }}
         run: |
           ubuntu_datei=$(sed -n 's/^ubuntu_datei=//p' "$RUNNER_TEMP/image/basis.txt")
           ubuntu_sha=$(sed -n 's/^ubuntu_sha256=//p' "$RUNNER_TEMP/image/basis.txt")
           mkdir -p "$RUNNER_TEMP/hinweise"
           cat > "$RUNNER_TEMP/hinweise/versionshinweise.md" <<EOF
-          zenOS $VERSION für den Raspberry Pi 5 (arm64), basiert auf Ubuntu 26.04 LTS Server.
+          **zenOS $VERSION für den Raspberry Pi 5 (arm64) · basiert auf Ubuntu 26.04 LTS**
 
-          - Prüfen: \`sha256sum -c SHA256SUMS\`
-          - Schreiben: am besten mit dem Raspberry Pi Imager («Eigenes Image»), dort unter «Einstellungen» Benutzer und Passwort setzen (optional SSH mit deinem öffentlichen Schlüssel). balenaEtcher geht auch, dann ohne Einstellungen. Ziel: SD-Karte, USB-Stick oder NVMe.
-          - Erste Anmeldung: Beim ersten Start ein bis zwei Minuten warten, bis cloud-init den Benutzer angelegt hat. Mit Einstellungen aus dem Imager meldest du dich direkt im zenOS-Login an.
-          - Ohne Einstellungen heisst der Benutzer \`ubuntu\` mit Passwort \`ubuntu\`, und das Passwort muss zuerst geändert werden. Das geht nicht im zenOS-Login: Mit \`Ctrl + Alt + F2\` zur Textkonsole wechseln, dort mit \`ubuntu\` / \`ubuntu\` anmelden, ein neues Passwort setzen und mit \`exit\` abmelden. Mit \`Ctrl + Alt + F7\` zurück zum zenOS-Login und dort mit dem neuen Passwort anmelden.
-          - Chrome, VS Code und 1Password sind nicht enthalten. Die Einrichtung beim ersten Start installiert sie auf Wunsch aus den offiziellen Quellen der Hersteller.
-          - Grundlage: \`$ubuntu_datei\` (SHA-256 \`$ubuntu_sha\`), Signatur von SHA256SUMS mit dem Ubuntu-CD-Schlüssel geprüft.
+          - **Prüfen:** \`sha256sum -c SHA256SUMS\` und die Herkunft mit \`gh attestation verify zenos-$VERSION-pi5-arm64.img.xz --repo $REPO\`
+          - **Schreiben:** mit dem Raspberry Pi Imager 2.x über die Manifest-Datei \`zenos-$VERSION.rpi-imager-manifest\` (Doppelklick oder «App Options › Content Repository › Edit › Use custom file»). Nur so wirken die Einstellungen für Benutzer, SSH und WLAN. balenaEtcher geht auch, dann ohne Einstellungen. Ziel: SD-Karte, USB-Stick oder NVMe.
+          - **Erste Anmeldung:** Mit Einstellungen aus dem Imager gilt dein eigener Benutzer. Ohne Einstellungen heisst der Benutzer \`user\` mit Passwort \`user\`, das zuerst geändert werden muss: mit \`Ctrl + Alt + F2\` zur Textkonsole, dort anmelden, neues Passwort setzen, \`exit\`, mit \`Ctrl + Alt + F7\` zurück zum Login von zenOS. sudo fragt immer nach dem Passwort, SSH nimmt nur Schlüssel an.
+          - **Argon ONE UP (Compute Module 5):** USB ist eingestellt. Für eine NVMe-SSD muss im EEPROM \`PCIE_PROBE=1\` stehen.
+          - **Updates:** Das Grundsystem bekommt Sicherheitsupdates direkt von Ubuntu (main). Für Pakete aus universe (etwa labwc, greetd, kitty) gibt es sie verlässlich nur mit Ubuntu Pro. Quickshell und die Oberfläche aktualisiert \`zen update\`.
+          - **Nicht enthalten:** Chrome, VS Code und 1Password. Die Einrichtung beim ersten Start installiert sie auf Wunsch aus den offiziellen Quellen der Hersteller.
+          - **Quellcode:** \`zenos-$VERSION-quellen-teil*.tar\` und \`zenos-$VERSION-quickshell-*.tar\` auf dieser Seite, Übersicht in \`zenos-$VERSION-QUELLEN.txt\`, Paketliste in \`zenos-$VERSION-pi5-arm64.pakete.txt\`.
+          - **Grundlage:** \`$ubuntu_datei\` (SHA-256 \`$ubuntu_sha\`), Signatur von SHA256SUMS mit dem Ubuntu-CD-Schlüssel geprüft.
+          - zenOS ist ein persönliches Projekt, ohne Support.
+
+          ---
+
+          **zenOS $VERSION for Raspberry Pi 5 (arm64) · based on Ubuntu 26.04 LTS**
+
+          - **Verify:** \`sha256sum -c SHA256SUMS\` and the provenance with \`gh attestation verify zenos-$VERSION-pi5-arm64.img.xz --repo $REPO\`
+          - **Write:** with Raspberry Pi Imager 2.x using the manifest file \`zenos-$VERSION.rpi-imager-manifest\` (double-click, or App Options › Content Repository › Edit › Use custom file); only then are user, SSH and Wi-Fi settings applied. balenaEtcher works too, without settings.
+          - **First login without Imager settings:** user \`user\`, password \`user\`, which must be changed first on the text console (\`Ctrl + Alt + F2\`, then back with \`Ctrl + Alt + F7\`). sudo always asks for the password, SSH accepts keys only.
+          - **Updates:** security updates for the base system come straight from Ubuntu (main); universe packages are only reliably covered with Ubuntu Pro. Documentation is in German.
+          - **Source code:** the \`quellen-teil*.tar\` and \`quickshell-*.tar\` files on this page.
+          - Personal project, no support.
+
+          Ubuntu and Canonical are registered trademarks of Canonical Ltd. Linux® is the registered trademark of Linus Torvalds in the U.S. and other countries. Raspberry Pi is a trademark of Raspberry Pi Ltd. zenOS is not affiliated with or endorsed by Canonical or Raspberry Pi Ltd.
           EOF
+
+      - name: Paketliste für den Quellcode ablegen
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zenos-${{ steps.tag.outputs.version }}-pakete
+          path: ${{ runner.temp }}/ausgabe/zenos-${{ steps.tag.outputs.version }}-pi5-arm64.pakete.txt
+          if-no-files-found: error
+          retention-days: ${{ steps.tag.outputs.release == 'true' && 3 || 14 }}
 
       - name: Image als Artefakt ablegen
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -128,9 +196,58 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  quellen:
+    name: Quellcode
+    needs: bauen
+    # Eigener Runner, weil der Image-Job seinen Platz braucht. Im Container ubuntu:26.04 wie scripts/pruefen.sh
+    # (pruefen.yml, gleicher Digest): apt und der Schlüsselbund des Ubuntu-Archivs passen dann sicher zu resolute.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 240
+    container:
+      image: ubuntu:26.04@sha256:da6fc2be547864451aa253836dd926da33623312df4a9a243e35dc877c378a78
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    permissions:
+      contents: read
+    steps:
+      - name: Werkzeuge
+        run: |
+          apt-get -o Acquire::Retries=3 update -qq
+          apt-get -o Acquire::Retries=3 install -y -qq --no-install-recommends \
+            ca-certificates curl jq git tar ubuntu-keyring
+
+      - name: Repo auschecken
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Paketliste holen
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: zenos-${{ needs.bauen.outputs.version }}-pakete
+          path: pakete
+
+      - name: Quellen holen und packen
+        env:
+          VERSION: ${{ needs.bauen.outputs.version }}
+        run: |
+          df -h "$RUNNER_TEMP"
+          image/quellen.sh "pakete/zenos-$VERSION-pi5-arm64.pakete.txt" "$RUNNER_TEMP/quellen" --version "$VERSION"
+          (cd "$RUNNER_TEMP/quellen" && sha256sum -- * > SHA256SUMS-quellen)
+          ls -l "$RUNNER_TEMP/quellen"
+
+      - name: Quellen als Artefakt ablegen
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zenos-${{ needs.bauen.outputs.version }}-quellen
+          path: ${{ runner.temp }}/quellen/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ needs.bauen.outputs.release == 'true' && 3 || 14 }}
+
   veroeffentlichen:
     name: Release
-    needs: bauen
+    needs: [bauen, quellen]
     if: needs.bauen.outputs.release == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -143,12 +260,23 @@ jobs:
           name: zenos-${{ needs.bauen.outputs.version }}-pi5-arm64
           path: artefakt
 
+      - name: Quellen holen
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: zenos-${{ needs.bauen.outputs.version }}-quellen
+          path: quellen
+
       - name: Prüfen
         env:
           VERSION: ${{ needs.bauen.outputs.version }}
         working-directory: artefakt/ausgabe
         run: |
           sha256sum --check SHA256SUMS
+          (cd ../../quellen && sha256sum --check SHA256SUMS-quellen)
+          ls ../../quellen/zenos-"$VERSION"-quellen-teil*.tar ../../quellen/zenos-"$VERSION"-QUELLEN.txt >/dev/null
+          for teil in ../../quellen/*.tar; do
+            if (( $(stat -c %s "$teil") >= 2147483648 )); then echo "::error::$teil ist 2 GiB oder grösser"; exit 1; fi
+          done
           groesse=$(stat -c %s "zenos-$VERSION-pi5-arm64.img.xz")
           if (( groesse >= 2147483648 )); then
             echo "::error::Release-Datei ist $(( groesse / 1048576 )) MiB gross (Grenze 2 GiB)"
@@ -162,7 +290,9 @@ jobs:
           TAG: ${{ github.ref_name }}
           VERSION: ${{ needs.bauen.outputs.version }}
         run: |
-          dateien=("artefakt/ausgabe/zenos-$VERSION-pi5-arm64.img.xz" artefakt/ausgabe/SHA256SUMS)
+          dateien=("artefakt/ausgabe/zenos-$VERSION-pi5-arm64.img.xz" artefakt/ausgabe/SHA256SUMS
+            "artefakt/ausgabe/zenos-$VERSION-pi5-arm64.pakete.txt" "artefakt/hinweise/zenos-$VERSION.rpi-imager-manifest"
+            quellen/*.tar "quellen/zenos-$VERSION-QUELLEN.txt" quellen/SHA256SUMS-quellen)
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG gibt es schon, Dateien werden ersetzt."
             gh release upload "$TAG" "${dateien[@]}" --clobber

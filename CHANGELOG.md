@@ -85,6 +85,21 @@ an; eine Version entspricht einem Tag `v…` im Repo.
 
 ### Geändert
 
+- **Image: Standardkonto und erster Start:** Ohne Einstellungen aus dem Raspberry Pi Imager heisst der Benutzer
+  `user` («Default User») mit dem Passwort `user`, das bei der ersten Anmeldung geändert werden muss, und der Rechner
+  `zenos` (bisher `ubuntu`/`ubuntu`). sudo fragt immer nach dem Passwort; bisher bekam der Standardbenutzer sudo ohne
+  Passwort, womit etwa die Passwortsperre der Firewall wirkungslos war. SSH nimmt weiter nur Schlüssel an. Auf der
+  Startpartition liegt ein README von zenOS, und `config.txt` hat einen Abschnitt `[cm5]` mit USB-2 im Host-Modus:
+  Am Argon ONE UP gehen Tastatur, Touchpad und USB damit gleich beim ersten Start.
+- **Releases mit Quellcode, Manifest und Herkunft:** Jedes Release enthält neben dem Image die Paketliste, den
+  Quellcode aller enthaltenen Pakete in genau den ausgelieferten Versionen (`image/quellen.sh`, in Teilen unter
+  2 GiB, mit Übersicht) und von Quickshell, ein Manifest für den Raspberry Pi Imager 2.x (nur damit wirken dort die
+  Einstellungen für Benutzer, SSH und WLAN) und eine Herkunftsbestätigung von GitHub (`gh attestation verify`).
+  Ohne vollständige Quellen gibt es kein Release. Die Versionshinweise sind zweisprachig und nennen die Basis
+  Ubuntu und die Markenhinweise.
+- **Lizenzhinweise im System:** `/usr/local/share/doc/zenos/` mit `copyright`, `RECHTLICHES` (Lizenzen, Marken) und
+  `QUELLEN` (wo der Quellcode liegt), im Image dazu `pakete.txt`; `/usr/local/share/doc/quickshell/` mit Herkunft,
+  Commit, Bauoptionen und den Lizenztexten (LGPL 3). `/etc/legal` verweist darauf.
 - **`zen version`** zeigt statt «System …» eine Zeile «Basis Ubuntu 26.04.1 LTS» (aus der os-release von Ubuntu);
   Einstellungen → System ebenso.
 - **motd-news ohne Eingriff ins Conffile:** Statt `ENABLED=0` in `/etc/default/motd-news` maskiert zenOS

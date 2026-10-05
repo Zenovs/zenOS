@@ -18,15 +18,63 @@ Bau im Einzelnen läuft (Optionen, lokal im Container, Aufräumen), steht in `im
    Pakete und zenOS; Quickshell wird dabei gebaut. Danach prüft `bauen.sh` im chroot die Kennung zenOS und die
    Ubuntu-Sicherheitsquelle (Umlenkung von os-release, `ID=zenos`, Codename wie Ubuntu, `51zenos-ubuntu-quellen`,
    `zenos-sicherheitsquelle` Exit 0, `zenos-kennung pruefen`, kein Ubuntu in `PRETTY_NAME`) und bricht sonst ab.
-5. **Aufräumen:**
+5. **Erster Start und Paketliste** (Dateien aus `image/erststart/`):
+   - `user-data` auf der Startpartition: Benutzer `user` mit Passwort `user` (muss bei der ersten Anmeldung geändert
+     werden), Rechnername `zenos`, SSH nur mit Schlüssel (`ssh_pwauth: false` wie bei Ubuntu).
+   - `/etc/cloud/cloud.cfg.d/90-zenos-benutzer.cfg`: Der Standardbenutzer heisst `user` («Default User») und hat
+     **kein sudo ohne Passwort** (`sudo: null` statt `NOPASSWD:ALL` aus Ubuntus `cloud.cfg`). Sonst wären
+     Passwortabfragen wie beim Ausschalten der Firewall wirkungslos. sudo geht über die Gruppe `sudo`, mit Passwort.
+   - `/etc/hostname` `zenos` (und `/etc/hosts`, falls dort `ubuntu` steht), ein README von zenOS auf der
+     Startpartition statt dem von Ubuntu.
+   - `config.txt`: ein Abschnitt `[cm5]` mit `dtoverlay=dwc2,dr_mode=host`. Er schaltet den USB-2-Anschluss des
+     Compute Module 5 in den Host-Modus; ohne ihn gehen am Argon ONE UP Tastatur, Touchpad und USB nicht. Ein
+     normaler Pi 5 ist davon nicht betroffen.
+   - Paketliste `zenos-<version>-pi5-arm64.pakete.txt` (Paket, Version, Quellpaket, Quellversion), auch im Image unter
+     `/usr/local/share/doc/zenos/pakete.txt`.
+6. **Aufräumen:**
    - Paket-Cache und Logs löschen.
    - SSH-Hostschlüssel und `machine-id` entfernen; beide werden beim ersten Start neu erzeugt.
    - Das Dateisystem verkleinern (mit 256 MiB Luft); beim ersten Start wächst es auf die ganze Karte.
-6. **Packen:** `xz -T0 -9`, dazu `SHA256SUMS`. Eine Signatur der Release-Dateien gibt es nicht.
-7. **Veröffentlichen:**
-   - Tags mit `-rc` (z. B. `v0.1.0-rc1`): nur ein Workflow-Artefakt, **kein Release**.
-   - Andere Tags: Release mit `zenos-<version>-pi5-arm64.img.xz` und `SHA256SUMS`. Tags mit Bindestrich (z. B.
-     `v0.2.0-beta1`) werden als Vorabversion markiert.
+7. **Packen:** `xz -T0 -9`, dazu `SHA256SUMS` über Image und Paketliste. Danach bestätigt GitHub die Herkunft
+   (Artifact Attestation, siehe «Prüfen»), und der Workflow schreibt das Manifest für den Raspberry Pi Imager.
+8. **Quellcode** (eigener Job «quellen», Container `ubuntu:26.04`): `image/quellen.sh` holt zu jedem Paar aus
+   Quellpaket und Version der Paketliste die `.dsc` samt Dateien, zuerst aus dem Ubuntu-Archiv (apt prüft Signatur und
+   Prüfsummen), sonst von Launchpad (geprüft gegen die Prüfsummen der `.dsc`), dazu Quickshell als `git archive` am
+   gebauten Commit. Fehlt eine Quelle, scheitert der Job, und es gibt kein Release.
+9. **Veröffentlichen:**
+   - Tags mit `-rc` (z. B. `v0.1.0-rc1`): nur Workflow-Artefakte (Image, Quellen), **kein Release**.
+   - Andere Tags: ein Release mit allen Dateien unter «Release-Dateien». Tags mit Bindestrich (z. B. `v0.2.0-beta1`)
+     werden als Vorabversion markiert.
+
+## Release-Dateien
+
+| Datei | Inhalt |
+|---|---|
+| `zenos-<v>-pi5-arm64.img.xz` | das Image |
+| `zenos-<v>-pi5-arm64.pakete.txt` | alle Pakete im Image mit Version und Quellpaket |
+| `SHA256SUMS` | Prüfsummen von Image und Paketliste |
+| `zenos-<v>.rpi-imager-manifest` | Manifest für den Raspberry Pi Imager 2.x (siehe «Flashen») |
+| `zenos-<v>-quellen-teil<NN>.tar` | Quellcode aller Ubuntu-Pakete im Image, je Teil unter 2 GiB |
+| `zenos-<v>-quickshell-<qv>.tar` | Quellcode von Quickshell am gebauten Commit |
+| `zenos-<v>-QUELLEN.txt` | welches Quellpaket in welchem Teil liegt und woher es kommt |
+| `SHA256SUMS-quellen` | Prüfsummen der Quellen-Dateien |
+
+## Prüfen
+
+- Prüfsummen: `sha256sum -c SHA256SUMS` (und `sha256sum -c SHA256SUMS-quellen` für die Quellen).
+- Herkunft: `gh attestation verify zenos-<v>-pi5-arm64.img.xz --repo <besitzer>/zenOS` bestätigt, dass die Datei aus
+  dem Workflow dieses Repos zum Tag stammt (dasselbe für die Paketliste). Die Bestätigung erzeugt GitHub ohne eigenen
+  Schlüssel über Sigstore; dabei landen Metadaten aus der CI (Repo, Workflow, Commit, Prüfsummen) im öffentlichen
+  Transparenz-Log von Sigstore. Vom Rechner, auf dem zenOS läuft, geht dabei nichts weg.
+
+## Quellcode und Lizenzen
+
+Das Image gibt GPL-Software als Binärpakete von Ubuntu weiter. Das ist nur zusammen mit dem Quellcode in genau den
+ausgelieferten Versionen erlaubt (GPLv2 §3, GPLv3 §6). Deshalb liegen die Quellen auf derselben Release-Seite wie das
+Image, so lange wie dieses; ein Verweis auf das Ubuntu-Archiv reicht nicht, weil ersetzte Versionen dort
+verschwinden. Im System stehen die Hinweise unter `/usr/local/share/doc/zenos/` (`copyright`, `RECHTLICHES`,
+`QUELLEN`, `pakete.txt`) und `/usr/local/share/doc/quickshell/` (LGPL 3); `/etc/legal` verweist darauf. Die
+`copyright`-Dateien der Ubuntu-Pakete unter `/usr/share/doc/` bleiben vollständig.
 
 ## Name, Version und Kanal
 
@@ -67,11 +115,19 @@ Chrome, VS Code, 1Password und coremail sind nicht im Image; Chrome, VS Code und
   (Release-Notes von Ubuntu 26.04). Prüfen mit `sudo rpi-eeprom-update`, aktualisieren mit
   `sudo rpi-eeprom-update -a` oder mit dem Raspberry Pi Imager (Bootloader-Image). zenOS selbst fasst die Firmware
   nie an.
-- Am besten mit dem Raspberry Pi Imager (eigenes Image wählen) und unter «Einstellungen» Benutzer, Passwort und
-  optional einen SSH-Schlüssel setzen, dazu Zeitzone und Tastaturbelegung. Die Belegung gilt auch für das
-  Passwortfeld im zenOS-Login, die Zeitzone für Uhr, Bündelung der Mitteilungen und Uhrzeit-Auslöser.
-- balenaEtcher geht auch, dann ohne Einstellungen: Beim ersten Start gilt `ubuntu`/`ubuntu`, Zeitzone UTC und die
+- Am besten mit dem Raspberry Pi Imager 2.x **über die Manifest-Datei** `zenos-<v>.rpi-imager-manifest`: per
+  Doppelklick öffnen oder im Imager «App Options › Content Repository › Edit › Use custom file › Apply & Restart»,
+  dann zenOS auswählen. Unter
+  «Einstellungen» Benutzer, Passwort und optional einen SSH-Schlüssel setzen, dazu Zeitzone und Tastaturbelegung.
+  Wählt man das Image dagegen direkt als «eigenes Image» (`.img.xz`), bietet der Imager 2.x keine Einstellungen an,
+  weil er nicht weiss, dass das Image cloud-init versteht; erst das Manifest sagt es ihm (`init_format: cloudinit`).
+  Die Belegung gilt auch für das Passwortfeld im zenOS-Login, die Zeitzone für Uhr, Bündelung der Mitteilungen und
+  Uhrzeit-Auslöser. Bei einem `-rc`-Image ohne Release-Seite in der Manifest-Datei `url` auf die heruntergeladene
+  Datei ändern (`file:///…/zenos-<v>-pi5-arm64.img.xz`).
+- balenaEtcher geht auch, dann ohne Einstellungen: Beim ersten Start gilt `user`/`user`, Zeitzone UTC und die
   Vorgabe-Belegung des Images (siehe «Erster Start»).
+- **Argon ONE UP (Compute Module 5) mit NVMe:** Damit der Bootloader die SSD findet, muss im EEPROM `PCIE_PROBE=1`
+  stehen (`sudo rpi-eeprom-config --edit`). USB ist im Image schon eingestellt (`[cm5]` in `config.txt`).
 - Ziel: SD-Karte, USB-Stick oder NVMe.
 
 ## Erster Start
@@ -80,9 +136,11 @@ Chrome, VS Code, 1Password und coremail sind nicht im Image; Chrome, VS Code und
    systemd erzeugt eine neue `machine-id`. Die Firewall ist von Anfang an an (`ufw.service` lädt die Regeln vor
    dem Netz): Herein kommt nur SSH aus lokalen Netzen (`docs/sicherheit.md`).
 2. Anmelden: Mit Einstellungen aus dem Raspberry Pi Imager direkt im zenOS-Login. Ohne Einstellungen legt
-   cloud-init `ubuntu`/`ubuntu` mit abgelaufenem Passwort an. greetd 0.10 kann Passwörter nicht ändern (kein
-   `pam_chauthtok`), der Login zeigt deshalb einen Hinweis. Zuerst an der Textkonsole (`Ctrl + Alt + F2`) oder per
-   SSH anmelden, ein neues Passwort setzen, mit `exit` abmelden und mit `Ctrl + Alt + F7` zurück zum zenOS-Login.
+   cloud-init den Benutzer `user` («Default User») mit dem Passwort `user` an, das abgelaufen ist. greetd 0.10 kann
+   Passwörter nicht ändern (kein `pam_chauthtok`), der Login zeigt deshalb einen Hinweis. Zuerst an der Textkonsole
+   (`Ctrl + Alt + F2`) anmelden, ein neues Passwort setzen, mit `exit` abmelden und mit `Ctrl + Alt + F7` zurück zum
+   zenOS-Login. Per SSH geht das nur mit einem Schlüssel, Passwörter nimmt SSH nicht an. sudo fragt immer nach dem
+   Passwort.
    Zeitzone und Tastatur lassen sich dort nachholen: `sudo timedatectl set-timezone <Zone>` und
    `sudo dpkg-reconfigure keyboard-configuration`, danach neu starten.
 3. Beim ersten Login kommen die Benutzerteile von zenOS (`zenos-sitzung` ruft `install.sh --nur-benutzer`).
@@ -113,12 +171,14 @@ Seit der Systemkennung (`docs/module/kennung.md`, Modul `72-kennung`) gilt:
   gebaut.
 - **Nie:** «offiziell», «Ubuntu-Edition» oder ein Name auf -buntu, Ubuntu im Produktnamen oder Logo, das Logo von
   Raspberry Pi, «Linux» im Namen (zenOS ist eine Linux®-Distribution, heisst aber nicht «zenOS Linux»).
-- **Markenhinweise** (README, später Website und Versionshinweise): «Ubuntu and Canonical are registered trademarks
+- **Markenhinweise** (README, Versionshinweise, `RECHTLICHES`, später Website): «Ubuntu and Canonical are registered trademarks
   of Canonical Ltd. Linux® is the registered trademark of Linus Torvalds in the U.S. and other countries. Raspberry Pi
   is a trademark of Raspberry Pi Ltd.»
 
-Offen vor einer Weitergabe an andere: die schriftliche Anfrage bei Canonical, eine Ähnlichkeitsrecherche zum Namen
-zenOS und der Quellcode zu jedem Release auf derselben Release-Seite.
+Der Quellcode zu jedem Release liegt auf derselben Release-Seite («Quellcode und Lizenzen»), die Markenhinweise
+stehen auch in den Versionshinweisen und unter `/usr/local/share/doc/zenos/RECHTLICHES`. Offen vor einer Weitergabe
+an andere: die schriftliche Anfrage bei Canonical, eine Ähnlichkeitsrecherche zum Namen zenOS und ein signierter
+Update-Kanal «stabil» (heute zieht `zen update` den Zweig `dev` ohne Signaturprüfung).
 
 ## Bürorechner
 

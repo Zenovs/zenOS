@@ -16,6 +16,7 @@ Verweis angelegt; was generiert wird, erzeugen die Programme unter `scripts/bin/
 | `systemd/system/systemd-networkd-wait-online.service.d/zenos-netzwerk.conf` | `/etc/systemd/system/…` | wait-online überspringen, solange NetworkManager das Netz verwaltet |
 | `modprobe/zenos-brcmfmac.conf` | `/etc/modprobe.d/` (von `zen netzwerk umstellen` bzw. im Image) | WPA3 im WLAN-Treiber des Raspberry Pi aus (`docs/module/netzwerk.md`) |
 | `cloud/99-zenos-netzwerk.cfg` | `/etc/cloud/cloud.cfg.d/` (von `zen netzwerk umstellen`, nie im Image) | cloud-init schreibt keine Netzwerk-Konfiguration mehr |
+| `doc/RECHTLICHES`, `doc/QUELLEN` | `/usr/local/share/doc/zenos/` (Modul `72-kennung`, neben `copyright` aus `LICENSE`) | Lizenzen, Markenhinweise und wo der Quellcode liegt; `/etc/legal` verweist darauf |
 | `systemd/system-shutdown/zenos-argon` | `/usr/lib/systemd/system-shutdown/` | Abschaltsignal an die Argon-Platine beim Ausschalten |
 | `portal/labwc-portals.conf` | `/etc/xdg/xdg-desktop-portal/` | Portale: `gtk`, Bildschirm über `wlr` |
 | `portal/xdpw.conf` | `/etc/xdg/xdg-desktop-portal-wlr/config` | Bildschirmwahl und Erkennung der Freigabe |

@@ -1,0 +1,23 @@
+#cloud-config
+# zenOS: Einstellungen für den ersten Start (cloud-init, https://cloudinit.readthedocs.io/).
+#
+# Ohne Einstellungen aus dem Raspberry Pi Imager legt cloud-init den Benutzer «user» mit dem Passwort «user» an
+# (Anzeigename «Default User», /etc/cloud/cloud.cfg.d/90-zenos-benutzer.cfg). Das Passwort muss bei der ersten
+# Anmeldung geändert werden: an der Textkonsole (Ctrl + Alt + F2) anmelden, neues Passwort setzen, «exit», mit
+# Ctrl + Alt + F7 zurück zum Login von zenOS. sudo fragt immer nach dem Passwort.
+# Stellst du im Imager Benutzer, SSH oder WLAN ein, ersetzt er diese Datei.
+#
+# YAML: nur mit Leerzeichen einrücken, nie mit Tabulatoren.
+
+chpasswd:
+  expire: true
+  users:
+  - name: user
+    password: user
+    type: text
+
+# Rechnername (ein Name im lokalen Netz nur mit eigenem DNS oder avahi)
+hostname: zenos
+
+# SSH nimmt keine Passwörter an, nur Schlüssel (wie bei Ubuntu)
+ssh_pwauth: false

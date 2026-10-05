@@ -87,7 +87,10 @@ ISSUE_TEXT = "\\S \\n \\l\n\n"
 LEGAL_TEXT = """
 zenOS besteht aus freier Software und wenigen unfreien, frei weitergebbaren
 Firmware-Dateien. Die genauen Lizenzbedingungen jedes Programms stehen in
-/usr/share/doc/*/copyright, die von zenOS selbst in /opt/zenos/LICENSE.
+/usr/share/doc/*/copyright, die von zenOS selbst in
+/usr/local/share/doc/zenos/copyright, die von Quickshell in
+/usr/local/share/doc/quickshell/copyright. Wo der Quellcode liegt, steht in
+/usr/local/share/doc/zenos/QUELLEN, die Markenhinweise in RECHTLICHES daneben.
 
 zenOS basiert auf Ubuntu und ist ein unabhängiges Projekt. Es ist nicht mit
 Canonical verbunden und wird von Canonical weder unterstützt noch geprüft.

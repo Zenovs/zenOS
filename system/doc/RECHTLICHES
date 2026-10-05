@@ -1,0 +1,31 @@
+zenOS – Rechtliches
+===================
+
+zenOS ist ein unabhängiges, persönliches Projekt. Es basiert auf Ubuntu 26.04 LTS,
+ist aber nicht mit Canonical verbunden und wird von Canonical weder unterstützt
+noch geprüft. Pakete und Sicherheitsupdates des Grundsystems kommen unverändert
+aus dem Ubuntu-Archiv.
+
+Lizenzen
+--------
+- zenOS selbst (Oberfläche, Skripte, Konfiguration): MIT-Lizenz, siehe copyright
+  in diesem Ordner.
+- Quickshell: GNU LGPL 3, siehe /usr/local/share/doc/quickshell/copyright.
+- Pakete aus Ubuntu: unter ihren eigenen Lizenzen, siehe
+  /usr/share/doc/<paket>/copyright.
+- Firmware von Raspberry Pi, Broadcom und Cypress: unfrei, aber frei
+  weitergebbar, unter den Bedingungen in den copyright-Dateien ihrer Pakete
+  (etwa /usr/share/doc/linux-firmware-raspi/copyright).
+
+Wo der Quellcode liegt, steht in QUELLEN in diesem Ordner.
+
+zenOS kommt OHNE JEDE GEWÄHRLEISTUNG, soweit das anwendbare Recht dies zulässt.
+Es gibt keinen Support.
+
+Marken / Trademarks
+-------------------
+Ubuntu and Canonical are registered trademarks of Canonical Ltd.
+Linux® is the registered trademark of Linus Torvalds in the U.S. and other
+countries.
+Raspberry Pi is a trademark of Raspberry Pi Ltd.
+zenOS is not affiliated with or endorsed by Canonical or Raspberry Pi Ltd.

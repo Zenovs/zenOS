@@ -1,0 +1,26 @@
+zenOS – Wo der Quellcode liegt
+==============================
+
+zenOS
+  https://github.com/Zenovs/zenOS, jede Version als Tag v…. Der installierte
+  Stand liegt als Git-Checkout unter /opt/zenos («zen version» zeigt den Commit).
+
+Quickshell
+  https://git.outfoxxed.me/quickshell/quickshell (Spiegel:
+  https://github.com/quickshell-mirror/quickshell), gebaut aus genau dem Commit
+  in /usr/local/share/doc/quickshell/copyright.
+
+Pakete aus Ubuntu
+  Zu jedem Image von zenOS gibt es den Quellcode aller enthaltenen Pakete in
+  genau den ausgelieferten Versionen auf derselben Release-Seite wie das Image
+  (zenos-<version>-quellen-teil*.tar, Übersicht in QUELLEN.txt), so lange, wie
+  das Image dort angeboten wird. Welche Pakete in welcher Version im Image
+  enthalten sind, steht in pakete.txt in diesem Ordner (nur bei einem Image).
+  Auf einem laufenden System holt «apt source <paket>» die Quelle der
+  installierten Version, solange Ubuntu sie anbietet; ältere Versionen gibt es
+  auf https://launchpad.net/ubuntu/+source/<paket>.
+
+Firmware
+  Einige Firmware-Dateien (Raspberry Pi, Broadcom, Cypress) gibt es nur binär.
+  Sie stehen unter den Lizenzen der Hersteller, die die Weitergabe erlauben
+  (copyright-Dateien der Pakete, etwa linux-firmware-raspi).

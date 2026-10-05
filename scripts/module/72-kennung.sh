@@ -4,6 +4,7 @@
 #
 # Das System weist sich als zenOS aus (ID=zenos, ID_LIKE="ubuntu debian"), wie Pop!_OS, Mint und elementary. Die
 # Arbeit macht scripts/bin/zenos-kennung (Einzelheiten dort und in docs/module/kennung.md). Hier:
+# - Lizenz, Markenhinweise und Quellenangaben nach /usr/local/share/doc/zenos (copyright, RECHTLICHES, QUELLEN).
 # - zenos-kennung als root-eigene Kopie nach /usr/local/sbin (root führt es aus, auch im apt-Hook; die Kopie bleibt
 #   bei einem «zen rollback» auf einen Stand ohne Kennung liegen) und der apt-Hook /etc/apt/apt.conf.d/60zenos-kennung.
 #   Ist /usr/local/sbin für andere als root schreibbar, unterbleibt beides (und die Umstellung).
@@ -25,11 +26,22 @@
 _KENNUNG_PROGRAMM=/usr/local/sbin/zenos-kennung
 
 modul_system() {
+  _kennung_rechtliches
   _kennung_werkzeug || return 0
   _kennung_version
   datei_installieren "$ZENOS_CODE/assets/zeichen/zenos-app-icon.svg" \
     /usr/local/share/icons/hicolor/scalable/apps/zenos.svg 0644 root:root
   _kennung_umstellen
+}
+
+# Lizenz, Marken- und Quellenhinweise unter /usr/local/share/doc/zenos (auf sie verweist /etc/legal). Gilt auch mit
+# der Kennung Ubuntu: Die Hinweise beschreiben zenOS, nicht den Namen in os-release. pakete.txt daneben schreibt nur
+# image/bauen.sh (Stand bei Auslieferung).
+_kennung_rechtliches() {
+  local ziel=/usr/local/share/doc/zenos
+  datei_installieren "$ZENOS_CODE/LICENSE" "$ziel/copyright" 0644 root:root
+  datei_installieren "$ZENOS_CODE/system/doc/RECHTLICHES" "$ziel/RECHTLICHES" 0644 root:root
+  datei_installieren "$ZENOS_CODE/system/doc/QUELLEN" "$ziel/QUELLEN" 0644 root:root
 }
 
 # Root führt das Programm aus: Jeder Ordner auf dem Weg gehört root und ist nur für root schreibbar

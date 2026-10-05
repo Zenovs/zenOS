@@ -324,5 +324,10 @@ Telemetrie).
 
 - Keine Geheimnisse und keine persönlichen Daten im Repo. gitleaks läuft als Pre-Commit-Hook und in GitHub Actions.
 - GitHub nur mit 2FA. Das Repo ist das System: Wer das Konto übernimmt, bringt Code auf die Rechner.
-- Releases enthalten `SHA256SUMS`, optional mit Signatur.
+- Releases enthalten `SHA256SUMS` und eine Herkunftsbestätigung von GitHub (Artifact Attestation über Sigstore,
+  prüfbar mit `gh attestation verify`), dazu den Quellcode aller Pakete. Einen eigenen Signaturschlüssel gibt es nicht.
+- Im Image hat der Standardbenutzer (`user`, nur ohne Einstellungen aus dem Imager) **kein sudo ohne Passwort**
+  (`/etc/cloud/cloud.cfg.d/90-zenos-benutzer.cfg`, `sudo: null`), sein Startpasswort ist abgelaufen und muss zuerst
+  geändert werden, SSH nimmt nur Schlüssel an. Ubuntus Vorgabe wäre `NOPASSWD:ALL`; damit wären Passwortabfragen
+  wie beim Ausschalten der Firewall wirkungslos.
 - Im Image werden SSH-Hostschlüssel und `machine-id` gelöscht und beim ersten Start neu erzeugt. Sonst hätten alle Kopien dieselben Schlüssel.

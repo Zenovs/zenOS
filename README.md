@@ -48,10 +48,10 @@ Chrome, VS Code, 1Password (mit CLI) und coremail installiert zenOS beim ersten 
 
 Bis das erste Image erscheint, wird zenOS per Skript auf Ubuntu Server 26.04 LTS installiert (siehe oben). Danach geht es so:
 
-1. Unter [Releases](../../releases) die neuste Datei `zenos-<version>-pi5-arm64.img.xz` herunterladen.
-2. Prüfsumme vergleichen: `sha256sum -c SHA256SUMS`
-3. Das Image am besten mit dem Raspberry Pi Imager (eigenes Image wählen) auf SD-Karte, USB-Stick oder NVMe schreiben und dort unter «Einstellungen» Benutzer und Passwort setzen (optional SSH mit deinem öffentlichen Schlüssel), dazu Zeitzone und Tastaturbelegung. balenaEtcher geht auch, dann ohne Einstellungen.
-4. Pi starten, ein bis zwei Minuten warten und im zenOS-Login anmelden. Ohne Einstellungen heisst der Benutzer `ubuntu` mit Passwort `ubuntu`, und das Passwort muss zuerst an der Textkonsole geändert werden: mit `Ctrl + Alt + F2` wechseln, als `ubuntu` / `ubuntu` anmelden, ein neues Passwort setzen, mit `exit` abmelden und mit `Ctrl + Alt + F7` zurück zum zenOS-Login.
+1. Unter [Releases](../../releases) die neuste Datei `zenos-<version>-pi5-arm64.img.xz` herunterladen, dazu `SHA256SUMS` und `zenos-<version>.rpi-imager-manifest`.
+2. Prüfsumme vergleichen: `sha256sum -c SHA256SUMS`. Die Herkunft bestätigt `gh attestation verify zenos-<version>-pi5-arm64.img.xz --repo Zenovs/zenOS`.
+3. Das Image am besten mit dem Raspberry Pi Imager 2.x auf SD-Karte, USB-Stick oder NVMe schreiben: die Manifest-Datei per Doppelklick öffnen (oder «App Options › Content Repository › Edit › Use custom file»), zenOS wählen und unter «Einstellungen» Benutzer und Passwort setzen (optional SSH mit deinem öffentlichen Schlüssel), dazu Zeitzone und Tastaturbelegung. Wählst du die `.img.xz` direkt als eigenes Image, bietet der Imager keine Einstellungen an. balenaEtcher geht auch, dann ohne Einstellungen.
+4. Pi starten, ein bis zwei Minuten warten und im zenOS-Login anmelden. Ohne Einstellungen heisst der Benutzer `user` mit Passwort `user`, und das Passwort muss zuerst an der Textkonsole geändert werden: mit `Ctrl + Alt + F2` wechseln, als `user` / `user` anmelden, ein neues Passwort setzen, mit `exit` abmelden und mit `Ctrl + Alt + F7` zurück zum zenOS-Login. sudo fragt immer nach dem Passwort, SSH nimmt nur Schlüssel an.
 5. Die Einrichtung fragt nach Name, optional Ort, Erscheinungsbild und erstem Modus.
 
 Ubuntu 26.04 braucht auf dem Pi 5 einen Bootloader (EEPROM) vom 11.02.2025 oder neuer, sonst startet es nicht. Wie du ihn prüfst und aktualisierst, steht in [ANLEITUNG.md](ANLEITUNG.md) und in [docs/image-und-releases.md](docs/image-und-releases.md).
@@ -87,6 +87,6 @@ Passt's dir, nimm's. Passt's dir nicht, bau dein eigenes.
 
 zenOS ist ein unabhängiges Projekt. Es basiert auf Ubuntu, ist aber nicht mit Canonical verbunden und wird von Canonical weder unterstützt noch geprüft. Das System weist sich als zenOS aus; «basiert auf Ubuntu» steht in der Systemkennung, in `zen version` und bei der Anmeldung.
 
-Der Code von zenOS steht unter der [MIT-Lizenz](LICENSE). Das Image enthält Pakete aus Ubuntu unter ihren eigenen Lizenzen und unfreie, weitergebbare Firmware von Raspberry Pi, Broadcom und Cypress; die Lizenztexte liegen im System unter `/usr/share/doc/*/copyright`. Schriften und Quickshell behalten ihre eigenen Lizenzen. Den Quellcode von zenOS gibt es in diesem Repo, den der Ubuntu-Pakete im Ubuntu-Archiv (`apt source <paket>`).
+Der Code von zenOS steht unter der [MIT-Lizenz](LICENSE). Das Image enthält Pakete aus Ubuntu unter ihren eigenen Lizenzen und unfreie, weitergebbare Firmware von Raspberry Pi, Broadcom und Cypress; die Lizenztexte liegen im System unter `/usr/share/doc/*/copyright`. Schriften und Quickshell (LGPL 3) behalten ihre eigenen Lizenzen. Den Quellcode von zenOS gibt es in diesem Repo; den aller Pakete im Image, in genau den ausgelieferten Versionen, und den von Quickshell auf derselben Release-Seite wie das Image (`zenos-<version>-quellen-teil*.tar`, Übersicht in `zenos-<version>-QUELLEN.txt`). Im System stehen die Hinweise unter `/usr/local/share/doc/zenos/`.
 
 Ubuntu and Canonical are registered trademarks of Canonical Ltd. Linux® is the registered trademark of Linus Torvalds in the U.S. and other countries. Raspberry Pi is a trademark of Raspberry Pi Ltd.

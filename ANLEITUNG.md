@@ -667,8 +667,9 @@ git tag -a v0.1.0 -m "zenOS 0.1.0"
 git push origin v0.1.0
 ```
 
-Nach dem Bau liegen `zenos-0.1.0-pi5-arm64.img.xz` und `SHA256SUMS` unter Releases auf GitHub. Den Stand des Baus
-zeigt GitHub unter Actions.
+Nach dem Bau liegen unter Releases auf GitHub: `zenos-0.1.0-pi5-arm64.img.xz`, die Paketliste, `SHA256SUMS`, das
+Manifest für den Raspberry Pi Imager und der Quellcode aller Pakete (`docs/image-und-releases.md`, «Release-Dateien»).
+Den Stand des Baus zeigt GitHub unter Actions; der Quellcode-Job braucht je nach Netz bis zu einigen Stunden.
 
 **G7 bis G10: `main` auf den Stand bringen** (deine Entscheidung). Solange `main` nur den Start-Commit enthält,
 braucht jede Installation `git switch dev`. Vorschlag: `main` auf `v0.1.0` vorspulen. Dann funktionieren

@@ -1,0 +1,42 @@
+Startpartition von zenOS
+========================
+
+zenOS basiert auf Ubuntu 26.04 LTS Server für den Raspberry Pi. Diese Partition
+(Bezeichnung «system-boot») ist im laufenden System unter /boot/firmware
+eingehängt. Mehr: https://github.com/Zenovs/zenOS (docs/image-und-releases.md)
+
+
+Dateien, die du ändern darfst
+-----------------------------
+
+config.txt
+  Einstellungen des Bootloaders, etwa Device-Tree-Overlays für angeschlossene
+  Hardware. Der Abschnitt [cm5] schaltet den USB-2-Anschluss des Compute
+  Module 5 in den Host-Modus (Argon ONE UP: Tastatur, Touchpad und USB).
+  https://www.raspberrypi.com/documentation/computers/config_txt.html
+
+user-data
+  cloud-init für den ersten Start. Ohne Einstellungen aus dem Raspberry Pi
+  Imager: Benutzer «user», Passwort «user», das bei der ersten Anmeldung
+  geändert werden muss. Der Imager ersetzt diese Datei mit deinen Einstellungen.
+  https://cloudinit.readthedocs.io/
+
+network-config
+  Netz für den ersten Start (netplan, YAML). zenOS stellt danach auf den
+  NetworkManager um.
+
+
+Nicht ändern
+------------
+
+meta-data
+  Kennung der Instanz für cloud-init.
+
+current/, new/, old/
+  Kernel, initrd, Device-Trees und cmdline.txt. Neue Startdateien landen in
+  new/ und werden beim nächsten Start getestet; klappt das, werden sie zu
+  current/, sonst startet das System weiter mit current/ (man piboot-try).
+  Zurück auf den vorherigen Stand: sudo piboot-try --restore-old
+
+autoboot.txt, bootcode.bin, start*.elf, fixup*.dat
+  Bootloader und Firmware, geschrieben von flash-kernel.

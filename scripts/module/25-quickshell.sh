@@ -5,6 +5,10 @@
 # Quickshell fehlt in den Ubuntu-Paketquellen. Gebaut wird genau der Commit von v0.3.1, geprüft nach dem
 # Klonen. Quickshell nutzt private Qt-APIs, deshalb hält der Stempel /usr/local/share/zenos/quickshell.version
 # neben Commit und Version auch die Version von libqt6core6t64 fest: Ändert sich Qt, wird neu gebaut.
+# Lizenz (GNU LGPL 3): /usr/local/share/doc/quickshell/ mit copyright (Herkunft, Commit, Bauoptionen) und den
+# Lizenztexten LICENSE (LGPL 3) und LICENSE-GPL (GPL 3), bei jedem Lauf, auch ohne Neubau. Die Texte kommen aus
+# /usr/share/common-licenses (unveränderte Fassungen der FSF): LGPL-3 ist bytegleich mit LICENSE im Quellbaum von
+# v0.3.1, GPL-3 hat gegenüber LICENSE-GPL dort nur zusätzlich den Anhang «How to Apply These Terms».
 # Die Build-Abhängigkeiten (scripts/pakete/quickshell-bau.txt) bleiben danach installiert, damit ein
 # Neubau nach einem Qt-Update ohne neue Downloads auskommt. Der Build-Ordner wird immer gelöscht.
 # Läuft auch im --image-Modus.
@@ -17,6 +21,7 @@ modul_system() {
   if [[ -n "$qt" ]] && _quickshell_stempel_passt "$stempel" "$commit" "$version" "$qt"; then
     log_info "Quickshell $version vorhanden (Qt $qt)"
     _quickshell_desktop_entfernen
+    _quickshell_lizenz "$version" "$commit"
     return 0
   fi
 
@@ -38,6 +43,43 @@ modul_system() {
   qt=$(_quickshell_qt_version)
   [[ -n "$qt" ]] || abbruch "libqt6core6t64 ist nicht installiert"
   printf 'commit=%s\nversion=%s\nqt=%s\n' "$commit" "$version" "$qt" | datei_schreiben "$stempel" 0644 root:root
+  _quickshell_lizenz "$version" "$commit"
+}
+
+# Bauoptionen für cmake, je Zeile eine (auch für copyright)
+_quickshell_cmake_optionen() { # COMMIT
+  printf '%s\n' -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=/usr/local \
+    -DINSTALL_QML_PREFIX=lib/qt6/qml "-DDISTRIBUTOR=zenOS (Quellbau)" "-DGIT_REVISION=$1" -DCRASH_HANDLER=OFF \
+    -DHYPRLAND=OFF -DI3=OFF -DX11=OFF
+}
+
+# copyright und Lizenztexte (Kopf dieser Datei)
+_quickshell_lizenz() {
+  local version=$1 commit=$2 ziel=/usr/local/share/doc/quickshell text optionen
+  for text in LGPL-3 GPL-3; do
+    [[ -f "/usr/share/common-licenses/$text" ]] || { log_warnung "/usr/share/common-licenses/$text fehlt (base-files)"; return 0; }
+  done
+  datei_installieren /usr/share/common-licenses/LGPL-3 "$ziel/LICENSE" 0644 root:root
+  datei_installieren /usr/share/common-licenses/GPL-3 "$ziel/LICENSE-GPL" 0644 root:root
+  optionen=$(_quickshell_cmake_optionen "$commit" | sed 's/.* .*/"&"/' | paste -sd ' ' -)
+  datei_schreiben "$ziel/copyright" 0644 root:root <<TEXT
+Quickshell $version, gebaut von zenOS aus dem unveränderten Quellcode
+(scripts/module/25-quickshell.sh) und installiert unter /usr/local.
+
+Quelle:   https://git.outfoxxed.me/quickshell/quickshell
+Spiegel:  https://github.com/quickshell-mirror/quickshell
+Tag:      v$version
+Commit:   $commit
+Bau:      cmake $optionen
+          danach strip --strip-debug
+
+Lizenz:   GNU Lesser General Public License, Version 3 (LICENSE), die auf der
+          GNU General Public License, Version 3 aufbaut (LICENSE-GPL).
+          Copyright: die Autorinnen und Autoren von Quickshell (siehe Quelle).
+
+Den Quellcode zu genau diesem Commit gibt es unter der Quelle oben und auf der
+Release-Seite jedes Images von zenOS (siehe /usr/local/share/doc/zenos/QUELLEN).
+TEXT
 }
 
 _quickshell_qt_version() {
@@ -100,18 +142,7 @@ _quickshell_bauen() {
   if [[ "$mem_kb" =~ ^[0-9]+$ ]] && (( mem_kb / 1200000 < jobs )); then jobs=$(( mem_kb / 1200000 )); fi
   (( jobs >= 1 )) || jobs=1
 
-  cmake_optionen=(
-    -G Ninja
-    -DCMAKE_BUILD_TYPE=RelWithDebInfo
-    -DCMAKE_INSTALL_PREFIX=/usr/local
-    -DINSTALL_QML_PREFIX=lib/qt6/qml
-    "-DDISTRIBUTOR=zenOS (Quellbau)"
-    -DGIT_REVISION="$commit"
-    -DCRASH_HANDLER=OFF
-    -DHYPRLAND=OFF
-    -DI3=OFF
-    -DX11=OFF
-  )
+  mapfile -t cmake_optionen < <(_quickshell_cmake_optionen "$commit")
   log_info "Quickshell $version bauen mit $jobs Job(s) – auf dem Pi dauert das eine Weile"
   start=$SECONDS
   if ! cmake -S "$bau/quelle" -B "$bau/build" "${cmake_optionen[@]}" > "$bau/bau.log" 2>&1 ||

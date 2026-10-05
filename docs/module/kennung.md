@@ -39,8 +39,11 @@ lautlos ab.
 - **`/etc/issue`** (Textkonsole): `\S \n \l` und eine Leerzeile. agetty setzt für `\S` den `PRETTY_NAME` ein, also
   «zenOS 0.1.0-rc2-18-ge1ee578 <rechner> tty1»; bei einer neuen Version bleibt die Datei gleich.
 - **`/etc/legal`** (zeigt `pam_motd` einmal je Benutzer): freie Software und Firmware, Lizenzen unter
-  `/usr/share/doc/*/copyright` und `/opt/zenos/LICENSE`, «basiert auf Ubuntu … nicht mit Canonical verbunden … weder
-  unterstützt noch geprüft», ohne Gewährleistung.
+  `/usr/share/doc/*/copyright`, `/usr/local/share/doc/zenos/copyright` und `/usr/local/share/doc/quickshell/copyright`,
+  Quellen in `/usr/local/share/doc/zenos/QUELLEN`, Markenhinweise in `RECHTLICHES` daneben, «basiert auf Ubuntu …
+  nicht mit Canonical verbunden … weder unterstützt noch geprüft», ohne Gewährleistung. Die drei Dateien unter
+  `/usr/local/share/doc/zenos/` legt `72-kennung` an (aus `LICENSE` und `system/doc/`), auch wenn die Kennung Ubuntu
+  bleibt.
 - **Begrüssung (motd):** `00-header` («Welcome to Ubuntu»), `10-help-text` (docs.ubuntu.com, Landscape, Ubuntu Pro),
   `91-contract-ua-esm-status` und `91-release-upgrade` werden mit `dpkg-statoverride --update --add root root 0644`
   stillgelegt (nur vorhandene). Dazu `/var/lib/update-notifier/hide-esm-in-motd` (Schalter von update-notifier, blendet
