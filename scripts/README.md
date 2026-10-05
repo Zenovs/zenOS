@@ -6,7 +6,6 @@
 | `lib/gemeinsam.sh` | Hilfsfunktionen für install.sh, Module und zen (API im Kopf der Datei) |
 | `lib/firewall.sh` | gemeinsame Teile der Firewall für `zen firewall`, `zen doctor` und `bin/zenos-firewall` |
 | `lib/aufraeumen.sh` | gemeinsame Teile für `module/22-aufraeumen.sh` und `zen doctor` (snapd, landscape-common) |
-| `lib/wechsel.sh` | gemeinsame Teile von `zen update` und `zen rollback`: Sperren, Platzprüfung, Holen von origin |
 | `lib/sensible-pfade` | Pfade, die `release-signieren.sh` gesondert zeigt: Rückfrage-Pfade (Firewall, Netz, Boot), Anmeldung, Vertrauen |
 | `module/NN-name.sh` | Installationsschritte, laufen in Namensreihenfolge |
 | `pakete/<modul>.txt` | apt-Pakete je Modul (ein Paket pro Zeile, `#` Kommentar) |
@@ -16,21 +15,28 @@
 | `bin/zenos-*` | Hilfsprogramme (bash oder python3, ausführbar) |
 | `pruefen.sh` | Selbsttest des Repos (Linux, nicht auf dem Mac) |
 | `release-signieren.sh` | signiert ein Release oder einen Tag `vertrauen/NNNN` mit 1Password (Mac, bash 3.2) |
-| `bin/zenos-kanal` | signierter Kanal auf dem Gerät: holen (ohne Rechte), prüfen (root, ohne Netz), Status, Anker. Installiert nichts |
+| `bin/zenos-kanal` | signierter Kanal auf dem Gerät: holen (ohne Rechte), prüfen und bereitstellen (root, ohne Netz), installieren mit Gesundheitsprüfung und Rückweg, nachstart, Status, Anker; Kern von `zen update` und `zen rollback` |
 
 ## install.sh
 
 ```
-./scripts/install.sh [--image] [--nur-benutzer] [--ruhig]
+./scripts/install.sh [--image] [--nur-benutzer] [--nur-code] [--ruhig]
 ```
 
 - Läuft als normaler Benutzer und holt sich Root-Rechte mit `sudo` für die Systemteile. Mit
   `sudo ./scripts/install.sh` aufgerufen, läuft es als der aufrufende Benutzer weiter. Als root ohne
   sudo (chroot) gibt es keine Benutzerteile.
 - `--image`: für den Image-Bau im chroot. Keine Benutzerteile, kein Zugriff auf `~`, Dienste werden nur
-  aktiviert, nie gestartet. `ZENOS_KANAL=<kanal>` legt den Kanal beim ersten Mal fest (der Image-Bau
-  setzt `dev`, solange `main` keine Releases trägt).
-- `--nur-benutzer`: nur die Benutzerteile, ohne sudo. Läuft auch beim Sitzungsstart (mit `--ruhig`).
+  aktiviert, nie gestartet. `ZENOS_KANAL=<kanal>` legt den Kanal beim ersten Mal fest (`stabil`, `vorschau` oder
+  `dev`, `main` gilt als `stabil`; der Image-Bau setzt `dev`, solange es keine signierten Releases gibt).
+- `--nur-benutzer`: nur die Benutzerteile, ohne sudo. Läuft auch beim Sitzungsstart (mit `--ruhig`). Ohne
+  `--ruhig` (`zen update`, `zen benutzer`) startet es die Oberfläche neu, wenn sich QML geändert hat.
+- `--nur-code`: nur als root, nur Modul 10-code (Code nach `/opt/zenos`), ohne Netz. Für
+  `zenos-kanal-nachstart.service` nach einem Abbruch.
+- `ZENOS_KANAL_LAUF=1` setzt zenos-kanal, wenn es install.sh aus einer Bereitstellung startet. Ohne die Variable
+  gilt ein Lauf als «von Hand»: Aus einem anderen Checkout wartet install.sh vor der eigenen Sperre auf die
+  Kanal-Sperre (dieselbe Reihenfolge wie zenos-kanal) und 10-code markiert den Stand als angehalten; jeder Lauf von
+  Hand erledigt eine unterbrochene Kanal-Installation (`laeuft.json`).
 - `--ruhig`: im Terminal nur Warnungen und Fehler, alles andere ins Log.
 - Log: `/var/log/zenos/install.log` (gehört dem Benutzer, Gruppe `adm`, 0640). Kann `--nur-benutzer`
   dort nicht schreiben (frisches Image), landet das Log in `~/.local/state/zenos/install.log`. Jeder
@@ -90,11 +96,11 @@ modul_benutzer() {  # optional; als Benutzer, ohne sudo, nie im --image-Modus
 
 | Befehl | Modul | Was es tut |
 |---|---|---|
-| `zen update` | M1 | neuen Stand vom Kanal holen und installieren |
-| `zen rollback <tag>` | M1 | zu einem getaggten Stand zurück und installieren |
-| `zen kanal [status\|pruefen\|anker]` | Kanal | signierter Kanal: Stand mit Fingerabdrücken; `sudo zen kanal pruefen` holt und prüft (installiert nichts); `sudo zen kanal anker ORDNER` setzt den Anker von Hand |
+| `zen update` | M1 | über den Kanal holen, prüfen, bei Bedarf «ja», installieren, Gesundheit prüfen, sonst zurück |
+| `zen rollback <tag>` | M1 | über den Kanal zu einem Tag zurück (signiert, sonst nur mit «ja») |
+| `zen kanal [status\|pruefen\|anker]` | Kanal | signierter Kanal: Stand mit Fingerabdrücken, letzte Installation; `sudo zen kanal pruefen` holt und prüft (installiert nichts); `sudo zen kanal anker ORDNER` setzt den Anker von Hand |
 | `zen doctor [--kurz]` | M1 | Prüfbericht ohne Geheimnisse, Exit 1 bei Fehlern |
-| `zen version` | M1 | zenOS-Version, Basis (Ubuntu), Kanal, Commit, Quickshell, labwc, Architektur |
+| `zen version` | M1 | zenOS-Version, Basis (Ubuntu), Kanal, Commit, letzte Installation über den Kanal, Quickshell, labwc, Architektur |
 | `zen benutzer [--ruhig]` | M1 | nur die Benutzerteile einrichten (`install.sh --nur-benutzer`) |
 | `zen hilfe [befehl]` | M1 | Übersicht oder Hilfe zu einem Befehl |
 | `zen lock` | M7 | Sitzung sperren, auch per SSH (Notfall-Sperre, falls die Oberfläche nicht antwortet) |
@@ -113,14 +119,13 @@ modul_benutzer() {  # optional; als Benutzer, ohne sudo, nie im --image-Modus
 - Den Unterbefehlen stehen `lib/gemeinsam.sh` sowie `zen_git` (lesend in /opt/zenos), `zen_git_root`
   (schreibend als root), `zen_fehler`, `zen_warnung`, `zen_hinweis`, `$SUDO` und `$ZENOS_CODE` (immer
   `/opt/zenos`) zur Verfügung.
-- `zen update`: in /opt/zenos die Branches ohne Tags holen (`git fetch --no-tags --prune`), dann die Tags getrennt
-  und ohne `--force` (ein auf origin verschobener Tag bleibt, mit Warnung), Checkout hart auf `origin/<kanal>`
-  (Kanal aus `/etc/xdg/zenos/kanal`, Standard `dev`), `clean -fd`, dann install.sh. Zeigt alt → neu.
-- `zen rollback <tag>`: neue Tags holen (ohne `--force`), `checkout --detach <tag>`, install.sh. Das nächste
-  `zen update` kehrt auf den Kanal zurück.
-- Beide (`lib/wechsel.sh`): Sperre `/run/lock/zenos-kanal.lock` bis zum Ende von install.sh, Wechsel erst, wenn
-  kein anderes install.sh läuft (`/run/lock/zenos-install.lock`, höchstens 15 Minuten Warten), `git fetch` mit
-  Zeitlimit 180 s und ohne Rückfragen, Abbruch ohne Änderung bei weniger als 1 GiB frei unter /opt/zenos.
+- `zen update` und `zen rollback <tag>` starten `sudo /usr/local/libexec/zenos/zenos-kanal update` bzw.
+  `rollback <tag>`. Das schreibt einen Wunsch, startet `zenos-kanal-holen` und `zenos-kanal-pruefen`, fragt bei
+  Bedarf nach «ja» (gebunden an die gezeigte Commit- bzw. Objekt-ID), startet dann `zenos-kanal-installieren` und
+  zeigt dessen Journal. Eine eigene Sperre (`/run/lock/zenos-kanal-bedienung.lock`) verhindert zwei gleichzeitige
+  Aufrufe. Nach einer Installation oder einem Rückweg richtet zen die Benutzerteile ein (`install.sh
+  --nur-benutzer`). Exit: 0 installiert oder aktuell, 3 abgelehnt, 4 gescheitert und zurück, 5 kaputt, 10 wartet
+  (Zustimmung, Platz, Netz), 75 läuft schon. Fehlt zenos-kanal, verweist zen auf den Notweg (ANLEITUNG F).
 
 ## zen doctor
 

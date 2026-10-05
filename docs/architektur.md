@@ -376,26 +376,32 @@ Mac (Claude Code, Tests im Container) ── push ──▶ GitHub dev ──▶
                                                                   und Bürorechner (nur getestete Stände)
 ```
 
-- **`zen update`:** holt die Branches ohne Tags (`git fetch --no-tags --prune`), danach die Tags getrennt und ohne
-  `--force`, dann `reset --hard` auf `origin/<kanal>` und `clean`, danach `install.sh`. Zeigt alt → neu. Der Kanal
-  steht in `/etc/xdg/zenos/kanal`: `dev` auf dem Pi und im Image, bis `main` Releases trägt. Lokale Änderungen in
-  `/opt/zenos` gehen verloren. Ein auf origin verschobener Tag bleibt beim Stand, den das Gerät kennt, und erscheint
-  nur als Warnung (bis `v0.1.0-rc3` brach `zen update` daran ab).
-- **`zen rollback <tag>`:** holt neue Tags (ebenso ohne `--force`), setzt `/opt/zenos` losgelöst auf den Tag, dann
-  `install.sh`. Das nächste `zen update` kehrt auf den Kanal zurück.
-- **Schutz bei beiden** (`scripts/lib/wechsel.sh`): eine eigene Sperre `/run/lock/zenos-kanal.lock` von vor dem
-  Holen bis zum Ende von `install.sh` (nie zwei Wechsel gleichzeitig); der Wechsel selbst wartet, bis kein anderes
-  `install.sh` mehr läuft (dessen Sperre `/run/lock/zenos-install.lock`); ein `git fetch` hat 180 s Zeit; mit
-  weniger als 1 GiB frei unter `/opt/zenos` bricht der Wechsel ab, bevor er etwas ändert. Den Notweg ohne `zen`
-  beschreibt `ANLEITUNG.md`, Abschnitt F.
-- **`zen kanal`** (signierter Kanal, installiert in dieser Fassung nichts): `sudo zen kanal pruefen` holt Tags und
-  Branches ohne Rechte (`zenos-kanal-holen.service`, DynamicUser, Sandbox) als Bundle, prüft es als root ohne Netz
-  (`zenos-kanal-pruefen.service`) gegen den Anker `/etc/zenos/vertrauen` und schreibt
-  `/var/lib/zenos/kanal/stand.json`. `zen kanal status` zeigt Kanal, Zustand, Fingerabdrücke und abgelehnte Tags.
-  Regeln und Zustände: `docs/image-und-releases.md`, «Signierte Releases». `zen update` bleibt bis zur Installation
-  über den Kanal der Weg von Hand.
+- **`zen update`** läuft über den signierten Kanal (`scripts/bin/zenos-kanal`, root-eigene Kopie unter
+  `/usr/local/libexec/zenos`). Die Arbeit machen systemd-Units, ein SSH-Abbruch schadet nicht:
+  1. holen ohne Rechte (`zenos-kanal-holen.service`, DynamicUser, nur https) als Bundle;
+  2. prüfen und bereitstellen als root ohne Netz (`zenos-kanal-pruefen.service`): Signatur gegen den Anker
+     `/etc/zenos/vertrauen`, Ziel nach `/var/lib/zenos/kanal/bereit/<commit>` (eigenes Repo, ausgecheckt, geprüft);
+  3. installieren als root mit Netz (`zenos-kanal-installieren.service`, Block-Inhibitor, `KillMode=mixed`):
+     `install.sh` aus der Bereitstellung, 10-code übernimmt den Code Datei für Datei atomar nach `/opt/zenos`. Danach
+     Gesundheitsprüfung; scheitert sie, kommt die Version nach `gesperrt/` und der Stand davor zurück.
+  Der Kanal steht in `/etc/xdg/zenos/kanal`: `stabil` (nur `vX.Y.Z`), `vorschau` (auch `-rcN`), `dev` (Branch dev;
+  ohne Frage nur, wenn jeder neue Commit gültig signiert ist, sonst nach «ja» für genau diesen Commit). Firewall,
+  Netz und Boot fragen immer. Solange der Anker leer ist, geht nur dev von Hand. Zum Schluss richtet `zen update`
+  die Benutzerteile als Benutzer ein (`install.sh --nur-benutzer`).
+- **`zen rollback <tag>`:** derselbe Weg mit einem Tag als Ziel, signiert ohne Frage, unsigniert nur nach «ja» für
+  genau dieses Tag-Objekt. `hoechste` bleibt; das nächste `zen update` kehrt auf den Kanal zurück.
+- **Abbruch:** Strom weg oder hart beendet hinterlässt `/var/lib/zenos/kanal/laeuft.json`. Beim Start vollendet
+  `zenos-kanal-nachstart.service` vor greetd die Übernahme des Codes (`install.sh --nur-code`, ohne Netz), damit der
+  Login keinen Mischstand sieht; `zen update` setzt den Rest fort. Nach zwei unterbrochenen Versuchen wird die
+  Version gesperrt und der Rückweg genommen.
+- **Von Hand:** `install.sh` aus einem Arbeits-Checkout (etwa `~/zenOS`) wartet auf die Kanal-Sperre
+  `/run/lock/zenos-kanal.lock` und markiert den Stand als «angehalten»; das nächste `zen update` kehrt zum Kanal
+  zurück. Den Notweg ohne `zen` und ohne den neuen Code beschreibt `ANLEITUNG.md`, Abschnitt F.
+- **`zen kanal`:** `zen kanal status` zeigt Kanal, Zustand, Fingerabdrücke, abgelehnte Tags, letzte Installation,
+  guten und gesperrten Stand; `sudo zen kanal pruefen` holt und prüft, ohne zu installieren. Regeln, Zustände und
+  Dateien: `docs/image-und-releases.md`, «Signierte Releases».
 - **`zen doctor`:** Prüfbericht ohne Geheimnisse und ohne Persönliches, Exit 1 bei Fehlern. `zen version` zeigt
-  zenOS-Version, die Basis (Ubuntu), Quickshell und labwc.
+  zenOS-Version, die Basis (Ubuntu), Kanal, Commit, die letzte Installation über den Kanal, Quickshell und labwc.
 - Systemänderungen laufen immer über `install.sh`. Das Skript darf beliebig oft laufen.
 
 ## Plattformen

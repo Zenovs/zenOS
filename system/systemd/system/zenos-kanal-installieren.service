@@ -1,0 +1,29 @@
+# zenOS: einen geprüften, bereitgestellten Stand installieren (zenos-kanal installieren). Läuft als root mit Netz
+# (install.sh braucht apt) und ohne Sandbox, aber nur auf einem Auftrag, den zenos-kanal-pruefen.service ohne Netz
+# geprüft und nach /var/lib/zenos/kanal/bereit/<commit> gestellt hat; vor der Benutzung prüft es ihn noch einmal.
+# Während install.sh hält es einen Block-Inhibitor für Ausschalten und Ruhezustand. Gestartet nur von «zen update» und
+# «zen rollback» (kein Timer in dieser Fassung). Ein SSH-Abbruch schadet nicht: Der Dienst läuft zu Ende.
+#
+# KillMode=mixed: Ein Stopp (etwa beim Ausschalten durch root) schickt SIGTERM nur an zenos-kanal. Das wartet auf das
+# Ende von install.sh, damit dpkg nie mittendrin abbricht; erst nach TimeoutStopSec beendet systemd alles. Ein harter
+# Abbruch hinterlässt /var/lib/zenos/kanal/laeuft.json: zenos-kanal-nachstart.service und «zen update» setzen fort.
+[Unit]
+Description=zenOS: Kanal installieren (root, mit Netz)
+Documentation=file:///opt/zenos/docs/image-und-releases.md
+Wants=network-online.target
+After=network-online.target zenos-kanal-pruefen.service apt-daily.service apt-daily-upgrade.service
+ConditionPathExists=/usr/local/libexec/zenos/zenos-kanal
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/zenos/zenos-kanal installieren
+Environment=HOME=/root LANG=C.UTF-8
+StateDirectory=zenos/kanal
+StateDirectoryMode=0755
+RuntimeDirectory=zenos-kanal
+RuntimeDirectoryMode=0755
+UMask=0022
+KillMode=mixed
+TimeoutStartSec=3h
+TimeoutStopSec=20min
+SyslogIdentifier=zenos-kanal

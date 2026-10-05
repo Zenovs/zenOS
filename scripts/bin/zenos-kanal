@@ -1,11 +1,23 @@
 #!/usr/bin/python3 -I
-"""zenos-kanal: der signierte Update-Kanal von zenOS. Holt die Tags von origin, prüft sie gegen den
-Vertrauensanker des Geräts und schreibt den Stand. Diese Fassung installiert NICHTS: Sie liest /opt/zenos nur.
+"""zenos-kanal: der signierte Update-Kanal von zenOS. Holt die Tags und Branches von origin, prüft sie gegen den
+Vertrauensanker des Geräts, stellt einen geprüften Stand bereit und installiert ihn, mit Gesundheitsprüfung und Rückweg.
+Automatisch installiert diese Fassung nichts: nur auf «zen update» oder «zen rollback».
 
 Aufruf:
-  zenos-kanal status [--json|--kurz]   Kanal, Anker mit Fingerabdrücken und die letzte Prüfung (ohne root)
-  zenos-kanal pruefen                  prüft das zuletzt geholte Bundle ohne Netz und schreibt den Stand (root;
-                                       läuft als zenos-kanal-pruefen.service)
+  zenos-kanal update                   zen update: holen, prüfen, bei Bedarf «ja», bereitstellen, installieren (root,
+                                       im Terminal; die Arbeit machen die Units, ein SSH-Abbruch schadet nicht)
+  zenos-kanal rollback TAG             zen rollback: wie update, Ziel ist TAG (signiert, sonst nur mit «ja»)
+  zenos-kanal status [--json|--kurz|--installation|--zeile]
+                                       Kanal, Anker mit Fingerabdrücken, letzte Prüfung und Installation (ohne root)
+  zenos-kanal pruefen                  prüft das zuletzt geholte Bundle ohne Netz, erfüllt einen Wunsch von update oder
+                                       rollback (bereitstellen) und schreibt den Stand (zenos-kanal-pruefen.service)
+  zenos-kanal installieren             installiert den bereitgestellten Stand oder setzt einen unterbrochenen Lauf fort
+                                       (zenos-kanal-installieren.service: root, mit Netz, Inhibitor)
+  zenos-kanal nachstart                vollendet nach einem Abbruch die Übernahme des Codes vor dem Login
+                                       (zenos-kanal-nachstart.service, vor greetd, ohne Netz)
+  zenos-kanal selbsttest [--anker] [--tag NAME OBJEKT REPO]
+                                       Teil der Gesundheitsprüfung: liest der eben installierte zenos-kanal den Anker
+                                       und nimmt er den installierten Tag an?
   zenos-kanal anker                    zeigt den Vertrauensanker /etc/zenos/vertrauen
   zenos-kanal anker ORDNER             setzt den Anker von Hand aus ORDNER (root, nur im Terminal: der Fingerabdruck
                                        der Wurzel wird eingetippt, die Release-Schlüssel mit «ja» bestätigt)
@@ -38,30 +50,52 @@ und abgeschaltetem OpenPGP und X.509. Regeln:
   6. Ziel ist die höchste gültige Version des Kanals über «hoechste» (kein Downgrade; rcN liegt vor der finalen
      Version), ohne Versionen in gesperrt/. «hoechste» steigt mit dem installierten Stand: Jeder gültige Tag, dessen
      Commit im Verlauf von /opt/zenos liegt, hebt es an. Fehlt «hoechste» und ist der installierte Stand keiner
-     signierten Version zuzuordnen, ist der Kanal «blockiert».
-  7. Kanal dev: nur Auskunft. Neuer Stand von origin/dev, ob der installierte Stand darin liegt und ob alle Commits
-     dazwischen mit einem Release-Schlüssel signiert sind; sonst nur von Hand mit «ja».
+     signierten Version zuzuordnen, ist der Kanal «blockiert». Trifft der Weg dorthin Firewall, Netz oder Boot
+     (Rückfrage-Pfade, fest im Code), heisst der Zustand «zustimmung».
+  7. Kanal dev: neuer Stand von origin/dev, ob der installierte Stand darin liegt und ob alle Commits dazwischen mit
+     einem Release-Schlüssel signiert sind. Automatisch kommt auf dev nie etwas.
+
+Wunsch (zen update, zen rollback): Das Ziel braucht ein getipptes «ja», gebunden an genau diese Commit- bzw. Objekt-ID,
+wenn es nicht gültig signiert ist (dev: nicht jeder Commit seit dem installierten Stand; Anker fehlt), dev umgeschrieben
+wurde, es gesperrt ist, ein Rückschritt wäre oder Firewall, Netz oder Boot trifft. Stabil und vorschau nehmen nur
+Signiertes. Bereitgestellt wird in /var/lib/zenos/kanal/bereit/<commit> (eigenes Repo, ausgecheckt, geprüft).
+
+Installieren (root, mit Netz, unter einem Block-Inhibitor für Ausschalten und Ruhezustand): Vorher «dpkg --configure
+-a», falls dpkg unterbrochen wurde, und eine Bereitstellung des laufenden Stands als Rückweg. Dann <bereit>/scripts/
+install.sh mit ZENOS_KANAL_LAUF=1; 10-code übernimmt den Code Datei für Datei atomar nach /opt/zenos. Gesund heisst:
+Exit 0 und «== Ende … ok» im install.log, /opt/zenos auf dem Commit und sauber, scripts/zen läuft, quickshell läuft,
+greetd nicht ausgefallen, und der neue zenos-kanal besteht seinen Selbsttest. Sonst: Version nach gesperrt/, Rückweg
+auf den Stand davor (Ergebnis «zurueck»); scheitert auch der, «kaputt». Ein Abbruch (Strom, kill) hinterlässt
+laeuft.json: nachstart vollendet die Übernahme des Codes vor dem Login, zen update setzt fort; nach zwei
+unterbrochenen Versuchen wird die Version gesperrt und der Rückweg genommen.
 
 Dateien: /etc/xdg/zenos/kanal (Kanal: stabil, vorschau, dev; main gilt als stabil), /etc/zenos/vertrauen (Anker),
-/var/lib/zenos/kanal/{stand.json, gesehen.json, hoechste, gesperrt/} (root, stand.json für alle lesbar),
-/var/lib/zenos-kanal-holen/{uebergabe.bundle, holen.json} (Holer).
+/var/lib/zenos/kanal/{stand.json, gesehen.json, hoechste, gesperrt/, wunsch.json, auftrag.json, laeuft.json, gut.json,
+letzte.json, angehalten, bereit/} (root, alles für alle lesbar), /var/lib/zenos-kanal-holen/{uebergabe.bundle,
+holen.json} (Holer).
 
-Exit: 0 in Ordnung (aktuell, bereit, dev) · 1 Fehler · 2 Aufruf · 3 blockiert oder Anker fehlt · 10 kein Kontakt
-(Netz) · 75 läuft schon (Sperre /run/lock/zenos-kanal.lock, auch von zen update gehalten).
+Exit: 0 in Ordnung (aktuell, bereit, installiert) · 1 Fehler · 2 Aufruf · 3 abgelehnt, blockiert oder Anker fehlt ·
+4 gescheitert, Rückweg ok · 5 kaputt (auch der Rückweg scheiterte) · 10 wartet (Netz, Platz, Zustimmung) · 75 läuft
+schon (Sperre /run/lock/zenos-kanal.lock).
 """
 
 import base64
+import contextlib
 import datetime
 import fcntl
 import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
+import signal
 import stat
 import struct
 import subprocess
 import sys
+import tempfile
+import time
 import traceback
 
 NAME = "zenos-kanal"
@@ -82,20 +116,86 @@ TRUSTED_UIDS = (0,)
 PATH_CHECK_TOP = "/"
 ALLOWED_SCHEMES = ("https",)
 
+UI_LOCK_FILE = "/run/lock/zenos-kanal-bedienung.lock"
+RUNTIME_DIR = "/run/zenos-kanal"
+INSTALL_LOG = "/var/log/zenos/install.log"
+INSTALLED_PROGRAM = "/usr/local/libexec/zenos/zenos-kanal"
+SPACE_PATHS = ("/var",)
+DPKG_UPDATES = "/var/lib/dpkg/updates"
+DPKG_LOCKS = ("/var/lib/dpkg/lock-frontend", "/var/lib/dpkg/lock")
+SYSTEMD_RUN_DIR = "/run/systemd/system"
+
+PYTHON = "/usr/bin/python3"
+BASH = "/bin/bash"
+DPKG = "/usr/bin/dpkg"
+SLEEP = "/usr/bin/sleep"
+SYSTEMCTL = "/usr/bin/systemctl"
+JOURNALCTL = "/usr/bin/journalctl"
+LOGINCTL = "/usr/bin/loginctl"
+SYSTEMD_INHIBIT = "/usr/bin/systemd-inhibit"
+QUICKSHELL = "/usr/local/bin/quickshell"
+INSTALL_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
 FETCH_TIMEOUT = 600
 GIT_TIMEOUT = 300
+CHECK_TIMEOUT = 120
+DPKG_TIMEOUT = 3600
+DPKG_WAIT = 600
 MAX_BUNDLE = 1 << 30
 MAX_SMALL_FILE = 1 << 16
 MAX_TAGS = 1000
 MAX_DEV_RANGE = 2000
+MAX_SHOWN = 20
+MIN_FREE = 1 << 30
+MAX_ATTEMPTS = 2
 WAIT_STABLE = datetime.timedelta(hours=24)
+MAX_AGE = datetime.timedelta(hours=1)
 
 EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_USAGE = 2
 EXIT_BLOCKED = 3
+EXIT_FAILED = 4
+EXIT_BROKEN = 5
 EXIT_NO_CONTACT = 10
+EXIT_WAIT = 10
 EXIT_BUSY = 75
+
+UNITS = {
+    "holen": "zenos-kanal-holen.service",
+    "pruefen": "zenos-kanal-pruefen.service",
+    "installieren": "zenos-kanal-installieren.service",
+}
+
+# Rückfrage-Pfade: Ein Update, das einen davon ändert, installiert nur nach Zustimmung (Firewall, Netz, Boot). Dieselben
+# wie die Gruppen firewall, netz und boot in scripts/lib/sensible-pfade (ein Einheitentest hält beide gleich). Fest im
+# Code: Ein neuer Stand kann keinen streichen, seine eigene Liste kommt nur dazu. Muster wie dort: git-Pfadmuster, ein
+# Ordner endet mit /, ein * passt auf beliebige Zeichen (auch auf /). Indirekte Änderungen fängt die Liste nicht.
+CONSENT_PATHS = (
+    "scripts/lib/firewall.sh",
+    "scripts/bin/zenos-firewall",
+    "scripts/zen.d/firewall.sh",
+    "scripts/module/70-sicherheit.sh",
+    "scripts/pakete/sicherheit.txt",
+    "system/polkit/org.zenos.firewall.policy",
+    "scripts/module/35-netzwerk.sh",
+    "scripts/bin/zenos-netzwerk",
+    "scripts/zen.d/netzwerk.sh",
+    "scripts/pakete/netzwerk.txt",
+    "system/cloud/",
+    "system/modprobe/",
+    "system/systemd/system/zenos-netzwerk-erststart.service",
+    "system/systemd/system/zenos-wlan-land.service",
+    "system/systemd/system/systemd-networkd-wait-online.service.d/",
+    "scripts/module/42-bootsplash.sh",
+    "scripts/zen.d/bootsplash.sh",
+    "scripts/pakete/bootsplash.txt",
+    "system/plymouth/",
+)
+CONSENT_GROUPS = ("firewall", "netz", "boot")
+PATTERN_RE = re.compile(r"[A-Za-z0-9._][A-Za-z0-9._*/-]{0,199}")
+# Schlüsselfiles, die nach einer Installation nicht leer sein dürfen (eine volle Platte schrieb früher 0 Byte)
+KEY_FILES = ("scripts/zen", "scripts/install.sh", "scripts/bin/zenos-greeter", "scripts/bin/zenos-sitzung")
 
 CHANNELS = ("stabil", "vorschau", "dev")
 ANCHOR_FILES = ("release", "wurzel", "widerrufen", "serie")
@@ -106,6 +206,10 @@ REVOKED_LINE = re.compile("(" + KEY_PATTERN + ")")
 SERIES_LINE = re.compile(r"[1-9][0-9]{0,3}")
 VERSION_RE = re.compile(r"v(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})(?:-rc([1-9][0-9]{0,8}))?")
 TRUST_RE = re.compile(r"vertrauen/([0-9]{4})")
+TAG_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
+BRANCH_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,99}")
+USER_RE = re.compile(r"[a-z_][a-z0-9_-]{0,31}")
+WISH_ID_RE = re.compile(r"[0-9a-f]{16}")
 OID_RE = re.compile(r"[0-9a-f]{40}")
 TIME_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
 HTTPS_RE = re.compile(r"https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?/[A-Za-z0-9._~/+-]+")
@@ -169,6 +273,31 @@ def run(argv, cwd="/", env=None, timeout=GIT_TIMEOUT):
         return subprocess.CompletedProcess(argv, 124, "", f"Zeitlimit von {timeout} s überschritten")
     except OSError as e:
         return subprocess.CompletedProcess(argv, 127, "", f"{argv[0]}: {e.strerror}")
+
+
+def run_visible(argv, env, timeout=None, cwd="/"):
+    """Startet ein Programm mit Argumentliste, die Ausgabe geht durch (Journal bzw. Terminal). Exit-Code; Zeitlimit →
+    124, fehlt es → 127."""
+    sys.stdout.flush()
+    sys.stderr.flush()
+    try:
+        return subprocess.run(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, timeout=timeout, check=False).returncode
+    except subprocess.TimeoutExpired:
+        print(f"{NAME}: {os.path.basename(argv[0])}: Zeitlimit von {timeout} s überschritten", file=sys.stderr)
+        return 124
+    except OSError as e:
+        print(f"{NAME}: {argv[0]}: {e.strerror}", file=sys.stderr)
+        return 127
+
+
+def install_env():
+    """Umgebung für install.sh und die Prüfungen danach: leer bis auf das Nötigste. ZENOS_KANAL_LAUF=1 sagt 10-code,
+    dass der Lauf vom Kanal kommt (der die Sperre schon hält)."""
+    return {"PATH": INSTALL_PATH, "HOME": "/root", "LANG": "C.UTF-8", "ZENOS_KANAL_LAUF": "1"}
+
+
+def state_path(*parts):
+    return os.path.join(STATE_DIR, *parts)
 
 
 def git_env():
@@ -708,17 +837,18 @@ def cmd_fetch_internal(argv):
 # --- Prüfen (root, ohne Netz) ----------------------------------------------------------------------------------
 
 
-def take_lock():
-    """Sperre /run/lock/zenos-kanal.lock (dieselbe wie zen update). None, wenn sie belegt ist. Eine fremde Datei wird
-    nur lesend geöffnet (fs.protected_regular), flock geht auch so."""
+def take_lock(path=None):
+    """Sperre PATH (Standard /run/lock/zenos-kanal.lock: Prüfen, Installieren, Anker). None, wenn sie belegt ist. Eine
+    fremde Datei wird nur lesend geöffnet (fs.protected_regular), flock geht auch so."""
+    path = path or LOCK_FILE
     flags = os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
     try:
-        fd = os.open(LOCK_FILE, os.O_RDONLY | flags)
+        fd = os.open(path, os.O_RDONLY | flags)
     except FileNotFoundError:
         try:
-            fd = os.open(LOCK_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL | flags, 0o644)
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | flags, 0o644)
         except FileExistsError:
-            fd = os.open(LOCK_FILE, os.O_RDONLY | flags)
+            fd = os.open(path, os.O_RDONLY | flags)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
@@ -821,15 +951,197 @@ def code_history_usable():
     return git(CODE_DIR, "config", "--get", "extensions.partialclone").stdout.strip() == ""
 
 
+class Waiting(Exception):
+    """Es fehlt etwas, das sich von selbst geben kann (Platz): Exit 10, nichts geändert."""
+
+
+class Refusal(Exception):
+    """Ein Wunsch lässt sich nicht erfüllen (abgelehnt, Exit 3)."""
+
+
+class Current(Exception):
+    """Nichts zu tun."""
+
+
+def write_wish(art, tag=None, ja=None):
+    """Wunsch von zen update oder zen rollback für den nächsten Lauf von «pruefen»; gibt seine Kennung zurück."""
+    wish_id = secrets.token_hex(8)
+    os.makedirs(STATE_DIR, mode=0o755, exist_ok=True)
+    write_json(state_path("wunsch.json"), {"version": 1, "id": wish_id, "art": art, "tag": tag, "ja": ja,
+                                           "zeit": iso(now())}, 0o600)
+    return wish_id
+
+
+def take_wish(t):
+    """Liest und entfernt wunsch.json. None, wenn es keinen gültigen, frischen Wunsch gibt."""
+    path = state_path("wunsch.json")
+    data = load_json(path, trusted=True)
+    if os.path.lexists(path):
+        os.unlink(path)
+    if not data or data.get("version") != 1 or not WISH_ID_RE.fullmatch(str(data.get("id"))):
+        return None
+    when = parse_iso(data.get("zeit"))
+    if not when or abs(t - when) > MAX_AGE:
+        return None
+    art, tag, ja = data.get("art"), data.get("tag"), data.get("ja")
+    if art not in ("update", "rollback") or (ja is not None and not OID_RE.fullmatch(str(ja))):
+        return None
+    if art == "rollback" and not TAG_NAME_RE.fullmatch(str(tag)):
+        return None
+    return {"id": data["id"], "art": art, "tag": tag if art == "rollback" else None, "ja": ja}
+
+
+def consent_patterns(repo, commits):
+    """Rückfrage-Muster: CONSENT_PATHS, dazu die Gruppen firewall, netz und boot aus scripts/lib/sensible-pfade der
+    genannten Commits (sie kommen nur dazu)."""
+    patterns = set(CONSENT_PATHS)
+    for commit in commits:
+        r = git(repo, "cat-file", "blob", f"{commit}:scripts/lib/sensible-pfade")
+        if r.returncode != 0:
+            continue
+        for line in r.stdout.split("\n"):
+            parts = line.split()
+            if len(parts) == 2 and parts[0] in CONSENT_GROUPS and PATTERN_RE.fullmatch(parts[1]):
+                patterns.add(parts[1])
+    return sorted(patterns)
+
+
+def consent_hits(repo, old, new):
+    """Geänderte Rückfrage-Pfade von OLD nach NEW (sortierte Liste). None, wenn sich das nicht feststellen lässt (dann
+    gilt: Zustimmung nötig)."""
+    if not old or not repo or not has_commit(repo, old) or not has_commit(repo, new):
+        return None
+    if old == new:
+        return []
+    r = git(repo, "diff", "--name-only", "--no-renames", "-z", old, new, "--", *consent_patterns(repo, (old, new)))
+    if r.returncode != 0:
+        return None
+    return sorted(p for p in r.stdout.split("\0") if p)
+
+
+def free_space_problem(paths):
+    """Text, wenn auf dem Dateisystem eines Pfads weniger als MIN_FREE frei ist, sonst None."""
+    for path in paths:
+        probe = os.path.abspath(path)
+        while not os.path.exists(probe) and probe != "/":
+            probe = os.path.dirname(probe)
+        try:
+            st = os.statvfs(probe)
+        except OSError:
+            continue
+        free = st.f_bavail * st.f_frsize
+        if free < MIN_FREE:
+            return (f"Nur {free >> 20} MB frei unter {probe}, gebraucht wird mindestens {MIN_FREE >> 20} MB. "
+                    "Zuerst Platz schaffen.")
+    return None
+
+
+def install_space_paths():
+    return (state_path("bereit"), CODE_DIR, *SPACE_PATHS)
+
+
+def repo_intact(folder, commit):
+    """Ist FOLDER eine sichere Bereitstellung von COMMIT? Root-eigen bis oben, HEAD gleich COMMIT, Baum sauber (auch ohne
+    unversionierte oder ignorierte Dateien)."""
+    if path_problem(folder) or not os.path.isdir(os.path.join(folder, ".git")):
+        return False
+    r = git(folder, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+    if r.returncode != 0 or r.stdout.strip() != commit:
+        return False
+    r = git(folder, "status", "--porcelain", "--ignored", "--untracked-files=all")
+    return r.returncode == 0 and r.stdout == ""
+
+
+def stage(source, refspecs, commit, branch, origin):
+    """Stellt COMMIT in bereit/<commit> bereit: eigenes Repo ohne Hooks, Objekte und Refs per REFSPECS aus SOURCE (ohne
+    Netz), ausgecheckt auf BRANCH oder losgelöst, origin auf ORIGIN. Eine intakte Bereitstellung bleibt. Waiting bei zu
+    wenig Platz, Failure bei Fehlern."""
+    folder = state_path("bereit", commit)
+    if repo_intact(folder, commit):
+        return folder
+    problem = free_space_problem(install_space_paths())
+    if problem:
+        raise Waiting(problem)
+    os.makedirs(state_path("bereit"), mode=0o755, exist_ok=True)
+    tmp = state_path("bereit", f".{commit}.neu")
+    shutil.rmtree(tmp, ignore_errors=True)
+    steps = [
+        (None, "init", "--quiet", "--template=", tmp),
+        (tmp, "-c", "protocol.file.allow=always", "fetch", "--quiet", "--no-tags", "--no-write-fetch-head",
+         "--no-recurse-submodules", source, *refspecs),
+        (tmp, "checkout", "--quiet", "-B", branch, commit) if branch else (tmp, "checkout", "--quiet", "--detach",
+                                                                           commit),
+    ]
+    if origin:
+        steps.append((tmp, "remote", "add", "origin", origin))
+    try:
+        for repo, *args in steps:
+            r = git(repo, *args)
+            if r.returncode != 0:
+                raise Failure(f"Bereitstellen ({args[0] if args[0] != '-c' else args[2]}): {first_line(r.stderr)}")
+        os.chmod(tmp, 0o755)
+        if not repo_intact(tmp, commit):
+            raise Failure("Bereitstellung stimmt nach dem Auschecken nicht mit dem Commit überein")
+        shutil.rmtree(folder, ignore_errors=True)
+        os.replace(tmp, folder)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return folder
+
+
+def locked_entries():
+    """Gesperrte Ziele: Name (Version oder Commit) → Eintrag (grund, zeit)."""
+    folder = state_path("gesperrt")
+    entries = {}
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return entries
+    for name in names:
+        if version_key(name) or OID_RE.fullmatch(name):
+            entries[name] = load_json(os.path.join(folder, name)) or {}
+    return entries
+
+
+def lock_target(entry, reason):
+    """Sperrt ein gescheitertes Ziel: Versionen unter ihrem Namen, alles andere unter dem Commit."""
+    name = entry.get("version") if version_key(entry.get("version") or "") else entry["commit"]
+    os.makedirs(state_path("gesperrt"), mode=0o755, exist_ok=True)
+    write_json(state_path("gesperrt", name), {"commit": entry["commit"], "grund": short(reason, 300), "zeit": iso(now())})
+    return name
+
+
+def target_label(entry):
+    if not entry:
+        return "?"
+    commit = str(entry.get("commit") or "")[:12]
+    if entry.get("tag"):
+        return f"{entry['tag']} ({commit})"
+    if entry.get("zweig"):
+        return f"{entry['zweig']} {commit}"
+    return commit
+
+
 class Check:
     """Ein Lauf von «pruefen». Schreibt den Anker (nur über gültige vertrauen/NNNN), gesehen.json, hoechste und
-    stand.json. Installiert nichts."""
+    stand.json. Mit einem Wunsch (wunsch.json von zen update oder zen rollback) stellt es das Ziel bereit
+    (bereit/<commit>, auftrag.json). Installiert nichts."""
 
     def __init__(self):
         self.t = now()
         self.notes = []
         self.rejected = []
         self.ledger_changed = False
+        self.wish = None
+        self.repo = None
+        self.refs = None
+        self.installed = None
+        self.anchor = None
+        self.files = None
+        self.valid = {}
+        self.ledger = {}
+        self.floor_value = None
+        self.channel = None
         self.stand = {
             "version": 1,
             "kanal": None,
@@ -847,6 +1159,7 @@ class Check:
             "gueltig": [],
             "abgelehnt": self.rejected,
             "hinweise": self.notes,
+            "wunsch": None,
         }
 
     # -- Zustand auf der Platte --
@@ -895,6 +1208,13 @@ class Check:
         problem = path_problem(STATE_DIR)
         if problem:
             raise Failure(f"Zustand unsicher: {problem}")
+        self.wish = take_wish(self.t)
+        code = self.check()
+        if self.wish:
+            code = self.fulfil(code)
+        return code
+
+    def check(self):
         contact = read_fetch_status()
         self.stand["letzter_kontakt"] = contact["letzter_kontakt"]
         self.stand["holen_fehler"] = contact["fehler"]
@@ -911,6 +1231,7 @@ class Check:
         except Failure as e:
             return self.finish("blockiert", str(e), EXIT_BLOCKED)
         self.stand["kanal"] = channel
+        self.channel = channel
         if note:
             self.notes.append(note)
 
@@ -932,6 +1253,7 @@ class Check:
                                    EXIT_BLOCKED)
 
         refs = self.read_refs()
+        self.refs = refs
         installed = installed_commit()
         self.installed = installed
         self.stand["installiert"] = {"commit": installed, "version": None} if installed else None
@@ -980,6 +1302,7 @@ class Check:
 
     def with_anchor(self, anchor, refs, channel, work):
         files = signer_files(anchor, os.path.join(work, "anker"))
+        self.anchor, self.files = anchor, files
         names = [n for n in refs["tags"] if version_key(n) or TRUST_RE.fullmatch(n)]
         if len(names) > MAX_TAGS:
             return self.finish("blockiert", f"Zu viele Tags auf origin ({len(names)}, höchstens {MAX_TAGS}).",
@@ -1014,6 +1337,7 @@ class Check:
             write_device_anchor(new, f"{name}, Commit {result.commit[:12]}")
             anchor = new
             files = signer_files(anchor, os.path.join(work, "anker"))
+            self.anchor, self.files = anchor, files
             self.notes.append(f"Vertrauensanker Serie {number} aus {name} übernommen")
         self.stand["anker"] = anchor.summary()
         if alarm:
@@ -1043,6 +1367,7 @@ class Check:
             if entry["gueltig"] and name not in refs["tags"]:
                 self.notes.append(f"{name} gibt es auf origin nicht mehr")
         self.save_ledger(ledger)
+        self.valid, self.ledger = valid, ledger
         self.stand["gueltig"] = sorted((n for n in valid if in_channel(n, channel) or channel == "dev"),
                                        key=version_key)
         if alarm:
@@ -1054,6 +1379,7 @@ class Check:
             self.stand["installiert"]["version"] = highest(exact)
         floor, blocked = self.floor(valid)
         self.stand["hoechste"] = floor
+        self.floor_value = floor
         self.dev_info(refs, anchor, files)
         if blocked:
             return self.finish("blockiert", blocked, EXIT_BLOCKED)
@@ -1068,9 +1394,15 @@ class Check:
             return self.finish("aktuell", f"Keine neuere gültig signierte Version im Kanal {channel}.", EXIT_OK)
         first = parse_iso(ledger[target].get("erstmals")) or self.t
         free = first + (WAIT_STABLE if channel == "stabil" else datetime.timedelta(0))
+        self.import_installed()
+        hits = consent_hits(self.repo, self.installed, valid[target])
         self.stand["bereit"] = {"version": target, "commit": valid[target], "objekt": refs["tags"][target][0],
-                                "erstmals": iso(first), "frei_ab": iso(free)}
-        text = f"{target} ist gültig signiert und neuer als der installierte Stand. Diese Fassung installiert nichts."
+                                "erstmals": iso(first), "frei_ab": iso(free), "rueckfrage": hits}
+        if hits is None or hits:
+            what = ", ".join(hits[:5]) if hits else "der Vergleich mit dem installierten Stand ist nicht möglich"
+            return self.finish("zustimmung", f"{target} ist gültig signiert, betrifft aber Firewall, Netz oder Boot "
+                               f"({what}). Installiert wird nur mit Zustimmung: zen update.", EXIT_WAIT)
+        text = f"{target} ist gültig signiert und neuer als der installierte Stand. Installieren: zen update."
         if free > self.t:
             text += f" Automatisch frühestens ab {local_time(iso(free))} (24 h Wartezeit auf stabil)."
         return self.finish("bereit", text, EXIT_OK)
@@ -1207,6 +1539,218 @@ class Check:
         return text
 
 
+    # -- Wunsch von zen update oder zen rollback --
+
+    def import_installed(self):
+        """Holt den installierten Commit aus /opt/zenos ins Prüf-Repo, wenn er im Bundle fehlt (nicht gepusht): nötig
+        für den Vergleich der Rückfrage-Pfade. Nur lesend, ohne Netz."""
+        if not self.installed or not self.repo or has_commit(self.repo, self.installed) or not code_history_usable():
+            return
+        git(self.repo, "-c", "protocol.file.allow=always", "fetch", "--quiet", "--no-tags", "--no-write-fetch-head",
+            "--no-recurse-submodules", CODE_DIR, "+HEAD:refs/installiert/HEAD")
+
+    def answer(self, result, reason, code, **extra):
+        self.stand["wunsch"] = {"id": self.wish["id"], "art": self.wish["art"], "tag": self.wish["tag"],
+                                "ergebnis": result, "grund": reason, **extra}
+        return code
+
+    def fulfil(self, code):
+        """Erfüllt den Wunsch: Ziel bestimmen, Gründe für ein «ja» sammeln, bereitstellen, auftrag.json schreiben.
+        Rückgabe: Exit-Code dieses Laufs (der Wunsch zählt mehr als der Kanalzustand)."""
+        # Ein Auftrag von früher (nie installiert) gilt nicht mehr, sobald ein neuer Wunsch kommt
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(state_path("auftrag.json"))
+        state = self.stand["zustand"]
+        if state in ("fehler", "kein_kontakt") or self.refs is None:
+            result = "wartet" if state == "kein_kontakt" else "abgelehnt"
+            return self.answer(result, self.stand["grund"] or "Prüfung abgebrochen.",
+                               EXIT_WAIT if result == "wartet" else code or EXIT_BLOCKED)
+        # Signaturen zählen nur mit Anker und ohne Alarm. Sonst geht nur, was ein «ja» bekommt (dev, rollback).
+        trusted = self.anchor is not None and state != "blockiert"
+        self.import_installed()
+        try:
+            if self.wish["art"] == "rollback":
+                target = self.rollback_target(self.wish["tag"], trusted)
+            elif self.channel == "dev":
+                target = self.dev_target(trusted)
+            else:
+                target = self.channel_target(trusted)
+        except Refusal as e:
+            return self.answer("abgelehnt", str(e), EXIT_BLOCKED)
+        except Current as e:
+            return self.answer("aktuell", str(e), EXIT_OK)
+        if self.is_current(target):
+            return self.answer("aktuell", f"Schon installiert: {target_label(target)}.", EXIT_OK)
+
+        reasons = target.pop("gruende")
+        commits = target.pop("commits", None)
+        locked = locked_entries()
+        for name in (target.get("version"), target["commit"]):
+            if name and name in locked:
+                entry = locked[name]
+                reasons.append(f"{name} ist gesperrt: Die Installation am {local_time(entry.get('zeit'))} scheiterte "
+                               f"({short(entry.get('grund') or '?', 120)}).")
+                break
+        hits = consent_hits(self.repo, self.installed, target["commit"])
+        if hits is None:
+            reasons.append("Firewall, Netz und Boot: Der Vergleich mit dem installierten Stand ist nicht möglich.")
+        elif hits:
+            shown = ", ".join(hits[:MAX_SHOWN]) + (f" und {len(hits) - MAX_SHOWN} weitere" if len(hits) > MAX_SHOWN else "")
+            reasons.append(f"Betrifft Firewall, Netz oder Boot: {shown}.")
+        target["rueckfrage"] = hits
+
+        if reasons and self.wish["ja"] != target["id"]:
+            question = {"id": target["id"], "ziel": target_label(target), "gruende": reasons, "commits": commits}
+            return self.answer("zustimmung", f"{target_label(target)} braucht deine Zustimmung.", EXIT_WAIT,
+                               frage=question)
+        target["freigabe"] = "ja" if reasons else None
+        target.setdefault("bereich_von", None)
+
+        try:
+            origin = origin_url()
+        except Failure:
+            origin = None
+        try:
+            folder = stage(self.repo, target.pop("refspecs"), target["commit"], target.get("zweig"), origin)
+        except Waiting as e:
+            return self.answer("wartet", str(e), EXIT_WAIT)
+        except Failure as e:
+            return self.answer("abgelehnt", str(e), EXIT_ERROR)
+        order = {"version": 1, **target, "pfad": folder, "kanal": self.channel, "art": self.wish["art"],
+                 "von_hand": True, "zeit": iso(self.t)}
+        write_json(state_path("auftrag.json"), order)
+        what = ("mit deinem «ja»" if target["freigabe"] else "jeder neue Commit gültig signiert" if target["bereich_von"]
+                else "gültig signiert")
+        return self.answer("bereitgestellt", f"{target_label(target)} ist bereitgestellt ({what}).", EXIT_OK,
+                           auftrag=order)
+
+    def is_current(self, target):
+        """Läuft genau dieses Ziel schon, vom Kanal installiert und unverändert?"""
+        if target["commit"] != self.installed:
+            return False
+        gut = load_json(state_path("gut.json"), trusted=True) or {}
+        if gut.get("commit") != target["commit"] or os.path.lexists(state_path("angehalten")):
+            return False
+        if os.path.lexists(state_path("laeuft.json")):
+            return False
+        r = git(CODE_DIR, "status", "--porcelain")
+        return r.returncode == 0 and r.stdout.strip() == ""
+
+    def range_commits(self, old, new, trusted):
+        """Commits OLD..NEW als Liste [{commit, zeichen, titel}] (%G?: G gültig signiert; ohne Anker «?»), None wenn es
+        zu viele sind."""
+        count = git(self.repo, "rev-list", "--count", f"{old}..{new}").stdout.strip()
+        if not count.isdigit() or int(count) > MAX_DEV_RANGE:
+            return None
+        if trusted:
+            r = git(self.repo, "-c", f"gpg.ssh.allowedSignersFile={self.files['release']}",
+                    "-c", f"gpg.ssh.revocationFile={self.files['widerrufen']}", "log", "--format=%H %G? %s",
+                    f"{old}..{new}")
+        else:
+            r = git(self.repo, "log", "--format=%H ? %s", f"{old}..{new}")
+        if r.returncode != 0:
+            return None
+        commits = []
+        for line in r.stdout.split("\n"):
+            parts = line.split(" ", 2)
+            if len(parts) >= 2 and OID_RE.fullmatch(parts[0]):
+                commits.append({"commit": parts[0], "zeichen": parts[1], "titel": short(parts[2] if len(parts) > 2
+                                                                                       else "", 72)})
+        return commits if len(commits) == int(count) else None
+
+    def dev_target(self, trusted):
+        tip = self.refs["heads"].get("dev")
+        if not tip or tip[1] != "commit":
+            raise Refusal("origin/dev fehlt im zuletzt geholten Stand.")
+        tip = tip[0]
+        target = {"commit": tip, "zweig": "dev", "tag": None, "objekt": None, "version": None, "signiert": False,
+                  "id": tip, "hoechste": False, "refspecs": ["+refs/eingang/heads/dev:refs/heads/dev",
+                                                             "+refs/eingang/tags/*:refs/tags/*"]}
+        reasons, commits, signed_range = [], None, False
+        if not self.anchor:
+            reasons.append("Anker fehlt: Signaturen lassen sich nicht prüfen. dev geht von Hand weiter, nur mit «ja» "
+                           "für genau diesen Stand.")
+        elif not trusted:
+            reasons.append(f"Der Kanal ist blockiert, Signaturen zählen nicht: {short(self.stand['grund'], 160)}")
+        if not self.installed or not has_commit(self.repo, self.installed):
+            reasons.append("Der installierte Stand ist unbekannt; welche Commits dazukommen, lässt sich nicht zeigen.")
+        elif not is_ancestor(self.repo, self.installed, tip):
+            reasons.append("Der installierte Stand liegt nicht in origin/dev: dev wurde umgeschrieben, oder der Stand "
+                           "kam von Hand und ist nicht gepusht.")
+        else:
+            commits = self.range_commits(self.installed, tip, trusted)
+            if commits is None:
+                reasons.append(f"Mehr als {MAX_DEV_RANGE} neue Commits, ihre Signaturen werden nicht geprüft.")
+            elif trusted:
+                unsigned = [c for c in commits if c["zeichen"] != "G"]
+                if unsigned:
+                    reasons.append(f"{len(unsigned)} von {len(commits)} neuen Commits sind nicht gültig signiert.")
+                    commits = unsigned + [c for c in commits if c["zeichen"] == "G"]
+                else:
+                    signed_range = True
+        if commits is not None:
+            commits = commits[:MAX_SHOWN] + ([{"weitere": len(commits) - MAX_SHOWN}] if len(commits) > MAX_SHOWN
+                                              else [])
+        target["gruende"], target["commits"] = reasons, commits
+        # Ohne «ja» nur, weil jeder Commit seit dem installierten Stand gültig signiert ist; installieren prüft das nach
+        target["bereich_von"] = self.installed if signed_range else None
+        return target
+
+    def channel_target(self, trusted):
+        if not self.anchor:
+            raise Refusal(f"Anker fehlt ({self.stand['anker_problem']}). Auf {self.channel} kommt nur gültig "
+                          "Signiertes. Von Hand weiter geht es auf dev (Kanal in /etc/xdg/zenos/kanal).")
+        if not trusted:
+            raise Refusal(f"Kanal blockiert: {self.stand['grund']}")
+        floor = self.floor_value
+        candidates = [n for n in self.valid if in_channel(n, self.channel)
+                      and (floor is None or version_key(n) >= version_key(floor))]
+        if not candidates:
+            raise Current(f"Keine gültig signierte Version im Kanal {self.channel}.")
+        name = highest(candidates)
+        commit, oid = self.valid[name], self.refs["tags"][name][0]
+        reasons = []
+        if (self.installed and commit != self.installed and has_commit(self.repo, self.installed)
+                and is_ancestor(self.repo, commit, self.installed)):
+            reasons.append(f"Rückschritt: Der installierte Stand ist neuer als {name}.")
+        return {"commit": commit, "zweig": None, "tag": name, "objekt": oid, "version": name, "signiert": True,
+                "id": oid, "hoechste": True, "gruende": reasons, "commits": None,
+                "refspecs": ["+refs/eingang/tags/*:refs/tags/*"]}
+
+    def rollback_target(self, name, trusted):
+        if TRUST_RE.fullmatch(name):
+            raise Refusal(f"{name} ist ein Vertrauens-Tag, kein Stand.")
+        entry = self.refs["tags"].get(name)
+        if not entry:
+            known = sorted((n for n in self.refs["tags"] if version_key(n)), key=version_key, reverse=True)[:10]
+            raise Refusal(f"Den Tag {name} gibt es auf origin nicht (Stand des letzten Holens). Vorhanden: "
+                          f"{', '.join(known) or 'keine'}.")
+        oid, kind = entry
+        target = {"zweig": None, "tag": name, "objekt": oid, "version": name if version_key(name) else None,
+                  "hoechste": False, "commits": None, "refspecs": ["+refs/eingang/tags/*:refs/tags/*"]}
+        if trusted and name in self.valid:
+            target.update(commit=self.valid[name], signiert=True, id=oid, gruende=[])
+            return target
+        known = self.ledger.get(name)
+        if known and known["gueltig"] and known["objekt"] != oid:
+            raise Refusal(f"{name} war gültig signiert und zeigt auf origin jetzt auf ein anderes Objekt. Nichts "
+                          "geändert.")
+        r = git(self.repo, "rev-parse", "--verify", "--quiet", f"{oid}^{{commit}}")
+        commit = r.stdout.strip()
+        if r.returncode != 0 or not OID_RE.fullmatch(commit):
+            raise Refusal(f"{name} zeigt nicht auf einen Commit.")
+        if not self.anchor:
+            why = "Anker fehlt, Signaturen lassen sich nicht prüfen"
+        elif not trusted:
+            why = f"der Kanal ist blockiert ({short(self.stand['grund'], 120)})"
+        else:
+            result = check_tag(self.repo, name, oid, kind, self.anchor, self.files, RELEASE_PRINCIPAL)
+            why = "nicht gültig signiert" + (f": {result.reason}" if result.reason else "")
+        target.update(commit=commit, signiert=False, id=oid,
+                      gruende=[f"{name} ist ungeprüft ({why}). Das «ja» gilt nur für das Objekt {oid[:12]}."])
+        return target
+
+
 def cmd_check(argv):
     if argv:
         print(f"{NAME} pruefen: keine Argumente erwartet", file=sys.stderr)
@@ -1235,6 +1779,8 @@ def cmd_check(argv):
             code = check.finish("fehler", f"Prüfung abgebrochen: {type(e).__name__}: {short(e, 120)}", EXIT_ERROR)
         finally:
             shutil.rmtree(os.path.join(STATE_DIR, "arbeit"), ignore_errors=True)
+        if check.wish and not check.stand["wunsch"]:
+            code = check.answer("abgelehnt", check.stand["grund"] or "Prüfung abgebrochen.", code or EXIT_ERROR)
         if os.path.isdir(STATE_DIR) and not path_problem(STATE_DIR):
             write_json(os.path.join(STATE_DIR, "stand.json"), check.stand)
     except OSError as e:
@@ -1248,10 +1794,749 @@ def cmd_check(argv):
 
 def print_check(stand):
     print(f"Kanal {stand.get('kanal') or '?'}: {stand.get('zustand')} – {stand.get('grund')}")
+    wish = stand.get("wunsch")
+    if wish:
+        print(f"  Wunsch {wish.get('art')}: {wish.get('ergebnis')} – {wish.get('grund')}")
     for entry in stand.get("abgelehnt") or []:
         print(f"  abgelehnt: {entry['tag']}: {entry['grund']}")
     for note in stand.get("hinweise") or []:
         print(f"  Hinweis: {note}")
+
+
+# --- Installieren (root, mit Netz) -----------------------------------------------------------------------------
+
+ENTRY_KEYS = ("commit", "zweig", "tag", "objekt", "version", "signiert", "bereich_von", "freigabe", "hoechste", "pfad",
+              "art", "kanal", "von_hand", "quelle")
+
+
+def entry_problem(entry):
+    """Grund, warum ein Ziel aus auftrag.json oder laeuft.json unbrauchbar ist, sonst None."""
+    if not isinstance(entry, dict) or not OID_RE.fullmatch(str(entry.get("commit"))):
+        return "ohne gültigen Commit"
+    if entry.get("pfad") != state_path("bereit", entry["commit"]):
+        return "Bereitstellung an unerwartetem Ort"
+    if entry.get("tag") is not None and not TAG_NAME_RE.fullmatch(str(entry["tag"])):
+        return "ungültiger Tag"
+    if entry.get("zweig") is not None and not BRANCH_RE.fullmatch(str(entry["zweig"])):
+        return "ungültiger Branch"
+    if entry.get("signiert") and not (entry.get("tag") and OID_RE.fullmatch(str(entry.get("objekt")))):
+        return "signiert, aber ohne Tag"
+    if entry.get("bereich_von") is not None and not OID_RE.fullmatch(str(entry["bereich_von"])):
+        return "ungültiger Bereich"
+    return None
+
+
+def dpkg_interrupted():
+    try:
+        names = os.listdir(DPKG_UPDATES)
+    except OSError:
+        return False
+    return any(re.fullmatch(r"[0-9]+", n) for n in names)
+
+
+def dpkg_busy():
+    """Hält gerade ein anderer Paketvorgang die Sperren von dpkg (fcntl-Sperren wie apt und dpkg)?"""
+    for path in DPKG_LOCKS:
+        try:
+            fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0))
+        except OSError:
+            continue
+        try:
+            fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.lockf(fd, fcntl.LOCK_UN)
+        except OSError:
+            return True
+        finally:
+            os.close(fd)
+    return False
+
+
+def dpkg_repair():
+    """Wurde dpkg mittendrin unterbrochen (Strom, kill), verweigert apt alles bis «dpkg --configure -a». Das holt es nach,
+    wenn kein anderer Paketvorgang läuft."""
+    if not dpkg_interrupted():
+        return
+    end = time.monotonic() + DPKG_WAIT
+    while dpkg_busy():
+        if time.monotonic() > end:
+            print(f"{NAME}: Ein anderer Paketvorgang läuft noch; dpkg bleibt unterbrochen.", file=sys.stderr)
+            return
+        time.sleep(5)
+    if not dpkg_interrupted():
+        return
+    print("dpkg wurde unterbrochen: dpkg --configure -a …")
+    env = {"PATH": INSTALL_PATH, "HOME": "/root", "LANG": "C.UTF-8", "DEBIAN_FRONTEND": "noninteractive"}
+    rc = run_visible([DPKG, "--configure", "-a"], env, timeout=DPKG_TIMEOUT)
+    if rc != 0:
+        print(f"{NAME}: dpkg --configure -a endete mit Exit {rc}", file=sys.stderr)
+
+
+@contextlib.contextmanager
+def inhibitor(why):
+    """Block-Inhibitor für Ausschalten und Ruhezustand, solange der Block läuft (systemd-inhibit mit sleep). Ohne logind
+    geht es ohne, mit Hinweis."""
+    if not os.path.isdir(SYSTEMD_RUN_DIR) or not os.access(SYSTEMD_INHIBIT, os.X_OK):
+        yield False
+        return
+    proc = subprocess.Popen([SYSTEMD_INHIBIT, "--what=shutdown:sleep", "--mode=block", "--who=zenOS", f"--why={why}",
+                             SLEEP, "infinity"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.PIPE, env={"PATH": SYSTEM_PATH, "LANG": "C.UTF-8"})
+    time.sleep(0.5)
+    if proc.poll() is not None:
+        print(f"{NAME}: ohne Inhibitor: {first_line(proc.stderr.read().decode('utf-8', 'replace'))}", file=sys.stderr)
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+
+
+@contextlib.contextmanager
+def takeover_flag(entry):
+    """/run/zenos-kanal/uebernahme, solange install.sh läuft (die Sperre lädt die Oberfläche erst danach neu)."""
+    flag = os.path.join(RUNTIME_DIR, "uebernahme")
+    made = False
+    if os.path.isdir(RUNTIME_DIR) and not path_problem(RUNTIME_DIR):
+        write_atomic(flag, f"{entry['commit']}\n")
+        made = True
+    try:
+        yield
+    finally:
+        if made:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(flag)
+
+
+def session_users():
+    """Benutzer mit einer Sitzung auf seat0 (für das daemon-reload ihrer Benutzerinstanz)."""
+    if not os.path.isdir(SYSTEMD_RUN_DIR):
+        return []
+    r = run([LOGINCTL, "list-sessions", "--json=short", "--no-pager"], env={"PATH": SYSTEM_PATH, "LANG": "C.UTF-8"},
+            timeout=CHECK_TIMEOUT)
+    try:
+        sessions = json.loads(r.stdout) if r.returncode == 0 else []
+    except ValueError:
+        sessions = []
+    users = set()
+    for item in sessions if isinstance(sessions, list) else []:
+        if isinstance(item, dict) and item.get("seat") == "seat0" and USER_RE.fullmatch(str(item.get("user"))):
+            users.add(item["user"])
+    return sorted(users)
+
+
+def reload_user_managers():
+    for user in session_users():
+        r = run([SYSTEMCTL, "--user", "-M", f"{user}@", "daemon-reload"], env={"PATH": SYSTEM_PATH, "LANG": "C.UTF-8"},
+                timeout=CHECK_TIMEOUT)
+        if r.returncode == 0:
+            print(f"systemd-Benutzerinstanz von {user} neu geladen; der Rest der Benutzerteile folgt beim nächsten "
+                  "Login.")
+
+
+def raise_floor(version):
+    current = None
+    with contextlib.suppress(FileNotFoundError, Failure):
+        lines = content_lines(read_small(state_path("hoechste"), trusted=True))
+        current = lines[0].strip() if len(lines) == 1 and version_key(lines[0].strip()) else None
+    if current is None or version_key(version) > version_key(current):
+        write_atomic(state_path("hoechste"), version + "\n")
+
+
+def cleanup_staged(keep):
+    folder = state_path("bereit")
+    with contextlib.suppress(OSError):
+        for name in os.listdir(folder):
+            if name not in keep:
+                shutil.rmtree(os.path.join(folder, name), ignore_errors=True)
+
+
+def install_log_ok(offset):
+    """Steht im install.log nach OFFSET der Abschluss eines normalen Laufs mit «ok»? (Auch nach einem Kürzen des Logs.)"""
+    try:
+        with open(INSTALL_LOG, "rb") as f:
+            size = os.fstat(f.fileno()).st_size
+            f.seek(offset if offset <= size else max(0, size - 524288))
+            text = f.read().decode("utf-8", "replace")
+    except OSError:
+        return False
+    marks = [z for z in text.split("\n") if z.startswith("== Beginn ") or z.startswith("== Ende ")]
+    begins = [i for i, z in enumerate(marks) if z.startswith("== Beginn ") and " · normal · " in z]
+    if not begins:
+        return False
+    return any(z.startswith("== Ende ") and " · normal · ok · " in z for z in marks[begins[-1] + 1:])
+
+
+def log_size():
+    try:
+        return os.path.getsize(INSTALL_LOG)
+    except OSError:
+        return 0
+
+
+def healthy(entry, offset, anchor_ok):
+    """Gesundheitsprüfung nach install.sh: Liste der Probleme (leer: gesund)."""
+    problems = []
+    env = install_env()
+    if not install_log_ok(offset):
+        problems.append(f"im {INSTALL_LOG} fehlt «== Ende … ok» für diesen Lauf")
+    head = installed_commit()
+    if head != entry["commit"]:
+        problems.append(f"{CODE_DIR} steht auf {str(head)[:12]} statt auf {entry['commit'][:12]}")
+    else:
+        r = git(CODE_DIR, "status", "--porcelain")
+        if r.returncode != 0 or r.stdout.strip():
+            problems.append(f"{CODE_DIR} weicht vom Commit ab")
+    for name in KEY_FILES:
+        path = os.path.join(CODE_DIR, name)
+        if os.path.lexists(os.path.join(entry["pfad"], name)) and (not os.path.isfile(path)
+                                                                   or os.path.getsize(path) == 0):
+            problems.append(f"{name} fehlt oder ist leer")
+    zen = os.path.join(CODE_DIR, "scripts", "zen")
+    if run([BASH, "-n", zen], env=env, timeout=CHECK_TIMEOUT).returncode != 0:
+        problems.append("scripts/zen hat einen Syntaxfehler")
+    r = run([zen, "version"], env=env, timeout=CHECK_TIMEOUT)
+    if r.returncode != 0 or not re.search(r"^zenOS ", r.stdout, re.M):
+        problems.append(f"zen version läuft nicht (Exit {r.returncode}{': ' + first_line(r.stderr) if r.stderr else ''})")
+    if os.path.exists(QUICKSHELL):
+        r = run([QUICKSHELL, "--version"], env=env, timeout=CHECK_TIMEOUT)
+        if r.returncode != 0:
+            problems.append(f"quickshell --version endet mit Exit {r.returncode}")
+    if os.path.isdir(SYSTEMD_RUN_DIR):
+        if run([SYSTEMCTL, "is-failed", "--quiet", "greetd.service"], env=env, timeout=CHECK_TIMEOUT).returncode == 0:
+            problems.append("greetd ist ausgefallen")
+    if not os.path.isfile(INSTALLED_PROGRAM):
+        problems.append(f"{INSTALLED_PROGRAM} fehlt: Ohne ihn kommt kein Update mehr")
+    else:
+        argv = [PYTHON, "-I", INSTALLED_PROGRAM, "selbsttest"] + (["--anker"] if anchor_ok else [])
+        if entry.get("signiert"):
+            argv += ["--tag", entry["tag"], entry["objekt"], entry["pfad"]]
+        r = run(argv, env=env, timeout=CHECK_TIMEOUT)
+        if r.returncode != 0:
+            problems.append(f"Selbsttest des neuen zenos-kanal: {first_line(r.stdout + r.stderr) or r.returncode}")
+    return problems
+
+
+class Installation:
+    """Ein Lauf von «installieren»: ein bereitgestelltes Ziel (auftrag.json) installieren oder einen unterbrochenen
+    Lauf (laeuft.json) fortsetzen, mit Gesundheitsprüfung und Rückweg. Schreibt letzte.json."""
+
+    def __init__(self):
+        self.t = now()
+        self.stop_requested = False
+        self.result = {"version": 1, "ergebnis": None, "grund": "", "beginn": iso(self.t), "ende": None, "ziel": None,
+                       "rueckweg": None, "versuche": None, "hinweise": []}
+
+    def finish(self, result, reason, code):
+        self.result.update(ergebnis=result, grund=reason, ende=iso(now()))
+        return code
+
+    def save(self, running):
+        write_json(state_path("laeuft.json"), running)
+
+    def run(self):
+        os.makedirs(STATE_DIR, mode=0o755, exist_ok=True)
+        problem = path_problem(STATE_DIR)
+        if problem:
+            raise Failure(f"Zustand unsicher: {problem}")
+        running = load_json(state_path("laeuft.json"), trusted=True)
+        if running is not None:
+            problem = (entry_problem(running.get("ziel")) or (running.get("rueckweg") is not None and
+                                                               entry_problem(running.get("rueckweg"))))
+            if problem or running.get("phase") not in ("ziel", "rueckweg") or not isinstance(running.get("versuche"),
+                                                                                            dict):
+                os.replace(state_path("laeuft.json"), state_path("laeuft.kaputt.json"))
+                return self.finish("kaputt", f"laeuft.json ist unbrauchbar ({problem or 'Form'}); beiseite gelegt als "
+                                   "laeuft.kaputt.json.", EXIT_BROKEN)
+            print(f"Setze die unterbrochene Installation fort: {target_label(running[running['phase']])} "
+                  f"(bisher {running['versuche'].get(running['phase'], 0)} Versuche).")
+        else:
+            running = self.new_run()
+            if not isinstance(running, dict):
+                return running
+        self.result.update(ziel=running["ziel"], rueckweg=running["rueckweg"])
+        anchor_ok = self.anchor_ok()
+        dpkg_repair()
+        failure = running.get("grund")
+        while True:
+            phase = running["phase"]
+            entry = running[phase]
+            done = running["versuche"].get(phase, 0)
+            self.result["versuche"] = dict(running["versuche"])
+            if done >= MAX_ATTEMPTS:
+                reason = f"{target_label(entry)} wurde {done}-mal unterbrochen"
+                if phase == "rueckweg":
+                    return self.broken(running, f"{failure or '?'}; Rückweg: {reason}")
+                lock_target(entry, reason)
+                failure = reason
+                if not running["rueckweg"]:
+                    return self.broken(running, f"{reason}; kein Rückweg")
+                running.update(phase="rueckweg", grund=reason)
+                self.save(running)
+                continue
+            running["versuche"][phase] = done + 1
+            self.result["versuche"] = dict(running["versuche"])
+            self.save(running)
+            problems = self.attempt(entry, anchor_ok)
+            if not problems:
+                return self.success(running, phase, failure)
+            reason = "; ".join(problems)
+            print(f"{NAME}: {target_label(entry)} ist nicht gesund: {reason}", file=sys.stderr)
+            if phase == "rueckweg":
+                return self.broken(running, f"{failure}; Rückweg: {reason}")
+            if not running["rueckweg"]:
+                self.remove_running()
+                if running["ziel"]["commit"] == installed_commit():
+                    return self.finish("gescheitert", f"{target_label(entry)}: {reason}. Es läuft derselbe Stand wie "
+                                       "vorher.", EXIT_FAILED)
+                return self.broken(running, f"{reason}; kein Rückweg")
+            locked = lock_target(entry, reason)
+            print(f"{locked} ist gesperrt. Rückweg auf {target_label(running['rueckweg'])} …")
+            failure = f"{target_label(entry)}: {reason}"
+            running.update(phase="rueckweg", grund=failure)
+            self.save(running)
+
+    def anchor_ok(self):
+        try:
+            load_device_anchor()
+            return True
+        except AnchorError:
+            return False
+
+    def new_run(self):
+        order = load_json(state_path("auftrag.json"), trusted=True)
+        if order is None:
+            return self.finish("nichts", "Kein Auftrag: zen update stellt einen bereit.", EXIT_OK)
+        os.unlink(state_path("auftrag.json"))
+        problem = entry_problem(order)
+        when = parse_iso(order.get("zeit"))
+        if not problem and (not when or abs(self.t - when) > MAX_AGE):
+            problem = "älter als eine Stunde"
+        if problem:
+            return self.finish("abgelehnt", f"Auftrag unbrauchbar: {problem}. Noch einmal: zen update.", EXIT_BLOCKED)
+        try:
+            self.verify(order)
+        except Failure as e:
+            return self.finish("abgelehnt", f"{target_label(order)}: {e}", EXIT_BLOCKED)
+        problem = free_space_problem(install_space_paths())
+        if problem:
+            return self.finish("wartet", problem, EXIT_WAIT)
+        target = {k: order.get(k) for k in ENTRY_KEYS}
+        try:
+            fallback = self.prepare_fallback(target)
+        except Waiting as e:
+            return self.finish("wartet", str(e), EXIT_WAIT)
+        except Failure as e:
+            return self.finish("abgelehnt", f"Rückweg nicht bereitzustellen: {e}. Nichts geändert.", EXIT_ERROR)
+        return {"version": 1, "ziel": target, "rueckweg": fallback, "phase": "ziel",
+                "versuche": {"ziel": 0, "rueckweg": 0}, "beginn": iso(self.t), "grund": None}
+
+    def verify(self, entry):
+        """Prüft die Bereitstellung vor der Benutzung noch einmal: Ort, Commit, sauber; signiert gegen den Anker von
+        jetzt, sonst nur mit «ja»."""
+        folder = entry["pfad"]
+        if not repo_intact(folder, entry["commit"]):
+            raise Failure("Bereitstellung fehlt, ist verändert oder nicht root-eigen")
+        if entry.get("signiert"):
+            try:
+                anchor = load_device_anchor()
+            except AnchorError as e:
+                raise Failure(f"Anker: {e.reason}") from e
+            with tempfile.TemporaryDirectory(prefix="zenos-kanal.") as work:
+                files = signer_files(anchor, os.path.join(work, "anker"))
+                r = git(folder, "rev-parse", "--verify", "--quiet", f"refs/tags/{entry['tag']}")
+                if r.stdout.strip() != entry["objekt"]:
+                    raise Failure(f"Tag {entry['tag']} fehlt in der Bereitstellung")
+                kind = git(folder, "cat-file", "-t", entry["objekt"]).stdout.strip()
+                result = check_tag(folder, entry["tag"], entry["objekt"], kind, anchor, files, RELEASE_PRINCIPAL)
+            if not result.ok or result.commit != entry["commit"]:
+                raise Failure(f"Signatur gilt nicht mehr ({result.reason or 'anderer Commit'})")
+        elif entry.get("freigabe") == "ja":
+            return
+        elif entry.get("bereich_von"):
+            self.verify_range(entry)
+        else:
+            raise Failure("weder gültig signiert noch mit «ja» freigegeben")
+
+    def verify_range(self, entry):
+        """dev ohne «ja»: Der installierte Stand ist noch derselbe, liegt im Verlauf des Ziels, und jeder Commit dazwischen
+        ist gegen den Anker von jetzt gültig signiert (%G? gleich G)."""
+        base, folder = entry["bereich_von"], entry["pfad"]
+        if installed_commit() != base:
+            raise Failure("der installierte Stand hat sich seit der Prüfung geändert")
+        if is_ancestor(folder, base, entry["commit"]) is not True:
+            raise Failure("der installierte Stand liegt nicht im Verlauf des Ziels")
+        try:
+            anchor = load_device_anchor()
+        except AnchorError as e:
+            raise Failure(f"Anker: {e.reason}") from e
+        count = git(folder, "rev-list", "--count", f"{base}..{entry['commit']}").stdout.strip()
+        with tempfile.TemporaryDirectory(prefix="zenos-kanal.") as work:
+            files = signer_files(anchor, os.path.join(work, "anker"))
+            r = git(folder, "-c", f"gpg.ssh.allowedSignersFile={files['release']}",
+                    "-c", f"gpg.ssh.revocationFile={files['widerrufen']}", "log", "--format=%G?",
+                    f"{base}..{entry['commit']}")
+        marks = [z for z in r.stdout.split("\n") if z]
+        if r.returncode != 0 or not count.isdigit() or len(marks) != int(count) or any(m != "G" for m in marks):
+            raise Failure("nicht mehr jeder neue Commit ist gültig signiert")
+
+    def prepare_fallback(self, target):
+        """Rückweg: der laufende Stand von /opt/zenos als Bereitstellung (vom guten Stand, sonst frisch aus /opt/zenos).
+        None, wenn es keinen gibt oder das Ziel derselbe Commit ist."""
+        head = installed_commit()
+        if not head:
+            self.result["hinweise"].append(f"Kein Rückweg: {CODE_DIR} hat keinen Stand.")
+            return None
+        if head == target["commit"]:
+            return None
+        gut = load_json(state_path("gut.json"), trusted=True) or {}
+        folder = state_path("bereit", head)
+        if gut.get("commit") == head and repo_intact(folder, head):
+            return {**{k: gut.get(k) for k in ENTRY_KEYS}, "pfad": folder, "quelle": "gut"}
+        if os.path.lexists(state_path("angehalten")) or git(CODE_DIR, "status", "--porcelain").stdout.strip():
+            self.result["hinweise"].append(f"Rückweg ist der Commit {head[:12]} ohne die Änderungen, die von Hand in "
+                                           f"{CODE_DIR} kamen.")
+        branch = git(CODE_DIR, "symbolic-ref", "--quiet", "--short", "HEAD").stdout.strip()
+        branch = branch if BRANCH_RE.fullmatch(branch) and ".." not in branch else None
+        try:
+            origin = origin_url()
+        except Failure:
+            origin = None
+        stage(CODE_DIR, [f"+HEAD:refs/heads/{branch or 'zenos-vorher'}", "+refs/tags/*:refs/tags/*"], head, branch,
+              origin)
+        return {"commit": head, "zweig": branch, "tag": None, "objekt": None, "version": None, "signiert": False,
+                "freigabe": None, "hoechste": False, "pfad": folder, "art": "rueckweg", "kanal": None,
+                "von_hand": target.get("von_hand"), "quelle": "vorher"}
+
+    def attempt(self, entry, anchor_ok):
+        """Ein Lauf von install.sh aus der Bereitstellung, dann die Gesundheitsprüfung. Liste der Probleme."""
+        if not repo_intact(entry["pfad"], entry["commit"]):
+            return ["Bereitstellung fehlt oder ist verändert"]
+        script = os.path.join(entry["pfad"], "scripts", "install.sh")
+        argv = [script] + ([] if entry.get("von_hand") else ["--ruhig"])
+        print(f"install.sh aus {entry['pfad']} ({target_label(entry)}) …")
+        offset = log_size()
+        with inhibitor(f"zenOS wird aktualisiert ({target_label(entry)})"), takeover_flag(entry):
+            rc = run_visible(argv, install_env())
+        if self.stop_requested:
+            self.result["hinweise"].append("Während install.sh kam ein Stopp (Ausschalten?); install.sh lief zu Ende.")
+        problems = [] if rc == 0 else [f"install.sh endete mit Exit {rc}"]
+        return problems + healthy(entry, offset, anchor_ok)
+
+    def remove_running(self):
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(state_path("laeuft.json"))
+
+    def success(self, running, phase, failure):
+        entry = running[phase]
+        gut = {k: entry.get(k) for k in ENTRY_KEYS}
+        gut["zeit"] = iso(now())
+        write_json(state_path("gut.json"), gut)
+        if phase == "ziel" and entry.get("signiert") and entry.get("hoechste") and version_key(entry.get("version")):
+            raise_floor(entry["version"])
+        self.remove_running()
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(state_path("angehalten"))
+        cleanup_staged({entry["commit"]})
+        reload_user_managers()
+        if phase == "ziel":
+            return self.finish("installiert", f"{target_label(entry)} ist installiert und gesund.", EXIT_OK)
+        return self.finish("zurueck", f"{failure}. Zurück auf {target_label(entry)}, gesund.", EXIT_FAILED)
+
+    def broken(self, running, reason):
+        self.remove_running()
+        return self.finish("kaputt", f"{reason}. Hilfe: ANLEITUNG.md, Abschnitt F (Notweg).", EXIT_BROKEN)
+
+
+def cmd_install(argv):
+    if argv:
+        print(f"{NAME} installieren: keine Argumente erwartet", file=sys.stderr)
+        return EXIT_USAGE
+    if os.geteuid() not in TRUSTED_UIDS:
+        print(f"{NAME} installieren: nur als root (zen update)", file=sys.stderr)
+        return EXIT_USAGE
+    os.umask(0o022)
+    lock = take_lock()
+    if lock is None:
+        print(f"{NAME}: Ein Update oder eine Prüfung läuft gerade (Sperre {LOCK_FILE}). Später noch einmal.",
+              file=sys.stderr)
+        return EXIT_BUSY
+    run_ = Installation()
+
+    def stop(_signum, _frame):
+        # KillMode=mixed: Das Signal kommt nur hierher. install.sh läuft weiter (dpkg nie mittendrin abbrechen),
+        # bis es fertig ist oder systemd nach TimeoutStopSec alles beendet.
+        run_.stop_requested = True
+        print(f"{NAME}: Stopp verlangt, warte auf das Ende von install.sh …", file=sys.stderr)
+
+    old_term = signal.signal(signal.SIGTERM, stop)
+    old_hup = signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    try:
+        try:
+            code = run_.run()
+        except Failure as e:
+            code = run_.finish("fehler", f"Installation abgebrochen: {e}", EXIT_ERROR)
+        except Exception as e:  # noqa: BLE001 – laeuft.json bleibt, nachstart und zen update setzen fort
+            traceback.print_exc()
+            code = run_.finish("fehler", f"Installation abgebrochen: {type(e).__name__}: {short(e, 120)}", EXIT_ERROR)
+        if run_.result["ergebnis"] != "nichts" and os.path.isdir(STATE_DIR) and not path_problem(STATE_DIR):
+            write_json(state_path("letzte.json"), run_.result)
+    finally:
+        signal.signal(signal.SIGTERM, old_term)
+        signal.signal(signal.SIGHUP, old_hup)
+        os.close(lock)
+    print(f"Ergebnis: {RESULT_TEXT.get(run_.result['ergebnis'], run_.result['ergebnis'])} – {run_.result['grund']}")
+    for note in run_.result["hinweise"]:
+        print(f"  Hinweis: {note}")
+    return code
+
+
+# --- Nach dem Start (vor dem Login, ohne Netz) ---------------------------------------------------------------------
+
+
+def cmd_after_boot(argv):
+    """Ein Lauf wurde unterbrochen (laeuft.json): die Übernahme des Codes vollenden (install.sh --nur-code), damit der
+    Login keinen Mischstand sieht. Den Rest (Pakete, Units) holt «zen update» nach. Nach MAX_ATTEMPTS unterbrochenen
+    Versuchen ist das der Code des Rückwegs."""
+    if argv:
+        print(f"{NAME} nachstart: keine Argumente erwartet", file=sys.stderr)
+        return EXIT_USAGE
+    if os.geteuid() not in TRUSTED_UIDS:
+        print(f"{NAME} nachstart: nur als root", file=sys.stderr)
+        return EXIT_USAGE
+    os.umask(0o022)
+    lock = take_lock()
+    if lock is None:
+        return EXIT_BUSY
+    try:
+        running = load_json(state_path("laeuft.json"), trusted=True)
+        if running is None:
+            print("Keine unterbrochene Installation.")
+            return EXIT_OK
+        if (running.get("phase") not in ("ziel", "rueckweg") or entry_problem(running.get(running.get("phase")))
+                or not isinstance(running.get("versuche"), dict)):
+            print(f"{NAME}: laeuft.json ist unbrauchbar; zen update meldet es.", file=sys.stderr)
+            return EXIT_ERROR
+        if (running["phase"] == "ziel" and running["versuche"].get("ziel", 0) >= MAX_ATTEMPTS
+                and running.get("rueckweg") and not entry_problem(running["rueckweg"])):
+            reason = f"{target_label(running['ziel'])} wurde {running['versuche']['ziel']}-mal unterbrochen"
+            lock_target(running["ziel"], reason)
+            running.update(phase="rueckweg", grund=reason)
+            write_json(state_path("laeuft.json"), running)
+            print(f"{reason}: gesperrt, Rückweg auf {target_label(running['rueckweg'])}.")
+        entry = running[running["phase"]]
+        if not repo_intact(entry["pfad"], entry["commit"]):
+            print(f"{NAME}: Bereitstellung von {target_label(entry)} fehlt oder ist verändert.", file=sys.stderr)
+            return EXIT_ERROR
+        script = os.path.join(entry["pfad"], "scripts", "install.sh")
+        try:
+            with open(script, "rb") as f:
+                supported = b"--nur-code" in f.read(1 << 20)
+        except OSError:
+            supported = False
+        if not supported:
+            print(f"install.sh von {target_label(entry)} kennt --nur-code nicht; die Übernahme vollendet zen update.")
+            return EXIT_OK
+        if installed_commit() == entry["commit"] and not git(CODE_DIR, "status", "--porcelain").stdout.strip():
+            print(f"Code von {target_label(entry)} ist schon vollständig; den Rest holt zen update nach.")
+            return EXIT_OK
+        print(f"Vollende die Übernahme des Codes von {target_label(entry)} …")
+        rc = run_visible([script, "--nur-code"], install_env())
+        done = installed_commit() == entry["commit"] and not git(CODE_DIR, "status", "--porcelain").stdout.strip()
+        print("Code vollständig; den Rest holt zen update nach." if rc == 0 and done
+              else f"{NAME}: Übernahme nicht vollständig (Exit {rc}).")
+        return EXIT_OK if rc == 0 and done else EXIT_ERROR
+    finally:
+        os.close(lock)
+
+
+# --- Selbsttest (der eben installierte zenos-kanal) ----------------------------------------------------------------
+
+
+def cmd_selftest(argv):
+    want_anchor = argv[:1] == ["--anker"]
+    rest = argv[1:] if want_anchor else argv
+    if rest and (len(rest) != 4 or rest[0] != "--tag"):
+        print(f"{NAME} selbsttest [--anker] [--tag NAME OBJEKT REPO]", file=sys.stderr)
+        return EXIT_USAGE
+    try:
+        anchor = load_device_anchor()
+    except AnchorError as e:
+        if want_anchor or rest:
+            print(f"selbsttest: Anker nicht lesbar: {e.reason}")
+            return EXIT_BLOCKED
+        anchor = None
+    if rest:
+        name, oid, repo = rest[1:]
+        if not TAG_NAME_RE.fullmatch(name) or not OID_RE.fullmatch(oid):
+            print("selbsttest: ungültiger Tag", file=sys.stderr)
+            return EXIT_USAGE
+        with tempfile.TemporaryDirectory(prefix="zenos-kanal.") as work:
+            files = signer_files(anchor, os.path.join(work, "anker"))
+            kind = git(repo, "cat-file", "-t", oid).stdout.strip()
+            result = check_tag(repo, name, oid, kind, anchor, files, RELEASE_PRINCIPAL)
+        if not result.ok:
+            print(f"selbsttest: {name} gilt nicht: {result.reason}")
+            return EXIT_BLOCKED
+    print("selbsttest ok")
+    return EXIT_OK
+
+
+# --- zen update und zen rollback (root, im Terminal) ---------------------------------------------------------------
+
+
+def start_unit(key, follow=False):
+    """Startet eine der Units und wartet, bis sie fertig ist. follow: ihr Journal läuft mit. Exit-Code des Programms."""
+    unit = UNITS[key]
+    env = {"PATH": SYSTEM_PATH, "LANG": "C.UTF-8", "SYSTEMD_PAGER": "", "SYSTEMD_COLORS": "0"}
+    journal = None
+    sys.stdout.flush()
+    if follow:
+        since = f"@{int(time.time())}"
+        journal = subprocess.Popen([JOURNALCTL, "--follow", "--output=cat", "--no-pager", f"--since={since}",
+                                    f"--unit={unit}"], stdin=subprocess.DEVNULL, env=env)
+    try:
+        r = run([SYSTEMCTL, "start", unit], env=env, timeout=None)
+    finally:
+        if journal:
+            time.sleep(1)
+            journal.terminate()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                journal.wait(5)
+    status = run([SYSTEMCTL, "show", "--property=ExecMainStatus", "--value", unit], env=env).stdout.strip()
+    if r.returncode != 0 and (not status.isdigit() or int(status) == 0):
+        # Die Unit lief gar nicht (fehlt, Abhängigkeit gescheitert): ExecMainStatus wäre der eines früheren Laufs
+        print(f"{NAME}: {unit}: {first_line(r.stderr) or 'Start gescheitert'}", file=sys.stderr)
+        return EXIT_ERROR
+    if status.isdigit():
+        return int(status)
+    return EXIT_OK if r.returncode == 0 else EXIT_ERROR
+
+
+class Operator:
+    """«zen update» und «zen rollback»: Wunsch schreiben, holen, prüfen, nach Bedarf «ja» fragen, installieren. Alles
+    mit Gewicht läuft in den Units; dieses Programm zeigt nur und fragt."""
+
+    def run(self, wish):
+        if os.geteuid() not in TRUSTED_UIDS:
+            print(f"{NAME}: nur als root (zen update, zen rollback)", file=sys.stderr)
+            return EXIT_USAGE
+        os.umask(0o022)
+        lock = take_lock(UI_LOCK_FILE)
+        if lock is None:
+            print(f"{NAME}: Ein anderes zen update oder zen rollback läuft gerade.", file=sys.stderr)
+            return EXIT_BUSY
+        try:
+            return self.steps(wish)
+        except KeyboardInterrupt:
+            print("\nAbgebrochen. Eine laufende Installation läuft im Hintergrund weiter "
+                  "(journalctl -fu zenos-kanal-installieren.service).", file=sys.stderr)
+            return 130
+        finally:
+            os.close(lock)
+
+    def steps(self, wish):
+        if not installed_commit():
+            print(f"{NAME}: {CODE_DIR} ist nicht installiert. Zuerst im Repo ./scripts/install.sh ausführen.",
+                  file=sys.stderr)
+            return EXIT_ERROR
+        running = load_json(state_path("laeuft.json"), trusted=True)
+        if running is not None:
+            entry = running.get(running.get("phase")) if isinstance(running.get("phase"), str) else None
+            print(f"Eine Installation wurde unterbrochen ({target_label(entry)}). Sie wird zuerst fortgesetzt.")
+            if wish["art"] == "rollback":
+                print(f"Danach noch einmal: zen rollback {wish['tag']}")
+            return self.install()
+        stand = self.check(wish)
+        if stand is None:
+            return EXIT_ERROR
+        answer = stand["wunsch"]
+        if answer["ergebnis"] == "zustimmung":
+            question = answer.get("frage") or {}
+            if not self.agree(question):
+                return EXIT_WAIT
+            stand = self.check({**wish, "ja": question["id"]}, fetch=False)
+            if stand is None:
+                return EXIT_ERROR
+            answer = stand["wunsch"]
+        result = answer["ergebnis"]
+        print(answer.get("grund") or "")
+        if result == "bereitgestellt":
+            return self.install()
+        return {"aktuell": EXIT_OK, "wartet": EXIT_WAIT, "zustimmung": EXIT_WAIT}.get(result, EXIT_BLOCKED)
+
+    def check(self, wish, fetch=True):
+        sys.stdout.flush()
+        wish_id = write_wish(wish["art"], wish.get("tag"), wish.get("ja"))
+        if fetch:
+            print("Hole von origin (ohne Rechte) …")
+            if start_unit("holen") != EXIT_OK:
+                contact = read_fetch_status()
+                print(f"Warnung: Holen ist gescheitert ({contact['fehler'] or 'journalctl -u zenos-kanal-holen'}). "
+                      f"Es gilt der Stand vom {local_time(contact['letzter_kontakt'])}.", file=sys.stderr)
+        print("Prüfe (ohne Netz) …")
+        code = start_unit("pruefen")
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(state_path("wunsch.json"))
+        stand = read_stand()
+        if not stand or not isinstance(stand.get("wunsch"), dict) or stand["wunsch"].get("id") != wish_id:
+            text = ("Eine Prüfung oder Installation läuft gerade, später noch einmal" if code == EXIT_BUSY
+                    else f"Die Prüfung hat nicht geantwortet (Exit {code}; journalctl -u zenos-kanal-pruefen)")
+            print(f"{NAME}: {text}.", file=sys.stderr)
+            return None
+        for note in stand.get("hinweise") or []:
+            print(f"  Hinweis: {note}")
+        return stand
+
+    def agree(self, question):
+        print(f"\n{question.get('ziel')} braucht deine Zustimmung:")
+        for reason in question.get("gruende") or []:
+            print(f"  – {reason}")
+        commits = question.get("commits")
+        if commits:
+            print("Neue Commits (G = gültig signiert):")
+            for c in commits:
+                if "weitere" in c:
+                    print(f"  … und {c['weitere']} weitere")
+                else:
+                    print(f"  {c.get('zeichen')} {str(c.get('commit'))[:12]} {c.get('titel')}")
+        if not interactive():
+            print("Zustimmen geht nur im Terminal: zen update bzw. zen rollback dort ausführen. Nichts geändert.")
+            return False
+        typed = ask(f"Genau diesen Stand ({str(question.get('id'))[:12]}) installieren? Tippe «ja»: ").strip()
+        if typed != "ja":
+            print("Nichts geändert.")
+            return False
+        return True
+
+    def install(self):
+        print("Installiere als zenos-kanal-installieren.service (läuft auch ohne dieses Terminal zu Ende) …")
+        begin = now()
+        code = start_unit("installieren", follow=True)
+        last = load_json(state_path("letzte.json")) or {}
+        ended = parse_iso(last.get("ende"))
+        if ended and ended >= begin - datetime.timedelta(seconds=2):
+            print(f"\n{RESULT_TEXT.get(last.get('ergebnis'), last.get('ergebnis'))}: {last.get('grund')}")
+        return code
+
+
+def cmd_update(argv):
+    if argv:
+        print(f"{NAME} update: keine Argumente erwartet", file=sys.stderr)
+        return EXIT_USAGE
+    return Operator().run({"art": "update", "tag": None})
+
+
+def cmd_rollback(argv):
+    if len(argv) != 1 or not TAG_NAME_RE.fullmatch(argv[0]):
+        print(f"{NAME} rollback TAG (etwa v0.1.0-rc3)", file=sys.stderr)
+        return EXIT_USAGE
+    return Operator().run({"art": "rollback", "tag": argv[0]})
 
 
 # --- Status ----------------------------------------------------------------------------------------------------
@@ -1259,11 +2544,24 @@ def print_check(stand):
 STATE_TEXT = {
     "aktuell": "aktuell",
     "bereit": "neue Version bereit",
+    "zustimmung": "wartet auf Zustimmung",
     "dev": "dev, nur von Hand",
     "anker_fehlt": "Anker fehlt",
     "blockiert": "blockiert",
     "kein_kontakt": "kein Kontakt",
     "fehler": "Fehler",
+}
+
+RESULT_TEXT = {
+    "installiert": "Installiert",
+    "zurueck": "Gescheitert, zurück auf dem Stand davor",
+    "gescheitert": "Gescheitert",
+    "kaputt": "Kaputt",
+    "unterbrochen": "Unterbrochen",
+    "abgelehnt": "Abgelehnt",
+    "wartet": "Wartet",
+    "fehler": "Fehler",
+    "nichts": "Nichts zu tun",
 }
 
 
@@ -1300,10 +2598,39 @@ def stand_outdated(stand):
     return stand.get("anker") != live and not (live is None and stand.get("zustand") == "anker_fehlt")
 
 
+def installation_summary():
+    """(Schlüssel, Text) zur Installation über den Kanal, für status, zen doctor und zen version. Schlüssel:
+    unterbrochen, kaputt, angehalten, zurueck, gut, keine."""
+    running = load_json(state_path("laeuft.json"))
+    if running:
+        phase = running.get("phase") if running.get("phase") in ("ziel", "rueckweg") else "ziel"
+        tries = (running.get("versuche") or {}).get(phase, "?")
+        what = "Rückweg auf" if phase == "rueckweg" else "Installation von"
+        return "unterbrochen", (f"{what} {target_label(running.get(phase))} unterbrochen (Versuch {tries}); zen update "
+                                "setzt sie fort")
+    last = load_json(state_path("letzte.json")) or {}
+    if last.get("ergebnis") == "kaputt":
+        return "kaputt", f"am {local_time(last.get('ende'))}: {last.get('grund')}"
+    if os.path.lexists(state_path("angehalten")):
+        data = load_json(state_path("angehalten")) or {}
+        return "angehalten", (f"{CODE_DIR} kam am {local_time(data.get('zeit'))} von Hand aus einem Arbeitsstand "
+                              f"({str(data.get('commit') or '?')[:12]}); zen update kehrt zum Kanal zurück")
+    if last.get("ergebnis") == "zurueck":
+        return "zurueck", f"am {local_time(last.get('ende'))}: {last.get('grund')}"
+    gut = load_json(state_path("gut.json")) or {}
+    if gut.get("commit"):
+        return "gut", f"{target_label(gut)}, installiert am {local_time(gut.get('zeit'))}"
+    return "keine", "noch nichts über den Kanal installiert"
+
+
 def cmd_status(argv):
-    if argv not in ([], ["--json"], ["--kurz"]):
-        print(f"{NAME} status [--json|--kurz]", file=sys.stderr)
+    if argv not in ([], ["--json"], ["--kurz"], ["--installation"]):
+        print(f"{NAME} status [--json|--kurz|--installation]", file=sys.stderr)
         return EXIT_USAGE
+    if argv == ["--installation"]:
+        key, text = installation_summary()
+        print(f"{key} {text}")
+        return EXIT_OK
     stand = read_stand()
     if argv == ["--json"]:
         print(json.dumps(stand or {}, ensure_ascii=False, indent=1))
@@ -1359,6 +2686,16 @@ def cmd_status(argv):
             lines.append(f"{'Abgelehnt' if i == 0 else '':<12}{entry.get('tag')}: {entry.get('grund')}")
         for i, note in enumerate(stand.get("hinweise") or []):
             lines.append(f"{'Hinweise' if i == 0 else '':<12}{note}")
+    key, text = installation_summary()
+    lines.append(f"{'Update':<12}{text}")
+    gut = load_json(state_path("gut.json")) or {}
+    if key not in ("gut", "keine") and gut.get("commit"):
+        lines.append(f"{'Guter Stand':<12}{target_label(gut)}, installiert am {local_time(gut.get('zeit'))}")
+    if stand and gut.get("commit") and (stand.get("installiert") or {}).get("commit") not in (None, gut["commit"]):
+        lines.append(f"{'':<12}{CODE_DIR} steht nicht auf dem guten Stand (von Hand geändert?)")
+    locked = locked_entries()
+    for i, (name, entry) in enumerate(sorted(locked.items())):
+        lines.append(f"{'Gesperrt' if i == 0 else '':<12}{name[:20]}: {short(entry.get('grund') or '?', 100)}")
     print("\n".join(lines))
     return EXIT_OK
 
@@ -1463,7 +2800,9 @@ def main(argv):
     if not argv or argv[0] in ("-h", "--hilfe", "--help"):
         print(__doc__.strip())
         return EXIT_OK if argv else EXIT_USAGE
-    commands = {"status": cmd_status, "pruefen": cmd_check, "anker": cmd_anchor, "holen-intern": cmd_fetch_internal}
+    commands = {"status": cmd_status, "pruefen": cmd_check, "anker": cmd_anchor, "holen-intern": cmd_fetch_internal,
+                "update": cmd_update, "rollback": cmd_rollback, "installieren": cmd_install,
+                "nachstart": cmd_after_boot, "selbsttest": cmd_selftest}
     command = commands.get(argv[0])
     if not command:
         print(f"{NAME}: unbekannter Befehl «{short(argv[0], 30)}» (--hilfe)", file=sys.stderr)

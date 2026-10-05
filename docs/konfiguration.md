@@ -18,7 +18,7 @@ Eine Datei unter `modi/`, `zustaende/` oder `raster/` mit ungültigem Inhalt feh
 | `~/Ablage` | der eine Ordner für eigene Dateien | Installer, wenn er fehlt (0700); danach nur du |
 | `~/.config/user-dirs.dirs`, `~/.config/user-dirs.conf` | Benutzerordner (Downloads, Dokumente …) → `~/Ablage` | Installer, solange die erste Zeile die zenOS-Marke trägt |
 | `~/.config/Thunar/uca.xml` | Thunar-Aktion «Terminal hier öffnen» (kitty) | Installer, solange die erste Zeile die zenOS-Marke trägt; danach Thunar (eigene Aktionen) |
-| `/etc/xdg/zenos/kanal` | Kanal für `zen update` und den signierten Kanal | Installer beim ersten Mal |
+| `/etc/xdg/zenos/kanal` | Kanal für `zen update`: `stabil`, `vorschau` oder `dev` | Installer beim ersten Mal |
 | `/etc/zenos/vertrauen/` | Vertrauensanker: öffentliche Prüfschlüssel für signierte Releases | Installer, nur wenn er fehlt oder leer ist; danach `zenos-kanal` (Tag `vertrauen/NNNN`) oder `sudo zen kanal anker ORDNER` |
 | `/etc/xdg/zenos/argon.json` | Lüfterkurve (optional) | von Hand mit sudo |
 | `/etc/xdg/zenos/argon-akkuprofil` | Freigabe: zenos-argon darf Argons Akkuprofil in den Messchip schreiben (Argon ONE UP) | `zen akku freigeben`, entfernt mit `zen akku sperren` |
@@ -239,9 +239,11 @@ Damit Browser und Apps dort speichern, zeigen die XDG-Benutzerordner in `~/.conf
 
 ## Systemweit
 
-- **`/etc/xdg/zenos/kanal`:** `dev` oder `main`. Der Installer legt die Datei beim ersten Mal an (aus dem Branch der
-  Quelle, im Image `dev`) und ändert sie danach nicht mehr. Der signierte Kanal (`zen kanal`) kennt dazu `stabil` und
-  `vorschau`; `main` gilt dort als `stabil`, eine fehlende Datei als `dev`, alles andere blockiert ihn.
+- **`/etc/xdg/zenos/kanal`:** `stabil` (nur signierte `vX.Y.Z`), `vorschau` (dazu `vX.Y.Z-rcN`) oder `dev` (Branch
+  dev, nur von Hand). Der Installer legt die Datei beim ersten Mal an (aus dem Branch der Quelle: `main` → `stabil`,
+  sonst `dev`; im Image `dev`) und ändert sie danach nicht mehr, ausser ein alter Wert `main` wird zu `stabil`. Eine
+  fehlende Datei gilt als `dev`, ein unbekannter Wert blockiert den Kanal (`zen update` installiert nichts, der Notweg
+  in ANLEITUNG F geht weiter).
 - **`/etc/zenos/vertrauen/`:** `release`, `wurzel`, `widerrufen`, `serie` (root, 0644, Ordner 0755). Nicht von Hand
   bearbeiten: Ein Anker, der für andere schreibbar ist oder ein Verweis, gilt als fehlend. Format und Wechsel:
   `docs/image-und-releases.md`, «Signierte Releases».

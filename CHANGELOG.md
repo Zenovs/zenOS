@@ -7,6 +7,21 @@ an; eine Version entspricht einem Tag `v…` im Repo.
 
 ### Neu
 
+- **zen update und zen rollback über den Kanal:** `/opt/zenos` wird nie mehr direkt umgestellt. `zen update` holt
+  ohne Rechte, prüft und stellt ohne Netz bereit (`/var/lib/zenos/kanal/bereit/<commit>`) und installiert als Dienst
+  `zenos-kanal-installieren.service` (root, Block-Inhibitor fürs Ausschalten, `KillMode=mixed`; ein SSH-Abbruch
+  schadet nicht). Auf `stabil` und `vorschau` nur gültig signierte Tags; auf `dev` ohne Frage nur, wenn jeder neue
+  Commit gültig signiert ist, sonst (auch solange der Anker leer ist) nach einem getippten «ja» für genau diesen
+  Commit. Ein «ja» braucht es auch für Firewall, Netz und Boot (Rückfrage-Pfade fest im Code), für einen gesperrten
+  Stand und einen Rückschritt. Danach Gesundheitsprüfung (Log, Commit, `zen version`, Quickshell, greetd, Selbsttest
+  des neuen zenos-kanal); scheitert sie, kommt die Version nach `gesperrt/` und der Stand davor zurück. Ein Abbruch
+  (Strom, kill) wird beim Start vor greetd im Code vollendet (`zenos-kanal-nachstart.service`, `install.sh
+  --nur-code`) und vom nächsten `zen update` fortgesetzt; nach zwei Abbrüchen geht es zurück. `zen rollback <tag>`
+  nimmt signierte Tags ohne Frage, unsignierte nach «ja» für genau das Tag-Objekt. `zen version` zeigt die letzte
+  Installation, `zen doctor` und `zen kanal status` dazu Unterbrechungen, gesperrte Stände und «angehalten» (ein
+  `install.sh` von Hand aus `~/zenOS`, das jetzt auf den Kanal wartet). Kanäle in `/etc/xdg/zenos/kanal`: `stabil`,
+  `vorschau`, `dev`; `main` wird `stabil`. Ende-zu-Ende-Test: `test/container/kanal-e2e.sh`. Das erste `zen update`
+  mit diesem Stand läuft noch über den alten Weg und bringt den Kanal. `scripts/lib/wechsel.sh` entfällt.
 - **Signierter Kanal auf dem Gerät, nur prüfend:** `sudo zen kanal pruefen` holt Tags und Branches von GitHub als
   flüchtiger Systembenutzer ohne Rechte in einer Sandbox und prüft sie als root ohne Netz gegen den Vertrauensanker
   `/etc/zenos/vertrauen`: annotiert, Name gleich dem Feld im Tag, genau eine SSH-Signatur, `git verify-tag` gegen

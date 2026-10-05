@@ -241,7 +241,8 @@ class Releases(Basis):
         nachher = (self.git("rev-parse", "HEAD", ort=K.CODE_DIR),
                    self.git("status", "--porcelain", ort=K.CODE_DIR), sorted(os.listdir(K.CODE_DIR)))
         self.assertEqual(vorher, nachher)
-        self.assertIn("installiert nichts", stand["grund"])
+        self.assertIn("zen update", stand["grund"])
+        self.assertEqual(stand["bereit"]["rueckfrage"], [])
         self.assertFalse(os.path.exists(os.path.join(K.STATE_DIR, "arbeit")), "Arbeitsordner bleibt nicht liegen")
 
     def test_unsigniert_und_leicht(self):
@@ -527,7 +528,9 @@ class Hoechste(Basis):
         with open(os.path.join(K.STATE_DIR, "hoechste"), "w", encoding="utf-8") as f:
             f.write("v0.0.1\n")
         rc, stand = self.pruefen()
-        self.assertEqual((rc, stand["bereit"]["version"]), (0, "v0.1.0"))
+        self.assertEqual((rc, stand["bereit"]["version"]), (10, "v0.1.0"))
+        # Ohne installierten Stand lässt sich der Weg nicht mit den Rückfrage-Pfaden vergleichen: nur mit Zustimmung
+        self.assertEqual((stand["zustand"], stand["bereit"]["rueckfrage"]), ("zustimmung", None))
 
 
 class Vertrauen(Basis):

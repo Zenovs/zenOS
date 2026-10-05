@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# hilfe: kanal [status|pruefen|anker] – signierter Update-Kanal prüfen (installiert nichts)
-#   zen kanal [status]           Kanal, Zustand, Anker mit Fingerabdrücken, gültige und abgelehnte Tags
+# hilfe: kanal [status|pruefen|anker] – signierter Update-Kanal: Stand zeigen und prüfen (installieren: zen update)
+#   zen kanal [status]           Kanal, Zustand, Anker mit Fingerabdrücken, gültige und abgelehnte Tags, letzte
+#                                Installation, guter Stand, gesperrte Stände
 #   sudo zen kanal pruefen       holt Tags und Branches von origin (ohne Rechte), prüft sie ohne Netz, schreibt den
 #                                Stand (/var/lib/zenos/kanal/stand.json) und zeigt ihn. Installiert nichts.
 #   zen kanal anker              zeigt den Vertrauensanker /etc/zenos/vertrauen
 #   sudo zen kanal anker ORDNER  setzt den Anker von Hand aus ORDNER (etwa /opt/zenos/system/vertrauen): Fingerabdruck
 #                                der Wurzel aus 1Password eintippen, die Release-Schlüssel mit «ja» bestätigen
-# Das Programm ist /usr/local/libexec/zenos/zenos-kanal (kommt mit install.sh). «zen update» bleibt der Weg von Hand.
+# Das Programm ist /usr/local/libexec/zenos/zenos-kanal (kommt mit install.sh). Installiert wird mit «zen update» und
+# «zen rollback <tag>» über dieselben Units.
 # shellcheck shell=bash
 
 _KANAL_PROGRAMM=/usr/local/libexec/zenos/zenos-kanal

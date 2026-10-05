@@ -118,14 +118,14 @@ _basis_code() {
   if [[ -n "$zweig" ]]; then
     ok "$code: $stand · Branch $zweig"
   else
-    hinweis "$code: $stand · losgelöst (Rollback-Stand; zen update kehrt zum Kanal zurück)"
+    ok "$code: $stand · losgelöst (Stand eines Tags)"
   fi
 
   geaendert=$(_basis_git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
   if [[ "$geaendert" == 0 ]]; then
     ok "Checkout sauber"
   else
-    hinweis "$geaendert lokale Änderungen im Checkout (aus einem Arbeitsstand übernommen; zen update verwirft sie)"
+    hinweis "$geaendert lokale Änderungen im Checkout (aus einem Arbeitsstand übernommen; zen update ersetzt sie)"
   fi
 
   besitz=$(stat -c '%U:%G' -- "$code" 2>/dev/null)
@@ -149,12 +149,13 @@ _basis_code() {
   if [[ -r /etc/xdg/zenos/kanal ]]; then
     kanal=$(head -n 1 /etc/xdg/zenos/kanal | tr -d '[:space:]')
     case "$kanal" in
-      dev | main) ok "Kanal $kanal" ;;
+      stabil | vorschau | dev) ok "Kanal $kanal" ;;
+      main) hinweis "Kanal main heisst jetzt stabil (install.sh stellt das um)" ;;
       "") fehler "/etc/xdg/zenos/kanal ist leer" ;;
-      *) hinweis "Kanal $kanal (üblich sind dev und main)" ;;
+      *) fehler "Unbekannter Kanal $kanal: zen update installiert nichts (erlaubt: stabil, vorschau, dev)" ;;
     esac
-    if [[ -n "$zweig" && -n "$kanal" && "$zweig" != "$kanal" ]]; then
-      hinweis "Branch $zweig weicht vom Kanal $kanal ab (Stand aus einem Arbeits-Checkout; zen update wechselt auf $kanal)"
+    if [[ "$kanal" == dev && -n "$zweig" && "$zweig" != dev ]]; then
+      hinweis "Branch $zweig statt dev (Stand aus einem Arbeits-Checkout; zen update kehrt zu dev zurück)"
     fi
   else
     warnung "/etc/xdg/zenos/kanal fehlt (zen update nimmt dev)"

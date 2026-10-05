@@ -2,23 +2,61 @@
 # 10-code: /opt/zenos als Git-Checkout auf den Arbeitsstand der Quelle bringen, Kanal festlegen
 # shellcheck shell=bash
 #
-# Läuft install.sh aus einem anderen Checkout (z. B. ~/zenOS), bekommt /opt/zenos genau dessen Stand:
-# Commit und Branch (per git fetch), Tags, origin (GitHub-URL der Quelle, ohne Zugangsdaten, SSH als
-# HTTPS, weil root keinen SSH-Schlüssel hat), dazu nicht committete und neue, nicht ignorierte Dateien.
-# In der Quelle gelöschte Dateien verschwinden auch in /opt/zenos. Jede Datei wird atomar ersetzt (siehe
-# _code_arbeitsstand). Läuft install.sh aus /opt/zenos selbst (zen update), wird nichts synchronisiert.
+# Läuft install.sh aus einem anderen Checkout, bekommt /opt/zenos genau dessen Stand: Commit und Branch (per git
+# fetch), Tags, origin (GitHub-URL der Quelle, ohne Zugangsdaten, SSH als HTTPS, weil root keinen SSH-Schlüssel hat),
+# dazu nicht committete und neue, nicht ignorierte Dateien. In der Quelle gelöschte Dateien verschwinden auch in
+# /opt/zenos. Jede Datei wird atomar ersetzt (siehe _code_arbeitsstand). Läuft install.sh aus /opt/zenos selbst
+# (Notweg, von Hand), wird nichts synchronisiert.
+#
+# Zwei Arten von Quellen:
+# - Der Kanal (zen update, zen rollback): zenos-kanal startet install.sh als root aus einer geprüften Bereitstellung
+#   (/var/lib/zenos/kanal/bereit/<commit>) mit ZENOS_KANAL_LAUF=1. Er hält die Kanal-Sperre selbst.
+# - Von Hand aus einem Arbeits-Checkout (etwa ~/zenOS): install.sh hat vorher auf die Kanal-Sperre
+#   (/run/lock/zenos-kanal.lock) gewartet und hält sie bis zum Ende, damit Kanal und Hand nie zugleich /opt/zenos
+#   umstellen. Danach gilt der Stand als «angehalten» (/var/lib/zenos/kanal/angehalten): Er stammt nicht aus dem
+#   Kanal, bis zum nächsten zen update kommt nichts automatisch.
+# Jeder Lauf von Hand (auch aus /opt/zenos, etwa der Notweg) ersetzt eine unterbrochene Kanal-Installation
+# (laeuft.json): Die gilt danach als erledigt, statt beim nächsten zen update fortgesetzt zu werden.
+
+_CODE_KANAL_ZUSTAND=/var/lib/zenos/kanal
 
 modul_system() {
-  local quelle ziel
+  local quelle ziel von_hand=0
   quelle=$(readlink -f -- "$ZENOS_QUELLE")
   ziel=$(readlink -m -- "$ZENOS_CODE")
+  if [[ "${ZENOS_KANAL_LAUF:-}" != 1 && "$ZENOS_IMAGE" != 1 ]]; then von_hand=1; fi
   if [[ "$quelle" != "$ziel" ]]; then
     _code_synchronisieren "$quelle" "$ziel"
+    if (( von_hand )); then _code_angehalten "$ziel"; fi
   elif [[ ! -d "$ziel/.git" ]]; then
     abbruch "$ziel ist kein Git-Checkout"
   fi
+  if (( von_hand )); then _code_lauf_erledigt; fi
   _code_besitz "$ziel"
   _code_kanal "$ziel"
+}
+
+# Stand von Hand: Commit und Zeit für zen kanal status (nichts Persönliches, kein Pfad)
+_code_angehalten() {
+  local ziel=$1 commit
+  commit=$(_code_git_lesen rev-parse --verify --quiet 'HEAD^{commit}' 2>/dev/null) || commit=""
+  [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || return 0
+  # Schon so vermerkt: nichts schreiben (der zweite Lauf bleibt ohne Änderung)
+  if $SUDO grep -qs -- "\"commit\": \"$commit\"" "$_CODE_KANAL_ZUSTAND/angehalten"; then return 0; fi
+  ordner_sicherstellen /var/lib/zenos 0755 root:root
+  ordner_sicherstellen "$_CODE_KANAL_ZUSTAND" 0755 root:root
+  printf '{"version": 1, "commit": "%s", "zeit": "%s"}\n' "$commit" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" |
+    $SUDO tee "$_CODE_KANAL_ZUSTAND/angehalten.neu" > /dev/null
+  $SUDO chmod 0644 -- "$_CODE_KANAL_ZUSTAND/angehalten.neu"
+  $SUDO mv -f -- "$_CODE_KANAL_ZUSTAND/angehalten.neu" "$_CODE_KANAL_ZUSTAND/angehalten"
+  log_info "$ziel stammt jetzt aus einem Arbeitsstand: Der Kanal gilt als angehalten, bis zum nächsten zen update."
+}
+
+_code_lauf_erledigt() {
+  local datei=$_CODE_KANAL_ZUSTAND/laeuft.json
+  $SUDO test -e "$datei" || return 0
+  $SUDO rm -f -- "$datei"
+  aenderung "Unterbrochene Kanal-Installation gilt als erledigt (install.sh von Hand)"
 }
 
 _code_git_quelle() { git -c safe.directory="$_CODE_QUELLE" -C "$_CODE_QUELLE" "$@"; }
@@ -279,16 +317,32 @@ _code_besitz() {
   fi
 }
 
-# Kanal für zen update, nur beim ersten Mal: main → main, sonst dev (oder ZENOS_KANAL für den Image-Bau)
+# Kanal für zen update: stabil, vorschau oder dev. Beim ersten Mal ZENOS_KANAL (Image-Bau) oder nach dem Branch (main →
+# stabil, sonst dev). Ein alter Wert main heisst jetzt stabil; einen unbekannten lässt es stehen (zenos-kanal meldet ihn
+# als «blockiert» und installiert nichts darüber, der Notweg in ANLEITUNG F geht trotzdem).
 _code_kanal() {
-  local ziel=$1 datei=/etc/xdg/zenos/kanal zweig kanal
-  [[ -e "$datei" ]] && return 0
+  local ziel=$1 datei=/etc/xdg/zenos/kanal zweig kanal ist
+  if [[ -e "$datei" ]]; then
+    ist=$(head -n 1 -- "$datei" 2>/dev/null | tr -d '[:space:]') || ist=""
+    case "$ist" in
+      stabil | vorschau | dev) ;;
+      main)
+        printf 'stabil\n' | datei_schreiben "$datei" 0644 root:root
+        log_info "Kanal main heisst jetzt stabil"
+        ;;
+      *) log_warnung "Unbekannter Kanal in $datei (erlaubt: stabil, vorschau, dev): zen update installiert nichts" ;;
+    esac
+    return 0
+  fi
   if [[ -n "${ZENOS_KANAL:-}" ]]; then
-    [[ "$ZENOS_KANAL" =~ ^[A-Za-z0-9._/-]+$ ]] || abbruch "Ungültiger Kanal in ZENOS_KANAL"
-    kanal=$ZENOS_KANAL
+    case "$ZENOS_KANAL" in
+      stabil | vorschau | dev) kanal=$ZENOS_KANAL ;;
+      main) kanal=stabil ;;
+      *) abbruch "Ungültiger Kanal in ZENOS_KANAL (erlaubt: stabil, vorschau, dev)" ;;
+    esac
   else
     zweig=$(git -c safe.directory="$ziel" -C "$ziel" symbolic-ref --quiet --short HEAD 2>/dev/null) || zweig=""
-    if [[ "$zweig" == main ]]; then kanal=main; else kanal=dev; fi
+    if [[ "$zweig" == main ]]; then kanal=stabil; else kanal=dev; fi
   fi
   printf '%s\n' "$kanal" | datei_schreiben "$datei" 0644 root:root
   log_info "Kanal für zen update: $kanal"

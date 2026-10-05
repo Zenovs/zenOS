@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 15-kanal: signierter Kanal – Prüfprogramm, Units, Vertrauensanker und der letzte Stand (zen kanal status)
+# 15-kanal: signierter Kanal – Programm, Units, Vertrauensanker, letzte Prüfung und Installation (zen kanal status)
 # shellcheck shell=bash
 #
 # Ausgegeben werden nur Zustände und Fingerabdrücke öffentlicher Prüfschlüssel, keine Adressen.
@@ -16,11 +16,17 @@ pruefe_kanal() {
   elif [[ -r "$quelle" ]] && ! cmp -s "$programm" "$quelle"; then
     warnung "$programm weicht vom Stand in /opt/zenos ab (install.sh stellt ihn wieder her)"
   fi
-  for einheit in zenos-kanal-holen.service zenos-kanal-pruefen.service; do
+  for einheit in zenos-kanal-holen.service zenos-kanal-pruefen.service zenos-kanal-installieren.service \
+    zenos-kanal-nachstart.service; do
     [[ -f "/etc/systemd/system/$einheit" ]] || warnung "$einheit fehlt (install.sh)"
   done
+  if [[ -f /etc/systemd/system/zenos-kanal-nachstart.service ]] &&
+    [[ "$(systemctl is-enabled zenos-kanal-nachstart.service 2>/dev/null)" != enabled ]]; then
+    warnung "zenos-kanal-nachstart.service ist nicht aktiviert: Nach einem Abbruch vollendet niemand die Übernahme vor dem Login (install.sh)"
+  fi
   _kanal_anker
   _kanal_stand "$programm"
+  _kanal_installation "$programm"
 }
 
 # Gehört PFAD und jeder Ordner darüber root, und ist nichts davon für andere schreibbar?
@@ -50,7 +56,7 @@ _kanal_anker() {
   ausgabe=$(/usr/bin/python3 -I /usr/local/libexec/zenos/zenos-kanal anker --pruefen "$ordner" 2>&1) || true
   case "$ausgabe" in
     vollständig*) ok "Vertrauensanker ${ausgabe#vollständig: }" ;;
-    leer*) hinweis "Vertrauensanker noch ohne Schlüssel: Der signierte Kanal installiert nichts, zen update über dev geht weiter" ;;
+    leer*) hinweis "Vertrauensanker noch ohne Schlüssel: Signiertes gibt es nicht, zen update geht nur auf dev und mit «ja»" ;;
     *) fehler "Vertrauensanker ${ausgabe:-nicht prüfbar} (sudo zen kanal anker ORDNER)" ;;
   esac
 }
@@ -64,9 +70,27 @@ _kanal_stand() {
     ungeprueft | "") hinweis "Kanal noch nie geprüft (sudo zen kanal pruefen)" ;;
     veraltet) hinweis "Kanal: $grund" ;;
     aktuell | bereit | dev) ok "Kanal: $grund" ;;
+    zustimmung) hinweis "Kanal: $grund" ;;
     kein_kontakt) warnung "Kanal: $grund" ;;
     anker_fehlt) hinweis "Kanal: Anker fehlt, es gilt nichts als gültig (zen kanal status)" ;;
     blockiert | fehler) fehler "Kanal $zustand: $grund" ;;
     *) warnung "Kanal: unbekannter Zustand «$zustand»" ;;
+  esac
+}
+
+# Letzte Installation über den Kanal (zenos-kanal status --installation: Schlüssel, dann Text)
+_kanal_installation() {
+  local programm=$1 zeile schluessel text
+  zeile=$(/usr/bin/python3 -I "$programm" status --installation 2>/dev/null | head -n 1) || zeile=""
+  schluessel=${zeile%% *}
+  text=${zeile#* }
+  case "$schluessel" in
+    gut) ok "Installation: $text" ;;
+    keine | "") hinweis "Installation: noch nichts über den Kanal installiert (zen update)" ;;
+    angehalten) hinweis "Installation angehalten: $text" ;;
+    zurueck) warnung "Letzte Installation gescheitert, Rückweg gelungen $text" ;;
+    unterbrochen) warnung "$text" ;;
+    kaputt) fehler "Installation kaputt $text" ;;
+    *) warnung "Installation: unbekannter Zustand «$schluessel»" ;;
   esac
 }

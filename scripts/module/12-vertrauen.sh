@@ -42,7 +42,7 @@ modul_system() {
         log_info "Vertrauensanker zum ersten Mal mit Schlüsseln: $(_vertrauen_zustand "$ziel")"
         log_info "Fingerabdrücke mit 1Password vergleichen: zen kanal status"
       else
-        log_info "Vertrauensanker noch ohne Schlüssel: Der signierte Kanal installiert nichts, zen update über dev bleibt"
+        log_info "Vertrauensanker noch ohne Schlüssel: Signiertes gibt es nicht, zen update geht nur auf dev und mit «ja»"
       fi
       ;;
     *)

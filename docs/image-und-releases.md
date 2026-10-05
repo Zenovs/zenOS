@@ -171,14 +171,18 @@ Was ein Gerät prüft (`zenos-kanal`, siehe «Auf dem Gerät»):
 - Die Wurzel ändert sich nie über das Netz. Ist sie verloren oder gestohlen, braucht jedes Gerät ein neues Image
   oder einen neuen Anker von Hand.
 
-### Auf dem Gerät: zenos-kanal (prüft, installiert nichts)
+### Auf dem Gerät: zenos-kanal
 
 `scripts/bin/zenos-kanal` (Python, nur Standardbibliothek, `python3 -I`) liegt als root-eigene Kopie unter
-`/usr/local/libexec/zenos/zenos-kanal` (Modul `14-kanal`). Die Units führen diese Kopie aus, nie `/opt/zenos`.
+`/usr/local/libexec/zenos/zenos-kanal` (Modul `14-kanal`). Die Units und `zen update` führen diese Kopie aus, nie
+`/opt/zenos`. Automatisch installiert diese Fassung nichts: nur `zen update` und `zen rollback` (die Automatik folgt
+später, der Zeitpunkt wird am Gerät eingestellt).
 
 | Befehl | Wer | Was |
 |---|---|---|
-| `zen kanal status` | alle | Kanal, Zustand, Anker mit Fingerabdrücken, installierter Stand, `hoechste`, gültige und abgelehnte Tags, letzter Kontakt |
+| `zen update` | Benutzer mit sudo, im Terminal | holen, prüfen und bereitstellen, bei Bedarf «ja», installieren mit Gesundheitsprüfung und Rückweg, dann die Benutzerteile |
+| `zen rollback <tag>` | ebenso | dasselbe mit einem Tag als Ziel |
+| `zen kanal status` | alle | Kanal, Zustand, Anker mit Fingerabdrücken, installierter Stand, `hoechste`, gültige und abgelehnte Tags, letzter Kontakt, letzte Installation, guter Stand, gesperrte Stände |
 | `sudo zen kanal pruefen` | root | startet `zenos-kanal-holen.service`, dann `zenos-kanal-pruefen.service`, zeigt danach den Status. Installiert nichts |
 | `zen kanal anker` | alle | zeigt den Anker des Geräts |
 | `sudo zen kanal anker ORDNER` | root, nur im Terminal | setzt den Anker von Hand: Fingerabdruck der Wurzel eintippen, Release-Schlüssel mit «ja» bestätigen. Bei gleicher Wurzel nie mit kleinerer Serie, Widerrufe des Geräts bleiben |
@@ -218,17 +222,23 @@ Ablauf:
    - Ziel: die höchste gültige Version des Kanals über `hoechste`, ohne Versionen in `/var/lib/zenos/kanal/gesperrt/`.
      `stabil` nimmt nur `vX.Y.Z` und gibt sie erst 24 h nach dem ersten Sehen für die Automatik frei (`frei_ab`),
      `vorschau` auch `vX.Y.Z-rcN` sofort.
-   - `dev`: nur Auskunft. Neuer Stand von `origin/dev`, ob der installierte Stand darin liegt und ob jeder Commit
+   - `dev`: Neuer Stand von `origin/dev`, ob der installierte Stand darin liegt und ob jeder Commit
      dazwischen gültig mit einem Release-Schlüssel signiert ist (`%G?` gleich `G`; ein unsignierter Commit unter
-     einer signierten Spitze zählt). Sonst nur von Hand mit «ja».
+     einer signierten Spitze zählt). Sonst nur von Hand mit «ja». Automatisch kommt auf dev nie etwas.
+   - Rückfrage-Pfade: Trifft der Weg vom installierten Stand zum Ziel Firewall, Netz oder Boot, heisst der Zustand
+     `zustimmung`. Die Liste steht fest im Code (`CONSENT_PATHS`, gleich den Gruppen `firewall`, `netz` und `boot`
+     in `scripts/lib/sensible-pfade`, ein Test hält beide gleich); die Liste im neuen Stand kann nur Pfade
+     dazunehmen. Lässt sich der Weg nicht vergleichen (installierter Stand unbekannt), gilt ebenfalls `zustimmung`.
 4. **Stand:** `/var/lib/zenos/kanal/stand.json` (0644, atomar): `kanal`, `zustand`, `grund`, `geprueft`,
    `letzter_kontakt`, `holen_fehler`, `anker` (Serie und Fingerabdrücke), `anker_problem`, `installiert`,
-   `hoechste`, `bereit` (Version, Commit, Objekt, `erstmals`, `frei_ab`), `dev`, `gueltig`, `abgelehnt`, `hinweise`.
+   `hoechste`, `bereit` (Version, Commit, Objekt, `erstmals`, `frei_ab`, `rueckfrage`), `dev`, `gueltig`,
+   `abgelehnt`, `hinweise`, `wunsch` (Antwort auf `zen update` bzw. `zen rollback`, siehe unten).
 
 | Zustand | Exit | Bedeutung |
 |---|---|---|
 | `aktuell` | 0 | keine neuere gültige Version |
-| `bereit` | 0 | eine neuere gültige Version gibt es (installiert wird in dieser Fassung nichts) |
+| `bereit` | 0 | eine neuere gültige Version gibt es (`zen update` installiert sie) |
+| `zustimmung` | 10 | wie `bereit`, aber der Weg trifft Firewall, Netz oder Boot: nur mit Zustimmung |
 | `dev` | 0 | Kanal dev, nur Auskunft |
 | `anker_fehlt` | 3 | kein vollständiger Anker: nichts gilt |
 | `blockiert` | 3 | ALARM im Hauptbuch, unbekannter Kanal, `hoechste` nicht ableitbar, Bundle unbrauchbar, mehr als 1000 Tags |
@@ -236,15 +246,105 @@ Ablauf:
 | `fehler` | 1 | Prüfung abgebrochen |
 | (keiner) | 75 | Sperre belegt (ein `zen update` läuft), `stand.json` bleibt |
 
+#### Wunsch und Bereitstellung (`zen update`, `zen rollback`)
+
+`zen update` startet als root `zenos-kanal update` im Terminal. Es schreibt `wunsch.json` (Art, Tag, Kennung, eine
+Stunde gültig), startet holen und prüfen und liest die Antwort aus `stand.json` (`wunsch`). Das Prüfen bestimmt das
+Ziel:
+
+- `stabil`, `vorschau`: die höchste gültige Version des Kanals, nicht unter `hoechste` (auch gleich: ein
+  `zen update` nach einem Rollback kehrt zurück). Ohne Anker oder bei «blockiert» nichts.
+- `dev`: `origin/dev`. Ohne Frage nur, wenn der installierte Stand im Verlauf liegt und jeder neue Commit gültig
+  signiert ist; das prüft das Installieren gegen den Anker von dann noch einmal.
+- `rollback <tag>`: der Tag vom zuletzt geholten Stand; gültig signiert ohne Frage, sonst nur mit «ja». Ein
+  Vertrauens-Tag ist kein Ziel, ein gültiger Name, der auf origin auf ein anderes Objekt zeigt, wird abgelehnt.
+
+Ein getipptes «ja» braucht es, wenn das Ziel nicht gültig signiert ist (dazu gehört: Anker fehlt, Kanal blockiert,
+dev umgeschrieben, nicht jeder neue Commit signiert), wenn es gesperrt ist (scheiterte schon einmal), ein
+Rückschritt wäre (Kanalwechsel von dev) oder Firewall, Netz oder Boot trifft. `zen update` zeigt die Gründe und die
+neuen Commits (mit `%G?`) und fragt «Genau diesen Stand (…) installieren?». Das «ja» geht mit der gezeigten ID in einen
+zweiten Wunsch und gilt nur für genau diese Commit-ID (dev) bzw. dieses Tag-Objekt; ein neuerer Stand braucht ein
+neues «ja». Ohne Terminal gibt es keine Zustimmung.
+
+Ist alles erfüllt, stellt das Prüfen das Ziel bereit, ohne Netz: `/var/lib/zenos/kanal/bereit/<commit>` ist ein
+eigenes Repo ohne Hooks mit den Objekten aus dem Prüf-Repo, alle Tags, ausgecheckt (dev auf dem Branch dev, sonst
+losgelöst), origin wie in `/opt/zenos`. Verlangt werden mindestens 1 GiB frei auf `bereit/`, `/opt/zenos` und `/var`,
+HEAD gleich dem Commit und ein sauberer Baum (auch ohne unversionierte oder ignorierte Dateien). Dann folgt
+`auftrag.json` (eine Stunde gültig).
+
+#### Installieren
+
+`zenos-kanal-installieren.service` (root, mit Netz, `KillMode=mixed`, `TimeoutStopSec=20min`) liest `auftrag.json`,
+prüft die Bereitstellung noch einmal (Ort, Besitz, Commit, sauber; signiert gegen den Anker von jetzt, dev-Bereich
+neu, sonst nur mit «ja») und legt den Rückweg an: den laufenden Stand von `/opt/zenos`, aus `gut.json` oder frisch als
+Bereitstellung (Commit ohne Änderungen von Hand). Dann:
+
+1. Wurde dpkg unterbrochen (`/var/lib/dpkg/updates`), läuft zuerst `dpkg --configure -a`, sobald kein anderer
+   Paketvorgang die Sperren hält.
+2. `laeuft.json` mit Ziel, Rückweg, Phase und Versuchszähler, `/run/zenos-kanal/uebernahme` und ein Block-Inhibitor
+   für Ausschalten und Ruhezustand («zenOS wird aktualisiert»).
+3. `<bereit>/scripts/install.sh` als root mit `ZENOS_KANAL_LAUF=1`, ohne Terminal; 10-code übernimmt den Code Datei
+   für Datei atomar nach `/opt/zenos`. Ein SIGTERM (Ausschalten durch root) wartet auf das Ende von install.sh.
+4. Gesundheit: Exit 0 und «== Ende … ok» im install.log, `/opt/zenos` auf dem Commit und sauber, `scripts/zen`,
+   `install.sh`, `zenos-greeter` und `zenos-sitzung` nicht leer, `bash -n scripts/zen`, `zen version` gibt «zenOS …»
+   aus, `quickshell --version` läuft, greetd nicht ausgefallen, und der eben installierte zenos-kanal besteht
+   `selbsttest` (liest den Anker, nimmt den installierten Tag an).
+5. Gesund: `gut.json`, `hoechste` (nur bei einem Update, nie bei einem Rollback), alte Bereitstellungen weg, Marker
+   `angehalten` weg, daemon-reload der Benutzerinstanz einer Sitzung auf seat0; die übrigen Benutzerteile richtet
+   `zen update` danach als Benutzer ein (sonst die nächste Anmeldung). Ergebnis `installiert`.
+6. Nicht gesund: Die Version kommt nach `gesperrt/` (Grund, Zeit), dann derselbe Lauf mit dem Rückweg. Ist er gesund,
+   Ergebnis `zurueck` (Exit 4), sonst `kaputt` (Exit 5, keine weiteren Versuche, Notweg ANLEITUNG F). Ist das Ziel
+   der laufende Stand selbst, gibt es keinen Rückweg und keine Sperre (`gescheitert`).
+
+Ein harter Abbruch (Strom, `kill -9`) hinterlässt `laeuft.json`. `zenos-kanal-nachstart.service` (aktiviert, nur mit
+`laeuft.json`, vor greetd, ohne Netz) vollendet beim Start die Übernahme des Codes mit `install.sh --nur-code` aus der
+Bereitstellung; kennt deren install.sh die Option nicht (Stände vor diesem Kanal), bleibt das `zen update`. Ein
+`zen update` setzt danach zuerst den unterbrochenen Lauf fort. Nach zwei unterbrochenen Versuchen sperrt schon
+nachstart die Version und nimmt den Code des Rückwegs. Ein `install.sh` von Hand erledigt einen unterbrochenen Lauf.
+Das Ergebnis jedes Laufs steht in `letzte.json` (`ergebnis`, `grund`, `ziel`, `rueckweg`, `versuche`, `hinweise`).
+
+Ein `install.sh` von Hand aus einem Arbeits-Checkout wartet auf die Kanal-Sperre und hinterlässt `angehalten`
+(Commit, Zeit): `zen update` installiert den Stand des Kanals dann neu, auch wenn der Commit gleich ist.
+
+| Datei in `/var/lib/zenos/kanal` | Inhalt |
+|---|---|
+| `wunsch.json` | Wunsch von `zen update` bzw. `zen rollback` (0600, das Prüfen entfernt ihn) |
+| `auftrag.json` | bereitgestelltes Ziel für das Installieren |
+| `bereit/<commit>/` | Bereitstellungen: das Ziel und der gute Stand |
+| `laeuft.json` | laufende oder unterbrochene Installation |
+| `gut.json` | zuletzt gesund installierter Stand |
+| `letzte.json` | Ergebnis der letzten Installation |
+| `gesperrt/<version oder commit>` | gescheiterte Ziele mit Grund |
+| `angehalten` | Stand von Hand aus einem Arbeits-Checkout |
+
+| Exit | `zen update`, `zen rollback` |
+|---|---|
+| 0 | installiert oder schon aktuell |
+| 2 | Aufruf falsch |
+| 3 | abgelehnt (etwa Anker fehlt auf stabil, Tag unbekannt, Bereitstellung verändert) |
+| 4 | gescheitert, zurück auf dem Stand davor |
+| 5 | kaputt: auch der Rückweg scheiterte |
+| 10 | wartet: Zustimmung (auch «nein»), Platz, kein Kontakt |
+| 75 | ein anderes `zen update` oder eine Prüfung läuft |
+
 Am Gerät nach dem Einrichten (je ein Befehl): `zen kanal status` (Fingerabdrücke mit 1Password vergleichen),
 `sudo zen kanal pruefen`. Solange der Anker leer ist, steht dort «Anker fehlt» und `v0.1.0-rc1` bis `rc3` als
-«unsigniert».
+«unsigniert»; `zen update` geht dann nur auf dev und nur mit «ja».
 
-Rückweg: Weil nichts installiert wird und `zen update` unverändert bleibt, genügt es, den Commit zurückzunehmen und
-`zen update` laufen zu lassen. Liegen bleiben `/etc/zenos/vertrauen`, `/var/lib/zenos/kanal`,
-`/usr/local/libexec/zenos/zenos-kanal` und die beiden Units; sie sind statisch (kein Timer, nicht aktiviert) und
-stören nicht. Im Testcontainer nachgestellt: install.sh des vorigen Stands läuft durch, danach wieder vorwärts mit
-0 Änderungen im zweiten Lauf.
+Übergang: Das erste `zen update` mit diesem Stand läuft noch über den alten Weg (`git checkout` in `/opt/zenos`,
+`install.sh`) und bringt den Kanal; erst das nächste geht darüber. Ein `zen rollback` auf einen älteren Stand (etwa
+`v0.1.0-rc3`) bringt dessen alten `zen update` zurück, der Kanal-Code bleibt liegen und stört nicht.
+
+Rückweg für diesen Schritt: der Notweg in `ANLEITUNG.md`, Abschnitt F (`git fetch`, `git checkout`, `install.sh`, ohne
+`zen` und ohne den Kanal), oder `zen rollback` auf einen Stand davor.
+
+Geprüft im Testcontainer mit `test/container/kanal-e2e.sh` (echtes systemd, eigenes origin über https mit
+Wegwerf-CA, Wegwerf-Schlüssel): Übergang mit dem alten `zen update`; dev ohne Anker mit «nein» und «ja»; install.sh
+zweimal als root aus der Bereitstellung (zweiter Lauf 0 Änderungen); signierter Tag auf vorschau ohne Frage; ein
+Modul, das abbricht, und ein leeres `scripts/zen` (Rückweg, gesperrt); ein kleines tmpfs (wartet, Exit 10); ein
+Rückfrage-Pfad; SIGKILL mitten im Lauf mit nachgestellter halber Übernahme, Neustart (nachstart vor greetd), Fortsetzen;
+zwei Abbrüche (Rückweg schon beim Start); SIGTERM während install.sh (läuft zu Ende); Rollback signiert und unsigniert;
+fehlendes zenos-kanal und Notweg.
 
 ### Einmalig einrichten (Zeno)
 
@@ -294,6 +394,10 @@ Mit Wegwerf-Schlüsseln, im Container (git 2.53, OpenSSH 10.2) und auf dem Mac (
 - 1Password gibt einen Schlüssel laut Doku pro Anwendung bzw. Terminal-Sitzung frei, bis es sperrt (nicht selbst
   getestet). Ein Programm im selben Terminal könnte danach mitsignieren.
 - Die Rückfrage-Pfade fangen indirekte Änderungen nicht, etwa neue Pakete, die initramfs auslösen.
+- Ein Rückweg ist kein Schnappschuss: Pakete, Units und Dateien, die ein gescheiterter Stand neu brachte, bleiben
+  liegen; zurück kommt der Code und was install.sh des alten Stands einrichtet.
+- Ein Abbruch mitten in apt bleibt bis zum nächsten `zen update` halb (dpkg); nachstart vollendet nur den Code.
+- Die Bestätigung einige Minuten nach dem Start (läuft der Login?) kommt erst mit der Automatik.
 
 ## Quellcode und Lizenzen
 
@@ -308,8 +412,8 @@ verschwinden. Im System stehen die Hinweise unter `/usr/local/share/doc/zenos/` 
 
 - Die Datei heisst `zenos-<version>-pi5-arm64.img.xz`, die Version ohne «v»: `v0.1.0` → `zenos-0.1.0-pi5-arm64.img.xz`.
 - Im Image steht `/opt/zenos` losgelöst auf dem Tag, mit allen Tags und `origin` auf GitHub.
-- Der Kanal für `zen update` ist im Image `dev`, wie auf dem Pi, bis `main` Releases trägt. Das erste `zen update`
-  wechselt vom Tag auf `origin/dev`.
+- Der Kanal für `zen update` ist im Image `dev`, wie auf dem Pi, bis es signierte Releases gibt (dann `stabil`).
+  Kanäle: `stabil` (nur `vX.Y.Z`), `vorschau` (auch `vX.Y.Z-rcN`), `dev`; ein alter Wert `main` gilt als `stabil`.
 
 ## Grösse und Dauer
 

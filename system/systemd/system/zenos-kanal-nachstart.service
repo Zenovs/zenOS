@@ -1,0 +1,24 @@
+# zenOS: Nach einem Abbruch mitten in einer Kanal-Installation (Strom weg, hart beendet) vollendet dieser Dienst beim
+# Start die Übernahme des Codes nach /opt/zenos («install.sh --nur-code» aus der Bereitstellung), bevor der Login
+# startet: So sieht greetd keinen Mischstand aus alten und neuen Dateien. Ohne Netz; Pakete, Units und den Rest holt
+# «zen update» nach. Nach zwei unterbrochenen Versuchen nimmt er den Code des Rückwegs. Läuft nur, wenn
+# /var/lib/zenos/kanal/laeuft.json da ist; scheitert er, startet der Login trotzdem.
+[Unit]
+Description=zenOS: unterbrochene Kanal-Installation vor dem Login vollenden (nur Code)
+Documentation=file:///opt/zenos/docs/image-und-releases.md
+After=local-fs.target
+Before=greetd.service display-manager.service
+ConditionPathExists=/var/lib/zenos/kanal/laeuft.json
+ConditionPathExists=/usr/local/libexec/zenos/zenos-kanal
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/zenos/zenos-kanal nachstart
+Environment=HOME=/root LANG=C.UTF-8
+UMask=0022
+PrivateNetwork=yes
+TimeoutStartSec=10min
+SyslogIdentifier=zenos-kanal
+
+[Install]
+WantedBy=multi-user.target

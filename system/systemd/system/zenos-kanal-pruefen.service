@@ -1,9 +1,10 @@
 # zenOS: das zuletzt geholte Bundle prüfen (zenos-kanal pruefen). Läuft als root, aber ohne Netz (PrivateNetwork)
-# und ohne Rechte über root hinaus. Schreiben darf es nur /var/lib/zenos/kanal (Stand, Hauptbuch, hoechste),
-# /etc/zenos/vertrauen (nur über einen gültigen Tag vertrauen/NNNN) und die Sperre in /run/lock. /opt/zenos liest es
-# nur: Installiert wird in dieser Fassung nichts. Gestartet nur von «sudo zen kanal pruefen».
+# und ohne Rechte über root hinaus. Schreiben darf es nur /var/lib/zenos/kanal (Stand, Hauptbuch, hoechste, Wunsch,
+# Auftrag und die Bereitstellungen in bereit/), /etc/zenos/vertrauen (nur über einen gültigen Tag vertrauen/NNNN) und
+# die Sperre in /run/lock. /opt/zenos liest es nur. Installieren ist Sache von zenos-kanal-installieren.service.
+# Gestartet von «zen update», «zen rollback» und «sudo zen kanal pruefen».
 [Unit]
-Description=zenOS: Kanal prüfen (ohne Netz, installiert nichts)
+Description=zenOS: Kanal prüfen und bereitstellen (ohne Netz)
 Documentation=file:///opt/zenos/docs/image-und-releases.md
 After=zenos-kanal-holen.service
 ConditionPathExists=/usr/local/libexec/zenos/zenos-kanal

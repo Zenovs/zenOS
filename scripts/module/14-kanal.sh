@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
-# 14-kanal: signierter Kanal – Prüfprogramm (root-eigene Kopie), Units, Zustandsordner. Installiert nichts.
+# 14-kanal: signierter Kanal – Programm (root-eigene Kopie), Units, Zustandsordner
 # shellcheck shell=bash
 #
-# - scripts/bin/zenos-kanal als root-eigene Kopie nach /usr/local/libexec/zenos/zenos-kanal: Die Units führen diese
-#   Kopie aus, nicht /opt/zenos. So bleibt das Prüfprogramm, auch wenn /opt/zenos gerade umgestellt wird oder ein
-#   «zen rollback» auf einen Stand ohne Kanal geht. Ist ein Ordner auf dem Weg nicht nur für root schreibbar,
+# - scripts/bin/zenos-kanal als root-eigene Kopie nach /usr/local/libexec/zenos/zenos-kanal: Die Units und zen update
+#   führen diese Kopie aus, nicht /opt/zenos. So bleibt das Programm, auch wenn /opt/zenos gerade umgestellt wird oder
+#   ein «zen rollback» auf einen Stand ohne Kanal geht. Ist ein Ordner auf dem Weg nicht nur für root schreibbar,
 #   unterbleibt alles (root führt die Datei aus).
-# - zenos-kanal-holen.service (ohne Rechte, mit Netz) und zenos-kanal-pruefen.service (root, ohne Netz) nach
-#   /etc/systemd/system. Beide sind statisch: kein Timer, kein Start beim Booten, nur «sudo zen kanal pruefen».
-# - /var/lib/zenos/kanal (root, 0755) für stand.json, gesehen.json und hoechste.
+# - Units nach /etc/systemd/system: zenos-kanal-holen.service (ohne Rechte, mit Netz), zenos-kanal-pruefen.service
+#   (root, ohne Netz), zenos-kanal-installieren.service (root, mit Netz, Inhibitor) sind statisch: kein Timer, kein
+#   Start beim Booten, nur «zen update», «zen rollback» und «sudo zen kanal pruefen». zenos-kanal-nachstart.service
+#   ist aktiviert und läuft beim Start vor greetd, aber nur nach einer unterbrochenen Installation.
+# - /var/lib/zenos/kanal (root, 0755) für Stand, Hauptbuch, hoechste, Auftrag und die Bereitstellungen.
 # Der Anker kommt aus 12-vertrauen.
 
 _KANAL_PROGRAMM=/usr/local/libexec/zenos/zenos-kanal
-_KANAL_EINHEITEN=(zenos-kanal-holen.service zenos-kanal-pruefen.service)
+_KANAL_EINHEITEN=(zenos-kanal-holen.service zenos-kanal-pruefen.service zenos-kanal-installieren.service
+  zenos-kanal-nachstart.service)
 
 modul_system() {
   local einheit
@@ -27,6 +30,7 @@ modul_system() {
   done
   ordner_sicherstellen /var/lib/zenos 0755 root:root
   ordner_sicherstellen /var/lib/zenos/kanal 0755 root:root
+  dienst_aktivieren zenos-kanal-nachstart.service
 }
 
 # Gehört jeder vorhandene Ordner auf dem Weg root, und ist keiner für andere schreibbar?

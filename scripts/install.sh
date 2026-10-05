@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # install.sh – installiert zenOS. Idempotent: darf beliebig oft laufen, der zweite Lauf ändert nichts.
 #
-#   scripts/install.sh [--image] [--nur-benutzer] [--ruhig]
+#   scripts/install.sh [--image] [--nur-benutzer] [--nur-code] [--ruhig]
 #
 # Läuft als normaler Benutzer und holt sich Root-Rechte mit sudo für die Systemteile. Als root über
 # sudo aufgerufen, läuft es als der aufrufende Benutzer weiter. Die Module unter scripts/module/*.sh
@@ -14,29 +14,37 @@ umask 022
 
 _hilfe() {
   cat <<'EOF'
-Aufruf: scripts/install.sh [--image] [--nur-benutzer] [--ruhig]
+Aufruf: scripts/install.sh [--image] [--nur-benutzer] [--nur-code] [--ruhig]
 
   --image         für den Image-Bau im chroot: ohne Benutzerteile, ohne proprietäre Apps,
                   ohne laufende Dienste (nur aktivieren)
   --nur-benutzer  nur die Benutzerteile, ohne sudo (auch beim Sitzungsstart)
+  --nur-code      nur root: nur /opt/zenos auf den Stand dieser Quelle bringen (Modul 10-code),
+                  ohne Netz; für zenos-kanal-nachstart.service nach einem Abbruch
   --ruhig         im Terminal nur Warnungen und Fehler, alles andere ins Log
 EOF
 }
 
 ZENOS_IMAGE=0
 _NUR_BENUTZER=0
+_NUR_CODE=0
 _RUHIG=0
 for _arg in "$@"; do
   case "$_arg" in
     --image) ZENOS_IMAGE=1 ;;
     --nur-benutzer) _NUR_BENUTZER=1 ;;
+    --nur-code) _NUR_CODE=1 ;;
     --ruhig) _RUHIG=1 ;;
     -h | --hilfe | --help) _hilfe; exit 0 ;;
     *) printf 'install.sh: unbekannte Option «%s»\n\n' "$_arg" >&2; _hilfe >&2; exit 2 ;;
   esac
 done
-if (( ZENOS_IMAGE && _NUR_BENUTZER )); then
-  echo "install.sh: --image und --nur-benutzer schliessen sich aus" >&2
+if (( ZENOS_IMAGE + _NUR_BENUTZER + _NUR_CODE > 1 )); then
+  echo "install.sh: --image, --nur-benutzer und --nur-code schliessen sich aus" >&2
+  exit 2
+fi
+if (( _NUR_CODE && EUID != 0 )); then
+  echo "install.sh: --nur-code läuft nur als root (zenos-kanal-nachstart.service)" >&2
   exit 2
 fi
 
@@ -46,7 +54,7 @@ ZENOS_QUELLE=$(cd -- "$(dirname -- "$_SKRIPT")/.." && pwd -P)
 ZENOS_CODE=/opt/zenos
 
 # Als root über sudo aufgerufen: als der aufrufende Benutzer weiterlaufen (Systemteile dann mit sudo).
-if (( EUID == 0 && ! ZENOS_IMAGE )) && [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != root ]]; then
+if (( EUID == 0 && ! ZENOS_IMAGE && ! _NUR_CODE )) && [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != root ]]; then
   _home=$(getent passwd "$SUDO_USER" | cut -d: -f6)
   printf 'install.sh läuft als Benutzer %s weiter.\n' "$SUDO_USER"
   exec sudo -u "$SUDO_USER" env "HOME=$_home" "$_SKRIPT" "$@"
@@ -78,7 +86,8 @@ source "$ZENOS_QUELLE/scripts/lib/gemeinsam.sh"
 readonly ZENOS_QUELLE ZENOS_CODE ZENOS_IMAGE ZENOS_BENUTZER ZENOS_HOME ZENOS_SYSTEMD
 export ZENOS_QUELLE ZENOS_CODE ZENOS_IMAGE ZENOS_BENUTZER ZENOS_HOME ZENOS_SYSTEMD
 
-if (( ZENOS_IMAGE )); then _MODUS=image; elif (( _NUR_BENUTZER )); then _MODUS=benutzer; else _MODUS=normal; fi
+if (( ZENOS_IMAGE )); then _MODUS=image; elif (( _NUR_BENUTZER )); then _MODUS=benutzer
+elif (( _NUR_CODE )); then _MODUS=code; else _MODUS=normal; fi
 _LOG=""
 _TEE_PID=""
 _SUDO_WACH_PID=""
@@ -166,6 +175,26 @@ _sperren() {
     (( _RUHIG )) || echo "Eine andere zenOS-Installation läuft gerade, warte …" >&2
     flock -w 900 9 || { echo "install.sh: Sperre nicht frei geworden" >&2; exit 1; }
   fi
+}
+
+# Ein Lauf von Hand aus einem anderen Checkout (etwa ~/zenOS) wartet zuerst auf die Kanal-Sperre und hält sie bis zum
+# Ende: Kanal und Hand stellen /opt/zenos nie zugleich um. Vor der eigenen Sperre, in derselben Reihenfolge wie
+# zenos-kanal (erst Kanal, dann install.sh); sonst könnten sich ein Lauf von Hand und der Rückweg des Kanals
+# gegenseitig blockieren. Nicht für Läufe des Kanals selbst (ZENOS_KANAL_LAUF=1), aus /opt/zenos, Image und
+# Benutzerteile. Eine fremde Sperrdatei nur lesend, wie oben.
+_kanal_sperren() {
+  local sperre=/run/lock/zenos-kanal.lock warten=900
+  (( ! ZENOS_IMAGE && ! _NUR_BENUTZER )) || return 0
+  [[ "${ZENOS_KANAL_LAUF:-}" != 1 && "$ZENOS_QUELLE" != "$(readlink -m -- "$ZENOS_CODE")" ]] || return 0
+  befehl_vorhanden flock && [[ -d /run/lock && ! -L "$sperre" ]] || return 0
+  if [[ -e "$sperre" && ! -O "$sperre" ]]; then
+    { exec 6<"$sperre"; } 2>/dev/null || return 0
+  elif ! { exec 6>>"$sperre"; } 2>/dev/null; then
+    { exec 6<"$sperre"; } 2>/dev/null || return 0
+  fi
+  flock -n 6 && return 0
+  (( _RUHIG )) || echo "Der Kanal prüft oder installiert gerade, warte (höchstens $(( warten / 60 )) Minuten) …" >&2
+  flock -w "$warten" 6 || { echo "install.sh: Der Kanal ist nach $(( warten / 60 )) Minuten nicht fertig" >&2; exit 1; }
 }
 
 # --- sudo ------------------------------------------------------------------
@@ -272,6 +301,8 @@ _module_ausfuehren() {
   )
   for datei in "${dateien[@]}"; do
     name=$(basename -- "$datei" .sh)
+    # --nur-code: nur die Übernahme des Codes, kein anderes Modul (auch nicht laden)
+    if (( _NUR_CODE )) && [[ "$name" != 10-code ]]; then continue; fi
     kurz=${name#[0-9][0-9]-}
     kurz=${kurz//-/_}
     vorher=$(_funktionen)
@@ -376,6 +407,7 @@ _oberflaeche_auffrischen() {
 
 # --- Ablauf ----------------------------------------------------------------
 
+_kanal_sperren
 _sperren
 # Beginn dieses Laufs (nach der Sperre), für _oberflaeche_auffrischen
 printf -v _LAUF_BEGINN '%(%s)T' -1
@@ -396,13 +428,18 @@ fi
 if (( ZENOS_IMAGE )); then
   printf '\n'
   log_info "Image-Modus: Benutzerteile folgen beim ersten Login."
+elif (( _NUR_CODE )); then
+  printf '\n'
+  log_info "Nur der Code: Pakete, Units und Benutzerteile folgen mit dem nächsten vollen Lauf (zen update)."
 elif [[ -z "$ZENOS_BENUTZER" ]]; then
   printf '\n'
   log_info "Als root ohne Zielbenutzer: Benutzerteile übersprungen (später mit «zen benutzer»)."
 else
   _module_ausfuehren benutzer
   _zenos_benutzer_systemd_neu_laden
-  if [[ "$_MODUS" == normal ]]; then _oberflaeche_auffrischen; fi
+  # Von Hand auch nach --nur-benutzer: zen update holt den Code als root (zenos-kanal) und richtet danach die
+  # Benutzerteile so ein; beim Sitzungsstart (--ruhig) läuft die Oberfläche noch nicht
+  if [[ "$_MODUS" == normal ]] || (( _NUR_BENUTZER && ! _RUHIG )); then _oberflaeche_auffrischen; fi
 fi
 
 if git -c safe.directory="$ZENOS_CODE" -C "$ZENOS_CODE" rev-parse --git-dir >/dev/null 2>&1; then
@@ -414,6 +451,7 @@ _zusatz=""
 case "$_MODUS" in
   image) _zusatz=" (Image)" ;;
   benutzer) _zusatz=" (Benutzerteile)" ;;
+  code) _zusatz=" (nur Code)" ;;
 esac
 _aenderungen=$(zenos_anzahl aenderung)
 _warnungen=$(zenos_anzahl warnung)

@@ -349,8 +349,21 @@ stehen in `docs/image-und-releases.md`, Abschnitt «Signierte Releases».
   (`zenos-release`, `zenos-wurzel`). Das erlaubt Manifest 0 ausdrücklich, und gitleaks lässt sie durch. Private
   Schlüssel liegen nie in einer Datei.
 - **Fail-closed:** Solange der Anker keine Schlüssel enthält, signiert `scripts/release-signieren.sh` nichts, und ein
-  Gerät meldet «Anker fehlt»: nichts gilt als gültig. Der Weg von Hand über `dev` bleibt. `zen update` prüft weiter
-  keine Signatur; die Prüfung auf dem Gerät (`sudo zen kanal pruefen`) installiert noch nichts.
+  Gerät meldet «Anker fehlt»: nichts gilt als gültig, auf `stabil` und `vorschau` installiert `zen update` nichts. Der
+  Weg von Hand über `dev` bleibt, aber nur mit einem getippten «ja» für genau den gezeigten Commit.
+- **Installieren nur, was geprüft ist:** `zen update` und `zen rollback` stellen `/opt/zenos` nie mehr direkt um. Das
+  Prüfen (root, ohne Netz) stellt ein gültig signiertes oder mit «ja» freigegebenes Ziel in einem eigenen Repo
+  bereit; das Installieren (root, mit Netz) prüft es vor der Benutzung noch einmal gegen den Anker von dann und
+  verlangt einen unveränderten, root-eigenen Baum. Auf dev ohne Frage nur, wenn jeder neue Commit seit dem
+  installierten Stand gültig signiert ist (auch ein unsignierter Zwischencommit zählt). Das «ja» ist an die
+  Commit- bzw. Tag-Objekt-ID gebunden und gilt nur im Terminal.
+- **Rückfrage vor Firewall, Netz, Boot:** Trifft ein Update einen der Rückfrage-Pfade (fest im Code von zenos-kanal,
+  gleich den Gruppen in `scripts/lib/sensible-pfade`; ein neuer Stand kann keinen streichen), installiert es nur nach
+  Zustimmung, auch wenn es signiert ist. Indirekte Änderungen (neue Pakete, gemeinsame Bibliotheken) fängt die Liste
+  nicht.
+- **Kein Aussperren:** Nach jeder Installation prüft zenos-kanal die Gesundheit, dazu den Selbsttest des eben
+  installierten zenos-kanal (liest er den Anker, nimmt er den Tag an?). Scheitert etwas, geht es auf den Stand davor
+  zurück, die Version ist gesperrt. Der Notweg in `ANLEITUNG.md`, Abschnitt F, braucht weder `zen` noch den Kanal.
 - **Prüfung auf dem Gerät** (`scripts/bin/zenos-kanal`): Holen und Prüfen sind getrennt. Ein flüchtiger Systembenutzer
   ohne Rechte holt in einer Sandbox nur über https und gibt ein Bundle weiter; root öffnet dessen Repo nie. root prüft
   ohne Netz in einem Repo, das jedes Mal neu entsteht, mit leerer Umgebung für git (keine fremde config, keine Hooks,

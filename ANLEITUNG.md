@@ -447,14 +447,21 @@ systemctl --user start zenos-shell.service
 **System**
 - [ ] `zen doctor` meldet `0 Fehler`. Eine Warnung höchstens zur temporären sudo-Regel (nur mit B12), sonst Hinweise
   wie «Bootsplash vorbereitet, nicht aktiv».
-- [ ] `zen update` meldet «Schon aktuell» oder alt → neu und endet mit `installiert · N Änderungen`. Die Oberfläche ist
-  danach vollständig da.
-- [ ] `zen rollback v0.1.0-rc2` geht auf den Tag zurück, `zen version` zeigt ihn. `zen update` bringt dich wieder auf
-  `dev`.
-- [ ] Signierter Kanal (installiert noch nichts): `zen kanal status` zeigt «Anker fehlt», solange die Schlüssel fehlen,
-  sonst die Fingerabdrücke von Wurzel und Release; die vergleichst du mit «zenOS Wurzel» und «zenOS Release» in
-  1Password. `sudo zen kanal pruefen` holt von GitHub und listet `v0.1.0-rc1` bis `rc3` als «unsigniert». An
-  `/opt/zenos` ändert sich dabei nichts (`zen version` zeigt danach denselben Commit).
+- [ ] Das erste `zen update` nach dem Wechsel auf den Kanal läuft noch auf dem alten Weg und bringt den neuen Code
+  (endet mit `installiert · N Änderungen`).
+- [ ] Das nächste `zen update` geht über den Kanal: «Hole von origin», «Prüfe (ohne Netz)». Solange der Anker leer
+  ist, zeigt es «Anker fehlt», die neuen Commits und fragt nach «ja» für genau diesen Commit. Mit «nein» ändert sich
+  nichts; mit «ja» folgen das Journal von `zenos-kanal-installieren.service`, «Installiert: … installiert und gesund»
+  und die Benutzerteile. Ein weiteres `zen update` meldet «Schon installiert». Die Oberfläche ist danach vollständig
+  da.
+- [ ] `zen version` zeigt in der Zeile «Update» den eben installierten Stand.
+- [ ] `zen doctor` zeigt unter «Signierter Kanal» die Installation und keinen Fehler.
+- [ ] `zen rollback v0.1.0-rc3` fragt (unsigniert) nach «ja» für das Tag-Objekt, geht danach auf den Tag zurück, und
+  `zen version` zeigt ihn. `zen update` bringt dich wieder auf `dev` (aus `v0.1.0-rc3` noch auf dem alten Weg).
+- [ ] Signierter Kanal: `zen kanal status` zeigt «Anker fehlt», solange die Schlüssel fehlen, sonst die
+  Fingerabdrücke von Wurzel und Release; die vergleichst du mit «zenOS Wurzel» und «zenOS Release» in 1Password.
+  `sudo zen kanal pruefen` holt von GitHub und listet `v0.1.0-rc1` bis `rc3` als «unsigniert». An `/opt/zenos`
+  ändert sich dabei nichts (`zen version` zeigt danach denselben Commit).
 - [ ] Die Temperatur steht in der Leiste, der Lüfter im System-Menü (Argon ONE). Unter Last (in kitty viermal
   `yes > /dev/null &`, danach `pkill yes`) wird der Lüfter hörbar schneller und später wieder leiser.
 - [ ] Argon-Knopf: Doppeltipp startet neu, drei Sekunden halten schaltet aus, einmal kurz drücken tut nichts.
@@ -546,13 +553,26 @@ oder der Paketserver war kurz weg. Denselben Befehl noch einmal starten, Erledig
 sudo dpkg --configure -a
 ```
 
-`zen doctor` meldet «Letzte Installation … ist nicht zu Ende gelaufen» (Strom weg oder Absturz während einer
-Installation): `zen update` noch einmal laufen lassen.
+`zen doctor` meldet «Letzte Installation … ist nicht zu Ende gelaufen» oder «Installation von … unterbrochen» (Strom
+weg oder Absturz während einer Installation): `zen update` noch einmal laufen lassen. Es setzt die unterbrochene
+Installation fort; beim Start hat `zenos-kanal-nachstart.service` den Code schon vor dem Login vollendet. Nach zwei
+Abbrüchen derselben Version geht es von selbst auf den Stand davor zurück.
 
-`zen update` bricht ab, etwa mit «git fetch ist fehlgeschlagen», oder `zen` startet gar nicht mehr: Der Notweg geht
-ohne `zen`, per SSH. Bis `v0.1.0-rc3` brach `zen update` auch ab, wenn auf GitHub ein Tag verschoben wurde (so bei
-`v0.1.0-rc1`); der Notweg holt deshalb nur den Branch, ohne Tags. Heisst dein Kanal in `/etc/xdg/zenos/kanal` nicht
-`dev`, ersetze `dev` in den ersten beiden Befehlen. Erst den neuen Stand holen:
+`zen update` endet mit «Gescheitert, zurück auf dem Stand davor»: Die neue Version war nicht gesund (Grund in der
+Meldung und in `zen kanal status`), der alte Stand läuft wieder, die Version ist gesperrt. Ein späteres `zen update`
+versucht sie nur nach «ja» noch einmal. Schick Claude die Meldung.
+
+`zen update` fragt nach «ja», obwohl alles signiert ist: Die Änderung betrifft Firewall, Netz oder Boot (die Pfade
+stehen dabei). Das ist gewollt; mit «nein» bleibt alles, wie es ist.
+
+`zen update` meldet auf `stabil` oder `vorschau` «Anker fehlt»: Ohne Schlüssel im Anker kommt dort nichts. Von Hand
+geht es auf `dev` weiter (in `/etc/xdg/zenos/kanal` `dev` eintragen).
+
+`zen update` bricht ab, etwa mit «git fetch ist fehlgeschlagen» oder «zenos-kanal fehlt», endet mit «Kaputt», oder
+`zen` startet gar nicht mehr: Der Notweg geht ohne `zen` und ohne den Kanal, per SSH. Bis `v0.1.0-rc3` brach
+`zen update` auch ab, wenn auf GitHub ein Tag verschoben wurde (so bei `v0.1.0-rc1`); der Notweg holt deshalb nur den
+Branch, ohne Tags, und prüft keine Signatur: Nimm ihn nur, wenn du weisst, was auf `dev` liegt. Erst den neuen Stand
+holen:
 
 ```
 sudo git -C /opt/zenos fetch --no-tags origin dev
@@ -570,10 +590,14 @@ Dann installieren (fragt nach dem sudo-Passwort):
 /opt/zenos/scripts/install.sh
 ```
 
-Danach geht `zen update` wieder. Ein verschobener Tag erscheint dort nur noch als Warnung und bleibt beim Stand,
-den der Pi kennt; die Warnung nennt den Befehl, mit dem du den Stand von GitHub übernimmst. Meldet `zen update`
-«Nur … MB frei», zuerst Platz schaffen; meldet es «Ein anderes Update oder Rollback läuft gerade», wartet es auf das
-andere (läuft es in einer vergessenen tmux-Sitzung? `tmux ls`).
+Danach geht `zen update` wieder; eine unterbrochene Installation des Kanals gilt nach diesem `install.sh` als
+erledigt. Meldet `zen update` «Nur … MB frei», zuerst Platz schaffen; meldet es «Ein anderes zen update oder zen
+rollback läuft gerade», läuft es noch in einer anderen Sitzung (vergessene tmux-Sitzung? `tmux ls`). Was ein
+`zen update` gerade tut, zeigt auch nach einem Abbruch der SSH-Verbindung:
+
+```
+journalctl -fu zenos-kanal-installieren.service
+```
 
 Das Passwort wird im zenOS-Login abgelehnt, per SSH geht es: Die Tastaturbelegung stimmt nicht. Per SSH neu wählen,
 danach neu starten:
@@ -614,7 +638,7 @@ zen netzwerk zurueck
 ```
 
 Nach einem Update geht etwas nicht mehr: zurück zum letzten guten Stand, zum Beispiel `v0.1.0-rc3`. Ein Tag, den
-es nicht gibt, zeigt die vorhandenen.
+es nicht gibt, zeigt die vorhandenen. Ein unsignierter Tag wie dieser geht nur nach «ja» für genau dieses Tag-Objekt.
 
 ```
 zen rollback v0.1.0-rc3
@@ -713,7 +737,7 @@ Den Stand des Baus zeigt GitHub unter Actions; der Quellcode-Job braucht je nach
 **G7 bis G10: `main` auf den Stand bringen** (deine Entscheidung). Solange `main` nur den Start-Commit enthält,
 braucht jede Installation `git switch dev`. Vorschlag: `main` auf `v0.1.0` vorspulen. Dann funktionieren
 `git clone … ~/zenOS` und `./scripts/install.sh` ohne `git switch dev`, und neue Installationen folgen dem Kanal
-`main`. Der Pi bleibt auf dem Kanal `dev` (steht in `/etc/xdg/zenos/kanal`).
+`stabil` (aus `main`). Der Pi bleibt auf dem Kanal `dev` (steht in `/etc/xdg/zenos/kanal`).
 
 **G7.**
 
@@ -751,7 +775,7 @@ git switch dev
 - Rahmen von Chrome: Chrome zeichnet heute seinen eigenen, ohne zenOS-Titelzeile und Akzentrand, und eingerastet ragt
   sein Schatten in die Lücke. Den zenOS-Rahmen bekommt es in Chrome unter «Darstellung» mit Titelleiste und Rahmen
   des Systems (pro Chrome-Profil). Ob zenOS das vorgibt, siehe `docs/module/m9.md`, «Apps mit eigenem Rahmen».
-- Kanal des Images: Es folgt heute `dev`. Trägt `main` Releases, kann es auf `main` wechseln (Option `--kanal` von
+- Kanal des Images: Es folgt heute `dev`. Gibt es signierte Releases, wechselt es auf `stabil` (Option `--kanal` von
   `image/bauen.sh` im Workflow).
 - fish als Login-Shell, damit auch SSH-Sitzungen Eingabezeile, `?` und die Warnung haben: `chsh -s /usr/bin/fish`.
 - Bootsplash einschalten: per SSH `zen bootsplash aktivieren`. Es zeigt jeden Schritt vorher (Pakete, Standard-Theme,

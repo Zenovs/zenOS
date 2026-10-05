@@ -5,10 +5,11 @@
 # fehlen (etwa für Teile, die erst noch kommen).
 #
 # Gruppen:
-#   firewall, netz, boot   Rückfrage-Pfade. Trifft ein Update einen davon, soll ein Gerät es nur nach Zustimmung
-#                          installieren (kommt mit dem Kanal auf dem Gerät). Indirekte Änderungen fängt die Liste
-#                          nicht: neue Pakete, die initramfs oder flash-kernel auslösen, oder gemeinsame Teile wie
-#                          scripts/lib/gemeinsam.sh.
+#   firewall, netz, boot   Rückfrage-Pfade. Trifft ein Update einen davon, installiert ein Gerät es nur nach
+#                          Zustimmung. zenos-kanal hat diese drei Gruppen fest im Code (CONSENT_PATHS, ein
+#                          Einheitentest hält beide gleich); die Liste eines neuen Stands kann dort nur Pfade
+#                          dazunehmen. Indirekte Änderungen fängt die Liste nicht: neue Pakete, die initramfs oder
+#                          flash-kernel auslösen, oder gemeinsame Teile wie scripts/lib/gemeinsam.sh.
 #   anmeldung              Anmeldung, Sperre und Rechte: PAM, polkit, greetd, Greeter, Sperrbildschirm, sudo im Image
 #   vertrauen              Anker, Signieren, der Weg der Updates, CI und Hooks
 #
@@ -52,7 +53,6 @@ anmeldung image/erststart/
 vertrauen system/vertrauen/
 vertrauen scripts/release-signieren.sh
 vertrauen scripts/lib/sensible-pfade
-vertrauen scripts/lib/wechsel.sh
 vertrauen scripts/zen.d/update.sh
 vertrauen scripts/zen.d/rollback.sh
 vertrauen scripts/zen.d/kanal.sh

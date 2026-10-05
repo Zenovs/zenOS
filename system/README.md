@@ -15,7 +15,9 @@ Verweis angelegt; was generiert wird, erzeugen die Programme unter `scripts/bin/
 | `systemd/system/zenos-netzwerk-erststart.service` | `/etc/systemd/system/` (aktiviert nur im Image) | erster Start eines Images: auf NetworkManager umstellen |
 | `systemd/system/systemd-networkd-wait-online.service.d/zenos-netzwerk.conf` | `/etc/systemd/system/…` | wait-online überspringen, solange NetworkManager das Netz verwaltet |
 | `systemd/system/zenos-kanal-holen.service` | `/etc/systemd/system/` (`14-kanal`, statisch) | signierter Kanal: Tags und Branches von origin holen, ohne Rechte (DynamicUser, Sandbox) |
-| `systemd/system/zenos-kanal-pruefen.service` | `/etc/systemd/system/` (`14-kanal`, statisch) | signierter Kanal: das Bundle als root ohne Netz prüfen, Stand schreiben, nichts installieren |
+| `systemd/system/zenos-kanal-pruefen.service` | `/etc/systemd/system/` (`14-kanal`, statisch) | signierter Kanal: das Bundle als root ohne Netz prüfen, Stand schreiben, ein Ziel für `zen update` bereitstellen |
+| `systemd/system/zenos-kanal-installieren.service` | `/etc/systemd/system/` (`14-kanal`, statisch) | signierter Kanal: das bereitgestellte Ziel als root installieren (Inhibitor, `KillMode=mixed`), Gesundheit prüfen, sonst Rückweg |
+| `systemd/system/zenos-kanal-nachstart.service` | `/etc/systemd/system/` (`14-kanal`, aktiviert) | nach einem Abbruch beim Start vor greetd die Übernahme des Codes vollenden (`install.sh --nur-code`, ohne Netz) |
 | `modprobe/zenos-brcmfmac.conf` | `/etc/modprobe.d/` (von `zen netzwerk umstellen` bzw. im Image) | WPA3 im WLAN-Treiber des Raspberry Pi aus (`docs/module/netzwerk.md`) |
 | `cloud/99-zenos-netzwerk.cfg` | `/etc/cloud/cloud.cfg.d/` (von `zen netzwerk umstellen`, nie im Image) | cloud-init schreibt keine Netzwerk-Konfiguration mehr |
 | `doc/RECHTLICHES`, `doc/QUELLEN` | `/usr/local/share/doc/zenos/` (Modul `72-kennung`, neben `copyright` aus `LICENSE`) | Lizenzen, Markenhinweise und wo der Quellcode liegt; `/etc/legal` verweist darauf |
