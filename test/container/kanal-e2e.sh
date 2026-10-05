@@ -41,8 +41,8 @@
 #                ohne Oberfläche: zenos-kanal-bedienen als root wie über pkexec. polkit kennt die Aktionen, Zeitpunkt
 #                setzen (ein zu kurzes Fenster nicht), «Jetzt prüfen», «Jetzt installieren» (signiert, ohne Frage,
 #                danach neu geprüft), ein Stand, der Netz trifft (installieren wartet, zustimmen für ein anderes Objekt
-#                nichts, für das gezeigte installiert), dev unsigniert (zustimmen abgelehnt, installieren wartet); keine
-#                Unit «failed» bei Exit 3 oder 10
+#                nichts, für das gezeigte installiert), dev unsigniert (zustimmen abgelehnt, installieren wartet);
+#                der Helfer liest Exit 3 und 10 und lässt keine Unit «failed» zurück
 
 set -euo pipefail
 
@@ -787,7 +787,8 @@ s_bedienung() {
   erwarte_rc "$rc" 10 "installieren auf dev (braucht «ja»)"
   erwarte_kopf "$gut" "nichts installiert"
   [[ "$(systemctl is-failed "zenos-kanal-zustimmen@$neu.service")" != failed ]] || fehler "Unit «failed» bei Exit 3"
-  ok "Unit nicht «failed»"
+  [[ "$(systemctl is-failed zenos-kanal-pruefen.service)" != failed ]] || fehler "Prüfen «failed» nach «wartet»"
+  ok "Units nicht «failed», auch das Prüfen unterwegs nicht"
   kanal vorschau
 }
 

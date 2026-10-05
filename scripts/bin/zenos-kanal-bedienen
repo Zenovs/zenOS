@@ -35,7 +35,7 @@ _name=zenos-kanal-bedienen
 _programm=/usr/local/libexec/zenos/zenos-kanal
 
 _fehler() { printf '%s: %s\n' "$_name" "$*" >&2; }
-_aufruf() { _fehler "Aufruf: zenos-kanal-bedienen pruefen|installieren|zustimmen OBJEKT|zeitpunkt sperre|jederzeit|hand|zeitpunkt fenster VON BIS"; }
+_aufruf() { _fehler "Aufruf: zenos-kanal-bedienen pruefen|installieren|zustimmen OBJEKT|zeitpunkt WAHL [VON BIS]"; }
 
 # Streng: zwei Stellen, 00:00 bis 23:59 (zenos-kanal prüft das Zeitfenster selbst noch einmal)
 _uhrzeit() { [[ "$1" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]]; }
@@ -94,22 +94,31 @@ _weg() {
 
 _journal() { logger -t "$_name" -- "$*" 2>/dev/null || true; }
 
-# Unit starten, auf ihr Ende warten, Exit des Programms (ExecMainStatus) zurückgeben. Scheitert schon der Start (Unit
-# fehlt, Bedingung nicht erfüllt), 1.
+# Unit starten, auf ihr Ende warten, Exit des Programms (ExecMainStatus) zurückgeben. Endet das Programm mit einem
+# Exit ungleich 0, ist die Unit «failed» und behält ihn (eine erfolgreiche räumt systemd weg, dann gilt 0); danach
+# setzt reset-failed den Zustand zurück: «wartet» oder «abgelehnt» sind Zustände des Kanals, keine Ausfälle des
+# Systems. Scheitert schon der Start (Unit fehlt), 1.
 _unit() {
   local unit=$1 fehler rc
   fehler=$(systemctl start -- "$unit" 2>&1) || true
   rc=$(systemctl show --property=ExecMainStatus --value -- "$unit" 2>/dev/null) || rc=""
+  systemctl reset-failed -- "$unit" 2>/dev/null || true
   if [[ ! "$rc" =~ ^[0-9]+$ ]]; then
     [[ -z "$fehler" ]] || printf '%s\n' "$fehler" >&2
     return 1
   fi
   if (( rc == 0 )) && [[ -n "$fehler" ]]; then
-    # Die Unit lief nicht (ExecMainStatus wäre der eines früheren Laufs)
+    # Die Unit lief nicht (etwa: fehlt)
     printf '%s\n' "$fehler" >&2
     return 1
   fi
   return "$rc"
+}
+
+# Holen und Prüfen, die jetzt bzw. zustimmen unterwegs starten, enden bei «wartet» oder «abgelehnt» ebenfalls mit
+# Exit ungleich 0; auch das ist kein Ausfall. Eine gescheiterte Installation bleibt «failed» (systemctl --failed).
+_pruefung_zuruecksetzen() {
+  systemctl reset-failed -- zenos-kanal-holen.service zenos-kanal-pruefen.service 2>/dev/null || true
 }
 
 case "$1" in
@@ -126,12 +135,14 @@ case "$1" in
     _journal "Jetzt installieren ($(_weg))"
     rc=0
     _unit zenos-kanal-jetzt.service || rc=$?
+    _pruefung_zuruecksetzen
     exit "$rc"
     ;;
   zustimmen)
     _journal "Zustimmung für das Tag-Objekt $2 ($(_weg))"
     rc=0
     _unit "zenos-kanal-zustimmen@$2.service" || rc=$?
+    _pruefung_zuruecksetzen
     exit "$rc"
     ;;
   zeitpunkt)

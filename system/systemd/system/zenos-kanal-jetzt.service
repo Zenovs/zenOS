@@ -19,8 +19,8 @@ RuntimeDirectory=zenos-sperre
 RuntimeDirectoryMode=0700
 RuntimeDirectoryPreserve=yes
 UMask=0022
-# 3 abgelehnt oder blockiert, 10 wartet (Zustimmung, Netz, Platz), 75 läuft schon: Zustände, keine Fehler der Unit
-SuccessExitStatus=3 10 75
+# Kein SuccessExitStatus: Eine erfolgreich beendete statische Unit räumt systemd weg (ExecMainStatus wäre 0).
+# So bleibt der Exit (3, 4, 5, 10, 75) lesbar; zenos-kanal-bedienen liest ihn und setzt «failed» zurück.
 TimeoutStartSec=4h
 SyslogIdentifier=zenos-kanal
 

@@ -328,6 +328,7 @@ class Helfer(unittest.TestCase):
         self.assertNotRegex(text, r"\b(eval|sh -c|bash -c)\b")
         self.assertIn('/usr/bin/python3 -I "$_programm" zeitpunkt "$@"', text)
         self.assertIn('_unit "zenos-kanal-zustimmen@$2.service"', text)
+        self.assertIn('systemctl reset-failed -- "$unit"', text)
 
 
 class Policy(unittest.TestCase):
@@ -362,7 +363,9 @@ class Units(unittest.TestCase):
         self.assertIn("ExecStart=/usr/bin/python3 -I /usr/local/libexec/zenos/zenos-kanal zustimmen %i", zustimmen)
         for zeilen in (jetzt, zustimmen):
             self.assertIn("Type=oneshot", zeilen)
-            self.assertIn("SuccessExitStatus=3 10 75", zeilen)
+            # Ohne SuccessExitStatus: Sonst räumte systemd die erfolgreich beendete Unit weg, und der Helfer läse
+            # ExecMainStatus 0 statt 10 (im Ende-zu-Ende-Test so passiert)
+            self.assertFalse(any(z.startswith("SuccessExitStatus=") for z in zeilen))
             self.assertIn("RuntimeDirectory=zenos-sperre", zeilen)
             self.assertIn("RuntimeDirectoryPreserve=yes", zeilen)
             self.assertIn("StateDirectory=zenos/kanal", zeilen)

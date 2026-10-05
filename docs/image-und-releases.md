@@ -417,8 +417,9 @@ letzten Prüfung installiert, sagt sie das, statt alte Angaben zu zeigen.
 | Segmente «Bei Sperre · Zeitfenster · Jederzeit · Von Hand», beim Zeitfenster von–bis | `… zeitpunkt …` (ohne Passwort) | `zenos-kanal zeitpunkt` schreibt `/etc/xdg/zenos/kanal-zeitpunkt` (root, 0644, atomar); gilt für das ganze Gerät, weil root-Dienste ihn lesen |
 
 Die Units laufen unabhängig von der Oberfläche: Lädt sie neu (etwa weil das Update QML bringt), endet nur der Helfer.
-Exit 3, 10 und 75 sind für die Units Zustände, keine Fehler (`SuccessExitStatus`). Danach prüft `jetzt` wie
-`zen update` neu, die Seite zeigt den neuen Stand.
+Den Exit liest der Helfer aus `ExecMainStatus` (ohne `SuccessExitStatus`: eine erfolgreich beendete statische Unit
+räumt systemd weg, und es gälte 0) und setzt den Zustand «failed» danach zurück; «wartet» oder «abgelehnt» machen das
+System so nicht «degraded». Danach prüft `jetzt` wie `zen update` neu, die Seite zeigt den neuen Stand.
 
 Mitteilungen (Absender zenOS, jede nur einmal je Zustand, gemerkt in `~/.local/state/zenos/kanal-meldungen.json`):
 
