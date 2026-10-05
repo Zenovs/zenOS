@@ -307,8 +307,10 @@ Während einer Freigabe und bei `heute: false` blendet der Inhalt aus (200 ms).
 - zenOS selbst meldet sich nur bei niedrigem Akku (10 % und 5 % im Akkubetrieb, je einmal): Absender «zenOS» mit
   der Bildmarke. 10 % mit Dringlichkeit normal, also nach der Regel des Zustands wie jede andere Mitteilung. 5 %
   dringend: Die Karte kommt sofort (ausser im Zustand «keine») und bleibt bis zum Schliessen, ohne Ton und ohne
-  Blinken; zenOS fährt nicht selbst herunter, also darf sie nicht warten. Es steht immer nur eine Akku-Mitteilung
-  da (5 % ersetzt 10 %), und am Netzteil verschwindet sie.
+  Blinken; bei 3 % schaltet zenOS kontrolliert aus, also darf sie nicht warten. Es steht immer nur eine
+  Akku-Mitteilung da (5 % ersetzt 10 %), und am Netzteil verschwindet sie. Bei 3 % (drei Messungen) ersetzt sie die
+  dringende Karte «Akku fast leer» / «zenOS schaltet um 22:41 aus. Netzteil anschliessen bricht ab.»; auf der Sperre
+  steht dieselbe Uhrzeit in der ruhigen Zeile der Vorwarnung, mit dem Symbol `akku-leer` in `warnung`.
 
 ### Fenster
 

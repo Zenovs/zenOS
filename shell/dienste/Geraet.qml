@@ -8,13 +8,20 @@ import Quickshell.Io
 import qs.dienste
 import "geraet.js" as Logik
 
-// Gerätezustand aus /run/zenos/geraet.json (zenos-argon, Systemdienst): Akku und Lüfter des Argon ONE, dazu der
-// Lüfterwunsch, den zenos-argon umsetzt (einstellen: Luefter).
-// Fehlt die Datei, ist sie kaputt oder älter als 60 s, gilt alles als unbekannt; ein Akku, der in dieser Sitzung
-// schon da war, bleibt dann gedämpft in der Leiste stehen (statt zu verschwinden), im Menü «unbekannt».
+// Gerätezustand aus /run/zenos/geraet.json (zenos-argon, Systemdienst): Akku, Lüfter und Deckel des Argon ONE, dazu
+// der Lüfterwunsch, den zenos-argon umsetzt (einstellen: Luefter).
+// Die Datei wird bei jeder Änderung gelesen (watchChanges; ein Wechsel des Deckels steht sofort darin) und dazu alle
+// 5 s, was zugleich ihr Alter prüft. Fehlt sie, ist sie kaputt oder älter als 60 s, gilt alles als unbekannt; ein
+// Akku, der in dieser Sitzung schon da war, bleibt dann gedämpft in der Leiste stehen, im Menü «unbekannt».
 // Bei niedrigem Akku (10 % und 5 %, nur beim Entladen, je einmal pro Unterschreiten) eine Mitteilung über den eigenen
 // Mitteilungsdienst (notify-send): 10 % normal, 5 % dringend (kommt sofort, ruhig, ohne Ton). Es gibt immer nur
-// eine Akku-Mitteilung; beim Laden wird sie zurückgezogen. zenOS fährt nie selbst herunter.
+// eine Akku-Mitteilung; beim Laden wird sie zurückgezogen.
+// Ausschalten bei leerem Akku (Entscheid Oktober 2026, bisher fuhr zenOS nie selbst herunter): Bei 3 % im
+// Akkubetrieb schaltet zenos-argon nach 60 s Vorwarnung kontrolliert aus, auch am Login-Bildschirm. Hier wird daraus
+// eine dringende Mitteilung mit der Uhrzeit (sie ersetzt die Akku-Mitteilung); die Sperre zeigt die Uhrzeit ebenfalls.
+// Abbrechen kann nur das Netzteil.
+// Deckel (Argon ONE UP): Signal deckelGeklappt bei jedem Wechsel; dienste/Energie.qml sperrt beim Zuklappen und
+// schaltet den Bildschirm aus, beim Aufklappen wieder an.
 // Die Logik steht in geraet.js und ist dort getestet.
 Singleton {
     id: root
@@ -32,6 +39,8 @@ Singleton {
         property bool akkuGesehen: false
         // Nummer der aktuellen Akku-Mitteilung (0 = keine): wird ersetzt und beim Laden zurückgezogen
         property int mitteilung: 0
+        // Uhrzeit (ms) des Ausschaltens bei leerem Akku, die schon gemeldet ist (0 = keine)
+        property real ausschaltenGemeldet: 0
     }
 
     readonly property bool akkuVorhanden: _daten.akku.vorhanden || persist.akkuGesehen
@@ -55,6 +64,15 @@ Singleton {
     // Gehäuse laut zenos-argon: "argon-one-up" (Laptop mit Deckel), "argon-one-v3" oder leer (unbekannt)
     readonly property string modell: _daten.geraet
 
+    // zenos-argon schaltet bei leerem Akku um diese Uhrzeit aus (ms seit 1970), 0: keine Vorwarnung
+    readonly property real akkuAusschaltenUm: _daten.ausschaltenUm > 0 ? _daten.ausschaltenUm : 0
+
+    // Deckel (Argon ONE UP): vorhanden, wenn zenos-argon GPIO27 liest
+    readonly property bool deckelVorhanden: _daten.deckel.vorhanden
+    readonly property bool deckelZu: _daten.deckel.zustand === "zu"
+    // "zuklappen" (sperren und Bildschirm aus), "aufklappen" (Bildschirm an), "sperren" (das Zuklappen verpasst)
+    signal deckelGeklappt(string aktion)
+
     readonly property bool luefterVorhanden: _daten.luefter.vorhanden
     // «aus», «Stufe 2 von 4 · 3120 U/min» oder «55 %»
     readonly property string luefterWert: Logik.luefterWert(_daten.luefter)
@@ -75,14 +93,55 @@ Singleton {
 
     property var _daten: Logik.leer()
     property string _text: ""
+    // Zuletzt bekannter Deckel { zustand, seit } (null: noch keiner). Eine veraltete Datei überschreibt ihn nicht:
+    // Ein Wechsel in einer Lücke fällt so beim nächsten frischen Wert auf.
+    property var _deckelVorher: null
 
     function _auswerten(): void {
-        const daten = Logik.lesen(_text, Date.now());
+        const jetzt = Date.now();
+        const daten = Logik.lesen(_text, jetzt);
         if (JSON.stringify(daten) !== JSON.stringify(_daten))
             _daten = daten;
         if (daten.akku.vorhanden && !persist.akkuGesehen)
             persist.akkuGesehen = true;
         _warnen(daten.akku);
+        _ausschaltenMelden(daten.ausschaltenUm, daten.akku);
+        _deckel(daten.deckel, jetzt);
+    }
+
+    function _deckel(deckel: var, jetzt: real): void {
+        const aktion = Logik.deckelAktion(root._deckelVorher, deckel, jetzt);
+        if (deckel.vorhanden && deckel.zustand !== "")
+            root._deckelVorher = {
+                zustand: deckel.zustand,
+                seit: deckel.seit
+            };
+        if (aktion !== "")
+            root.deckelGeklappt(aktion);
+    }
+
+    // Ausschalten bei leerem Akku: dringende Mitteilung mit der Uhrzeit (ersetzt die Akku-Mitteilung). Endet die
+    // Vorwarnung ohne Netzteil, kommt wieder die Mitteilung von 5 % (die Uhrzeit stimmt dann nicht mehr).
+    function _ausschaltenMelden(um: real, akku: var): void {
+        if (!Konfig.verfuegbar)
+            return;
+        const was = Logik.ausschaltenFolge(persist.ausschaltenGemeldet, um, akku);
+        if (was === "")
+            return;
+        persist.ausschaltenGemeldet = was === "melden" ? um : 0;
+        if (was === "melden") {
+            console.info("Gerät: Akku fast leer, zenos-argon schaltet um", Logik.uhrzeit(um), "aus");
+            _naechste = Logik.ausschaltenMitteilung(um);
+            _senden();
+        } else if (was === "ersetzen") {
+            _naechste = Logik.mitteilung(5, akku.prozent);
+            _senden();
+        } else if (was === "verwerfen" && persist.mitteilung > 0) {
+            _naechste = null;
+            if (_eigene(persist.mitteilung))
+                Mitteilungen.verwerfen(persist.mitteilung);
+            persist.mitteilung = 0;
+        }
     }
 
     function _warnen(akku: var): void {
@@ -147,6 +206,9 @@ Singleton {
 
         path: "/run/zenos/geraet.json"
         printErrors: false
+        // zenos-argon schreibt atomar (neue Datei): ein Wechsel des Deckels kommt so ohne Verzögerung an
+        watchChanges: true
+        onFileChanged: reload()
         onLoaded: {
             root._text = text();
             root._auswerten();
@@ -157,7 +219,8 @@ Singleton {
         }
     }
 
-    // Der Dienst schreibt alle 15 s (atomar, neue Datei): ein ruhiger Takt genügt und prüft zugleich das Alter
+    // Der Dienst schreibt alle 15 s (atomar, neue Datei): Der ruhige Takt prüft das Alter und fängt eine Änderung auf,
+    // die watchChanges verpasst hätte
     Timer {
         interval: 5000
         repeat: true

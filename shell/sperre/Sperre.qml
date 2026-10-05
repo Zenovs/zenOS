@@ -36,6 +36,8 @@ import "../dienste/energie.js" as EnergieLogik
 //   eigenen Aufruf von zenos-bildschirm oder dessen Meldung «sperre bildschirm aus», nie ungesperrt.
 // - Vorwarnung vor dem Ausschalten (dienste/Energie.qml): eine ruhige Zeile mit der Uhrzeit, ohne Sekunden. Die
 //   Taste, die sie abbricht, landet ebenfalls nicht im Passwortfeld.
+// - Ausschalten bei leerem Akku (zenos-argon, Geraet.akkuAusschaltenUm): dieselbe Zeile mit dem Akku-Symbol und der
+//   Uhrzeit. Sie hat Vorrang, eine Taste bricht nicht ab (nur das Netzteil), und den Bildschirm schaltet sie nicht an.
 // - Ein/Aus-Taste (IPC «sperre taste», von zenos-energie taste): Bildschirm an, wenn er dunkel ist oder eben geweckt
 //   wurde, sonst sofort aus.
 Scope {
@@ -76,6 +78,10 @@ Scope {
     readonly property bool dunkel: root._weck.dunkel === true
     // Uhrzeit des Ausschaltens während der Vorwarnung, z. B. «22:41» (leer: keine Vorwarnung)
     readonly property string ausschaltenUm: Energie.vorwarnungLaeuft && Energie.ausschaltenUm > 0 ? Qt.formatDateTime(new Date(Energie.ausschaltenUm), "HH:mm") : ""
+    // Uhrzeit des Ausschaltens bei leerem Akku (zenos-argon), z. B. «22:41» (leer: keins)
+    readonly property string akkuAusschaltenUm: Geraet.akkuAusschaltenUm > 0 ? Qt.formatDateTime(new Date(Geraet.akkuAusschaltenUm), "HH:mm") : ""
+    // Zeile auf der Sperre: leerer Akku vor der Vorwarnung nach langer Sperre
+    readonly property string vorwarnungText: akkuAusschaltenUm.length > 0 ? "Akku fast leer: zenOS schaltet um " + akkuAusschaltenUm + " aus · Netzteil anschliessen bricht ab" : ausschaltenUm.length > 0 ? "zenOS schaltet um " + ausschaltenUm + " aus · Eine Taste bricht ab" : ""
 
     // Der Bildschirm ist aus bzw. wieder an (Meldung von zenos-bildschirm oder eigener Aufruf über Energie)
     function bildschirmGemeldet(was: string): void {
@@ -320,7 +326,7 @@ Scope {
                     // Vorwarnung vor dem Ausschalten: ruhig, mit Uhrzeit statt Sekunden. Ein Systemzustand, kein Inhalt.
                     Rectangle {
                         anchors.horizontalCenter: parent.horizontalCenter
-                        visible: root.ausschaltenUm.length > 0
+                        visible: root.vorwarnungText.length > 0
                         implicitWidth: vorwarnungZeile.implicitWidth + 38
                         implicitHeight: vorwarnungZeile.implicitHeight + 22
                         radius: Theme.radiusPille
@@ -336,15 +342,15 @@ Scope {
 
                             Symbol {
                                 anchors.verticalCenter: parent.verticalCenter
-                                name: "ausschalten"
+                                name: root.akkuAusschaltenUm.length > 0 ? "akku-leer" : "ausschalten"
                                 groesse: 14
                                 strichbreite: 1.8
-                                farbe: Theme.text2
+                                farbe: root.akkuAusschaltenUm.length > 0 ? Theme.warnung : Theme.text2
                             }
 
                             Text {
                                 anchors.verticalCenter: parent.verticalCenter
-                                text: "zenOS schaltet um " + root.ausschaltenUm + " aus · Eine Taste bricht ab"
+                                text: root.vorwarnungText
                                 color: Theme.text2
                                 font.family: Theme.schriftText
                                 font.pixelSize: Theme.groesseText

@@ -1,13 +1,13 @@
 #!/usr/bin/python3
 """zenos-argon: Argon ONE V3 am Raspberry Pi 5 (Lüfter, Power-Button) und Argon ONE UP am Compute Module 5
-(Akku, Anzeige von Lüfter und Temperatur).
+(Akku, Deckel, Ausschalten bei leerem Akku, Anzeige von Lüfter und Temperatur).
 
 Aufruf:
   zenos-argon                        Dienst (zenos-argon.service, als root)
   zenos-argon --simulieren [--temperatur GRAD | --temperatur-datei PFAD] [--puls MS …]
                                      Argon ONE V3 ohne I2C und GPIO: Lüfterwerte und Tastendrücke nur ins Log
   zenos-argon --pruefen              nur lesend: Gerät, I2C-Bus, Argon an 0x1a bzw. Akku-Messchip an 0x64,
-                                     GPIO4, Lüfter, Konfiguration, Freigabe für das Akkuprofil
+                                     GPIO4 bzw. Deckel an GPIO27, Lüfter, Konfiguration, Freigabe für das Akkuprofil
   zenos-argon --konfig-pruefen       Konfiguration prüfen und die wirksame Kurve zeigen
   zenos-argon --luefter-kernel       Sicherung für ExecStopPost: steht die Thermal-Zone des Kernel-Lüfters noch auf
                                      dem Regler user_space, wieder step_wise (schreibt sonst nichts)
@@ -52,6 +52,16 @@ Argon ONE UP (Laptop mit Compute Module 5; Quelle: Argons argononeupd.py, Versio
   ein Sprung um mehr als 10 % braucht eine zweite Messung.
 - Lüfter: Kernel-Treiber pwm-fan (hwmon «pwmfan», cooling_device «pwm-fan», nach Namen gesucht). Standard
   «auto»: Der Kernel regelt (step_wise), zenos-argon liest nur.
+- Deckel: GPIO27 am RP1 (Leitung «GPIO27», nach Namen gesucht wie GPIO4), nur lesend: Eingang mit Pull-up, beide
+  Flanken, 100 ms Entprellung in Software. 0 heisst zu, 1 offen (wie Argons argonpowerbutton-libgpiod.py). Jeder
+  Wechsel steht sofort in der Statusdatei; die Oberfläche sperrt beim Zuklappen und schaltet den Bildschirm aus.
+  Beim Beenden wird die Leitung freigegeben. Kein I2C, keine Firmware, kein config.txt.
+- Ausschalten bei leerem Akku (Leitplanke, Code): nur bei sicherem Messwert und sicherem Entladen, drei Messungen
+  hintereinander mit höchstens 3 %. Dann 60 s Vorwarnung («akku.ausschaltenUm»; die Oberfläche zeigt eine dringende
+  Mitteilung und eine Zeile auf der Sperre). Abbrechen kann nur das Netzteil (schon eine Messung «lädt»); ein
+  unsicherer Messwert bricht ebenfalls ab, dann beginnt alles von vorn. Läuft dpkg oder install.sh, wartet es höchstens
+  5 Min. länger. Dann «systemctl poweroff» (nie neu starten). SSH, tmux und Hemmer halten es nicht auf: Ein hartes Aus
+  bei leerem Akku wäre schlimmer. Gilt auch am Login-Bildschirm (Systemdienst).
 
 Lüfterwunsch /var/lib/zenos/luefter (nur scripts/bin/zenos-luefter schreibt ihn; «modus=auto» oder «modus=mindest»
 mit «stufe=1…4»), gelesen bei jeder Änderung, wirkt also ohne Neustart. Ungültig oder fehlend: «auto».
@@ -63,10 +73,14 @@ mit «stufe=1…4»), gelesen bei jeder Änderung, wirkt also ohne Neustart. Ung
   beim Beenden, bei «auto» und bei jedem Schreibfehler wieder step_wise; ein verwaister user_space beim Start wird
   aufgeräumt (dazu ExecStopPost mit --luefter-kernel). Zonen mit passiven Trip-Punkten übernimmt es nicht.
 
-Statusdatei /run/zenos/geraet.json (atomar, 0644), alle 5 s (V3) bzw. 15 s (UP), nach einem neuen Lüfterwunsch sofort:
+Statusdatei /run/zenos/geraet.json (atomar, 0644), alle 5 s (V3) bzw. 15 s (UP, 5 s während der Vorwarnung bei leerem
+Akku), nach einem neuen Lüfterwunsch und jedem Wechsel des Deckels sofort:
   {"version": 1, "zeit": ISO-8601, "geraet": "argon-one-v3" | "argon-one-up",
    "akku": {"vorhanden": bool, "prozent": int|null, "laedt": bool|null,
-            "zustand": "ok"|"unbekannt"|"fehler"|"freigabe" (Messchip misst nicht, Freigabe fehlt)},
+            "zustand": "ok"|"unbekannt"|"fehler"|"freigabe" (Messchip misst nicht, Freigabe fehlt),
+            "ausschaltenUm": ISO-8601|null (nur UP: Ausschalten bei leerem Akku, Vorwarnung läuft)},
+   "deckel": {"vorhanden": bool, "zu": bool|null, "seit": ISO-8601 mit ms|null (Wechsel im Betrieb; null: Pegel beim
+              Start des Dienstes)} (nur UP),
    "luefter": {"vorhanden": true, "prozent": int|null, …} (V3) oder
               {"vorhanden": bool, "stufe": int|null, "stufen": int|null, "upm": int|null, …} (UP),
               … = "modus": "auto"|"mindest", "mindeststufe": int|null, "steuerbar": bool (zenOS kann den
@@ -85,6 +99,7 @@ Exit: 0 in Ordnung oder nichts zu tun · 1 Fehler · 2 Aufruf.
 
 import datetime
 import errno
+import fcntl
 import io
 import json
 import math
@@ -207,6 +222,23 @@ POLICY_USER = "user_space"
 # Aktive Trip-Punkte (°C, Hysterese °C) der Thermal-Zone am Compute Module 5, am Gerät gelesen (Oktober 2026). Gelten
 # nur, wenn die Zone selbst keine brauchbaren liefert.
 FALLBACK_TRIPS = ((50.0, 5.0), (60.0, 5.0), (67.5, 5.0), (75.0, 5.0))
+
+# Deckel des Argon ONE UP: Leitung «GPIO27» am RP1 (Argons argonpowerbutton-libgpiod.py, LINE_LIDMONITOR = 27)
+LID_LINE = "GPIO27"
+# Entprellung in Software: Ein Pegel gilt erst nach 100 ms ohne weitere Flanke
+LID_DEBOUNCE = 0.1
+# Ohne Flanke wird der Pegel trotzdem jede Sekunde gelesen: Ein verpasster Wechsel fällt so spätestens dann auf
+LID_POLL = 1.0
+
+# Ausschalten bei leerem Akku. Leitplanke (Code, nicht Konfiguration), gespiegelt aus shell/modi/zustandslogik.js
+# (akkuAusschaltenProzent, vorwarnungSekunden); test/einheiten/argon.test.py gleicht ab.
+CRITICAL_PERCENT = 3
+CRITICAL_CONFIRMATIONS = 3
+CRITICAL_WARNING_SECONDS = 60
+# Läuft dpkg oder install.sh, so lange höchstens zusätzlich warten (ein hartes Aus wäre schlimmer als ein Abbruch)
+CRITICAL_MAX_DEFER = 300
+# install.sh hält diese Sperre exklusiv, solange es läuft
+INSTALL_LOCK_PATH = "/run/lock/zenos-install.lock"
 
 
 # --- Log -------------------------------------------------------------------
@@ -420,13 +452,20 @@ class PulseDetector:
         return width if width >= 0 else None
 
 
-def find_button_line(gpiod, devices=None):
-    """(Pfad, Offset, Label) der Zeile «GPIO4»; der RP1 des Pi 5 hat Vorrang. None, wenn es sie nicht gibt."""
+def gpio_devices():
+    """Die GPIO-Chips unter /dev (in Tests unter ZENOS_ARGON_TESTWURZEL: dort gibt es keine echten)."""
+    folder = system_path("/dev")
+    try:
+        return sorted(os.path.join(folder, name) for name in os.listdir(folder) if name.startswith("gpiochip"))
+    except OSError:
+        return []
+
+
+def find_line(gpiod, name, devices=None):
+    """(Pfad, Offset, Label) der GPIO-Leitung mit diesem Namen; der RP1 (pinctrl-rp1) hat Vorrang. None, wenn es sie
+    nicht gibt. Die Nummern der Chips wechseln je nach Gerät und Kernel, deshalb immer nach Namen suchen."""
     if devices is None:
-        try:
-            devices = sorted("/dev/" + name for name in os.listdir("/dev") if name.startswith("gpiochip"))
-        except OSError:
-            devices = []
+        devices = gpio_devices()
     found = []
     for path in devices:
         try:
@@ -435,7 +474,7 @@ def find_button_line(gpiod, devices=None):
             with gpiod.Chip(path) as chip:
                 label = chip.get_info().label
                 try:
-                    offset = chip.line_offset_from_id(BUTTON_LINE)
+                    offset = chip.line_offset_from_id(name)
                 except (OSError, ValueError):
                     continue
         except OSError:
@@ -445,6 +484,16 @@ def find_button_line(gpiod, devices=None):
         return None
     found.sort(key=lambda entry: (entry[0], len(entry[1]), entry[1]))
     return found[0][1:]
+
+
+def find_button_line(gpiod, devices=None):
+    """(Pfad, Offset, Label) der Zeile «GPIO4» (Power-Button des V3); der RP1 des Pi 5 hat Vorrang."""
+    return find_line(gpiod, BUTTON_LINE, devices)
+
+
+def find_lid_line(gpiod, devices=None):
+    """(Pfad, Offset, Label) der Zeile «GPIO27» (Deckel des ONE UP); der RP1 des Compute Module 5 hat Vorrang."""
+    return find_line(gpiod, LID_LINE, devices)
 
 
 class ButtonWatcher(threading.Thread):
@@ -501,6 +550,146 @@ class ButtonWatcher(threading.Thread):
                 width = detector.edge(event.event_type == rising_type, event.timestamp_ns)
                 if width is not None:
                     self.on_pulse(width)
+
+
+# --- Deckel (Argon ONE UP) -------------------------------------------------
+
+
+def now_iso_ms():
+    """Jetzt als ISO 8601 mit Millisekunden und Zeitzone (zwei Wechsel des Deckels sind so nie gleich datiert)."""
+    return datetime.datetime.now().astimezone().isoformat(timespec="milliseconds")
+
+
+class Lid:
+    """Entprellter Zustand des Deckels. LidWatcher schreibt ihn (eigener Thread), der Takt des Dienstes liest ihn für die
+    Statusdatei. «seit» ist die Zeit des letzten Wechsels im Betrieb; der Pegel beim Start hat keine (null): Er ist
+    kein Zuklappen, die Oberfläche reagiert nur auf Wechsel."""
+
+    def __init__(self, now=now_iso_ms):
+        self._now = now
+        self._lock = threading.Lock()
+        self._present = False
+        self._closed = None
+        self._since = None
+
+    @property
+    def closed(self):
+        with self._lock:
+            return self._closed if self._present else None
+
+    def report(self):
+        with self._lock:
+            if not self._present:
+                return {"vorhanden": False}
+            return {"vorhanden": True, "zu": self._closed, "seit": self._since}
+
+    def set(self, closed, changed):
+        """Neuer entprellter Pegel (closed: True = zu). changed: ein Wechsel im Betrieb (mit Zeit), sonst der Pegel beim
+        Start. True, wenn sich etwas geändert hat."""
+        with self._lock:
+            if self._present and closed == self._closed:
+                return False
+            self._present = True
+            self._closed = bool(closed)
+            self._since = self._now() if changed else None
+            return True
+
+    def absent(self):
+        """Kein Deckel (mehr) lesbar. True, wenn er vorher da war."""
+        with self._lock:
+            was = self._present
+            self._present, self._closed, self._since = False, None, None
+            return was
+
+
+class LidWatcher(threading.Thread):
+    """Deckel des Argon ONE UP an GPIO27, nur lesend: Eingang mit Pull-up, beide Flanken, 100 ms Entprellung. Pegel 0
+    heisst zu, 1 offen. Jeden Wechsel trägt er in lid (Lid) ein und meldet ihn an on_change (Statusdatei sofort
+    schreiben). Beim Beenden wird die Leitung freigegeben (Ende des with-Blocks); geschrieben wird nie etwas ausser der
+    Anforderung selbst mit dem Pull-up."""
+
+    def __init__(self, stop, lid, on_change, log):
+        super().__init__(name="deckel", daemon=True)
+        self.stop = stop
+        self.lid = lid
+        self.on_change = on_change
+        self.log = log
+
+    def run(self):
+        try:
+            self._run()
+        except Exception as err:  # Akku und Lüfter sollen weiterlaufen, was auch immer hier schiefgeht
+            self.log.error(f"Deckel: unerwarteter Fehler ({err!r}), Zuklappen sperrt nicht")
+        finally:
+            self._gone()
+
+    def _gone(self):
+        if self.lid.absent():
+            self.on_change()
+
+    def _run(self):
+        try:
+            import gpiod
+            from gpiod.line import Bias, Direction, Edge, Value
+        except ImportError:
+            self.log.warning("python3-libgpiod fehlt, der Deckel bleibt ohne Funktion (install.sh ausführen)")
+            return
+        for attempt in range(3):
+            if self.stop.is_set():
+                return
+            found = find_lid_line(gpiod)
+            if found is None:
+                self.log.info(f"GPIO-Leitung {LID_LINE} nicht gefunden: kein Deckel, Zuklappen sperrt nicht")
+                return
+            path, offset, label = found
+            settings = gpiod.LineSettings(direction=Direction.INPUT, edge_detection=Edge.BOTH, bias=Bias.PULL_UP)
+            try:
+                with gpiod.request_lines(path, consumer="zenos-argon", config={offset: settings}) as request:
+                    self.log.info(f"Deckel an {LID_LINE} ({path}, {label}, Zeile {offset}), Eingang mit Pull-up")
+                    self._watch(request, offset, Value.INACTIVE)
+                return
+            except OSError as err:
+                self._gone()
+                if err.errno == errno.EBUSY:
+                    self.log.warning(f"{LID_LINE} ist schon belegt (läuft Argons Software argononeupd?), Zuklappen "
+                                     "sperrt nicht")
+                    return
+                self.log.warning(f"Deckel: {err} (Versuch {attempt + 1} von 3)")
+                self.stop.wait(10)
+        self.log.warning("Deckel aufgegeben, Zuklappen sperrt nicht (Akku und Lüfter laufen weiter)")
+
+    def _drain(self, request):
+        request.read_edge_events()
+
+    def _settled(self, request):
+        """Entprellen: Flanken abholen, bis 100 ms lang keine mehr kommt. False, wenn der Dienst endet."""
+        while not self.stop.is_set():
+            if not request.wait_edge_events(LID_DEBOUNCE):
+                return True
+            self._drain(request)
+        return False
+
+    def _take(self, closed, changed):
+        if not self.lid.set(closed, changed):
+            return
+        if changed:
+            self.log.info("Deckel zu" if closed else "Deckel offen")
+        else:
+            self.log.info(f"Deckel beim Start {'zu' if closed else 'offen'}")
+        self.on_change()
+
+    def _watch(self, request, offset, closed_value):
+        # Nach dem Einschalten des Pull-ups erst den ruhigen Pegel lesen (ohne Zeit: kein Wechsel)
+        if not self._settled(request):
+            return
+        self._take(request.get_value(offset) == closed_value, changed=False)
+        while not self.stop.is_set():
+            if request.wait_edge_events(LID_POLL):
+                self._drain(request)
+                if not self._settled(request):
+                    return
+            # Nach jeder Flanke und sonst jede Sekunde: Der Pegel ist seit mindestens 100 ms ruhig
+            self._take(request.get_value(offset) == closed_value, changed=True)
 
 
 # --- Hardware --------------------------------------------------------------
@@ -1177,6 +1366,9 @@ class BatteryMonitor:
         self._failed = False
         self._zero_since = None
         self._announced = False
+        # Rohe Messung dieses Takts: (Ladestand, entlädt) mit plausiblem Ladestand (1–100 %), sonst None (Lesefehler,
+        # Chip startet oder misst nicht, unplausibel). Für CriticalBattery: ein einzelner Takt, ohne Entprellung.
+        self.sample = None
 
     @property
     def pending(self):
@@ -1196,6 +1388,7 @@ class BatteryMonitor:
 
     def tick(self):
         now = self.clock()
+        self.sample = None
         try:
             if not self.ready and not self._prepare(now):
                 return self.snapshot()
@@ -1300,6 +1493,7 @@ class BatteryMonitor:
             self.log.problem("akku-wert", f"Unplausibler Ladestand {soc} % ignoriert")
             return
         self.log.solved("akku-wert", "Ladestand wieder plausibel")
+        self.sample = (soc, bool(discharging))
         if self.percent is not None and abs(soc - self.percent) > SOC_JUMP:
             if self._soc_candidate is None or abs(soc - self._soc_candidate) > 2:
                 self._soc_candidate = soc
@@ -1313,6 +1507,163 @@ class BatteryMonitor:
         elif changed:
             self.log.info(f"Netzteil angeschlossen, Akku {soc} %" if self.charging.value else
                           f"Akkubetrieb, Akku {soc} %")
+
+
+# --- Ausschalten bei leerem Akku (Argon ONE UP) ----------------------------
+
+
+def install_running(path=None):
+    """Läuft install.sh (hält /run/lock/zenos-install.lock exklusiv)? Nur lesend geöffnet und kurz geteilt gesperrt;
+    install.sh wartet auf eine belegte Sperre (bis 15 Min.), stört sich also nicht daran. Ist die Datei da, aber nicht
+    prüfbar, gilt sie als belegt (dann wird höchstens 5 Min. gewartet)."""
+    path = path or system_path(INSTALL_LOCK_PATH)
+    try:
+        handle = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    try:
+        fcntl.flock(handle, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except OSError:
+        return True
+    finally:
+        os.close(handle)
+    return False
+
+
+def process_running(name, proc=None):
+    """Läuft ein Prozess mit genau diesem Namen (/proc/<pid>/comm)? Ist /proc nicht lesbar, gilt er als laufend."""
+    proc = proc or system_path("/proc")
+    try:
+        entries = os.listdir(proc)
+    except OSError:
+        return True
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        try:
+            with open(os.path.join(proc, entry, "comm"), encoding="utf-8", errors="replace") as handle:
+                if handle.read(64).strip() == name:
+                    return True
+        except OSError:
+            continue  # Prozess eben beendet
+    return False
+
+
+def system_busy():
+    """Warum jetzt nicht ausgeschaltet werden sollte (install.sh oder dpkg läuft), sonst ""."""
+    if install_running():
+        return "install.sh läuft"
+    if process_running("dpkg"):
+        return "dpkg läuft"
+    return ""
+
+
+class CriticalBattery:
+    """Leitplanke (Code, nicht abschaltbar): kontrolliertes Ausschalten bei leerem Akku statt eines harten Aus.
+
+    - Zählen nur bei sicherem Messwert (Zustand «ok») und sicherem Entladen (entprellt und in diesem Takt): drei
+      Messungen hintereinander mit höchstens 3 % (CRITICAL_PERCENT). Jeder andere Takt setzt zurück.
+    - Dann 60 s Vorwarnung: report() liefert die Uhrzeit für «akku.ausschaltenUm» (Oberfläche: dringende Mitteilung,
+      Zeile auf der Sperre). Abbrechen kann nur das Netzteil: schon eine Messung «lädt» bricht ab, eine Taste nicht.
+      Ein unsicherer Messwert bricht ebenfalls ab (nie ausschalten ohne sicheren Wert); dann beginnt alles von vorn.
+    - Läuft danach install.sh oder dpkg, wird gewartet, höchstens CRITICAL_MAX_DEFER (5 Min.) länger; die Uhrzeit zeigt
+      dann diese späteste. SSH-Sitzungen, tmux und Hemmer halten es nicht auf: Bei leerem Akku käme sonst das harte Aus.
+    - Ausgeschaltet wird mit «systemctl poweroff» (nie neu starten, nie --force). Mit ZENOS_ARGON_TESTWURZEL nie."""
+
+    def __init__(self, log, clock=time.monotonic, wall=None, busy=system_busy, runner=subprocess.run):
+        self.log = log
+        self.clock = clock
+        self.wall = wall or (lambda: datetime.datetime.now().astimezone())
+        self.busy = busy
+        self.runner = runner
+        self.count = 0
+        self.deadline = None  # Ende der Vorwarnung (clock)
+        self.until = None  # Uhrzeit des Ausschaltens für die Statusdatei (wall)
+        self.deferred = False
+        self.done = False
+
+    @property
+    def active(self):
+        """Läuft die Vorwarnung (oder das Warten auf dpkg/install.sh)? Dann misst der Dienst alle 5 s."""
+        return self.deadline is not None
+
+    def report(self):
+        """«akku.ausschaltenUm» für die Statusdatei: ISO 8601 oder None."""
+        return self.until.isoformat(timespec="seconds") if self.active and self.until is not None else None
+
+    @staticmethod
+    def _safe(monitor):
+        """Sicherer Messwert in diesem Takt: (Ladestand, entlädt) und ein bestätigter Zustand, sonst None."""
+        sample = monitor.sample
+        if sample is None or monitor.percent is None or monitor.charging.value is None:
+            return None
+        return sample
+
+    def update(self, monitor):
+        if self.done:
+            return
+        sample = self._safe(monitor)
+        if not self.active:
+            low = (sample is not None and sample[1] and monitor.charging.value is False
+                   and sample[0] <= CRITICAL_PERCENT and monitor.percent <= CRITICAL_PERCENT)
+            self.count = self.count + 1 if low else 0
+            if self.count >= CRITICAL_CONFIRMATIONS:
+                self._start(sample[0])
+            return
+        if monitor.sample is not None and not monitor.sample[1]:
+            self._cancel("Netzteil angeschlossen")
+            return
+        if sample is None:
+            self._cancel("Messwert unsicher, es beginnt von vorn")
+            return
+        now = self.clock()
+        if now < self.deadline:
+            return
+        reason = self.busy()
+        if reason and now < self.deadline + CRITICAL_MAX_DEFER:
+            if not self.deferred:
+                self.deferred = True
+                self.until = self.until + datetime.timedelta(seconds=CRITICAL_MAX_DEFER)
+                self.log.warning(f"Akku leer, aber {reason}: zenOS wartet damit, spätestens bis "
+                                 f"{self.until.strftime('%H:%M:%S')}")
+            return
+        if reason:
+            self.log.warning(f"Akku leer und {reason}: zenOS wartet nicht länger als "
+                             f"{CRITICAL_MAX_DEFER // 60} Min.")
+        self._poweroff(sample[0])
+
+    def _start(self, percent):
+        self.deadline = self.clock() + CRITICAL_WARNING_SECONDS
+        self.until = self.wall() + datetime.timedelta(seconds=CRITICAL_WARNING_SECONDS)
+        self.deferred = False
+        self.log.warning(f"Akku bei {percent} % im Akkubetrieb ({CRITICAL_CONFIRMATIONS} Messungen): zenOS schaltet um "
+                         f"{self.until.strftime('%H:%M:%S')} kontrolliert aus, nur das Netzteil bricht ab")
+
+    def _cancel(self, why):
+        self.log.info(f"Ausschalten bei leerem Akku abgebrochen: {why}")
+        self.count = 0
+        self.deadline = self.until = None
+        self.deferred = False
+
+    def _poweroff(self, percent):
+        if test_root():
+            self.log.info("Testwurzel: hier schaltete zenOS aus (systemctl poweroff), nicht ausgeführt")
+            self.done = True
+            return
+        self.log.warning(f"Akku bei {percent} %: schalte kontrolliert aus (systemctl poweroff)")
+        try:
+            result = self.runner(["systemctl", "poweroff"], stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                 timeout=60, check=False)
+            ok, detail = result.returncode == 0, (result.stderr or "").strip()[:200] or f"Exit {result.returncode}"
+        except (OSError, subprocess.SubprocessError) as err:
+            ok, detail = False, str(err)
+        if ok:
+            self.done = True
+            return
+        # Beim Herunterfahren beendet systemd auch diesen Dienst; sonst im nächsten Takt (5 s) wieder versuchen
+        self.log.problem("akku-aus", f"systemctl poweroff ist fehlgeschlagen ({detail}), neuer Versuch im nächsten Takt")
 
 
 # --- Lüfter am Compute Module 5 (Kernel) -----------------------------------
@@ -1845,36 +2196,72 @@ class KernelFanControl:
 
 class UpDaemon:
     """Takt beim Argon ONE UP: Akku, Lüfter und Temperatur lesen, Statusdatei schreiben. Schreibt an die Hardware nur
-    beim Laden des Akkuprofils und, mit einer Mindeststufe für den Lüfter, über control (KernelFanControl)."""
+    beim Laden des Akkuprofils und, mit einer Mindeststufe für den Lüfter, über control (KernelFanControl).
+    lid (Lid): Deckel, den LidWatcher in einem eigenen Thread liest; jeder Wechsel kommt über lid_changed sofort in die
+    Statusdatei. critical (CriticalBattery): Ausschalten bei leerem Akku, geprüft in jedem Takt."""
 
-    def __init__(self, monitor, fan, log, status, temperature_source, control=None):
+    def __init__(self, monitor, fan, log, status, temperature_source, control=None, lid=None, critical=None):
         self.monitor = monitor
         self.fan = fan
         self.log = log
         self.status = status
         self.temperature_source = temperature_source
         self.control = control
+        self.lid = lid
+        self.critical = critical
+        # Thread des Deckels (LidWatcher): beim Beenden kurz abwarten, damit er die Leitung freigibt
+        self.lid_watcher = None
         self.stop = threading.Event()
         self._akku = None
+        # Takt und Deckel-Thread schreiben die Statusdatei: nacheinander, und immer mit dem neuesten Deckel
+        self._write_lock = threading.Lock()
+        self._last = None
 
     def _write(self):
         temperature = self.temperature_source()
         luefter = self.fan.read()
         if self.control is not None:
             luefter.update(self.control.report())
-        self.status.write({
+        akku = self._akku
+        if self.critical is not None and isinstance(akku, dict):
+            akku = dict(akku, ausschaltenUm=self.critical.report())
+        report = {
             "geraet": "argon-one-up",
-            "akku": self._akku,
+            "akku": akku,
             "luefter": luefter,
             "temperatur": {"cpu": round_temperature(temperature)},
-        })
+        }
+        with self._write_lock:
+            if self.lid is not None:
+                report["deckel"] = self.lid.report()
+            self._last = report
+            self.status.write(report)
+
+    def lid_changed(self):
+        """Vom Deckel-Thread: Statusdatei sofort schreiben, mit den letzten Werten von Akku, Lüfter und Temperatur (der
+        Takt liest sie; vor dem ersten Takt gibt es noch keine, dann schreibt ihn der erste Takt)."""
+        with self._write_lock:
+            if self._last is None or self.lid is None:
+                return
+            report = dict(self._last, deckel=self.lid.report())
+            self._last = report
+            self.status.write(report)
 
     def tick(self):
         watchdog_ping()
         if self.control is not None:
             self.control.tick()
         self._akku = self.monitor.tick()
+        if self.critical is not None:
+            try:
+                self.critical.update(self.monitor)
+            except Exception as err:  # Programmfehler: Akku, Lüfter und Statusdatei sollen weiterlaufen
+                self.log.problem("akku-aus-fehler", f"Ausschalten bei leerem Akku: unerwarteter Fehler ({err!r})")
         self._write()
+
+    def _short(self):
+        """Öfter messen: eine Änderung wartet auf Bestätigung, oder die Vorwarnung bei leerem Akku läuft."""
+        return self.monitor.pending or (self.critical is not None and self.critical.active)
 
     def pause(self, seconds):
         """Pause mitten in einer längeren Arbeit am Messchip (Akkuprofil laden und aktivieren, bis etwa 20 s; als
@@ -1909,12 +2296,17 @@ class UpDaemon:
                 count += 1
                 if rounds is not None and count >= rounds:
                     break
-                self._wait(min(interval, UP_PENDING_INTERVAL) if self.monitor.pending else interval)
+                self._wait(min(interval, UP_PENDING_INTERVAL) if self._short() else interval)
         finally:
             self.stop.set()
             if self.control is not None:
                 self.control.release()
-            self.status.remove()
+            if self.lid_watcher is not None and self.lid_watcher.is_alive():
+                # Er wartet höchstens 1 s auf Flanken und gibt die Leitung danach frei
+                self.lid_watcher.join(LID_POLL + 1.5)
+            with self._write_lock:
+                self._last = None
+                self.status.remove()
         return 0
 
 
@@ -2107,10 +2499,14 @@ def run_up_service(options, log, model, bus, stop):
     monitor = BatteryMonitor(gauge, log, read_only=read_only, released=profile_released)
     fan = KernelFan(system_path("/sys"), log)
     control = KernelFanControl(fan, FanWish(system_path(FAN_WISH_PATH), log), log, system_path(THERMAL_CLASS))
-    daemon = UpDaemon(monitor, fan, log, StatusFile(options["status"], log), read_temperature, control=control)
+    lid = Lid()
+    daemon = UpDaemon(monitor, fan, log, StatusFile(options["status"], log), read_temperature, control=control,
+                      lid=lid, critical=CriticalBattery(log))
     daemon.stop = stop
     # Pausen beim Laden des Akkuprofils regeln den Lüfter weiter (UpDaemon.pause)
     gauge.sleep = daemon.pause
+    daemon.lid_watcher = LidWatcher(stop, lid, daemon.lid_changed, log)
+    daemon.lid_watcher.start()
     return daemon.run(options["intervall"] or UP_INTERVAL, options["durchlaeufe"])
 
 
@@ -2162,7 +2558,7 @@ def run_check(options, out=sys.stdout):
     model = read_model()
     pi5 = is_pi5(model)
     if is_cm5(model):
-        return run_check_up(model, out)
+        return run_check_up(model, out, options["status"])
     line(pi5, f"Gerät: {model or 'kein Gerätebaum'}")
     # Auf anderen Geräten können I2C-Bus 1 und GPIO4 etwas ganz anderes sein: dort nichts anfragen
     if not pi5:
@@ -2217,8 +2613,8 @@ def run_check(options, out=sys.stdout):
     return 0 if good else 1
 
 
-def run_check_up(model, out=sys.stdout):
-    """Argon ONE UP, nur lesend: Messchip (Chip-ID, Steuerregister, Profil, Ladestand, Stromrichtung), Lüfter,
+def run_check_up(model, out=sys.stdout, status_path=STATUS_PATH):
+    """Argon ONE UP, nur lesend: Messchip (Chip-ID, Steuerregister, Profil, Ladestand, Stromrichtung), Deckel, Lüfter,
     Temperatur. Schreibt nichts in den Chip, auch wenn er schläft."""
 
     def line(mark, text):
@@ -2239,6 +2635,7 @@ def run_check_up(model, out=sys.stdout):
                 good = _check_gauge(BatteryGauge(bus), line)
             finally:
                 bus.close()
+    _check_lid(line, status_path)
     fan = KernelFan(system_path("/sys"), Log(journal=False, stream=io.StringIO())).read()
     if fan["vorhanden"]:
         parts = []
@@ -2351,6 +2748,61 @@ def _check_gauge(gauge, line):
     shown = f"{soc} %" if 1 <= soc <= 100 else f"noch kein Wert (Register 0x04 = {soc})"
     line("✓", f"Akku {shown}, {'entlädt' if discharging else 'lädt oder Netzteil'}")
     return True
+
+
+def _lid_from_status(path):
+    """Deckel laut Statusdatei des laufenden Dienstes: «offen», «zu» oder None."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            deckel = json.load(handle).get("deckel")
+    except (OSError, ValueError, AttributeError):
+        return None
+    if not isinstance(deckel, dict) or deckel.get("vorhanden") is not True or not isinstance(deckel.get("zu"), bool):
+        return None
+    return "zu" if deckel["zu"] else "offen"
+
+
+def _check_lid(line, status_path=STATUS_PATH):
+    """Deckel des Argon ONE UP (GPIO27): Belegt der Dienst die Leitung, zählt sein Wert aus der Statusdatei. Ist sie
+    frei, wird sie kurz angefordert wie im Dienst (Eingang mit Pull-up), der Pegel gelesen und sofort wieder freigegeben.
+    So lässt sich die Richtung prüfen: offen 1, zu 0."""
+    try:
+        import gpiod
+        from gpiod.line import Bias, Direction, Value
+    except ImportError:
+        line("·", "python3-libgpiod fehlt, Deckel nicht geprüft")
+        return
+    found = find_lid_line(gpiod)
+    if found is None:
+        line("·", f"Kein Deckel: GPIO-Leitung {LID_LINE} nicht gefunden")
+        return
+    path, offset, label = found
+    where = f"Deckel an {LID_LINE} = {path} ({label}), Zeile {offset}"
+    try:
+        with gpiod.Chip(path) as chip:
+            info = chip.get_line_info(offset)
+            consumer = (info.consumer or "?") if info.used else None
+    except OSError as err:
+        line("✗", f"{where}: nicht lesbar ({err})")
+        return
+    if consumer == "zenos-argon":
+        state = _lid_from_status(status_path)
+        shown = f"{state} (Pegel {0 if state == 'zu' else 1})" if state else f"Wert nicht in {status_path}"
+        line("✓", f"{where}, überwacht von zenos-argon: {shown}")
+        return
+    if consumer is not None:
+        line("✗", f"{where}: belegt von «{consumer}» (Argons Software?), Zuklappen sperrt nicht")
+        return
+    settings = gpiod.LineSettings(direction=Direction.INPUT, bias=Bias.PULL_UP)
+    try:
+        with gpiod.request_lines(path, consumer="zenos-argon-pruefen", config={offset: settings}) as request:
+            time.sleep(LID_DEBOUNCE)
+            closed = request.get_value(offset) == Value.INACTIVE
+    except OSError as err:
+        line("✗", f"{where}: nicht lesbar ({err})")
+        return
+    line("✓", f"{where}: Pegel {0 if closed else 1} = {'zu' if closed else 'offen'} (kurz mit Pull-up gelesen, "
+              "zenos-argon läuft nicht)")
 
 
 def _check_config_line(options, line):

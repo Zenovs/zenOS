@@ -550,7 +550,11 @@ class Testwurzel(unittest.TestCase):
                 self.assertIsInstance(bus, A.FileBus)
                 self.assertEqual(A.run_up_service(optionen, stille(), CM5, bus, Warten()), 0)
             daten = status.geschrieben[0]
-            self.assertEqual(daten["akku"], {"vorhanden": True, "prozent": 9, "laedt": False, "zustand": "ok"})
+            # 9 % im Akkubetrieb: kein Ausschalten (erst bei 3 %, test/einheiten/argon.test.py)
+            self.assertEqual(daten["akku"], {"vorhanden": True, "prozent": 9, "laedt": False, "zustand": "ok",
+                                             "ausschaltenUm": None})
+            # In der Testwurzel gibt es keine GPIO-Chips: kein Deckel (ohne die echten Leitungen anzufassen)
+            self.assertEqual(daten["deckel"], {"vorhanden": False})
             # Ohne Regler in der Zone (Attrappe ohne policy) nicht einstellbar, der Kernel regelt allein
             self.assertEqual(daten["luefter"], {"vorhanden": True, "stufe": 2, "stufen": 4, "upm": 3120, "modus": "auto",
                                                 "mindeststufe": None, "steuerbar": False})

@@ -1,12 +1,13 @@
 # zenOS: Argon ONE (scripts/bin/zenos-argon). Argon ONE V3 am Raspberry Pi 5: Lüfterkurve und Power-Button.
-# Argon ONE UP am Compute Module 5: Akku-Messchip CW2217 (lädt bei Bedarf Argons Akkuprofil), Temperatur und
-# Kernel-Lüfter, mit einer Mindeststufe (zen luefter, System-Menü) auch dessen Regler. Schreibt
+# Argon ONE UP am Compute Module 5: Akku-Messchip CW2217 (lädt bei Bedarf Argons Akkuprofil), Deckel (GPIO27, nur
+# lesend), kontrolliertes Ausschalten bei 3 % Akku (auch am Login-Bildschirm), Temperatur und Kernel-Lüfter, mit einer
+# Mindeststufe (zen luefter, System-Menü) auch dessen Regler. Schreibt
 # /run/zenos/geraet.json für die Leiste. Ohne passendes Gerät, I2C-Bus 1 oder Argon endet der Dienst mit einer
 # Meldung und Exit 0 (kein Neustart). Auf amd64 startet er gar nicht.
 # Konfiguration der Lüfterkurve (optional, nur V3): /etc/xdg/zenos/argon.json; Lüfterwunsch /var/lib/zenos/luefter
 # (scripts/bin/zenos-luefter). Siehe docs/module/m13.md.
 [Unit]
-Description=zenOS Argon ONE (Lüfter, Power-Button, Akku)
+Description=zenOS Argon ONE (Lüfter, Power-Button, Akku, Deckel)
 Documentation=file:///opt/zenos/docs/module/m13.md
 ConditionArchitecture=arm64
 ConditionPathExists=/opt/zenos/scripts/bin/zenos-argon
@@ -37,7 +38,8 @@ SyslogIdentifier=zenos-argon
 # Härtung: nur I2C- und GPIO-Geräte, kein Netz, System nur lesbar. Geschrieben wird nur /run/zenos und unter /sys
 # nur die Thermal-Zonen und Kühler (Regler und Stufe des Kernel-Lüfters, nur mit einer Mindeststufe; sysfs-Dateien
 # gehören root, dafür braucht es keine Capability). CAP_SYS_BOOT braucht logind, damit «systemctl reboot/poweroff»
-# vom Power-Button ohne Rückfrage durchgeht.
+# vom Power-Button (V3) und bei leerem Akku (ONE UP) ohne Rückfrage durchgeht. Gelesen werden dafür auch
+# /run/lock/zenos-install.lock (geteilt gesperrt, läuft install.sh?) und /proc/*/comm (läuft dpkg?).
 CapabilityBoundingSet=CAP_SYS_BOOT
 NoNewPrivileges=yes
 DevicePolicy=closed

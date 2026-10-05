@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 80-argon: Argon ONE – Dienst, Abschaltsignal, Gerät (Pi 5 mit V3 oder Compute Module 5 mit ONE UP), I2C-Bus,
-# Argon an 0x1a bzw. Akku-Messchip an 0x64 (nur lesend), Werte für die Leiste (Akku, Lüfter), Kurve, Lüfterwunsch
-# und Regler der Thermal-Zone (zen luefter)
+# Argon an 0x1a bzw. Akku-Messchip an 0x64 (nur lesend), Werte für die Leiste (Akku, Lüfter), beim ONE UP Deckel und
+# Ausschalten bei leerem Akku, Kurve, Lüfterwunsch und Regler der Thermal-Zone (zen luefter)
 # shellcheck shell=bash
 
 pruefe_argon() {
@@ -223,6 +223,27 @@ _argon_werte() {
     freigabe) hinweis "Akku: Der Messchip misst nicht, und das Akkuprofil schreiben ist nicht freigegeben (zen akku freigeben)" ;;
     *) warnung "Akku nicht lesbar (${zustand:-unbekannt}; journalctl -u zenos-argon)" ;;
   esac
+  _argon_deckel "$datei"
+}
+
+# Argon ONE UP: Deckel (GPIO27) und Ausschalten bei leerem Akku laut Statusdatei (nur lesend). DATEI: geraet.json
+_argon_deckel() {
+  local datei=${1:-/run/zenos/geraet.json} zeile deckel um
+  zeile=$(jq -r 'select(.version == 1) | [
+      (.deckel | if . == null then "" elif .vorhanden != true then "fehlt"
+                 elif .zu == true then "zu" elif .zu == false then "offen" else "unbekannt" end),
+      (.akku.ausschaltenUm // "" | tostring)
+    ] | join("|")' "$datei" 2> /dev/null) || zeile=""
+  IFS='|' read -r deckel um <<< "$zeile"
+  case "$deckel" in
+    offen | zu) ok "Deckel $deckel (GPIO27): Zuklappen sperrt und schaltet den Bildschirm aus" ;;
+    fehlt) hinweis "Kein Deckel erkannt: GPIO27 nicht gefunden oder belegt, Zuklappen sperrt nicht (journalctl -u zenos-argon)" ;;
+    unbekannt) warnung "Deckel: Pegel unbekannt (journalctl -u zenos-argon)" ;;
+    *) hinweis "zenos-argon meldet keinen Deckel (älterer Stand? install.sh ausführen)" ;;
+  esac
+  if [[ "$um" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T([0-9]{2}:[0-9]{2}) ]]; then
+    warnung "Akku fast leer: zenOS schaltet um ${BASH_REMATCH[1]} aus (Netzteil anschliessen bricht ab)"
+  fi
 }
 
 # Thermal-Zone des Kernel-Lüfters: Verweis cdevN auf die cooling_device «pwm-fan», sonst thermal_zone0

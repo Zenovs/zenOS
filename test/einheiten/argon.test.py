@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
-"""Einheitentests für scripts/bin/zenos-argon (Kurve, Hysterese, Pulse, I2C-Protokoll, Status, Beenden) und den
-Hook system/systemd/system-shutdown/zenos-argon (Abschaltsignal beim Ausschalten).
+"""Einheitentests für scripts/bin/zenos-argon (Kurve, Hysterese, Pulse, I2C-Protokoll, Status, Beenden, beim Argon ONE
+UP Deckel an GPIO27 und Ausschalten bei leerem Akku), den Hook system/systemd/system-shutdown/zenos-argon
+(Abschaltsignal beim Ausschalten) und den Deckel-Teil von scripts/doctor.d/80-argon.sh.
 
-Läuft ohne Hardware und ohne Abhängigkeiten ausser python3 und bash: python3 test/einheiten/argon.test.py
+Läuft ohne Hardware und ohne Abhängigkeiten ausser python3 und bash (jq für den doctor-Teil):
+python3 test/einheiten/argon.test.py
 """
 
+import datetime
 import enum
 import errno
+import fcntl
 import importlib.machinery
 import importlib.util
 import io
@@ -17,8 +21,11 @@ import subprocess
 import sys
 import tempfile
 import threading
+import re
+import shutil
 import types
 import unittest
+from unittest import mock
 
 WURZEL = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _loader = importlib.machinery.SourceFileLoader("zenos_argon", os.path.join(WURZEL, "scripts", "bin", "zenos-argon"))
@@ -953,6 +960,667 @@ class Abschaltsignal(unittest.TestCase):
                 code, aus, err, protokoll = self.hook("poweroff", wurzel=wurzel)
                 self.assertEqual((code, aus, protokoll), (2, "", []))
                 self.assertIn("ZENOS_ARGON_TESTWURZEL", err)
+
+
+# --- Deckel des Argon ONE UP (GPIO27) -------------------------------------------
+
+DECKEL_CHIPS = {
+    # wie am Gerät: RP1 an /dev/gpiochip0, «GPIO27» ist Zeile 27; der brcmstb-Chip hat keine solche Leitung
+    "/dev/gpiochip0": ("pinctrl-rp1", ["ID_SDA", "ID_SCL"] + [f"GPIO{n}" for n in range(2, 28)]),
+    "/dev/gpiochip10": ("gpio-brcmstb@107d508500", ["-", "2712_BOOT_CS_N", "PWR_GPIO"]),
+}
+
+
+def falsches_gpiod(test, chips=None, drehbuch=(), pegel=1, fehler=None, belegt=None):
+    """python3-libgpiod (v2) im Test, eingesetzt als sys.modules["gpiod"]. drehbuch: Schritte für wait_edge_events:
+    ("flanke", pegel) neue Flanke, ("ruhe",) keine Flanke, ("still", pegel) neuer Pegel ohne Flanke (verpasst). Ist
+    es leer, endet der Lauf (stop). pegel: Pegel vor dem ersten Schritt. Die Anfrage kennt nur Lesen: Ein Aufruf zum
+    Schreiben (set_value, reconfigure_lines …) gäbe einen AttributeError. Aufrufe stehen in test.anfragen."""
+    chips = DECKEL_CHIPS if chips is None else chips
+    line = types.ModuleType("gpiod.line")
+
+    class Direction(enum.Enum):
+        AS_IS = 1
+        INPUT = 2
+        OUTPUT = 3
+
+    class Edge(enum.Enum):
+        NONE = 1
+        RISING = 2
+        FALLING = 3
+        BOTH = 4
+
+    class Bias(enum.Enum):
+        AS_IS = 1
+        UNKNOWN = 2
+        DISABLED = 3
+        PULL_UP = 4
+        PULL_DOWN = 5
+
+    class Value(enum.Enum):
+        INACTIVE = 0
+        ACTIVE = 1
+
+    line.Direction, line.Edge, line.Bias, line.Value = Direction, Edge, Bias, Value
+    gpiod = types.ModuleType("gpiod")
+    gpiod.line = line
+    gpiod.LineSettings = lambda **einstellungen: einstellungen
+    gpiod.is_gpiochip_device = lambda pfad: pfad in chips
+    test.anfragen = []
+    test.schritte = list(drehbuch)
+
+    class Chip:
+        def __init__(self, pfad):
+            self.pfad = pfad
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get_info(self):
+            return types.SimpleNamespace(label=chips[self.pfad][0])
+
+        def line_offset_from_id(self, name):
+            if name not in chips[self.pfad][1]:
+                raise FileNotFoundError(2, "No such file or directory")
+            return chips[self.pfad][1].index(name)
+
+        def get_line_info(self, offset):
+            return types.SimpleNamespace(used=belegt is not None, consumer=belegt)
+
+    class Anfrage:
+        def __init__(self):
+            self.pegel = pegel
+            self.wartend = 0
+            self.freigegeben = False
+            self.gelesen = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            self.freigegeben = True
+            return False
+
+        def wait_edge_events(self, timeout):
+            if not test.schritte:
+                test.stop.set()
+                return False
+            schritt = test.schritte.pop(0)
+            if schritt[0] == "flanke":
+                self.pegel = schritt[1]
+                self.wartend += 1
+                return True
+            if schritt[0] == "still":
+                self.pegel = schritt[1]
+            return False
+
+        def read_edge_events(self):
+            anzahl, self.wartend = self.wartend, 0
+            return [object()] * anzahl
+
+        def get_value(self, offset):
+            self.gelesen += 1
+            return Value.ACTIVE if self.pegel else Value.INACTIVE
+
+    def request_lines(pfad, consumer, config):
+        anfrage = Anfrage()
+        test.anfragen.append((pfad, consumer, config, anfrage))
+        if fehler is not None:
+            raise fehler
+        return anfrage
+
+    gpiod.Chip = Chip
+    gpiod.request_lines = request_lines
+    sys.modules["gpiod"] = gpiod
+    sys.modules["gpiod.line"] = line
+    return line
+
+
+class ModuleZurueck(unittest.TestCase):
+    """Stellt gpiod in sys.modules und A.gpio_devices nach jedem Test wieder her."""
+
+    def setUp(self):
+        self.vorher = {name: sys.modules.get(name) for name in ("gpiod", "gpiod.line")}
+        self.geraete = A.gpio_devices
+        A.gpio_devices = lambda: sorted(DECKEL_CHIPS)
+        self.stop = SofortStop()
+
+    def tearDown(self):
+        A.gpio_devices = self.geraete
+        for name, modul in self.vorher.items():
+            if modul is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = modul
+
+
+class Deckel(ModuleZurueck):
+    def lauf(self, **kwargs):
+        line = falsches_gpiod(self, **kwargs)
+        self.zeiten = iter(f"2026-10-05T22:40:0{n}.000+02:00" for n in range(10))
+        self.lid = A.Lid(now=lambda: next(self.zeiten))
+        self.gemeldet = []
+        self.log = stille()
+        A.LidWatcher(self.stop, self.lid, lambda: self.gemeldet.append(self.lid.report()), self.log).run()
+        return line
+
+    def logtext(self):
+        return self.log.stream.getvalue()
+
+    def test_nach_namen_gefunden_rp1_zuerst(self):
+        line = falsches_gpiod(self)
+        gpiod = sys.modules["gpiod"]
+        self.assertIsNotNone(line)
+        self.assertEqual(A.find_lid_line(gpiod), ("/dev/gpiochip0", 27, "pinctrl-rp1"))
+        chips = {"/dev/gpiochip4": ("anderer", ["GPIO27"]), "/dev/gpiochip0": ("pinctrl-rp1", ["x"] * 3 + ["GPIO27"])}
+        falsches_gpiod(self, chips=chips)
+        self.assertEqual(A.find_lid_line(sys.modules["gpiod"], sorted(chips)), ("/dev/gpiochip0", 3, "pinctrl-rp1"))
+        # Der Power-Button des V3 sucht weiter GPIO4
+        self.assertEqual(A.find_button_line(gpiod), ("/dev/gpiochip0", 4, "pinctrl-rp1"))
+
+    def test_nur_lesend_mit_pull_up_und_beiden_flanken(self):
+        line = self.lauf(drehbuch=[("ruhe",)])
+        pfad, consumer, config, anfrage = self.anfragen[0]
+        self.assertEqual((pfad, consumer, list(config)), ("/dev/gpiochip0", "zenos-argon", [27]))
+        self.assertEqual(config[27], {"direction": line.Direction.INPUT, "edge_detection": line.Edge.BOTH,
+                                      "bias": line.Bias.PULL_UP})
+        # Beim Beenden freigegeben, nie etwas geschrieben (die Attrappe kennt kein Schreiben)
+        self.assertTrue(anfrage.freigegeben)
+        self.assertNotIn("unerwarteter Fehler", self.logtext())
+        self.assertEqual(len(self.anfragen), 1)
+
+    def test_zu_und_offen(self):
+        self.lauf(pegel=1, drehbuch=[("ruhe",), ("flanke", 0), ("ruhe",), ("flanke", 1), ("ruhe",)])
+        self.assertEqual(self.gemeldet, [
+            # Pegel beim Start: ohne Zeit (kein Wechsel, die Oberfläche sperrt deshalb nicht)
+            {"vorhanden": True, "zu": False, "seit": None},
+            {"vorhanden": True, "zu": True, "seit": "2026-10-05T22:40:00.000+02:00"},
+            {"vorhanden": True, "zu": False, "seit": "2026-10-05T22:40:01.000+02:00"},
+            # Ende des Laufs: kein Deckel mehr
+            {"vorhanden": False},
+        ])
+        self.assertIn("Deckel an GPIO27 (/dev/gpiochip0, pinctrl-rp1, Zeile 27)", self.logtext())
+        self.assertIn("Deckel beim Start offen", self.logtext())
+        self.assertIn("Deckel zu", self.logtext())
+
+    def test_zu_beim_start(self):
+        self.lauf(pegel=0, drehbuch=[("ruhe",)])
+        self.assertEqual(self.gemeldet[0], {"vorhanden": True, "zu": True, "seit": None})
+
+    def test_prellen_zaehlt_erst_nach_100_ms_ruhe(self):
+        self.lauf(pegel=1, drehbuch=[("ruhe",),
+                                      # zuklappen mit Prellen: ein Wechsel
+                                      ("flanke", 0), ("flanke", 1), ("flanke", 0), ("flanke", 0), ("ruhe",),
+                                      # Störung, die beim alten Pegel endet: kein Wechsel
+                                      ("flanke", 1), ("flanke", 0), ("ruhe",),
+                                      ("ruhe",)])
+        self.assertEqual([g.get("zu") for g in self.gemeldet], [False, True, None])
+
+    def test_verpasste_flanke_faellt_nach_einer_sekunde_auf(self):
+        self.lauf(pegel=1, drehbuch=[("ruhe",), ("still", 0), ("ruhe",)])
+        self.assertEqual([g.get("zu") for g in self.gemeldet], [False, True, None])
+
+    def test_leitung_fehlt(self):
+        falsches_gpiod(self, chips={"/dev/gpiochip10": DECKEL_CHIPS["/dev/gpiochip10"]})
+        A.gpio_devices = lambda: ["/dev/gpiochip10"]
+        lid = A.Lid()
+        log = stille()
+        gemeldet = []
+        A.LidWatcher(self.stop, lid, lambda: gemeldet.append(1), log).run()
+        self.assertEqual((self.anfragen, gemeldet, lid.report()), ([], [], {"vorhanden": False}))
+        self.assertIn("GPIO27 nicht gefunden: kein Deckel", log.stream.getvalue())
+
+    def test_leitung_belegt(self):
+        self.lauf(fehler=OSError(errno.EBUSY, "Device or resource busy"))
+        self.assertEqual(len(self.anfragen), 1)
+        self.assertIn("schon belegt (läuft Argons Software argononeupd?)", self.logtext())
+        self.assertEqual(self.lid.report(), {"vorhanden": False})
+
+    def test_andere_fehler_dreimal(self):
+        self.lauf(fehler=OSError(errno.EIO, "I/O error"))
+        self.assertEqual(len(self.anfragen), 3)
+        self.assertIn("Deckel aufgegeben", self.logtext())
+
+    def test_ohne_libgpiod(self):
+        sys.modules["gpiod"] = None  # import gpiod scheitert
+        log = stille()
+        A.LidWatcher(self.stop, A.Lid(), lambda: None, log).run()
+        self.assertIn("python3-libgpiod fehlt", log.stream.getvalue())
+
+    def test_unerwarteter_fehler_beendet_nur_den_deckel(self):
+        self.lauf(fehler=RuntimeError("kaputt"))
+        self.assertIn("Deckel: unerwarteter Fehler", self.logtext())
+        self.assertEqual(self.lid.report(), {"vorhanden": False})
+
+    def test_testwurzel_ohne_echte_chips(self):
+        A.gpio_devices = self.geraete
+        with tempfile.TemporaryDirectory() as wurzel:
+            os.makedirs(os.path.join(wurzel, "dev"))
+            open(os.path.join(wurzel, "dev", "i2c-1"), "w").close()
+            with mock.patch.dict(os.environ, {"ZENOS_ARGON_TESTWURZEL": wurzel}):
+                self.assertEqual(A.gpio_devices(), [])
+                open(os.path.join(wurzel, "dev", "gpiochip0"), "w").close()
+                self.assertEqual(A.gpio_devices(), [os.path.join(wurzel, "dev", "gpiochip0")])
+
+
+class FalscherStatusUp:
+    def __init__(self):
+        self.geschrieben = []
+        self.entfernt = False
+
+    def write(self, daten, now=None):
+        self.geschrieben.append(json.loads(json.dumps(daten)))
+        return True
+
+    def remove(self):
+        self.entfernt = True
+
+
+class FalscherKernelLuefter:
+    def read(self):
+        return {"vorhanden": True, "stufe": 1, "stufen": 4, "upm": 2000}
+
+
+class FalscherMonitor:
+    pending = False
+    sample = None
+    percent = 50
+    charging = types.SimpleNamespace(value=True)
+
+    def tick(self):
+        return {"vorhanden": True, "prozent": 50, "laedt": True, "zustand": "ok"}
+
+
+class DeckelInDerStatusdatei(unittest.TestCase):
+    def test_sofort_geschrieben_nach_dem_ersten_takt(self):
+        lid = A.Lid(now=lambda: "2026-10-05T22:40:00.000+02:00")
+        status = FalscherStatusUp()
+        daemon = A.UpDaemon(FalscherMonitor(), FalscherKernelLuefter(), stille(), status, lambda: 41.0, lid=lid)
+        # Vor dem ersten Takt schreibt der Deckel nichts (es fehlen Akku und Lüfter)
+        lid.set(False, changed=False)
+        daemon.lid_changed()
+        self.assertEqual(status.geschrieben, [])
+        daemon.tick()
+        self.assertEqual(status.geschrieben[-1]["deckel"], {"vorhanden": True, "zu": False, "seit": None})
+        lid.set(True, changed=True)
+        daemon.lid_changed()
+        self.assertEqual(len(status.geschrieben), 2)
+        self.assertEqual(status.geschrieben[-1]["deckel"], {"vorhanden": True, "zu": True,
+                                                            "seit": "2026-10-05T22:40:00.000+02:00"})
+        # Akku, Lüfter und Temperatur bleiben die des letzten Takts
+        self.assertEqual(status.geschrieben[-1]["akku"], status.geschrieben[0]["akku"])
+        self.assertEqual(status.geschrieben[-1]["temperatur"], {"cpu": 41.0})
+
+    def test_beenden_wartet_auf_den_deckel_und_entfernt_die_datei(self):
+        status = FalscherStatusUp()
+        daemon = A.UpDaemon(FalscherMonitor(), FalscherKernelLuefter(), stille(), status, lambda: 41.0, lid=A.Lid())
+        daemon.stop = Warten()
+        ende = threading.Event()
+
+        class Faden:
+            def is_alive(self):
+                return True
+
+            def join(self, timeout):
+                ende.set()
+
+        daemon.lid_watcher = Faden()
+        daemon.run(15.0, rounds=1)
+        self.assertTrue(ende.is_set())
+        self.assertTrue(status.entfernt)
+        # Danach schreibt der Deckel nichts mehr
+        daemon.lid_changed()
+        self.assertEqual(len(status.geschrieben), 1)
+
+
+# --- Ausschalten bei leerem Akku --------------------------------------------------
+
+class FalscherMesschip:
+    """CW2217 im Test, aktiv mit Argons Profil: Ladestand (0x04) und Stromrichtung (0x0E) frei setzbar."""
+
+    def __init__(self, soc=5, entlaedt=True):
+        self.reg = dict.fromkeys(range(256), 0)
+        self.reg[0x00], self.reg[0x08], self.reg[0x0B] = 0xA0, 0x00, 0x80
+        for i, wert in enumerate(A.ARGON_UP_PROFILE):
+            self.reg[0x10 + i] = wert
+        self.reg[0x04] = soc
+        self.reg[0x0E] = 0xF0 if entlaedt else 0x01
+        self.fehler = False
+        self.geschrieben = []
+
+    def read_byte_data(self, adresse, register):
+        if adresse != A.GAUGE_ADDRESS or self.fehler:
+            raise OSError(121, "Remote I/O error")
+        return self.reg[register]
+
+    def write_byte_data(self, adresse, register, wert):
+        self.geschrieben.append((register, wert))
+
+
+class Warten(threading.Event):
+    """Stop-Ereignis, das die Wartezeiten nur notiert."""
+
+    def __init__(self):
+        super().__init__()
+        self.zeiten = []
+
+    def wait(self, timeout=None):
+        self.zeiten.append(timeout)
+        return self.is_set()
+
+
+WAND = datetime.datetime(2026, 10, 5, 22, 40, 0, tzinfo=datetime.timezone(datetime.timedelta(hours=2)))
+
+
+class AkkuLeer(unittest.TestCase):
+    def setUp(self):
+        self.uhr = Uhr()
+        self.chip = FalscherMesschip()
+        self.log = stille()
+        self.monitor = A.BatteryMonitor(A.BatteryGauge(self.chip, sleep=lambda s: None), self.log, clock=self.uhr)
+        self.aufrufe = []
+        self.belegt = ""
+        self.rc = 0
+        self.kritisch = A.CriticalBattery(self.log, clock=self.uhr,
+                                          wall=lambda: WAND + datetime.timedelta(seconds=self.uhr.t - 1000),
+                                          busy=lambda: self.belegt, runner=self.runner)
+        self.messen(5)  # erster Wert: 5 % im Akkubetrieb
+
+    def runner(self, argv, **kwargs):
+        self.aufrufe.append((argv, kwargs))
+        return types.SimpleNamespace(returncode=self.rc, stderr="Fehler\n" if self.rc else "")
+
+    def messen(self, soc=None, entlaedt=True, sekunden=15, fehler=False):
+        if soc is not None:
+            self.chip.reg[0x04] = soc
+        self.chip.reg[0x0E] = 0xF0 if entlaedt else 0x01
+        self.chip.fehler = fehler
+        self.uhr.t += sekunden
+        self.monitor.tick()
+        self.kritisch.update(self.monitor)
+        return self.kritisch.report()
+
+    def um(self, sekunden_ab_start):
+        return (WAND + datetime.timedelta(seconds=sekunden_ab_start)).isoformat(timespec="seconds")
+
+    def logtext(self):
+        return self.log.stream.getvalue()
+
+    def bis_zur_vorwarnung(self):
+        self.assertIsNone(self.messen(3))
+        self.assertIsNone(self.messen(3))
+        bericht = self.messen(3)
+        self.assertEqual(bericht, self.um(self.uhr.t - 1000 + 60))
+        return self.uhr.t
+
+    def test_vier_prozent_nie(self):
+        for _ in range(40):
+            self.assertIsNone(self.messen(4))
+        self.assertEqual(self.aufrufe, [])
+        self.assertFalse(self.kritisch.active)
+
+    def test_drei_messungen_dann_60_s_vorwarnung_dann_aus(self):
+        start = self.bis_zur_vorwarnung()
+        self.assertTrue(self.kritisch.active)
+        # 5 % beim Start, dann dreimal 3 % im Abstand von 15 s: Vorwarnung um 22:41:00, aus um 22:42:00
+        self.assertIn("zenOS schaltet um 22:42:00 kontrolliert aus, nur das Netzteil bricht ab", self.logtext())
+        # Eine Messung mit 4 % während der Vorwarnung bricht nicht ab (nur das Netzteil)
+        self.messen(4, sekunden=5)
+        while self.uhr.t + 5 < start + 60:
+            self.messen(3, sekunden=5)
+        self.assertEqual(self.aufrufe, [])
+        self.messen(3, sekunden=5)
+        self.assertEqual(self.uhr.t - start, 60)
+        self.assertEqual(len(self.aufrufe), 1)
+        argv, kwargs = self.aufrufe[0]
+        self.assertEqual(argv, ["systemctl", "poweroff"])
+        self.assertIs(kwargs["stdin"], subprocess.DEVNULL)
+        # Nur einmal
+        for _ in range(5):
+            self.messen(3, sekunden=5)
+        self.assertEqual(len(self.aufrufe), 1)
+        self.assertEqual(self.chip.geschrieben, [])
+
+    def test_prellen_braucht_drei_hintereinander(self):
+        for soc in (3, 3, 4, 3, 3):
+            self.assertIsNone(self.messen(soc))
+        self.assertIsNotNone(self.messen(3))
+
+    def test_lesefehler_setzt_zurueck(self):
+        self.assertIsNone(self.messen(3))
+        self.assertIsNone(self.messen(3))
+        self.assertIsNone(self.messen(fehler=True))
+        self.assertIsNone(self.messen(3))
+        self.assertIsNone(self.messen(3))
+        self.assertIsNotNone(self.messen(3))
+
+    def test_laden_nie(self):
+        for _ in range(10):
+            self.assertIsNone(self.messen(2, entlaedt=False))
+        self.assertEqual(self.aufrufe, [])
+
+    def test_entladen_erst_nach_der_entprellung(self):
+        # Netzteil dran, dann ausgesteckt: «lädt nicht» gilt erst nach drei gleichen Messungen (BatteryMonitor)
+        for _ in range(3):
+            self.messen(3, entlaedt=False)
+        self.assertIsNone(self.messen(3))
+        self.assertIsNone(self.messen(3))
+        self.assertIsNone(self.messen(3))  # jetzt sicher im Akkubetrieb: erste Messung zählt
+        self.assertIsNone(self.messen(3))
+        self.assertIsNotNone(self.messen(3))
+
+    def test_netzteil_mitten_in_der_vorwarnung(self):
+        self.bis_zur_vorwarnung()
+        self.messen(3, sekunden=5)
+        # Eine einzige Messung «lädt» bricht ab, auch vor der Entprellung
+        self.assertIsNone(self.messen(3, entlaedt=False, sekunden=5))
+        self.assertFalse(self.kritisch.active)
+        self.assertIn("abgebrochen: Netzteil angeschlossen", self.logtext())
+        for _ in range(30):
+            self.messen(3, entlaedt=False, sekunden=5)
+        self.assertEqual(self.aufrufe, [])
+
+    def test_unsicherer_messwert_bricht_ab_und_beginnt_von_vorn(self):
+        self.bis_zur_vorwarnung()
+        self.assertIsNone(self.messen(fehler=True, sekunden=5))
+        self.assertIn("abgebrochen: Messwert unsicher", self.logtext())
+        # Ladestand 0 heisst beim Messchip «noch kein Wert»: ebenso unsicher
+        self.bis_zur_vorwarnung()
+        self.assertIsNone(self.messen(0, sekunden=5))
+        start = self.bis_zur_vorwarnung()
+        while self.uhr.t - start < 60:
+            self.messen(3, sekunden=5)
+        self.assertEqual(len(self.aufrufe), 1)
+
+    def test_dpkg_wartet_hoechstens_5_min(self):
+        start = self.bis_zur_vorwarnung()
+        self.belegt = "dpkg läuft"
+        while self.uhr.t - start < 60:
+            self.messen(3, sekunden=5)
+        self.assertEqual(self.aufrufe, [])
+        # Die Uhrzeit zeigt nun die späteste
+        self.assertEqual(self.kritisch.report(), self.um(start - 1000 + 60 + 300))
+        self.assertIn("dpkg läuft: zenOS wartet damit, spätestens bis 22:47:00", self.logtext())
+        while self.uhr.t - start < 60 + 300:
+            self.assertEqual(self.aufrufe, [])
+            self.messen(3, sekunden=5)
+        self.assertEqual(len(self.aufrufe), 1)
+        self.assertIn("wartet nicht länger als 5 Min.", self.logtext())
+
+    def test_installation_fertig_dann_sofort(self):
+        start = self.bis_zur_vorwarnung()
+        self.belegt = "install.sh läuft"
+        while self.uhr.t - start < 120:
+            self.messen(3, sekunden=5)
+        self.assertEqual(self.aufrufe, [])
+        self.belegt = ""
+        self.messen(3, sekunden=5)
+        self.assertEqual(len(self.aufrufe), 1)
+
+    def test_fehlschlag_neuer_versuch_im_naechsten_takt(self):
+        start = self.bis_zur_vorwarnung()
+        self.rc = 1
+        while self.uhr.t - start < 60:
+            self.messen(3, sekunden=5)
+        self.messen(3, sekunden=5)
+        self.assertEqual(len(self.aufrufe), 2)
+        self.assertEqual(self.logtext().count("systemctl poweroff ist fehlgeschlagen"), 1)
+        self.rc = 0
+        self.messen(3, sekunden=5)
+        self.messen(3, sekunden=5)
+        self.assertEqual(len(self.aufrufe), 3)
+
+    def test_testwurzel_schaltet_nie_aus(self):
+        with tempfile.TemporaryDirectory() as wurzel, mock.patch.dict(os.environ, {"ZENOS_ARGON_TESTWURZEL": wurzel}):
+            start = self.bis_zur_vorwarnung()
+            while self.uhr.t - start < 60:
+                self.messen(3, sekunden=5)
+        self.assertEqual(self.aufrufe, [])
+        self.assertIn("Testwurzel: hier schaltete zenOS aus", self.logtext())
+
+    def test_statusdatei_und_takt(self):
+        status = FalscherStatusUp()
+        daemon = A.UpDaemon(self.monitor, FalscherKernelLuefter(), stille(), status, lambda: 40.0,
+                            critical=self.kritisch)
+        daemon.stop = Warten()
+        original = self.monitor.tick
+
+        def tick():
+            self.chip.reg[0x04] = 3
+            self.uhr.t += 5
+            return original()
+
+        self.monitor.tick = tick
+        daemon.run(15.0, rounds=5)
+        akku = [d["akku"] for d in status.geschrieben]
+        self.assertEqual([a["ausschaltenUm"] is not None for a in akku], [False, False, True, True, True])
+        self.assertEqual(akku[2]["prozent"], 3)
+        # Ohne Vorwarnung alle 15 s, während der Vorwarnung alle 5 s
+        self.assertEqual(daemon.stop.zeiten, [15.0, 15.0, 5.0, 5.0])
+        self.assertNotIn("deckel", status.geschrieben[0])
+
+    def test_abgleich_mit_den_leitplanken(self):
+        with open(os.path.join(WURZEL, "shell", "modi", "zustandslogik.js"), encoding="utf-8") as f:
+            logik = f.read()
+        self.assertEqual(A.CRITICAL_PERCENT, int(re.search(r"akkuAusschaltenProzent: (\d+)", logik).group(1)))
+        self.assertEqual(A.CRITICAL_WARNING_SECONDS, int(re.search(r"vorwarnungSekunden: (\d+)", logik).group(1)))
+
+
+class WaechterBeimAusschalten(unittest.TestCase):
+    def test_installation(self):
+        with tempfile.TemporaryDirectory() as ordner:
+            pfad = os.path.join(ordner, "zenos-install.lock")
+            self.assertFalse(A.install_running(pfad))
+            open(pfad, "w").close()
+            self.assertFalse(A.install_running(pfad))
+            with open(pfad) as gehalten:
+                fcntl.flock(gehalten, fcntl.LOCK_EX)
+                self.assertTrue(A.install_running(pfad))
+            self.assertFalse(A.install_running(pfad))
+            # Fremder Verweis statt der Datei: nicht prüfbar, gilt als belegt (dann höchstens 5 Min. warten)
+            os.unlink(pfad)
+            os.symlink(os.path.join(ordner, "woanders"), pfad)
+            self.assertTrue(A.install_running(pfad))
+
+    def test_dpkg(self):
+        with tempfile.TemporaryDirectory() as proc:
+            for pid, name in (("1", "systemd"), ("77", "bash"), ("self", "x")):
+                os.makedirs(os.path.join(proc, pid))
+                with open(os.path.join(proc, pid, "comm"), "w") as f:
+                    f.write(name + "\n")
+            os.makedirs(os.path.join(proc, "88"))  # Prozess eben beendet: kein comm
+            self.assertFalse(A.process_running("dpkg", proc))
+            os.makedirs(os.path.join(proc, "4242"))
+            with open(os.path.join(proc, "4242", "comm"), "w") as f:
+                f.write("dpkg\n")
+            self.assertTrue(A.process_running("dpkg", proc))
+            self.assertFalse(A.process_running("dpk", proc))
+            self.assertTrue(A.process_running("dpkg", os.path.join(proc, "fehlt")))
+
+
+# --- Deckel in --pruefen und zen doctor -------------------------------------------
+
+class DeckelPruefen(ModuleZurueck):
+    def zeilen(self, status=None, **kwargs):
+        falsches_gpiod(self, **kwargs)
+        ausgabe = []
+        with tempfile.TemporaryDirectory() as ordner:
+            pfad = os.path.join(ordner, "geraet.json")
+            if status is not None:
+                with open(pfad, "w", encoding="utf-8") as f:
+                    json.dump(status, f)
+            A._check_lid(lambda zeichen, text: ausgabe.append(f"{zeichen} {text}"), pfad)
+        return ausgabe
+
+    def test_frei_kurz_gelesen_und_freigegeben(self):
+        for pegel, text in ((1, "Pegel 1 = offen"), (0, "Pegel 0 = zu")):
+            with self.subTest(pegel=pegel):
+                ausgabe = self.zeilen(pegel=pegel)
+                self.assertEqual(len(ausgabe), 1)
+                self.assertTrue(ausgabe[0].startswith("✓ Deckel an GPIO27 = /dev/gpiochip0 (pinctrl-rp1), Zeile 27: "
+                                                      + text), ausgabe[0])
+                _pfad, consumer, config, anfrage = self.anfragen[0]
+                line = sys.modules["gpiod.line"]
+                self.assertEqual((consumer, config[27]), ("zenos-argon-pruefen", {"direction": line.Direction.INPUT,
+                                                                                    "bias": line.Bias.PULL_UP}))
+                self.assertTrue(anfrage.freigegeben)
+
+    def test_vom_dienst_belegt(self):
+        ausgabe = self.zeilen(belegt="zenos-argon", status={"version": 1, "deckel": {"vorhanden": True, "zu": True,
+                                                                                    "seit": None}})
+        self.assertEqual(ausgabe, ["✓ Deckel an GPIO27 = /dev/gpiochip0 (pinctrl-rp1), Zeile 27, überwacht von "
+                                   "zenos-argon: zu (Pegel 0)"])
+        self.assertEqual(self.anfragen, [])
+
+    def test_fremd_belegt_oder_fehlt(self):
+        self.assertTrue(self.zeilen(belegt="argon")[0].startswith("✗ "))
+        self.assertEqual(self.anfragen, [])
+        A.gpio_devices = lambda: []
+        self.assertEqual(self.zeilen(), ["· Kein Deckel: GPIO-Leitung GPIO27 nicht gefunden"])
+
+
+DOCTOR = os.path.join(WURZEL, "scripts", "doctor.d", "80-argon.sh")
+DOCTOR_DECKEL = r"""
+ok() { printf 'ok: %s\n' "$*"; }
+hinweis() { printf 'hinweis: %s\n' "$*"; }
+warnung() { printf 'warnung: %s\n' "$*"; }
+fehler() { printf 'fehler: %s\n' "$*"; }
+source "$1"
+_argon_deckel "$2"
+"""
+
+
+@unittest.skipUnless(shutil.which("jq") and shutil.which("bash"), "braucht jq und bash")
+class DoctorDeckel(unittest.TestCase):
+    def doctor(self, daten):
+        with tempfile.TemporaryDirectory() as ordner:
+            pfad = os.path.join(ordner, "geraet.json")
+            with open(pfad, "w", encoding="utf-8") as f:
+                json.dump(dict({"version": 1}, **daten), f)
+            ergebnis = subprocess.run(["bash", "-c", DOCTOR_DECKEL, "test", DOCTOR, pfad], capture_output=True,
+                                      text=True, timeout=30, check=False)
+        self.assertEqual(ergebnis.returncode, 0, ergebnis.stderr)
+        return ergebnis.stdout.splitlines()
+
+    def test_deckel(self):
+        self.assertEqual(self.doctor({"deckel": {"vorhanden": True, "zu": False, "seit": None}}),
+                         ["ok: Deckel offen (GPIO27): Zuklappen sperrt und schaltet den Bildschirm aus"])
+        self.assertEqual(self.doctor({"deckel": {"vorhanden": True, "zu": True, "seit": "2026-10-05T22:40:00.000+02:00"}})[0],
+                         "ok: Deckel zu (GPIO27): Zuklappen sperrt und schaltet den Bildschirm aus")
+        self.assertTrue(self.doctor({"deckel": {"vorhanden": False}})[0].startswith("hinweis: Kein Deckel erkannt"))
+        self.assertTrue(self.doctor({})[0].startswith("hinweis: zenos-argon meldet keinen Deckel"))
+
+    def test_ausschalten_bei_leerem_akku(self):
+        zeilen = self.doctor({"deckel": {"vorhanden": False},
+                              "akku": {"vorhanden": True, "prozent": 3, "laedt": False, "zustand": "ok",
+                                       "ausschaltenUm": "2026-10-05T22:41:05+02:00"}})
+        self.assertEqual(zeilen[-1], "warnung: Akku fast leer: zenOS schaltet um 22:41 aus (Netzteil anschliessen "
+                                     "bricht ab)")
+        zeilen = self.doctor({"akku": {"vorhanden": True, "prozent": 30, "ausschaltenUm": None}})
+        self.assertEqual(len(zeilen), 1)
 
 
 if __name__ == "__main__":

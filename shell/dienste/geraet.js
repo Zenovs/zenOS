@@ -1,15 +1,19 @@
 .pragma library
 // Logik der Geräteanzeige ohne QML: /run/zenos/geraet.json (von zenos-argon) prüfen und für Leiste und
-// System-Menü aufbereiten, dazu die Warnungen bei niedrigem Akku. Getestet mit test/einheiten/geraet.test.mjs.
+// System-Menü aufbereiten, dazu die Warnungen bei niedrigem Akku, das Ausschalten bei leerem Akku und der Deckel.
+// Getestet mit test/einheiten/geraet.test.mjs.
 //
 // Datei (Version 1, siehe docs/module/m13.md):
 //   { version: 1, zeit: ISO-8601, geraet: "argon-one-v3" | "argon-one-up",
 //     akku: { vorhanden, prozent (int|null), laedt (bool|null),
-//             zustand: "ok" | "unbekannt" | "fehler" | "freigabe" (misst nicht, Freigabe fehlt: zen akku freigeben) },
+//             zustand: "ok" | "unbekannt" | "fehler" | "freigabe" (misst nicht, Freigabe fehlt: zen akku freigeben),
+//             ausschaltenUm (ISO-8601|null, nur ONE UP: zenos-argon schaltet bei leerem Akku um diese Zeit aus) },
+//     deckel: { vorhanden, zu (bool|null), seit (ISO-8601|null: Wechsel im Betrieb; null: Pegel beim Start) } (ONE UP),
 //     luefter: { vorhanden, prozent } (V3) oder { vorhanden, stufe, stufen, upm } (Kernel), seit Oktober 2026 dazu
 //              modus ("auto" | "mindest"), mindeststufe (1–4 | null), steuerbar (zenos-argon kann den Wunsch umsetzen),
 //     temperatur: { cpu } }
-// Fehlen modus, mindeststufe und steuerbar (älterer Dienst), bleibt die Zeile «Lüfter» reine Anzeige.
+// Fehlen modus, mindeststufe und steuerbar (älterer Dienst), bleibt die Zeile «Lüfter» reine Anzeige. Fehlen deckel
+// oder ausschaltenUm, gibt es keinen Deckel bzw. kein Ausschalten.
 
 // Der Dienst schreibt alle 15 s (beim V3 alle 5 s). Ältere Werte gelten als unbekannt (Dienst hängt oder ist aus).
 var MAX_ALTER_MS = 60000;
@@ -17,6 +21,10 @@ var MAX_ALTER_MS = 60000;
 var WARNSTUFEN = [10, 5];
 // Ab hier (und beim Entladen) steht der Akku in der Leiste in der Warnfarbe
 var NIEDRIG = 10;
+// «ausschaltenUm» gilt nur so nah an der Uhr (Vorwarnung 60 s, Warten auf dpkg oder install.sh höchstens 5 Min.)
+var AUSSCHALTEN_MAX_MS = 10 * 60000;
+// Einen Wechsel des Deckels, den die Oberfläche nicht selbst gesehen hat (sie startete eben), nimmt sie nur so frisch
+var DECKEL_FRISCH_MS = 60000;
 
 function _ganz(wert, min, max) {
     return typeof wert === "number" && isFinite(wert) && Math.round(wert) === wert && wert >= min && wert <= max ? wert : -1;
@@ -28,7 +36,11 @@ function leer() {
         frisch: false,
         geraet: "",
         akku: { vorhanden: false, prozent: -1, laedt: null, zustand: "unbekannt" },
-        luefter: { vorhanden: false, prozent: -1, stufe: -1, stufen: -1, upm: -1, modus: "", mindeststufe: 0, steuerbar: false }
+        luefter: { vorhanden: false, prozent: -1, stufe: -1, stufen: -1, upm: -1, modus: "", mindeststufe: 0, steuerbar: false },
+        // Uhrzeit (ms), zu der zenos-argon bei leerem Akku ausschaltet, -1: keine Vorwarnung
+        ausschaltenUm: -1,
+        // zustand: "offen" | "zu" | "" (unbekannt), seit: ms des letzten Wechsels im Betrieb, -1: keiner
+        deckel: { vorhanden: false, zustand: "", seit: -1 }
     };
 }
 
@@ -63,6 +75,19 @@ function lesen(text, jetztMs) {
             prozent: zustand === "ok" ? prozent : -1,
             laedt: zustand === "ok" && typeof a.laedt === "boolean" ? a.laedt : null,
             zustand: zustand
+        };
+        var um = typeof a.ausschaltenUm === "string" ? Date.parse(a.ausschaltenUm) : NaN;
+        if (isFinite(um) && Math.abs(um - jetztMs) <= AUSSCHALTEN_MAX_MS)
+            ergebnis.ausschaltenUm = um;
+    }
+
+    var d = daten.deckel;
+    if (d && typeof d === "object" && d.vorhanden === true) {
+        var seit = typeof d.seit === "string" ? Date.parse(d.seit) : NaN;
+        ergebnis.deckel = {
+            vorhanden: true,
+            zustand: d.zu === true ? "zu" : d.zu === false ? "offen" : "",
+            seit: isFinite(seit) && seit >= 0 ? seit : -1
         };
     }
 
@@ -216,9 +241,9 @@ function warnungPruefen(akku, gewarnt) {
 }
 
 // Titel, Text und Dringlichkeit der Mitteilung für eine Warnstufe. 10 % ist normal (folgt der Regel des Zustands,
-// ohne Zustand gebündelt). 5 % ist dringend: zenOS fährt nicht selbst herunter, also ist diese Mitteilung der
-// einzige Schutz vor dem harten Ausschalten und darf nicht bis zur nächsten Zustellung warten. Dringendes kommt
-// ausser im Zustand «keine» sofort, als ruhige Karte ohne Ton und ohne Blinken.
+// ohne Zustand gebündelt). 5 % ist dringend: Bei 3 % schaltet zenos-argon nach 60 s Vorwarnung kontrolliert aus, also
+// darf diese Mitteilung nicht bis zur nächsten Zustellung warten. Dringendes kommt ausser im Zustand «keine» sofort,
+// als ruhige Karte ohne Ton und ohne Blinken.
 function mitteilung(stufe, prozent) {
     var titel = "Akku bei " + prozent + " %";
     if (stufe <= 5)
@@ -246,4 +271,69 @@ function nummer(ausgabe) {
 // Akku-Mitteilung zurückziehen? Ja, sobald sicher geladen wird (sie ist dann überholt, auch wenn sie noch wartet).
 function zurueckziehen(akku) {
     return !!akku && akku.vorhanden === true && akku.zustand === "ok" && akku.prozent >= 0 && akku.laedt === true;
+}
+
+// --- Ausschalten bei leerem Akku (zenos-argon) ---------------------------------
+
+function _zweistellig(n) {
+    return (n < 10 ? "0" : "") + n;
+}
+
+// «14:03» (Ortszeit) für eine Zeit in ms
+function uhrzeit(ms) {
+    var d = new Date(ms);
+    return _zweistellig(d.getHours()) + ":" + _zweistellig(d.getMinutes());
+}
+
+// Dringende Mitteilung, sobald zenos-argon bei leerem Akku ausschalten will. Sie ersetzt die Akku-Mitteilung.
+function ausschaltenMitteilung(um) {
+    return { titel: "Akku fast leer", text: "zenOS schaltet um " + uhrzeit(um) + " aus. Netzteil anschliessen bricht ab.", dringend: true };
+}
+
+// Was mit der Mitteilung geschieht. gemeldet: Uhrzeit (ms) der schon gezeigten Mitteilung oder 0; um: aus lesen().
+//   "melden"     neue oder geänderte Uhrzeit: dringende Mitteilung (ersetzt die bisherige)
+//   "ersetzen"   vorbei ohne Netzteil (unsicherer Messwert, es beginnt von vorn): wieder die Mitteilung von 5 %,
+//                die Uhrzeit darin stimmt nicht mehr
+//   "verwerfen"  vorbei ohne Netzteil und ohne Ladestand: die Mitteilung zurückziehen
+//   "vergessen"  vorbei mit dem Netzteil: Das Zurückziehen beim Laden (zurueckziehen) erledigt den Rest
+//   ""           nichts zu tun
+function ausschaltenFolge(gemeldet, um, akku) {
+    var war = typeof gemeldet === "number" && isFinite(gemeldet) && gemeldet > 0;
+    if (typeof um === "number" && isFinite(um) && um > 0)
+        return um !== gemeldet ? "melden" : "";
+    if (!war)
+        return "";
+    if (zurueckziehen(akku))
+        return "vergessen";
+    return akku && akku.vorhanden === true && akku.zustand === "ok" && akku.prozent >= 0 ? "ersetzen" : "verwerfen";
+}
+
+// --- Deckel (Argon ONE UP) ----------------------------------------------------
+
+// Was beim Deckel zu tun ist. vorher: der zuletzt bekannte Deckel ({ zustand, seit }) oder null; deckel: aus lesen().
+//   "zuklappen"   sperren und Bildschirm aus: Wechsel von offen zu zu, oder ein Wechsel zu «zu», den die Oberfläche
+//                 verpasst hat (vorher zu mit anderer Zeit; beim Start der Oberfläche nur, wenn er frisch ist)
+//   "aufklappen"  Bildschirm an: Wechsel von zu zu offen
+//   "sperren"     nur sperren: wieder offen mit neuer Zeit, das Zuklappen dazwischen hat die Oberfläche verpasst
+//   ""            nichts: unbekannt, unverändert oder der Pegel beim Start des Dienstes (seit -1, kein Wechsel)
+// Leitplanke: Zuklappen sperrt immer, auch wenn die Oberfläche das «zu» verpasst hat.
+function deckelAktion(vorher, deckel, jetztMs) {
+    if (!deckel || deckel.vorhanden !== true || (deckel.zustand !== "zu" && deckel.zustand !== "offen"))
+        return "";
+    var bekannt = !!vorher && (vorher.zustand === "zu" || vorher.zustand === "offen");
+    if (bekannt && vorher.zustand === deckel.zustand && vorher.seit === deckel.seit)
+        return "";
+    var wechsel = typeof deckel.seit === "number" && deckel.seit >= 0;
+    if (deckel.zustand === "zu") {
+        if (bekannt && vorher.zustand === "offen")
+            return "zuklappen";
+        if (!wechsel)
+            return "";
+        if (bekannt)
+            return "zuklappen";
+        return Math.abs(jetztMs - deckel.seit) <= DECKEL_FRISCH_MS ? "zuklappen" : "";
+    }
+    if (bekannt && vorher.zustand === "zu")
+        return "aufklappen";
+    return bekannt && wechsel ? "sperren" : "";
 }

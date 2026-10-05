@@ -487,8 +487,14 @@ systemctl --user start zenos-shell.service
   dem ersten Start braucht der Akku-Messchip etwas Zeit, bis die Werte stimmen.
 - [ ] Im Akkubetrieb bei 10 % und darunter: Akku in Gelb (Warnfarbe), nichts blinkt. Eine ruhige Mitteilung «Akku
   bei N %» kommt (ohne Zustand gebündelt zur nächsten vollen Stunde, Glocke «1 · HH:00»). Bei 5 % ersetzt sie eine
-  dringende Karte, die sofort erscheint, ohne Ton. Es steht immer nur eine Akku-Mitteilung da. zenOS fährt nicht
-  selbst herunter. Nach dem Einstecken verschwindet die Akku-Mitteilung, und es beginnt von vorn.
+  dringende Karte, die sofort erscheint, ohne Ton. Es steht immer nur eine Akku-Mitteilung da. Nach dem Einstecken
+  verschwindet die Akku-Mitteilung, und es beginnt von vorn.
+- [ ] Bei 3 % im Akkubetrieb: Die dringende Karte «Akku fast leer · zenOS schaltet um HH:MM aus» erscheint, auf der
+  Sperre steht dieselbe Uhrzeit. Netzteil einstecken bricht ab (Karte weg). Ohne Netzteil schaltet das Gerät nach
+  60 s sauber aus; `journalctl -b -1 -u zenos-argon` zeigt danach «schalte kontrolliert aus».
+- [ ] Deckel: `sudo systemctl stop zenos-argon`, dann `sudo /opt/zenos/scripts/bin/zenos-argon --pruefen` einmal
+  offen («Pegel 1 = offen») und einmal zugeklappt («Pegel 0 = zu»), danach `sudo systemctl start zenos-argon`.
+  Zuklappen sperrt innerhalb von 2 s und macht dunkel, Aufklappen schaltet den Bildschirm an, die Sperre steht.
 - [ ] Per SSH, nur lesend: `sudo /opt/zenos/scripts/bin/zenos-argon --pruefen` zeigt «Messchip aktiv, Argons
   Akkuprofil ist geladen» und den Ladestand. `zen doctor` zeigt im Abschnitt «Argon ONE» den Akku.
 - [ ] In Chrome zeigt `chrome://policy` 13 zenOS-Richtlinien ohne Fehler. Die 1Password-Erweiterung ist fest

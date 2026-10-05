@@ -1,5 +1,6 @@
 // Einheitentests für shell/dienste/geraet.js (Statusdatei von zenos-argon lesen, Anzeige von Akku und Lüfter samt
-// Lüfterwunsch, Warnungen bei niedrigem Akku). Läuft ohne Abhängigkeiten: node --test test/einheiten/
+// Lüfterwunsch, Warnungen bei niedrigem Akku, Ausschalten bei leerem Akku, Deckel). Läuft ohne Abhängigkeiten:
+// node --test test/einheiten/
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -226,4 +227,128 @@ test("Ohne Freigabe: «nicht freigegeben», kein Messwert", () => {
   assert.equal(L.akkuText(d.akku), "");
   assert.equal(L.akkuNiedrig(d.akku), false);
   assert.equal(L.warnungPruefen(d.akku, []).stufe, 0);
+});
+
+// --- Ausschalten bei leerem Akku (akku.ausschaltenUm) ---
+
+const ISO = (ms) => new Date(ms).toISOString().replace(/\.\d+Z$/, "+00:00");
+
+test("lesen: ausschaltenUm nur gültig und nah an der Uhr", () => {
+  const akku = (um) => ({ akku: { vorhanden: true, prozent: 3, laedt: false, zustand: "ok", ausschaltenUm: um } });
+  assert.equal(L.lesen(datei(akku(ISO(JETZT + 55000))), JETZT).ausschaltenUm, JETZT + 55000);
+  // Warten auf dpkg: bis 6 Min. in der Zukunft
+  assert.equal(L.lesen(datei(akku(ISO(JETZT + 360000))), JETZT).ausschaltenUm, JETZT + 360000);
+  for (const falsch of [null, "", "bald", 17, ISO(JETZT + 11 * 60000), ISO(JETZT - 11 * 60000)])
+    assert.equal(L.lesen(datei(akku(falsch)), JETZT).ausschaltenUm, -1, String(falsch));
+  // Älterer Dienst ohne das Feld, Argon ONE V3 ohne Akku, leere Datei
+  assert.equal(L.lesen(datei(UP), JETZT).ausschaltenUm, -1);
+  assert.equal(L.lesen(datei({ geraet: "argon-one-v3", akku: { vorhanden: false } }), JETZT).ausschaltenUm, -1);
+  assert.equal(L.lesen("", JETZT).ausschaltenUm, -1);
+  // Der Akku selbst bleibt, wie er war
+  assert.deepEqual(roh(L.lesen(datei(akku(ISO(JETZT + 55000))), JETZT).akku), { vorhanden: true, prozent: 3, laedt: false, zustand: "ok" });
+});
+
+test("Mitteilung beim Ausschalten: dringend, mit Uhrzeit", () => {
+  const um = new Date(2026, 9, 5, 22, 41, 30).getTime();
+  assert.equal(L.uhrzeit(um), "22:41");
+  assert.equal(L.uhrzeit(new Date(2026, 9, 5, 7, 5).getTime()), "07:05");
+  assert.deepEqual(roh(L.ausschaltenMitteilung(um)), {
+    titel: "Akku fast leer", text: "zenOS schaltet um 22:41 aus. Netzteil anschliessen bricht ab.", dringend: true,
+  });
+  const befehl = roh(L.befehl(L.ausschaltenMitteilung(um), 17));
+  assert.ok(befehl.includes("--urgency=critical"));
+  assert.ok(befehl.includes("--replace-id=17"));
+});
+
+test("Mitteilung beim Ausschalten: melden, ersetzen, verwerfen, vergessen", () => {
+  const um = JETZT + 60000;
+  const entlaedt = { vorhanden: true, prozent: 3, laedt: false, zustand: "ok" };
+  assert.equal(L.ausschaltenFolge(0, um, entlaedt), "melden");
+  assert.equal(L.ausschaltenFolge(um, um, entlaedt), "");
+  // dpkg verschiebt die Uhrzeit: neu melden
+  assert.equal(L.ausschaltenFolge(um, um + 300000, entlaedt), "melden");
+  // Vorbei ohne Netzteil (unsicherer Messwert): wieder die Mitteilung von 5 %
+  assert.equal(L.ausschaltenFolge(um, -1, entlaedt), "ersetzen");
+  assert.equal(L.ausschaltenFolge(um, -1, { vorhanden: true, prozent: -1, laedt: null, zustand: "fehler" }), "verwerfen");
+  assert.equal(L.ausschaltenFolge(um, -1, null), "verwerfen");
+  // Vorbei mit dem Netzteil: das Zurückziehen beim Laden genügt
+  assert.equal(L.ausschaltenFolge(um, -1, { vorhanden: true, prozent: 3, laedt: true, zustand: "ok" }), "vergessen");
+  assert.equal(L.ausschaltenFolge(0, -1, entlaedt), "");
+});
+
+// --- Deckel ---
+
+test("lesen: Deckel", () => {
+  const seit = "2026-10-02T08:00:01.250+00:00";
+  assert.deepEqual(roh(L.lesen(datei({ deckel: { vorhanden: true, zu: true, seit } }), JETZT).deckel),
+    { vorhanden: true, zustand: "zu", seit: Date.parse(seit) });
+  assert.deepEqual(roh(L.lesen(datei({ deckel: { vorhanden: true, zu: false, seit: null } }), JETZT).deckel),
+    { vorhanden: true, zustand: "offen", seit: -1 });
+  assert.deepEqual(roh(L.lesen(datei({ deckel: { vorhanden: true, zu: null, seit: "kaputt" } }), JETZT).deckel),
+    { vorhanden: true, zustand: "", seit: -1 });
+  for (const deckel of [undefined, null, { vorhanden: false }, { vorhanden: "ja", zu: true }, "zu"])
+    assert.deepEqual(roh(L.lesen(datei({ deckel }), JETZT).deckel), { vorhanden: false, zustand: "", seit: -1 }, JSON.stringify(deckel));
+  // Zu alte Datei: kein Deckel
+  assert.equal(L.lesen(datei({ deckel: { vorhanden: true, zu: true, seit } }, -61), JETZT).deckel.vorhanden, false);
+});
+
+test("Deckel: Zuklappen, Aufklappen und nichts", () => {
+  const d = (zustand, seit = -1) => ({ vorhanden: true, zustand, seit });
+  const v = (zustand, seit = -1) => ({ zustand, seit });
+  const T = JETZT - 2000;
+  assert.equal(L.deckelAktion(v("offen"), d("zu", T), JETZT), "zuklappen");
+  assert.equal(L.deckelAktion(v("zu", T), d("offen", T + 900), JETZT), "aufklappen");
+  // unverändert
+  assert.equal(L.deckelAktion(v("zu", T), d("zu", T), JETZT), "");
+  assert.equal(L.deckelAktion(v("offen"), d("offen"), JETZT), "");
+  // unbekannt oder kein Deckel: nichts, und auch kein Aufklappen
+  assert.equal(L.deckelAktion(v("zu", T), { vorhanden: false, zustand: "", seit: -1 }, JETZT), "");
+  assert.equal(L.deckelAktion(v("zu", T), d(""), JETZT), "");
+  assert.equal(L.deckelAktion(v("zu", T), null, JETZT), "");
+});
+
+test("Deckel: Start des Dienstes ist kein Wechsel", () => {
+  const d = (zustand, seit = -1) => ({ vorhanden: true, zustand, seit });
+  const v = (zustand, seit = -1) => ({ zustand, seit });
+  // Dienst neu gestartet (seit -1): nichts, ob offen oder zu
+  assert.equal(L.deckelAktion(v("offen", JETZT - 9000), d("offen"), JETZT), "");
+  assert.equal(L.deckelAktion(v("zu", JETZT - 9000), d("zu"), JETZT), "");
+  // ... ausser er ging dabei auf: Bildschirm an
+  assert.equal(L.deckelAktion(v("zu", JETZT - 9000), d("offen"), JETZT), "aufklappen");
+  // Oberfläche startet (vorher unbekannt) mit zugeklapptem Deckel (z. B. mit externem Bildschirm): nichts
+  assert.equal(L.deckelAktion(null, d("zu"), JETZT), "");
+  assert.equal(L.deckelAktion(null, d("zu", JETZT - 61000), JETZT), "");
+  assert.equal(L.deckelAktion(null, d("offen", JETZT - 1000), JETZT), "");
+  // ... aber ein frisches Zuklappen gilt (z. B. die Oberfläche lud eben neu)
+  assert.equal(L.deckelAktion(null, d("zu", JETZT - 1000), JETZT), "zuklappen");
+});
+
+test("Deckel: verpasste Wechsel sperren trotzdem", () => {
+  const d = (zustand, seit = -1) => ({ vorhanden: true, zustand, seit });
+  const v = (zustand, seit = -1) => ({ zustand, seit });
+  // offen → (zu) → offen zwischen zwei Lesungen: nur sperren
+  assert.equal(L.deckelAktion(v("offen", JETZT - 60000), d("offen", JETZT - 500), JETZT), "sperren");
+  assert.equal(L.deckelAktion(v("offen"), d("offen", JETZT - 500), JETZT), "sperren");
+  // zu → (offen) → zu: wieder zuklappen (sperren und dunkel)
+  assert.equal(L.deckelAktion(v("zu", JETZT - 60000), d("zu", JETZT - 500), JETZT), "zuklappen");
+  // auch wenn die Lücke lang war (veraltete Datei dazwischen): Zuklappen sperrt immer
+  assert.equal(L.deckelAktion(v("offen", JETZT - 3600000), d("offen", JETZT - 600000), JETZT), "sperren");
+});
+
+test("Deckel: Ablauf wie in Geraet.qml (vorher = letzter bekannter Wert)", () => {
+  const folge = [
+    [{ vorhanden: true, zustand: "offen", seit: -1 }, ""],
+    [{ vorhanden: true, zustand: "zu", seit: JETZT }, "zuklappen"],
+    [{ vorhanden: true, zustand: "zu", seit: JETZT }, ""],
+    // Datei kurz veraltet: unbekannt, vorher bleibt
+    [{ vorhanden: false, zustand: "", seit: -1 }, ""],
+    [{ vorhanden: true, zustand: "offen", seit: JETZT + 3000 }, "aufklappen"],
+    [{ vorhanden: true, zustand: "offen", seit: JETZT + 3000 }, ""],
+  ];
+  let vorher = null;
+  for (const [deckel, erwartet] of folge) {
+    assert.equal(L.deckelAktion(vorher, deckel, JETZT + 4000), erwartet, JSON.stringify(deckel));
+    if (deckel.vorhanden && deckel.zustand !== "")
+      vorher = { zustand: deckel.zustand, seit: deckel.seit };
+  }
 });

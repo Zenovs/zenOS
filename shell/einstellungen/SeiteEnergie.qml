@@ -72,8 +72,9 @@ Item {
         }
     ]
 
-    // Den Deckel wertet zenOS noch nicht aus. Beim Argon ONE UP (Laptop) ehrlich sagen, sonst gibt es keinen.
-    readonly property string zuklappenText: Dienste.Geraet.modell === "argon-one-up" ? "Sperrt noch nicht. Bis dahin vor dem Zuklappen mit Super+L sperren." : "Kein Deckel erkannt."
+    // Deckel (Argon ONE UP, zenos-argon liest GPIO27): Zuklappen sperrt immer (Leitplanke). Liest zenos-argon ihn nicht,
+    // beim Laptop ehrlich sagen, sonst gibt es keinen.
+    readonly property string zuklappenText: Dienste.Geraet.deckelVorhanden ? "Sperrt sofort und schaltet den Bildschirm aus. Aufklappen schaltet ihn wieder an." : Dienste.Geraet.modell === "argon-one-up" ? "Deckel nicht erkannt. Bis dahin vor dem Zuklappen mit Super+L sperren." : "Kein Deckel erkannt."
 
     function _speichernBald(): void {
         speicherTimer.restart();
@@ -305,6 +306,12 @@ Item {
                 Hinweistext {
                     visible: Dienste.Energie.ausschaltenArt === "akku" && !Dienste.Geraet.akkuVorhanden
                     text: "Kein Akku erkannt: «Im Akkubetrieb» schaltet auf diesem Gerät nie aus."
+                }
+
+                // Leitplanke unabhängig von der Wahl oben (zenos-argon, auch am Login-Bildschirm)
+                Hinweistext {
+                    visible: Dienste.Geraet.akkuVorhanden
+                    text: "Bei " + Dienste.Leitplanken.akkuAusschaltenProzent + " % Akku schaltet zenOS immer kontrolliert aus, nach " + Dienste.Leitplanken.vorwarnungSekunden + " s Vorwarnung. Nur das Netzteil bricht ab."
                 }
 
                 Hinweistext {

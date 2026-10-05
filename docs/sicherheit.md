@@ -233,6 +233,16 @@ Rest von `/sys` bleibt nur lesbar). Firmware-Einstellungen (`/boot/firmware/conf
 
   Risiko: gering. Der Chip misst nur, er steuert weder Laden noch Strom noch das Abschalten. Ein falsches Profil
   ergäbe höchstens falsche Prozentwerte; ein erneutes Laden behebt es.
+- **Argon ONE UP: Deckel an GPIO27, nur lesend.** zenos-argon fordert die Leitung als Eingang mit Pull-up und beiden
+  Flanken an (wie Argons Software) und gibt sie beim Beenden frei. Es schreibt keinen Pegel, kein I2C, keine Firmware,
+  kein `config.txt`. Der Wechsel geht über `/run/zenos/geraet.json` (nicht vertraulich) an die Oberfläche, die beim
+  Zuklappen sofort sperrt (Leitplanke, nicht abschaltbar) und erst danach den Bildschirm ausschaltet.
+- **Argon ONE UP: Ausschalten bei leerem Akku.** zenos-argon schaltet bei 3 % mit `systemctl poweroff` aus
+  (`CAP_SYS_BOOT`, wie der Power-Button des V3), nie neu und nie mit `--force`. Nur bei sicherem Messwert und sicherem
+  Entladen, drei Messungen hintereinander, 60 s Vorwarnung; ein unsicherer oder fehlender Messwert führt nie zum
+  Ausschalten, schon eine Messung «lädt» bricht ab. Läuft `dpkg` oder `install.sh`, wartet es höchstens 5 Min.
+  Gelesen wird dafür nur `/proc/*/comm` und die Sperre `/run/lock/zenos-install.lock` (lesend geöffnet, kurz geteilt
+  gesperrt). Die Grenze steht im Code (`CRITICAL_PERCENT`, gespiegelt aus `LEITPLANKEN.akkuAusschaltenProzent`).
 - **Lüfter einstellen (Mindeststufe).** Standard ist «auto»: Am Compute Module 5 regelt der Kernel (`step_wise`)
   allein, zenOS liest nur. Wählt Zeno eine Mindeststufe 1–4 (System-Menü oder `zen luefter`), stellt zenos-argon die
   Thermal-Zone des Lüfters auf den Regler `user_space` und setzt alle 2 s die Stufe selbst. Beim Argon ONE V3 hebt

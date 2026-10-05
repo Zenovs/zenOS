@@ -31,6 +31,12 @@ import "energie.js" as EnergieLogik
 //   aus. Jede Eingabe, das Netzteil (bei «akku») und das Entsperren brechen ab. Ist etwas im Weg, versucht es der
 //   Dienst alle 5 Min. erneut, der Bildschirm bleibt dabei dunkel. Stürzt die Oberfläche ab, schaltet nichts aus.
 // - Nach einem automatischen Aus zeigt die nächste Sitzung einmal eine ruhige Mitteilung (zenos-energie meldung).
+// - Deckel (Argon ONE UP, Leitplanke: Zuklappen sperrt immer, nicht abschaltbar): Geraet meldet jeden Wechsel, den
+//   zenos-argon an GPIO27 sieht. Zuklappen sperrt sofort und schaltet den Bildschirm aus (wie aus()), Aufklappen
+//   schaltet ihn an. Kommt danach keine Eingabe, geht er nach «Bildschirm aus nach der Sperre» wieder aus. Hat die
+//   Oberfläche das Zuklappen verpasst (zu und wieder offen zwischen zwei Lesungen), sperrt sie trotzdem.
+// - Ausschalten bei leerem Akku macht zenos-argon selbst (Systemdienst, auch am Login-Bildschirm); Geraet zeigt die
+//   Mitteilung, die Sperre die Uhrzeit.
 // IPC «energie»: aus(), status(), vorwarnung() (Probe für Bilder und Tests: zeigt die Vorwarnung, schaltet nie aus)
 Singleton {
     id: root
@@ -131,10 +137,33 @@ Singleton {
     // Oberfläche nicht sperren kann), mit Argumentliste.
     function _sperrenTrotzHemmer(): void {
         console.info("Energie:", root.sperreTrotzHemmerMinuten, "Min. ohne Eingabe, sperre trotz Idle-Hemmer (Leitplanke)");
+        root._sperren();
+    }
+
+    function _sperren(): void {
         Quickshell.execDetached({
             command: [root._zen, "lock"],
             workingDirectory: Pfade.home
         });
+    }
+
+    // Deckel: "zuklappen" | "aufklappen" | "sperren" (aus Geraet, Logik in geraet.js)
+    function _deckel(aktion: string): void {
+        if (aktion === "zuklappen") {
+            console.info("Energie: Deckel zu, sperre und schalte den Bildschirm aus");
+            deckelWecken.stop();
+            // zen energie aus sperrt immer zuerst (dunkel heisst gesperrt), eine Eingabe weckt wieder
+            root.aus();
+        } else if (aktion === "sperren") {
+            console.info("Energie: Deckel zu und wieder offen (verpasst), sperre");
+            root._sperren();
+        } else if (aktion === "aufklappen") {
+            console.info("Energie: Deckel offen, Bildschirm an");
+            root.bildschirm("an");
+            // Gesperrt und ohne Eingabe: nach «Bildschirm aus nach der Sperre» wieder dunkel
+            if (Oberflaeche.gesperrt)
+                deckelWecken.restart();
+        }
     }
 
     // Die Zeit gesperrt ohne Eingabe ist um (oder ein neuer Versuch ist fällig): erst fragen, dann vorwarnen
@@ -266,8 +295,41 @@ Singleton {
         target: Oberflaeche
 
         function onGesperrtChanged(): void {
-            if (!Oberflaeche.gesperrt)
+            if (!Oberflaeche.gesperrt) {
                 root._abbrechen("entsperrt");
+                deckelWecken.stop();
+            }
+        }
+    }
+
+    Connections {
+        target: Geraet
+
+        function onDeckelGeklappt(aktion: string): void {
+            root._deckel(aktion);
+        }
+    }
+
+    // Nach dem Aufklappen: Kommt keine Eingabe, geht der Bildschirm nach «Bildschirm aus nach der Sperre» wieder aus.
+    // Die Leerlauf-Zähler von swayidle und der Sperre laufen dann nicht neu an (es gab keine Eingabe).
+    Timer {
+        id: deckelWecken
+
+        interval: root.bildschirmMinuten * 60000
+        onTriggered: {
+            if (Oberflaeche.gesperrt && !Geraet.deckelZu)
+                root.bildschirm("aus");
+        }
+    }
+
+    // Jede Eingabe nach dem Aufklappen beendet deckelWecken (scharf nach 1 s Ruhe, wie das Wecken in der Sperre)
+    IdleMonitor {
+        enabled: deckelWecken.running
+        respectInhibitors: false
+        timeout: 1
+        onIsIdleChanged: {
+            if (!isIdle)
+                deckelWecken.stop();
         }
     }
 
