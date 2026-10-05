@@ -313,10 +313,17 @@ s_kaputt() {
   [[ ! -e /opt/zenos/scripts/module/99-e2e-kaputt.sh ]] || fehler "kaputtes Modul liegt noch da"
   [[ -f "$STAND/gesperrt/v0.1.1-rc2" ]] || fehler "nicht gesperrt"
   ok "v0.1.1-rc2 gesperrt, Modul weg"
+  # Seit Teil B ist eine gesperrte Version kein Ziel von zen update mehr; noch einmal nur mit zen rollback und «ja»
   rc=0
-  zen_als_tester "nein" zen update || rc=$?
-  erwarte_rc "$rc" 10 "nochmals: gesperrt, nur mit «ja»"
-  erwarte_text "ist gesperrt" "Grund «gesperrt»"
+  zen_als_tester "" zen update || rc=$?
+  erwarte_rc "$rc" 0 "nochmals zen update: gesperrt ist kein Ziel"
+  erwarte_text "v0.1.1-rc2 ist gesperrt .* und kein Ziel" "Hinweis «gesperrt»"
+  erwarte_kopf "$gut" "nichts geändert"
+  rc=0
+  zen_als_tester "nein" zen rollback v0.1.1-rc2 || rc=$?
+  erwarte_rc "$rc" 10 "zen rollback auf die gesperrte Version: nur mit «ja»"
+  erwarte_text "v0.1.1-rc2 ist gesperrt:" "Grund «gesperrt»"
+  erwarte_kopf "$gut" "nichts geändert"
 }
 
 s_gesundheit() {
