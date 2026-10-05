@@ -7,6 +7,14 @@ an; eine Version entspricht einem Tag `v…` im Repo.
 
 ### Neu
 
+- **Signierte Releases vorbereitet:** `scripts/release-signieren.sh vX.Y.Z[-rcN]` signiert ein Release auf dem Mac
+  mit dem Schlüssel «zenOS Release» aus 1Password (Touch ID, kein privater Schlüssel in einer Datei). Vorher prüft
+  es sauberen Baum, HEAD auf origin, Tag neu und höher, CI und Anker und zeigt die Commits seit dem letzten Release
+  sowie gesondert die sensiblen Pfade (Firewall, Netz, Boot, Anmeldung, Vertrauen). Danach prüft es den Tag mit
+  `git verify-tag` gegen den Anker und pusht nur nach Rückfrage. `--vertrauen` signiert mit dem Schlüssel «zenOS
+  Wurzel» einen Tag `vertrauen/NNNN`, der den Anker ändert (neuer Release-Schlüssel, Widerruf). Der Anker
+  `system/vertrauen/` enthält noch keine Schlüssel; bis dahin wird nichts signiert. Auf den Geräten ändert sich nichts,
+  die Prüfung dort kommt mit dem Kanal. Manifest 0 erlaubt jetzt ausdrücklich die öffentlichen Prüfschlüssel.
 - **Systemkennung zenOS:** Das System weist sich als zenOS aus (`ID=zenos`, `ID_LIKE="ubuntu debian"`), wie Pop!_OS,
   Mint und elementary: an der Textkonsole («zenOS 0.1.0-… <rechner> tty1»), bei `hostnamectl` und `lsb_release`, mit
   eigenem Logo (`LOGO=zenos`) und einer ruhigen Begrüssung bei der Anmeldung («zenOS … · Basis Ubuntu 26.04.1 LTS ·

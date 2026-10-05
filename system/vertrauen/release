@@ -1,0 +1,18 @@
+# system/vertrauen/release – öffentliche Prüfschlüssel für Releases von zenOS.
+#
+# Format von gpg.ssh.allowedSignersFile (ssh-keygen(1), Abschnitt ALLOWED SIGNERS), eine Zeile je Schlüssel:
+#
+#   zenos-release namespaces="git" ssh-ed25519 AAAA…
+#
+# Der Prinzipal heisst immer «zenos-release», der Namespace ist nur «git», der Schlüssel ist Ed25519. Hinter dem
+# Schlüssel steht nichts, kein Kommentar und kein Name. Zeilen mit # und leere Zeilen zählen nicht.
+#
+# Mit diesem Schlüssel («zenOS Release» in 1Password) signiert Zeno die Tags vX.Y.Z und vX.Y.Z-rcN, und zwar mit
+# scripts/release-signieren.sh. Der private Teil verlässt 1Password nie. Stehen mehrere Zeilen hier (nur während
+# eines Wechsels), gilt jede; signiert wird mit der ersten.
+#
+# Noch steht hier kein Schlüssel, Zeno legt ihn später an. Bis dahin ist der Anker unvollständig: Das Skript
+# signiert nichts, und ein Gerät installiert über den Kanal nichts («Anker fehlt»).
+#
+# Ändern geht nur zusammen mit einer höheren Serie (Datei serie) und einem Tag vertrauen/NNNN, den der Wurzel-Schlüssel
+# signiert hat. Einzelheiten: docs/image-und-releases.md, Abschnitt «Signierte Releases».

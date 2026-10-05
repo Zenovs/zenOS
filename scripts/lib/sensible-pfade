@@ -1,0 +1,66 @@
+# sensible-pfade – Pfade, deren Änderungen scripts/release-signieren.sh vor dem Signieren gesondert zeigt.
+#
+# Format: GRUPPE PFAD, eine Zeile je Pfad. Zeilen mit # und leere Zeilen zählen nicht. PFAD ist ein git-Pfadmuster
+# relativ zur Repo-Wurzel: Ein Ordner endet mit /, ein * passt auf beliebige Zeichen (auch auf /). Ein Pfad darf
+# fehlen (etwa für Teile, die erst noch kommen).
+#
+# Gruppen:
+#   firewall, netz, boot   Rückfrage-Pfade. Trifft ein Update einen davon, soll ein Gerät es nur nach Zustimmung
+#                          installieren (kommt mit dem Kanal auf dem Gerät). Indirekte Änderungen fängt die Liste
+#                          nicht: neue Pakete, die initramfs oder flash-kernel auslösen, oder gemeinsame Teile wie
+#                          scripts/lib/gemeinsam.sh.
+#   anmeldung              Anmeldung, Sperre und Rechte: PAM, polkit, greetd, Greeter, Sperrbildschirm, sudo im Image
+#   vertrauen              Anker, Signieren, der Weg der Updates, CI und Hooks
+#
+# Das Skript liest diese Liste aus dem neuen Stand UND aus dem letzten Release und nimmt beide zusammen. Wer hier eine
+# Zeile streicht, versteckt damit also keine Änderung im selben Release.
+
+firewall scripts/lib/firewall.sh
+firewall scripts/bin/zenos-firewall
+firewall scripts/zen.d/firewall.sh
+firewall scripts/module/70-sicherheit.sh
+firewall scripts/pakete/sicherheit.txt
+firewall system/polkit/org.zenos.firewall.policy
+
+netz scripts/module/35-netzwerk.sh
+netz scripts/bin/zenos-netzwerk
+netz scripts/zen.d/netzwerk.sh
+netz scripts/pakete/netzwerk.txt
+netz system/cloud/
+netz system/modprobe/
+netz system/systemd/system/zenos-netzwerk-erststart.service
+netz system/systemd/system/zenos-wlan-land.service
+netz system/systemd/system/systemd-networkd-wait-online.service.d/
+
+boot scripts/module/42-bootsplash.sh
+boot scripts/zen.d/bootsplash.sh
+boot scripts/pakete/bootsplash.txt
+boot system/plymouth/
+
+anmeldung system/pam/
+anmeldung system/polkit/
+anmeldung system/greetd/
+anmeldung system/greeter/
+anmeldung scripts/bin/zenos-greeter
+anmeldung scripts/module/40-sitzung.sh
+anmeldung shell/greeter.qml
+anmeldung shell/greeter/
+anmeldung shell/sperre/
+anmeldung shell/polkit/
+anmeldung image/erststart/
+
+vertrauen system/vertrauen/
+vertrauen scripts/release-signieren.sh
+vertrauen scripts/lib/sensible-pfade
+vertrauen scripts/lib/wechsel.sh
+vertrauen scripts/zen.d/update.sh
+vertrauen scripts/zen.d/rollback.sh
+vertrauen scripts/zen.d/kanal.sh
+vertrauen scripts/module/10-code.sh
+vertrauen scripts/module/*-vertrauen.sh
+vertrauen scripts/module/*-kanal.sh
+vertrauen scripts/bin/zenos-kanal*
+vertrauen system/systemd/system/zenos-kanal*
+vertrauen image/bauen.sh
+vertrauen .github/workflows/
+vertrauen .githooks/

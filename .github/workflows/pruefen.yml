@@ -36,14 +36,15 @@ jobs:
         shell: bash
     steps:
       # git vor dem Auschecken, sonst lädt actions/checkout nur ein Archiv ohne Verlauf.
-      # nodejs, fish, unattended-upgrades und lsb-release nur für die Einheitentests (ohne sie überspringt
-      # pruefen.sh diese Tests; die beiden letzten braucht sicherheitsquelle.test.py).
+      # nodejs, fish, unattended-upgrades, lsb-release und openssh-client nur für die Einheitentests (ohne sie
+      # überspringt pruefen.sh diese Tests; unattended-upgrades und lsb-release braucht sicherheitsquelle.test.py,
+      # openssh-client mit ssh-keygen und ssh-agent release-signieren.test.py).
       - name: Werkzeuge installieren
         run: |
           apt-get -o Acquire::Retries=3 update -qq
           apt-get -o Acquire::Retries=3 install -y -qq --no-install-recommends \
             ca-certificates git shellcheck gitleaks python3 python3-jsonschema qt6-declarative-dev-tools \
-            nodejs fish unattended-upgrades lsb-release
+            nodejs fish unattended-upgrades lsb-release openssh-client
 
       - name: Auschecken (ganzer Verlauf für gitleaks)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

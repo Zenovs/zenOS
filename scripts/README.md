@@ -7,6 +7,7 @@
 | `lib/firewall.sh` | gemeinsame Teile der Firewall für `zen firewall`, `zen doctor` und `bin/zenos-firewall` |
 | `lib/aufraeumen.sh` | gemeinsame Teile für `module/22-aufraeumen.sh` und `zen doctor` (snapd, landscape-common) |
 | `lib/wechsel.sh` | gemeinsame Teile von `zen update` und `zen rollback`: Sperren, Platzprüfung, Holen von origin |
+| `lib/sensible-pfade` | Pfade, die `release-signieren.sh` gesondert zeigt: Rückfrage-Pfade (Firewall, Netz, Boot), Anmeldung, Vertrauen |
 | `module/NN-name.sh` | Installationsschritte, laufen in Namensreihenfolge |
 | `pakete/<modul>.txt` | apt-Pakete je Modul (ein Paket pro Zeile, `#` Kommentar) |
 | `zen` | Werkzeug `zen`, `/usr/local/bin/zen` verweist darauf |
@@ -14,6 +15,7 @@
 | `doctor.d/NN-name.sh` | Prüfungen für `zen doctor` |
 | `bin/zenos-*` | Hilfsprogramme (bash oder python3, ausführbar) |
 | `pruefen.sh` | Selbsttest des Repos (Linux, nicht auf dem Mac) |
+| `release-signieren.sh` | signiert ein Release oder einen Tag `vertrauen/NNNN` mit 1Password (Mac, bash 3.2) |
 
 ## install.sh
 
@@ -128,6 +130,21 @@ Jede Datei `doctor.d/NN-name.sh` definiert `pruefe_<name>` und berichtet mit `ab
 Nie ausgeben: Umgebungsvariablen, Tokens, Schlüssel, Passwörter, IP-/MAC-Adressen, Hostnamen, SSIDs,
 Benutzernamen, Inhalte aus `~/.config/zenos` (nur Anzahl und Gültigkeit). Das Home erscheint als `~`.
 Bekannte offene Punkte sind Hinweise, keine Fehler.
+
+## release-signieren.sh
+
+```
+scripts/release-signieren.sh vX.Y.Z[-rcN]
+scripts/release-signieren.sh --vertrauen
+```
+
+Läuft auf dem Mac (bash 3.2) in einem eigenen Terminal-Tab ohne Claude Code und signiert über `op-ssh-sign` von
+1Password mit Touch ID; der öffentliche Schlüssel kommt aus `system/vertrauen` des signierten Stands. Prüft sauberen
+Baum, HEAD auf origin, Tag neu und höher, CI per `gh` und den Anker, zeigt Commits und sensible Pfade
+(`lib/sensible-pfade`), signiert nach «ja», prüft den Tag mit `git verify-tag` gegen den Anker und pusht nach einem
+zweiten «ja» nur den Tag. `--vertrauen` signiert die Serie aus `system/vertrauen/serie` als `vertrauen/NNNN` mit dem
+Wurzel-Schlüssel. Ablauf und Regeln: `docs/image-und-releases.md`, «Signierte Releases». Nur für Tests:
+`ZENOS_TEST_SIGNIERPROGRAMM` (z. B. `ssh-keygen` mit einem Wegwerf-Schlüssel im ssh-agent) statt op-ssh-sign.
 
 ## pruefen.sh
 

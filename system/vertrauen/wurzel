@@ -1,0 +1,15 @@
+# system/vertrauen/wurzel – öffentlicher Prüfschlüssel der Wurzel von zenOS.
+#
+# Format von gpg.ssh.allowedSignersFile wie bei release, genau eine Zeile:
+#
+#   zenos-wurzel namespaces="git" ssh-ed25519 AAAA…
+#
+# Der Wurzel-Schlüssel («zenOS Wurzel», in einem eigenen Tresor von 1Password) signiert nur die Tags vertrauen/NNNN.
+# Mit ihnen ändert sich die Liste der Release-Schlüssel oder der Widerrufe. Er signiert nie ein Release, und mit
+# dem Release-Schlüssel lässt sich der Anker nicht ändern: Die beiden Dateien sind getrennt, und ein Schlüssel darf
+# nicht in beiden stehen.
+#
+# Die Wurzel selbst ändert sich nie über das Netz. Ein Gerät bekommt sie mit dem Image oder einmalig aus dem Repo,
+# danach nur noch von Hand.
+#
+# Noch steht hier kein Schlüssel, Zeno legt ihn später an. Bis dahin ist der Anker unvollständig.

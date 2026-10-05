@@ -1,0 +1,12 @@
+# system/vertrauen/widerrufen – widerrufene Schlüssel (gpg.ssh.revocationFile).
+#
+# Ein öffentlicher Schlüssel je Zeile, ohne Prinzipal und ohne Kommentar:
+#
+#   ssh-ed25519 AAAA…
+#
+# Hat ein Schlüssel aus dieser Liste einen Tag signiert, gilt der Tag nie, auch nicht mit einem zurückdatierten
+# Datum. Die Liste wächst nur: Was einmal widerrufen ist, bleibt widerrufen. Ein neuer Eintrag kommt wie jede
+# Änderung am Anker mit einer höheren Serie und einem Tag vertrauen/NNNN.
+#
+# Die Datei muss es geben, auch ohne Eintrag. Fehlt sie, warnt git nur und nimmt die Signatur trotzdem an
+# (geprüft mit git 2.53). Ein Gerät gilt dann als «Anker fehlt».

@@ -1,0 +1,10 @@
+# system/vertrauen/serie – Serie des Vertrauensankers.
+#
+# Eine ganze Zahl von 1 bis 9999 als einzige Zeile ohne #. Serie 1 ist der erste Anker: Er kommt mit dem Image oder
+# einmalig aus dem Repo, ohne Tag. Jede spätere Änderung an release oder widerrufen erhöht die Serie um genau 1 und
+# braucht den Tag vertrauen/NNNN (NNNN ist die Serie, vierstellig, etwa vertrauen/0002) auf einem Commit mit genau
+# diesem Anker, signiert mit dem Wurzel-Schlüssel: scripts/release-signieren.sh --vertrauen.
+#
+# Ein Gerät übernimmt einen solchen Tag nur, wenn seine Serie höher ist als die eigene und die Wurzel gleich bleibt.
+#
+# Noch ohne Zahl: Die 1 kommt zusammen mit den ersten Schlüsseln.

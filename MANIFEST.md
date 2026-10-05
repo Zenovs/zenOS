@@ -4,7 +4,7 @@ Die Reihenfolge ist die Rangordnung. Bei einem Konflikt gewinnt immer der höher
 
 ## 0. zenOS hat genau einen Benutzer.
 
-zenOS ist für mich gebaut, enthält aber nichts von mir. Im Repo und im Image stehen keine Namen, Konten, Modi, Orte oder Schlüssel. Persönliches entsteht lokal beim ersten Start und bleibt dort.
+zenOS ist für mich gebaut, enthält aber nichts von mir. Im Repo und im Image stehen keine Namen, Konten, Modi, Orte oder geheimen Schlüssel. Einzige Ausnahme sind die öffentlichen Prüfschlüssel von zenOS, mit denen Geräte Updates prüfen. Persönliches entsteht lokal beim ersten Start und bleibt dort.
 
 ## 1. Sicherheit ist Standard.
 

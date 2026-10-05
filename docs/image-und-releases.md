@@ -66,6 +66,145 @@ Bau im Einzelnen läuft (Optionen, lokal im Container, Aufräumen), steht in `im
   dem Workflow dieses Repos zum Tag stammt (dasselbe für die Paketliste). Die Bestätigung erzeugt GitHub ohne eigenen
   Schlüssel über Sigstore; dabei landen Metadaten aus der CI (Repo, Workflow, Commit, Prüfsummen) im öffentlichen
   Transparenz-Log von Sigstore. Vom Rechner, auf dem zenOS läuft, geht dabei nichts weg.
+- Signatur des Tags: ab dem ersten signierten Release (siehe «Signierte Releases») mit
+  `git -c gpg.ssh.allowedSignersFile=system/vertrauen/release -c gpg.ssh.revocationFile=system/vertrauen/widerrufen verify-tag vX.Y.Z`.
+  Nur der Exit-Code zählt, und das Feld `tag` im Objekt (`git cat-file tag vX.Y.Z`) muss dem Namen entsprechen.
+
+## Signierte Releases
+
+**Stand:** Signieren ist eingerichtet, die Prüfung auf den Geräten folgt mit dem Kanal. Bis dahin ändert sich auf den
+Geräten nichts, `zen update` zieht weiter den Zweig `dev` ohne Signaturprüfung. Die echten Schlüssel fehlen noch,
+Zeno legt sie später an. Solange ist der Anker leer: `scripts/release-signieren.sh` signiert nichts, und der Kanal
+installiert nichts («Anker fehlt», fail-closed). Der heutige Weg von Hand über `dev` bleibt.
+
+### Schlüssel und Anker
+
+Zwei SSH-Schlüssel (Ed25519), beide nur in 1Password. Der private Teil verlässt 1Password nie, jede Signatur gibt
+Zeno mit Touch ID frei.
+
+| Schlüssel in 1Password | Prinzipal | signiert | öffentlich in |
+|---|---|---|---|
+| «zenOS Release» | `zenos-release` | Tags `vX.Y.Z` und `vX.Y.Z-rcN` | `system/vertrauen/release` |
+| «zenOS Wurzel», eigener Tresor | `zenos-wurzel` | nur Tags `vertrauen/NNNN` | `system/vertrauen/wurzel` |
+
+Der Anker `system/vertrauen/` hat vier Dateien. Zeilen mit `#` und leere Zeilen zählen nirgends.
+
+- `release`, `wurzel`: Format von `gpg.ssh.allowedSignersFile`, je Schlüssel eine Zeile
+  `zenos-release namespaces="git" ssh-ed25519 AAAA…` (bei der Wurzel `zenos-wurzel`, genau eine Zeile). Nur Ed25519,
+  keine weiteren Optionen, kein Kommentar und kein Name hinter dem Schlüssel.
+- `widerrufen`: Format von `gpg.ssh.revocationFile`, je Zeile ein öffentlicher Schlüssel `ssh-ed25519 AAAA…`. Die
+  Datei muss es geben, auch leer: Fehlt sie, warnt git nur und nimmt die Signatur an. Die Liste wächst nur.
+- `serie`: eine Zahl von 1 bis 9999. Serie 1 ist der erste Anker, er kommt mit dem Image oder einmalig aus dem Repo.
+
+Ein Schlüssel steht nie zugleich in `release` und `wurzel` oder in `release` und `widerrufen`. Öffentliche Schlüssel
+sind keine Geheimnisse (Manifest 0, Ausnahme für die Prüfschlüssel); gitleaks lässt sie durch und meldet private.
+Auf dem Gerät liegt der Anker später root-eigen unter `/etc/zenos/vertrauen` und wird nie aus `/opt/zenos` gelesen.
+
+Kanäle (umgesetzt mit dem Kanal auf dem Gerät): `stabil` nimmt nur `vX.Y.Z`, mit 24 h Wartezeit; `vorschau` nimmt
+auch `vX.Y.Z-rcN`, ohne Wartezeit; `dev` nur von Hand, unsignierte Commits nur mit getipptem «ja» für genau diese
+SHA. Den Zeitpunkt automatischer Updates stellt man am Gerät ein.
+
+### Ein Release signieren
+
+Auf dem Mac, in einem eigenen Terminal-Tab, in dem Claude Code nicht läuft. Alles ist committet und gepusht.
+
+```
+scripts/release-signieren.sh v0.1.0-rc4
+```
+
+1. Das Skript prüft:
+   - Der Arbeitsbaum ist sauber, und HEAD liegt auf origin (nach `git fetch`).
+   - Den Tag gibt es weder lokal noch auf origin. Er ist höher als jede Version auf origin. Dabei gilt
+     `v0.1.0-rc3` < `v0.1.0-rc10` < `v0.1.0` < `v0.1.1`. Ein Tag wird nie verschoben, auch kein alter: `v0.1.0-rc1`
+     bis `rc3` bleiben unsigniert, der erste signierte Tag ist `v0.1.0-rc4` oder höher.
+   - HEAD baut auf dem letzten Release auf, und dieser Tag ist lokal derselbe wie auf origin.
+   - Die Prüfung `pruefen.yml` für HEAD ist per `gh` nicht rot. Läuft sie noch oder fehlt gh, gibt es nur eine
+     Warnung.
+   - Der Anker in HEAD ist vollständig. Gegenüber dem letzten Release ist er gleich, Kommentare ausgenommen. Oder er
+     hat eine höhere Serie, und es gibt den Tag `vertrauen/NNNN`, der genau diesen Anker trägt. Die Wurzel bleibt
+     immer gleich.
+2. Es zeigt die Commits seit dem letzten Release, die Fingerabdrücke des Ankers und gesondert die Änderungen an
+   sensiblen Pfaden (`scripts/lib/sensible-pfade`): Firewall, Netz und Boot (die Rückfrage-Pfade), Anmeldung und
+   Rechte, Vertrauen und Updates. Die Liste kommt aus dem neuen Stand und aus dem letzten Release zusammen. «d» zeigt
+   den ganzen Diff dieser Pfade.
+3. «ja» signiert einen annotierten Tag (Nachricht `zenOS vX.Y.Z`) mit dem ersten Schlüssel aus `release`, über
+   `op-ssh-sign` von 1Password, mit Touch ID.
+4. Danach prüft es den neuen Tag: annotiert, Feld `tag` gleich dem Namen, zeigt auf HEAD, genau eine SSH-Signatur,
+   `git verify-tag` gegen `release` und `widerrufen` für den Prinzipal `zenos-release`. OpenPGP und X.509 sind dabei
+   abgeschaltet. Scheitert etwas, löscht das Skript den Tag wieder.
+5. Ein zweites «ja» pusht nur diesen Tag (`git push origin refs/tags/vX.Y.Z`). Sonst bleibt er lokal.
+6. Danach 1Password sperren.
+
+Das Skript braucht keine eigene git-Einstellung: Es setzt `gpg.format`, `gpg.ssh.program` und `user.signingkey` nur
+für den eigenen Aufruf. Es läuft mit bash 3.2. Exit 0 heisst signiert, 1 abgebrochen (dann bleibt kein neuer Tag
+liegen), 2 falscher Aufruf.
+
+### Den Anker ändern: Tag vertrauen/NNNN
+
+Für einen neuen Release-Schlüssel oder einen Widerruf, etwa wenn der Release-Schlüssel verloren oder gestohlen ist.
+
+1. In `system/vertrauen/` `release` und `widerrufen` anpassen und `serie` um genau 1 erhöhen, dann committen und
+   pushen.
+2. `scripts/release-signieren.sh --vertrauen` prüft wie oben und zusätzlich:
+   - Die Serie ist genau 1 höher als beim letzten Tag `vertrauen/NNNN` oder, vor dem ersten, als im Stand vor der
+     Erhöhung.
+   - Die Wurzel ist gleich, widerrufene Schlüssel bleiben widerrufen, und `release` oder `widerrufen` ändert sich
+     wirklich.
+   Es zeigt neue, entfernte und neu widerrufene Schlüssel, signiert nach «ja» den Tag `vertrauen/NNNN` (vierstellig)
+   mit dem Wurzel-Schlüssel und prüft ihn gegen `wurzel` und die Widerrufe von vorher. Gepusht wird nach einem
+   zweiten «ja».
+3. Erst danach Releases mit dem neuen Schlüssel signieren. Ein Release mit Serie 2 oder höher verlangt den
+   passenden Tag `vertrauen/NNNN` auf origin.
+
+Was ein Gerät später prüft (für den Kanal):
+
+- **Release-Tag:** annotiert, Feld `tag` gleich dem Ref-Namen, `type commit`, genau eine SSH-Signatur und kein
+  OpenPGP, `verify-tag` auf die Objekt-ID gegen `release` und `widerrufen` des Geräts mit Prinzipal
+  `zenos-release`. Die Nachricht hat keine Kopfzeilen und zählt nicht.
+- **Tag `vertrauen/NNNN`:** dieselben Formbedingungen, `verify-tag` gegen `wurzel` und `widerrufen` des Geräts mit
+  Prinzipal `zenos-wurzel`. Massgeblich ist der Commit, auf den er zeigt: Dort muss `system/vertrauen/serie` gleich
+  NNNN sein und `system/vertrauen/wurzel` dieselbe Wurzel tragen wie das Gerät. Dann übernimmt das Gerät `release`
+  und `widerrufen` aus diesem Commit (bei den Widerrufen als Vereinigung mit den alten). Es nimmt nur Tags mit
+  höherer Serie als der eigenen, aufsteigend und vor allen Releases. Die Fingerabdrücke in der Nachricht sind nur zum
+  Lesen da.
+- Die Wurzel ändert sich nie über das Netz. Ist sie verloren oder gestohlen, braucht jedes Gerät ein neues Image
+  oder einen neuen Anker von Hand.
+
+### Einmalig einrichten (Zeno)
+
+1. 1Password: Einstellungen › Entwickler › «SSH-Agent verwenden».
+2. In 1Password zwei SSH-Schlüssel (Ed25519) anlegen: «zenOS Release» im Standard-Tresor und «zenOS Wurzel» in
+   einem eigenen Tresor. Ungeprüft: Laut Doku von 1Password bietet der Agent Schlüssel aus anderen Tresoren erst an,
+   wenn sie in seiner Konfiguration (`agent.toml`) freigegeben sind; sonst meldet das Skript «Signieren ist
+   fehlgeschlagen».
+3. Die beiden öffentlichen Schlüssel (nicht geheim) an Claude geben. Sie kommen ohne Kommentar mit Serie 1 nach
+   `system/vertrauen/`.
+
+### Geprüft
+
+Mit Wegwerf-Schlüsseln, im Container (git 2.53, OpenSSH 10.2) und auf dem Mac (git 2.50, OpenSSH 10.3, bash 3.2):
+
+- Signieren mit `user.signingkey=key::ssh-ed25519 …`, wenn der Schlüssel nur im SSH-Agent liegt, geht. Liegt er nicht
+  dort, scheitert es mit «Couldn't find key in agent».
+- `verify-tag` nimmt einen Tag nur mit einem Schlüssel aus der Liste an. Ein fremder Schlüssel, ein Schlüssel aus
+  `widerrufen` oder eine Liste nur mit Kommentaren ergibt Exit 1. Kommentare in beiden Dateien stören nicht.
+- Eine Widerrufsdatei nur mit Kommentaren oder ganz leer nimmt git an. Fehlt sie, warnt git nur und gibt Exit 0
+  (fail-open). Ein Gerät muss die Datei deshalb selbst verlangen.
+- `verify-tag` prüft den Namen nicht: Ein Ref `v9.9.9` auf das Objekt von `v1.0.0` ergibt Exit 0. Deshalb wird das
+  Feld `tag` verglichen.
+- `namespaces="git"` wirkt: Mit einem anderen Namespace in der Liste wird der Tag abgelehnt.
+- Die Tests `test/einheiten/release-signieren.test.py` spielen das Skript ganz durch: Release, Vertrauens-Tag,
+  Abbruch und Ablehnung, falscher oder fehlender Schlüssel, rote CI, verschobener Tag, Downgrade, Anker ohne Serie
+  geändert, Wurzel geändert.
+
+### Grenzen
+
+- Eine Signatur bestätigt die Herkunft, nicht den Inhalt. Was signiert ist, läuft später als root auf allen Geräten.
+  Dagegen helfen nur die Durchsicht (das Skript zeigt sensible Pfade gesondert), ein eigener Terminal-Tab und danach
+  1Password sperren. Auch das Skript selbst ist Teil des Repos und erscheint deshalb unter «Vertrauen und Updates».
+- 1Password gibt einen Schlüssel laut Doku pro Anwendung bzw. Terminal-Sitzung frei, bis es sperrt (nicht selbst
+  getestet). Ein Programm im selben Terminal könnte danach mitsignieren.
+- Die Rückfrage-Pfade fangen indirekte Änderungen nicht, etwa neue Pakete, die initramfs auslösen.
 
 ## Quellcode und Lizenzen
 
@@ -178,7 +317,8 @@ Seit der Systemkennung (`docs/module/kennung.md`, Modul `72-kennung`) gilt:
 Der Quellcode zu jedem Release liegt auf derselben Release-Seite («Quellcode und Lizenzen»), die Markenhinweise
 stehen auch in den Versionshinweisen und unter `/usr/local/share/doc/zenos/RECHTLICHES`. Offen vor einer Weitergabe
 an andere: die schriftliche Anfrage bei Canonical, eine Ähnlichkeitsrecherche zum Namen zenOS und ein signierter
-Update-Kanal «stabil» (heute zieht `zen update` den Zweig `dev` ohne Signaturprüfung).
+Update-Kanal «stabil». Das Signieren ist eingerichtet («Signierte Releases»), die Prüfung auf den Geräten fehlt noch:
+Heute zieht `zen update` den Zweig `dev` ohne Signaturprüfung.
 
 ## Bürorechner
 

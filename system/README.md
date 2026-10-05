@@ -33,5 +33,6 @@ Verweis angelegt; was generiert wird, erzeugen die Programme unter `scripts/bin/
 | `apt/20auto-upgrades`, `apt/52zenos-unattended` | `/etc/apt/apt.conf.d/` | automatische Sicherheitsupdates |
 | `apt/zenos-ohne-snapd` | `/etc/apt/preferences.d/` (`22-aufraeumen`, nur solange snapd fehlt) | apt-Pin: snapd nie wieder installieren |
 | `plymouth/zenos/` | `/usr/share/plymouth/themes/zenos/` (`42-bootsplash`, nur `*.plymouth`, `*.script`, `bilder/`) | Bootsplash-Theme, abgelegt, nicht eingeschaltet (`docs/module/bootsplash.md`); `erzeugen.py` und `vorschau.sh` bleiben im Repo |
+| `vertrauen/release`, `wurzel`, `widerrufen`, `serie` | noch nirgends (mit dem Kanal: `/etc/zenos/vertrauen/`, nur wenn es fehlt; im Image) | Vertrauensanker: öffentliche Prüfschlüssel für signierte Releases, Prinzipale `zenos-release` und `zenos-wurzel`; noch ohne Schlüssel (`docs/image-und-releases.md`, «Signierte Releases») |
 
 Ein Ordner kommt nur mit seinem Modul dazu (Besitz und Einzelheiten in `docs/module/`).
