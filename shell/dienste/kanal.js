@@ -134,6 +134,8 @@ function standLesen(json) {
             commit: b.commit,
             objekt: b.objekt,
             freiAbMs: zeitMs(b.frei_ab),
+            // false: noch in der Wartezeit (stabil 24 h, nur mit synchronisierter Uhr); ältere stand.json ohne Feld: ja
+            frei: b.frei !== false,
             // null: Vergleich nicht möglich (dann braucht es ebenfalls die Zustimmung)
             rueckfrage: Array.isArray(b.rueckfrage) ? _liste(b.rueckfrage, 50, function (p) {
                 return text(p, 120) || null;
@@ -150,8 +152,20 @@ function standLesen(json) {
             commits: typeof d.dev.commits === "number" && d.dev.commits >= 0 ? Math.floor(d.dev.commits) : -1
         };
     }
+    // Automatisch installiert, wartet auf die Bestätigung nach einem Neustart (unbestaetigt.json)
+    var unbestaetigt = null;
+    if (d.unbestaetigt && typeof d.unbestaetigt === "object" && _commit(d.unbestaetigt.commit) !== "")
+        unbestaetigt = { commit: d.unbestaetigt.commit, version: _version(d.unbestaetigt.version), seitMs: zeitMs(d.unbestaetigt.seit) };
+    // Nach «zen rollback» für die Automatik zurückgestellt (zurueckgestellt.json)
+    var zurueckgestellt = null;
+    if (d.zurueckgestellt && typeof d.zurueckgestellt === "object" && _version(d.zurueckgestellt.version) !== "")
+        zurueckgestellt = { version: d.zurueckgestellt.version, seitMs: zeitMs(d.zurueckgestellt.seit) };
     return {
         kanal: KANAELE.indexOf(d.kanal) >= 0 ? d.kanal : "",
+        // Notschalter (sudo zen kanal automatik aus); ohne Angabe (ältere stand.json) gilt an
+        automatikAn: !(d.automatik && typeof d.automatik === "object" && d.automatik.an === false),
+        unbestaetigt: unbestaetigt,
+        zurueckgestellt: zurueckgestellt,
         zustand: zustand,
         grund: text(d.grund, 400),
         geprueftMs: zeitMs(d.geprueft),
@@ -391,10 +405,19 @@ function zeilen(stand, zeitpunkt, jetztMs) {
         aus.push({ titel: "Installiert", wert: (inst.version !== "" ? inst.version + " · " : "") + inst.commit.slice(0, 12) + (inst.version === "" ? " · ohne signierte Version" : "") });
     if (stand.bereit && (stand.zustand === "bereit" || stand.zustand === "zustimmung")) {
         var bereit = stand.bereit.version + " · " + stand.bereit.commit.slice(0, 12);
-        if (stand.zustand === "bereit" && zeitpunkt && zeitpunkt.art !== "hand" && isFinite(stand.bereit.freiAbMs) && stand.bereit.freiAbMs > jetztMs)
+        var automatisch = stand.zustand === "bereit" && stand.automatikAn && zeitpunkt && zeitpunkt.art !== "hand";
+        if (automatisch && isFinite(stand.bereit.freiAbMs) && stand.bereit.freiAbMs > jetztMs)
             bereit += " · automatisch ab " + zeitText(stand.bereit.freiAbMs, jetztMs);
+        else if (automatisch && !stand.bereit.frei)
+            bereit += " · automatisch erst mit synchronisierter Uhr";
         aus.push({ titel: "Bereit", wert: bereit });
     }
+    if (stand.unbestaetigt)
+        aus.push({ titel: "Bestätigung", wert: (stand.unbestaetigt.version !== "" ? stand.unbestaetigt.version : stand.unbestaetigt.commit.slice(0, 12)) + " · automatisch installiert, gilt als gut nach dem nächsten Neustart mit Login" });
+    if (stand.zurueckgestellt)
+        aus.push({ titel: "Zurückgestellt", wert: stand.zurueckgestellt.version + " · nach zen rollback, kommt nicht automatisch wieder" });
+    if (!stand.automatikAn)
+        aus.push({ titel: "Automatik", wert: "aus · einschalten: sudo zen kanal automatik an" });
     if (stand.kanal === "dev" && stand.dev && stand.dev.neu)
         aus.push({ titel: "origin/dev", wert: stand.dev.commit.slice(0, 12) + (stand.dev.commits >= 0 ? " · " + stand.dev.commits + (stand.dev.commits === 1 ? " Commit" : " Commits") + " neuer" : "") });
     aus.push({ titel: "Geprüft", wert: zeitText(stand.geprueftMs, jetztMs) });

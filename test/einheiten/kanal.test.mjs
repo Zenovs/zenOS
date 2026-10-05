@@ -191,6 +191,40 @@ test("zeilen: Kanal, Versionen, Prüfung, Anker mit kurzen Fingerabdrücken", ()
   assert.deepEqual(roh(L.zeilen(null, z, JETZT)), []);
 });
 
+test("zeilen: Automatik aus, Bestätigung nach dem Neustart, zurückgestellt, Wartezeit ohne Uhr", () => {
+  const z = L.zeitpunktLesen(null);
+  const ohneUhr = Object.assign({}, BEREIT, { erstmals: null, frei_ab: null, frei: false });
+  const s = L.standLesen(stand({
+    zustand: "bereit", bereit: ohneUhr, automatik: { an: true },
+    unbestaetigt: { commit: C1, version: "v0.1.0-rc4", tag: "v0.1.0-rc4", seit: iso(JETZT - H), fehlstarts: 0 },
+    zurueckgestellt: { version: "v0.1.0-rc6", seit: iso(JETZT - 3 * H) },
+  }));
+  assert.equal(s.automatikAn, true);
+  assert.deepEqual(roh(s.unbestaetigt), { commit: C1, version: "v0.1.0-rc4", seitMs: JETZT - H });
+  assert.deepEqual(roh(s.zurueckgestellt), { version: "v0.1.0-rc6", seitMs: JETZT - 3 * H });
+  const zeilen = roh(L.zeilen(s, z, JETZT));
+  assert.deepEqual(zeilen.find((x) => x.titel === "Bereit"), { titel: "Bereit", wert: "v0.1.0-rc5 · 222222222222 · automatisch erst mit synchronisierter Uhr" });
+  assert.deepEqual(zeilen.find((x) => x.titel === "Bestätigung"), { titel: "Bestätigung", wert: "v0.1.0-rc4 · automatisch installiert, gilt als gut nach dem nächsten Neustart mit Login" });
+  assert.deepEqual(zeilen.find((x) => x.titel === "Zurückgestellt"), { titel: "Zurückgestellt", wert: "v0.1.0-rc6 · nach zen rollback, kommt nicht automatisch wieder" });
+  assert.equal(zeilen.find((x) => x.titel === "Automatik"), undefined);
+  // Notschalter: keine Zeit für die Automatik, dafür die Zeile «Automatik»
+  const aus = L.standLesen(stand({ zustand: "bereit", automatik: { an: false }, bereit: Object.assign({}, BEREIT, { frei_ab: iso(JETZT + 14 * H), frei: false }) }));
+  const zeilenAus = roh(L.zeilen(aus, z, JETZT));
+  assert.deepEqual(zeilenAus.find((x) => x.titel === "Bereit"), { titel: "Bereit", wert: "v0.1.0-rc5 · 222222222222" });
+  assert.deepEqual(zeilenAus.find((x) => x.titel === "Automatik"), { titel: "Automatik", wert: "aus · einschalten: sudo zen kanal automatik an" });
+  // Ältere stand.json ohne die Felder: Automatik an, nichts davon
+  const alt = L.standLesen(stand({ zustand: "bereit", bereit: BEREIT }));
+  assert.equal(alt.automatikAn, true);
+  assert.equal(alt.bereit.frei, true);
+  assert.equal(alt.unbestaetigt, null);
+  assert.equal(alt.zurueckgestellt, null);
+  // Unsinn zählt nicht
+  const unsinn = L.standLesen(stand({ unbestaetigt: { commit: "x" }, zurueckgestellt: { version: "1.0" }, automatik: "aus" }));
+  assert.equal(unsinn.unbestaetigt, null);
+  assert.equal(unsinn.zurueckgestellt, null);
+  assert.equal(unsinn.automatikAn, true);
+});
+
 test("Titel, Symbol und Erklärung je Zustand", () => {
   assert.equal(L.zustandTitel(null, false), "Noch nie geprüft");
   const faelle = {
