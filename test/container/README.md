@@ -18,7 +18,7 @@ erzeugt; auf dem Pi läuft sie nur während einer Anmeldung (Login oder SSH).
 | `arbeitsstand.sh` | Container | überträgt den Stand von `/repo` nach `~/zenOS` (von `starten.sh` aufgerufen) |
 | `oberflaeche.sh` | Container | labwc + Quickshell ohne Bildschirm (direkt oder als Sitzung wie auf dem Pi), Bildschirmfotos, IPC, hell/dunkel, Tastatureingaben |
 | `holen.sh <container> <ordner>` | Mac | Bildschirmfotos aus dem Container holen |
-| `kanal-e2e.sh <schritt>` | Container (root) | Ende-zu-Ende-Test des signierten Kanals: eigenes origin über https mit Wegwerf-CA und Wegwerf-Schlüsseln, `zen update`, `zen rollback`, Rückweg, Abbruch mit Neustart, Notweg (Schritte im Kopf der Datei) |
+| `kanal-e2e.sh <schritt>` | Container (root) | Ende-zu-Ende-Test des signierten Kanals: eigenes origin über https mit Wegwerf-CA und Wegwerf-Schlüsseln, `zen update`, `zen rollback`, Rückweg, Abbruch mit Neustart, Notweg, Automatik (Timer, Zeitpunkt, gestellte Sitzung auf seat0 mit echter Sperre, Bestätigung nach Neustarts; Schritte im Kopf der Datei) |
 
 ## Basis-Image bauen
 

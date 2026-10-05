@@ -43,6 +43,20 @@
 #                danach neu geprüft), ein Stand, der Netz trifft (installieren wartet, zustimmen für ein anderes Objekt
 #                nichts, für das gezeigte installiert), dev unsigniert (zustimmen abgelehnt, installieren wartet);
 #                der Helfer liest Exit 3 und 10 und lässt keine Unit «failed» zurück
+#   automatik    (braucht «einrichten», «bedienung» oder einen Anker und dieses Programm in /opt/zenos; vor dem ersten
+#                install.sh den Notschalter setzen, siehe unten) Timer und Units, Notschalter (install.sh lässt die
+#                Timer aus), nie auf dev, «von Hand» nur bereit, Zeitfenster über die Gelegenheit ohne Holen,
+#                zenos-energie sagt während der Installation «Update läuft», «bei Sperre» mit einer über PAM gestellten
+#                Sitzung auf seat0 und der echten Sperre der Oberfläche (eben gesperrt: noch nicht), zen rollback
+#                stellt die verlassene Version zurück, dann ein automatisches Update mit Login-Bildschirm zum Schein
+#                → Neustart nötig
+#   nach-automatik   bestätigt nach dem Neustart (gut.json), dann ein automatisches Update ohne Login → Neustart nötig
+#   nach-automatik-2 erster Start ohne Login: gezählt (wartet 3 Min.) → Neustart nötig
+#   nach-automatik-3 zweiter Start ohne Login: gesperrt, zurück auf den guten Stand, greetd neu gestartet; aufräumen
+#
+# Die Timer der Automatik lösen im Test nie von selbst aus (einrichten legt einen Laufzeit-Drop-in an); der Test startet
+# ihre Units von Hand. Für «automatik» in einem frischen Container: als root /etc/xdg/zenos/kanal-automatik-aus anlegen,
+# origin von ~/zenOS auf die Adresse unten setzen, als tester install.sh, dann einrichten, bedienung, automatik.
 
 set -euo pipefail
 
@@ -198,6 +212,8 @@ PY
   [[ "$(git -c safe.directory=/opt/zenos -C /opt/zenos remote get-url origin)" == "$URL" ]] ||
     fehler "/opt/zenos hat nicht origin $URL (zuerst install.sh aus ~/zenOS mit diesem origin)"
   ok "/opt/zenos folgt $URL"
+  automatik_timer_zahm
+  ok "Timer der Automatik lösen im Test nicht von selbst aus"
 }
 
 s_migration() {
@@ -792,6 +808,369 @@ s_bedienung() {
   kanal vorschau
 }
 
+# --- Automatik ---------------------------------------------------------------------------------------------------
+
+AUS=/etc/xdg/zenos/kanal-automatik-aus
+PROGRAMM=/usr/local/libexec/zenos/zenos-kanal
+TESTER_UID=1000
+
+zeitpunkt() { /usr/bin/python3 -I "$PROGRAMM" zeitpunkt "$@" > /dev/null; }
+
+als_tester() { runuser -u "$TESTER" -- env HOME=/home/$TESTER XDG_RUNTIME_DIR=/run/user/$TESTER_UID "$@"; }
+
+signierter_commit() { # NACHRICHT – Commit auf dev, mit dem Wegwerf-Release-Schlüssel signiert, gepusht; gibt die ID aus
+  ga -c user.signingkey="$E2E/schluessel/rel" commit -q -S --allow-empty -m "$1"
+  pushen dev
+  ga rev-parse HEAD
+}
+
+# Startet eine Unit der Automatik und wartet auf ihr Ende; was das Programm sagte, steht danach in $E2E/zen.txt
+# (Journal seit dem Start), was es tat in automatik.json
+automatik() { # UNIT (Standard: zenos-kanal-automatik.service)
+  local unit=${1:-zenos-kanal-automatik.service} seit
+  seit=$(date +%s)
+  sleep 1
+  systemctl start "$unit" > "$E2E/start.txt" 2>&1 || true
+  journalctl -u "$unit" --since "@$seit" --no-pager -o cat > "$E2E/zen.txt" 2>&1 || true
+}
+
+erwarte_lauf() { # ERGEBNIS MUSTER TEXT – automatik.json nach dem letzten Lauf
+  local ergebnis grund
+  ergebnis=$(json "$STAND/automatik.json" .ergebnis)
+  grund=$(json "$STAND/automatik.json" .grund)
+  if [[ "$ergebnis" != "$1" || "$grund" != *"$2"* ]]; then
+    sed 's/^/      /' "$E2E/zen.txt" | tail -n 30 >&2
+    fehler "$3: «$ergebnis» – $grund (erwartet «$1» mit «$2»)"
+  fi
+  ok "$3: $ergebnis – ${grund:0:110}"
+}
+
+# Die Timer der Automatik lösen im Test nie von selbst aus (Laufzeit-Drop-in, nach jedem Neustart neu): Ein Lauf hielte
+# die Sperre der Bedienung mitten in einem Schritt. Der Test startet die Units von Hand.
+automatik_timer_zahm() {
+  local timer
+  for timer in zenos-kanal.timer zenos-kanal-gelegenheit.timer; do
+    install -d -m 0755 "/run/systemd/system/$timer.d"
+    printf '# Nur im Ende-zu-Ende-Test: kein Lauf von selbst\n[Timer]\nOnBootSec=\nOnCalendar=\nOnCalendar=2099-01-01 00:00:00\n' \
+      > "/run/systemd/system/$timer.d/e2e.conf"
+  done
+  systemctl daemon-reload
+}
+
+# Wartet, bis eine Unit (oneshot) fertig ist: «activating» zählt als laufend (is-active sagt dann nein)
+warte_bis_fertig() { # UNIT [SEKUNDEN]
+  local i zustand
+  for i in $(seq 1 "${2:-300}"); do
+    zustand=$(systemctl show -p ActiveState --value "$1")
+    case "$zustand" in activating | active | deactivating | reloading) sleep 1 ;; *) return 0 ;; esac
+  done
+  fehler "$1 ist nach ${2:-300} s nicht fertig"
+}
+
+# Erste freie Version v0.N.0 (N ab 6) für die Automatik: So läuft der Schritt auch ein zweites Mal im selben Container
+version_frei() {
+  local n=6
+  while g -C "$REMOTE" rev-parse -q --verify "refs/tags/v0.$n.0-rc1" > /dev/null; do n=$((n + 1)); done
+  printf 'v0.%s.0' "$n"
+}
+
+minute_plus() { # MINUTEN – Uhrzeit (HH:MM, Ortszeit) in MINUTEN Minuten, auch negativ
+  local jetzt
+  jetzt=$(( 10#$(date +%H) * 60 + 10#$(date +%M) ))
+  jetzt=$(( ((jetzt + $1) % 1440 + 1440) % 1440 ))
+  printf '%02d:%02d' $(( jetzt / 60 )) $(( jetzt % 60 ))
+}
+
+s_automatik() {
+  schritt "automatik: Units, Timer, Notschalter"
+  local neu gut vorher holen_vorher langsam i timer offset marker v
+  v=$(version_frei)
+  printf '%s\n' "$v" > "$E2E/automatik-version"
+  [[ -f /etc/systemd/system/zenos-kanal.timer ]] || fehler "zenos-kanal.timer fehlt (install.sh mit diesem Stand)"
+  systemd-analyze verify /etc/systemd/system/zenos-kanal{,-gelegenheit,-bestaetigen}.timer \
+    /etc/systemd/system/zenos-kanal-{automatik,gelegenheit,bestaetigen}.service > "$E2E/verify.txt" 2>&1 ||
+    { cat "$E2E/verify.txt" >&2; fehler "systemd-analyze verify"; }
+  ok "systemd-analyze verify ohne Befund"
+  [[ "$(systemctl show -p Triggers --value zenos-kanal.timer)" == zenos-kanal-automatik.service ]] ||
+    fehler "zenos-kanal.timer löst nicht zenos-kanal-automatik.service aus"
+  [[ "$(systemctl show -p Triggers --value zenos-kanal-gelegenheit.timer)" == zenos-kanal-gelegenheit.service ]] ||
+    fehler "zenos-kanal-gelegenheit.timer löst nicht seine Unit aus"
+  [[ "$(systemctl is-enabled zenos-kanal-bestaetigen.timer)" == enabled ]] || fehler "bestaetigen.timer nicht aktiviert"
+  ok "Timer lösen die Units aus, die Bestätigung nach dem Start ist aktiviert"
+  anker_schreiben
+  /usr/bin/python3 -I "$PROGRAMM" automatik aus > /dev/null
+  systemd-run --quiet --wait --collect --pipe -p Environment=HOME=/root -p Environment=ZENOS_KANAL_LAUF=1 \
+    /opt/zenos/scripts/install.sh --ruhig < /dev/null > "$E2E/root-install.txt" 2>&1 ||
+    { tail -n 30 "$E2E/root-install.txt" >&2; fehler "install.sh als root"; }
+  for timer in zenos-kanal.timer zenos-kanal-gelegenheit.timer; do
+    [[ "$(systemctl is-enabled "$timer")" == disabled ]] || fehler "$timer trotz Notschalter aktiviert"
+    ! systemctl --quiet is-active "$timer" || fehler "$timer läuft trotz Notschalter"
+  done
+  ok "Notschalter: install.sh lässt die Timer aus"
+  zen_als_tester "" zen kanal automatik || true
+  erwarte_text "^Automatik   aus" "zen kanal automatik: aus"
+  zen_als_tester "" zen kanal automatik an || fehler "zen kanal automatik an"
+  for timer in zenos-kanal.timer zenos-kanal-gelegenheit.timer; do
+    [[ "$(systemctl is-enabled "$timer")" == enabled ]] || fehler "$timer nach «an» nicht aktiviert"
+    systemctl --quiet is-active "$timer" || fehler "$timer nach «an» nicht aktiv"
+  done
+  [[ ! -e "$AUS" ]] || fehler "Notschalter nach «an» noch da"
+  enthaelt "zenos-kanal-automatik.service" systemctl list-timers --all --no-pager || fehler "list-timers"
+  ok "an: Timer aktiviert und aktiv (systemctl list-timers)"
+  zen_als_tester "" zen kanal automatik aus || fehler "zen kanal automatik aus"
+  [[ -e "$AUS" && "$(systemctl is-enabled zenos-kanal.timer)" == disabled ]] || fehler "aus"
+  enthaelt "Automatik aus (sudo, uid $TESTER_UID)" journalctl -t zenos-kanal --no-pager -o cat -n 20 ||
+    fehler "Notschalter nicht im Journal"
+  automatik
+  [[ "$(systemctl show -p ConditionResult --value zenos-kanal-automatik.service)" == no ]] ||
+    fehler "die Automatik startete trotz Notschalter"
+  ok "aus: im Journal, die Unit startet nicht"
+  /usr/bin/python3 -I "$PROGRAMM" automatik an > /dev/null
+  automatik_timer_zahm
+
+  schritt "automatik: dev nie, auch nicht signiert"
+  kanal dev
+  zeitpunkt jederzeit
+  vorher=$(kopf)
+  neu=$(signierter_commit "e2e: automatik dev signiert")
+  automatik
+  erwarte_kopf "$vorher" "dev: nichts installiert"
+  erwarte_lauf nichts "Kanal dev" "Automatik auf dev"
+  [[ "$(json "$STAND/stand.json" .zustand)" == dev && "$(json "$STAND/stand.json" .dev.commit)" == "$neu" ]] ||
+    fehler "stand.json kennt den neuen dev-Stand nicht"
+  ok "stand.json: dev, neuer Stand gesehen"
+
+  schritt "automatik: vorschau, «von Hand» → nur bereit"
+  kanal vorschau
+  zeitpunkt hand
+  neu=$(neuer_commit "e2e: automatik 1" e2e/automatik "1")
+  signieren "$v-rc1"
+  automatik
+  erwarte_kopf "$vorher" "von Hand: nichts installiert"
+  erwarte_lauf wartet "von Hand" "Automatik bei «von Hand»"
+  [[ "$(json "$STAND/stand.json" .zustand)" == bereit && "$(json "$STAND/stand.json" .bereit.version)" == "$v-rc1" ]] ||
+    fehler "stand.json: nicht bereit"
+  [[ "$(json "$STAND/automatik-bereit" .version)" == "$v-rc1" ]] || fehler "automatik-bereit fehlt"
+  ok "bereit $v-rc1, Marker für die Gelegenheit"
+  [[ "$(json "$STAND/stand.json" .uhr_synchron)" == true ]] || fehler "Prüfen sieht die Uhr nicht (timedatectl)"
+  [[ "$(json "$STAND/gesehen.json" ".tags[\"$v-rc1\"].erstmals_start.start")" == \
+    "$(cat /proc/sys/kernel/random/boot_id)" ]] || fehler "erstmals ohne Start-ID"
+  ok "das Prüfen liest die Uhr (synchron) und die Start-ID"
+
+  schritt "automatik: Zeitfenster, Gelegenheit ohne Holen"
+  gut=$(json "$STAND/gut.json" .commit)
+  zeitpunkt fenster "$(minute_plus 120)" "$(minute_plus 180)"
+  automatik zenos-kanal-gelegenheit.service
+  erwarte_kopf "$vorher" "ausserhalb des Fensters nichts"
+  erwarte_lauf wartet "ausserhalb des Zeitfensters" "Gelegenheit ausserhalb"
+  zeitpunkt fenster "$(minute_plus -60)" "$(minute_plus 60)"
+  holen_vorher=$(date +%s)
+  automatik zenos-kanal-gelegenheit.service
+  erwarte_kopf "$neu" "im Fenster installiert"
+  erwarte_lauf installiert "automatisch" "Gelegenheit im Fenster"
+  if journalctl -u zenos-kanal-holen.service --since "@$holen_vorher" --no-pager -o cat | grep -q .; then
+    fehler "die Gelegenheit hat geholt"
+  fi
+  ok "die Gelegenheit holte nicht"
+  [[ "$(json "$STAND/unbestaetigt.json" .commit)" == "$neu" && "$(json "$STAND/gut.json" .commit)" == "$gut" ]] ||
+    fehler "unbestaetigt.json bzw. gut.json"
+  ok "wartet auf die Bestätigung nach dem Neustart, gut.json bleibt"
+  [[ ! -e "$STAND/automatik-bereit" ]] || fehler "automatik-bereit nach der Installation"
+  zen_als_tester "" zen update || fehler "zen update danach"
+  erwarte_text "Schon installiert" "zen update: schon installiert"
+  zen_als_tester "" zen kanal status || true
+  erwarte_text "gilt als gut nach einem Neustart mit Login" "zen kanal status: unbestätigt"
+
+  schritt "automatik: Ausschalten wartet auf die Installation (zenos-energie als Benutzer)"
+  zeitpunkt jederzeit
+  langsam=$'#!/usr/bin/env bash\n# 99-e2e-langsam: nur im Ende-zu-Ende-Test: wartet, solange /srv/kanal-e2e/langsam da ist\n# shellcheck shell=bash\nmodul_system() {\n  local i=0\n  log_info "e2e: langsam"\n  while [[ -e /srv/kanal-e2e/langsam ]] && (( i < 300 )); do sleep 1; i=$((i + 1)); done\n}\n'
+  neu=$(neuer_commit "e2e: automatik langsam" scripts/module/99-e2e-langsam.sh "$langsam")
+  signieren "$v-rc2"
+  touch "$E2E/langsam"
+  offset=$(grep -c 'e2e: langsam' /var/log/zenos/install.log || true)
+  systemctl start --no-block zenos-kanal-automatik.service
+  for i in $(seq 1 240); do
+    (( $(grep -c 'e2e: langsam' /var/log/zenos/install.log || true) > offset )) && break
+    sleep 1
+  done
+  (( i < 240 )) || { rm -f "$E2E/langsam"; fehler "install.sh kam nicht bis zum langsamen Modul"; }
+  als_tester systemctl list-units --type=service --state=activating,active,deactivating,reloading --no-legend \
+    --plain --no-pager 'zenos-kanal-*.service' > "$E2E/zen.txt" 2>&1 || true
+  erwarte_text "^zenos-kanal-installieren.service" "ein Benutzer sieht die laufende Installation (systemd)"
+  if als_tester ls /run/zenos-sperre > /dev/null 2>&1; then fehler "ein Benutzer liest /run/zenos-sperre"; fi
+  ok "die Sperren in /run/zenos-sperre sieht er nicht"
+  install -d -o "$TESTER" -g "$TESTER" /home/$TESTER/.config/zenos
+  printf '{"ausschalten": "immer"}\n' > /home/$TESTER/.config/zenos/einstellungen.json
+  chown "$TESTER:$TESTER" /home/$TESTER/.config/zenos/einstellungen.json
+  als_tester /opt/zenos/scripts/bin/zenos-energie status > "$E2E/zen.txt" 2>&1 || true
+  erwarte_text "^nein: Update läuft (zenos-kanal-" "zenos-energie: nicht ausschalten"
+  rm -f "$E2E/langsam"
+  warte_bis_fertig zenos-kanal-automatik.service
+  erwarte_kopf "$neu" "danach installiert"
+  als_tester /opt/zenos/scripts/bin/zenos-energie status > "$E2E/zen.txt" 2>&1 || true
+  if grep -q "Update läuft" "$E2E/zen.txt"; then fehler "zenos-energie: nach der Installation noch «Update läuft»"; fi
+  ok "danach nicht mehr «Update läuft» ($(head -n 1 "$E2E/zen.txt"))"
+  rm -f /home/$TESTER/.config/zenos/einstellungen.json
+
+  schritt "automatik: «bei Sperre» mit Sitzung auf seat0 und der echten Sperre der Oberfläche"
+  zeitpunkt sperre
+  vorher=$(kopf)
+  ga rm -q scripts/module/99-e2e-langsam.sh
+  neu=$(neuer_commit "e2e: automatik sperre" e2e/automatik "3")
+  signieren "$v-rc3"
+  loginctl enable-linger "$TESTER"
+  systemctl stop e2e-sitzung.service 2>/dev/null || true
+  systemd-run --quiet --unit=e2e-sitzung -p PAMName=login -p User="$TESTER" -p Environment=XDG_SEAT=seat0 \
+    -p Environment=XDG_VTNR=7 -p Environment=XDG_SESSION_CLASS=user -p Environment=XDG_SESSION_TYPE=wayland \
+    /usr/bin/sleep infinity
+  for i in $(seq 1 20); do
+    loginctl list-sessions --json=short | jq -e '.[] | select(.seat == "seat0" and .class == "user")' > /dev/null && break
+    sleep 1
+  done
+  (( i < 20 )) || fehler "keine Sitzung auf seat0"
+  ok "Sitzung von $TESTER auf seat0 (gestellt über PAM)"
+  automatik
+  erwarte_kopf "$vorher" "angemeldet, nicht gesperrt: nichts"
+  erwarte_lauf wartet "$TESTER ist angemeldet, nicht gesperrt" "Automatik mit offener Sitzung"
+  als_tester bash /home/$TESTER/zenOS/test/container/oberflaeche.sh start --sitzung > "$E2E/oberflaeche.txt" 2>&1 ||
+    { tail -n 20 "$E2E/oberflaeche.txt" >&2; fehler "Oberfläche startet nicht"; }
+  als_tester /opt/zenos/scripts/zen lock > "$E2E/zen.txt" 2>&1 || true
+  for i in $(seq 1 30); do
+    [[ "$(als_tester /opt/zenos/scripts/bin/zenos-ipc sperre status 2>/dev/null | tail -n 1)" == gesperrt ]] && break
+    sleep 1
+  done
+  (( i < 30 )) || fehler "die Oberfläche sperrt nicht"
+  marker=/run/user/$TESTER_UID/zenos/gesperrt
+  [[ -f "$marker" ]] || fehler "Marker $marker fehlt"
+  ok "gesperrt (zenos-ipc sperre status), Marker da"
+  automatik
+  erwarte_kopf "$vorher" "eben gesperrt: noch nicht"
+  erwarte_lauf wartet "erst seit Kurzem gesperrt" "Automatik direkt nach der Sperre"
+  touch -d '-10 min' "$marker"
+  automatik
+  erwarte_kopf "$neu" "seit 10 Min. gesperrt: installiert"
+  erwarte_lauf installiert "" "Automatik während der Sperre"
+  enthaelt "(gesperrt)" cat "$E2E/zen.txt" || fehler "Grund «gesperrt» fehlt im Journal"
+  ok "die Unit fragte die Oberfläche als $TESTER (setpriv, zenos-ipc) in ihrer Sandbox"
+  als_tester bash /home/$TESTER/zenOS/test/container/oberflaeche.sh stopp > /dev/null 2>&1 || true
+  rm -f "$marker"
+  systemctl stop e2e-sitzung.service
+
+  schritt "automatik: zen rollback stellt die verlassene Version zurück"
+  gut=$(g -C "$REMOTE" rev-parse "$v-rc2^{commit}")
+  zen_als_tester "" zen rollback "$v-rc2" || fehler "zen rollback $v-rc2"
+  erwarte_kopf "$gut" "auf $v-rc2"
+  [[ "$(json "$STAND/zurueckgestellt.json" .zurueckgestellt)" == "$v-rc3" ]] || fehler "zurueckgestellt.json"
+  ok "$v-rc3 zurückgestellt"
+  zeitpunkt jederzeit
+  automatik
+  erwarte_kopf "$gut" "die Automatik bringt $v-rc3 nicht wieder"
+  [[ "$(json "$STAND/stand.json" .grund)" == *"zurückgestellt"* ]] || fehler "stand.json nennt die Rückstellung nicht"
+  ok "stand.json: zurückgestellt"
+  zen_als_tester "" zen update || fehler "zen update von Hand"
+  erwarte_kopf "$neu" "zen update von Hand: wieder $v-rc3"
+  [[ ! -e "$STAND/zurueckgestellt.json" ]] || fehler "Rückstellung bleibt nach zen update"
+  ok "zen update hebt die Rückstellung auf"
+
+  schritt "automatik: Bestätigung nach dem Neustart vorbereiten"
+  gut=$neu
+  neu=$(neuer_commit "e2e: automatik bestaetigen" e2e/automatik "4")
+  signieren "$v-rc4"
+  automatik
+  erwarte_kopf "$neu" "automatisch installiert"
+  [[ "$(json "$STAND/unbestaetigt.json" .commit)" == "$neu" && "$(json "$STAND/gut.json" .commit)" == "$gut" ]] ||
+    fehler "unbestaetigt.json bzw. gut.json"
+  # greetd zum Schein (im Container gibt es kein VT) und ein Login-Bildschirm: ein Prozess «quickshell» als _greetd
+  install -d /etc/systemd/system/greetd.service.d "$E2E/greeter"
+  printf '# Nur im Ende-zu-Ende-Test\n[Service]\nExecStart=\nExecStart=/usr/bin/sleep infinity\n' \
+    > /etc/systemd/system/greetd.service.d/e2e.conf
+  # Ein Skript namens quickshell: Der Kern nennt den Prozess danach (comm); sleep selbst ist ein Multicall-Programm
+  printf '#!/bin/sh\n# e2e: Login-Bildschirm zum Schein (comm «quickshell»)\nwhile :; do sleep 3600; done\n' \
+    > "$E2E/greeter/quickshell"
+  chmod 0755 "$E2E/greeter/quickshell"
+  printf '[Unit]\nDescription=e2e: Login-Bildschirm zum Schein\nWants=greetd.service\nAfter=greetd.service\n[Service]\nUser=_greetd\nExecStart=%s infinity\n[Install]\nWantedBy=multi-user.target\n' \
+    "$E2E/greeter/quickshell" > /etc/systemd/system/e2e-greeter.service
+  systemctl daemon-reload
+  systemctl enable --quiet e2e-greeter.service
+  automatik zenos-kanal-bestaetigen.service
+  erwarte_text "kein Neustart" "im selben Start keine Bestätigung"
+  [[ -f "$STAND/unbestaetigt.json" ]] || fehler "unbestaetigt.json"
+  printf '%s %s\n' "$gut" "$neu" > "$E2E/automatik-bestaetigen"
+  ok "jetzt den Container neu starten (docker restart), dann: einrichten, nach-automatik"
+}
+
+s_nach_automatik() {
+  schritt "nach-automatik: Login kommt → bestätigt"
+  local gut neu alt pid i v
+  v=$(cat "$E2E/automatik-version")
+  read -r gut neu < "$E2E/automatik-bestaetigen"
+  systemctl --quiet is-active greetd.service || fehler "greetd (zum Schein) läuft nicht"
+  for i in $(seq 1 60); do
+    pid=$(systemctl show -p MainPID --value e2e-greeter.service)
+    [[ "$pid" =~ ^[1-9][0-9]*$ ]] && (( $(ps -o etimes= -p "$pid") >= 25 )) && break
+    sleep 1
+  done
+  (( i < 60 )) || fehler "Login-Bildschirm zum Schein läuft nicht"
+  automatik zenos-kanal-bestaetigen.service
+  journalctl -b -u zenos-kanal-bestaetigen.service --no-pager -o cat > "$E2E/zen.txt"
+  erwarte_text "Bestätigt: $v-rc4" "bestätigt (der Login-Bildschirm läuft)"
+  [[ "$(json "$STAND/gut.json" .commit)" == "$neu" && "$(json "$STAND/gut.json" .bestaetigt)" != null ]] ||
+    fehler "gut.json nach der Bestätigung"
+  [[ ! -e "$STAND/unbestaetigt.json" ]] || fehler "unbestaetigt.json bleibt"
+  ok "gut.json: $v-rc4, bestätigt"
+
+  schritt "nach-automatik: ohne Login vorbereiten"
+  alt=$neu
+  neu=$(neuer_commit "e2e: automatik ohne Login" e2e/automatik "5")
+  signieren "$v-rc5"
+  automatik
+  erwarte_kopf "$neu" "automatisch installiert"
+  systemctl disable --now --quiet e2e-greeter.service
+  systemctl stop greetd.service
+  printf '%s %s\n' "$alt" "$neu" > "$E2E/automatik-zurueck"
+  ok "kein Login mehr; jetzt den Container neu starten, dann: einrichten, nach-automatik-2"
+}
+
+s_nach_automatik_2() {
+  schritt "nach-automatik-2: erster Start ohne Login (wartet bis zu 3 Min.)"
+  local alt neu v
+  v=$(cat "$E2E/automatik-version")
+  read -r alt neu < "$E2E/automatik-zurueck"
+  automatik zenos-kanal-bestaetigen.service
+  journalctl -b -u zenos-kanal-bestaetigen.service --no-pager -o cat > "$E2E/zen.txt"
+  erwarte_text "Nach dem Neustart kein Login (greetd läuft nicht" "erster Start ohne Login gezählt"
+  [[ "$(json "$STAND/unbestaetigt.json" '.fehlstarts | length')" == 1 ]] || fehler "fehlstarts"
+  [[ "$(systemctl is-failed zenos-kanal-bestaetigen.service)" != failed ]] || fehler "Unit «failed» bei Exit 10"
+  erwarte_kopf "$neu" "noch auf $v-rc5"
+  ok "jetzt den Container neu starten, dann: einrichten, nach-automatik-3"
+}
+
+s_nach_automatik_3() {
+  schritt "nach-automatik-3: zweiter Start ohne Login → zurück auf den guten Stand"
+  local alt neu v
+  v=$(cat "$E2E/automatik-version")
+  read -r alt neu < "$E2E/automatik-zurueck"
+  automatik zenos-kanal-bestaetigen.service
+  journalctl -b -u zenos-kanal-bestaetigen.service --no-pager -o cat > "$E2E/zen.txt"
+  erwarte_text "kam bei 2 Starts kein Login" "zweiter Start ohne Login"
+  erwarte_kopf "$alt" "zurück auf $v-rc4"
+  [[ "$(json "$STAND/letzte.json" .ergebnis)" == zurueck ]] || fehler "letzte.json"
+  [[ "$(json "$STAND/gesperrt/$v-rc5" .grund)" == *"kein Login"* ]] || fehler "$v-rc5 nicht gesperrt"
+  [[ ! -e "$STAND/unbestaetigt.json" && "$(json "$STAND/gut.json" .commit)" == "$alt" ]] || fehler "gut.json"
+  ok "$v-rc5 gesperrt, letzte.json «zurueck», gut.json $v-rc4"
+  systemctl --quiet is-active greetd.service || fehler "greetd wurde nicht neu gestartet"
+  ok "greetd neu gestartet (niemand angemeldet)"
+  automatik
+  erwarte_kopf "$alt" "die gesperrte Version kommt nicht wieder"
+  # Aufräumen: greetd wieder echt, kein Login zum Schein, Zeitpunkt Standard, Notschalter wie nach einrichten
+  rm -f /etc/systemd/system/greetd.service.d/e2e.conf /etc/systemd/system/e2e-greeter.service
+  systemctl daemon-reload
+  systemctl stop greetd.service 2>/dev/null || true
+  rm -f /etc/xdg/zenos/kanal-zeitpunkt
+  /usr/bin/python3 -I "$PROGRAMM" automatik aus > /dev/null
+  ok "aufgeräumt"
+}
+
 case "${1:-}" in
   einrichten) s_einrichten ;;
   migration) s_migration ;;
@@ -813,5 +1192,9 @@ case "${1:-}" in
   gitsperre) s_gitsperre ;;
   probelauf) s_probelauf ;;
   bedienung) s_bedienung ;;
-  *) sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  automatik) s_automatik ;;
+  nach-automatik) s_nach_automatik ;;
+  nach-automatik-2) s_nach_automatik_2 ;;
+  nach-automatik-3) s_nach_automatik_3 ;;
+  *) sed -n '2,60p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
