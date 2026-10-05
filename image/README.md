@@ -6,13 +6,18 @@ Ubuntu 26.04 LTS Server-Image für den Raspberry Pi. Zielbild: `docs/image-und-r
 
 | Datei | Zweck |
 |---|---|
-| `image/bauen.sh` | baut das Image (lokal und in GitHub Actions, als root auf arm64-Linux) |
+| `image/bauen.sh` | baut das Image (lokal und in GitHub Actions, als root auf arm64-Linux), nur aus einem gültig signierten Tag |
+| `image/tag-pruefen.sh` | prüft, ob ein Release-Tag gültig signiert ist (vor dem Bau, in `bauen.sh` und `image.yml`) |
 | `image/erststart/` | erster Start ohne Imager: `user-data`, `90-zenos-benutzer.cfg`, README der Startpartition |
 | `image/quellen.sh` | holt den Quellcode aller Pakete einer Paketliste und packt ihn in Teile unter 2 GiB |
 | `.github/workflows/image.yml` | baut bei jedem Tag `v*`, veröffentlicht Releases |
 
 ## Ablauf von `bauen.sh`
 
+0. **Tag und Signatur.** Gebaut wird nur ein Release-Tag `vX.Y.Z` oder `vX.Y.Z-rcN` (`--ref`), und nur, wenn
+   `image/tag-pruefen.sh` ihn gültig signiert findet (siehe «Signatur des Tags»). Der Kanal folgt dem Tag: `vX.Y.Z` →
+   `stabil`, `vX.Y.Z-rcN` → `vorschau`; die Version ist der Tag ohne «v». Passen `--kanal` oder `--version` nicht dazu,
+   bricht der Bau ab. Das alles läuft vor allem anderen, ohne root und ohne Download; `--nur-pruefen` hört danach auf.
 1. **Grundlage holen.** `SHA256SUMS` und `SHA256SUMS.gpg` von
    `https://cdimage.ubuntu.com/releases/26.04/release/`. Die Signatur prüft `gpgv` gegen den im Skript
    hinterlegten «Ubuntu CD Image Automatic Signing Key (2012)», Fingerabdruck
@@ -27,16 +32,27 @@ Ubuntu 26.04 LTS Server-Image für den Raspberry Pi. Zielbild: `docs/image-und-r
    läuft. `/var/tmp` kommt aus dem Arbeitsordner, damit der Quickshell-Bau (etwa 3,5 GB) keinen Platz im
    Image belegt. Namensauflösung über `/run/systemd/resolve/` im tmpfs (die Datei `/etc/resolv.conf` im
    Image bleibt unberührt), eine eigene `policy-rc.d` verhindert Dienststarts.
-4. **`/opt/zenos`.** `git clone --no-local` der Quelle, losgelöst auf dem gewünschten Stand (in CI der Tag),
+4. **`/opt/zenos`.** `git clone --no-local` der Quelle, losgelöst auf dem Tag,
    ohne Zweige, mit allen Tags, `origin` auf GitHub (https), leere Reflogs, Besitz root. Der Pfad der Quelle
    landet nicht im Image. Ins Image kommt nur der Commit, nicht der Arbeitsstand.
-5. **chroot.** `ZENOS_KANAL=dev /opt/zenos/scripts/install.sh --image` mit leerer Umgebung (`env -i`), damit
+5. **chroot.** `ZENOS_KANAL=<kanal> /opt/zenos/scripts/install.sh --image` mit leerer Umgebung (`env -i`), damit
    nichts aus der CI ins Image gelangt. Das Install-Log liegt danach als `<arbeit>/install.log` daneben.
    Danach «Kennung und Sicherheitsquelle prüfen» im chroot: Umlenkung von `/usr/lib/os-release`, `ID=zenos`,
    `lsb_release -cs` gleich dem Codenamen aus `os-release.ubuntu`, `51zenos-ubuntu-quellen`,
    `zenos-sicherheitsquelle` mit Exit 0, `zenos-kennung pruefen` und kein Ubuntu in `PRETTY_NAME`. Fehlt eines,
    bricht der Bau ab (kein Image ohne nachgewiesene Ubuntu-Sicherheitsupdates). Weicht `ZENOS_VERSION` von der
    Version im Dateinamen ab (`--version`), gibt es eine Warnung. Mit `--nur-mechanik` entfällt der Schritt.
+   Dann «Kanal, Vertrauensanker und Zustand ab Werk» (nicht mit `--nur-mechanik`):
+   - `/etc/xdg/zenos/kanal` muss der Kanal des Tags sein.
+   - Den Anker `/etc/zenos/vertrauen` füllt `12-vertrauen` nur im Image aus `system/vertrauen` des Stands (auf einem
+     Gerät nie von selbst). Er muss Datei für Datei genau diesen Inhalt haben und für `zenos-kanal anker --pruefen`
+     vollständig sein.
+   - `zenos-kanal image <tag>` prüft den Tag im chroot ein drittes Mal, wie ein Gerät (git und ssh-keygen des Images,
+     Anker des Images, `/opt/zenos` sauber auf dem Commit des Tags), und legt den Zustand ab Werk in
+     `/var/lib/zenos/kanal` an: `gut.json` (der Tag als guter Stand, auch für den Rückweg), `hoechste` (seine Version,
+     darunter installiert der Kanal nie) und `gesehen.json` (der Tag als gültig gesehen: Zeigt er auf origin später
+     gültig signiert auf einen anderen Commit, ist das schon beim ersten Kontakt ALARM). `zen kanal status` und
+     `zen version` zeigen ab dem ersten Start «<tag>, installiert am …».
    Dann «Erster Start und Paketliste» (ebenfalls nicht mit `--nur-mechanik`):
    - `user-data` und `README` aus `image/erststart/` auf die Startpartition, `90-zenos-benutzer.cfg` nach
      `/etc/cloud/cloud.cfg.d/`: Benutzer `user` mit Passwort `user` (abgelaufen), sudo nur mit Passwort,
@@ -63,8 +79,38 @@ die Reste weg.
 
 ## Kanal
 
-Das Image bekommt `/etc/xdg/zenos/kanal` mit `dev`, wie der Pi. `zen update` holt damit `origin/dev`. Das
-bleibt so, bis `main` Releases trägt (Entscheidung beim Bau von 0.1). Danach: `--kanal main` im Workflow.
+Das Image folgt dem Kanal seines Tags (Entscheid Zeno): `vX.Y.Z` → `stabil`, `vX.Y.Z-rcN` → `vorschau`. `dev` gibt es
+im Image nicht, ausser in einem Testbau; auf `dev` kommt nie etwas automatisch. Ab dem ersten Start holt und prüft
+`zenos-kanal.timer` und installiert neuere, gültig signierte Tags des Kanals zum Zeitpunkt aus Einstellungen › System ›
+Updates (`docs/image-und-releases.md`, «Automatik»).
+
+## Signatur des Tags
+
+`image/tag-pruefen.sh [--quelle REPO] [--commit SHA] vX.Y.Z[-rcN]` prüft wie ein Gerät (`scripts/bin/zenos-kanal`):
+
+- Name `vX.Y.Z` oder `vX.Y.Z-rcN`, ohne führende Nullen. Andere Tags (etwa `v0.2.0-beta1`) gehören zu keinem Kanal.
+- Annotierter Tag, Kopf genau `object`, `type`, `tag`, `tagger`, Feld `tag` gleich dem Namen, `type commit`, mit
+  `--commit` genau auf diesen Commit. Genau eine SSH-Signatur am Ende, kein OpenPGP, kein X.509.
+- Der Anker `system/vertrauen` **im Commit des Tags** (nicht im Arbeitsbaum) ist vollständig und streng im Format.
+- `git verify-tag` nimmt den Tag gegen `release` und `widerrufen` dieses Ankers für den Prinzipal `zenos-release` an.
+  git läuft dabei gehärtet: leere Umgebung, keine System- und Benutzer-config, keine Ersatzobjekte, Hooks und
+  fsmonitor aus, `gpg.ssh.program=/usr/bin/ssh-keygen`, OpenPGP und X.509 aus; was die config des Repos zu Signaturen
+  sagt, überschreibt die Befehlszeile. Unabhängig davon nimmt `ssh-keygen -Y verify` die Signatur über die Nutzlast an
+  (Namespace `git`, mit den Widerrufen), und beide nennen denselben Schlüssel.
+- Ab Serie 2 gibt es `vertrauen/NNNN`, mit der Wurzel desselben Ankers gültig signiert, auf einem Commit mit genau
+  diesem Anker. So bekommt ein Image nie einen Anker, den ein Gerät nicht auch über das Netz übernommen hätte.
+
+Ausgabe bei Exit 0 auf stdout: `tag`, `version`, `kanal`, `release`, `commit`, `objekt`, `schluessel`, `serie`,
+`wurzel` (je `schluessel=wert`, für `$GITHUB_OUTPUT`). Exit 1 heisst ungültig (Grund auf stderr), 2 falscher Aufruf.
+
+Geprüft in `test/einheiten/image-signatur.test.py` mit Wegwerf-Schlüsseln: gültig (rc und final), anderer Commit,
+unsigniert, leichter Tag, fremder Schlüssel, Wurzel statt Release, widerrufen, falscher Name im Objekt, zwei
+Signaturen, keine Release-Version, Anker leer, unvollständig, mit Option oder nur im Arbeitsbaum, fremde config mit
+eigenem Prüfprogramm, Schlüsselliste, Hooks und fsmonitor, Serie 2 mit und ohne `vertrauen/0002` (auch mit dem
+Release-Schlüssel signiert oder auf einem anderen Anker), der echte Anker im Format; dazu `bauen.sh --nur-pruefen`
+(unter Linux): Kanal und Version aus dem Tag, Abbruch ohne Tag, unsigniert, fremd signiert, mit anderem Kanal oder
+anderer Version, Testbau und Testbau in GitHub Actions. `zenos-kanal image` in `test/einheiten/kanal.test.py`
+(Klasse `Image`).
 
 ## Lokal ausführen
 
@@ -72,22 +118,28 @@ Voraussetzungen: arm64-Linux (Pi 5 mit Ubuntu, arm64-VM oder privilegierter Cont
 frei und diese Werkzeuge:
 
 ```
-sudo apt-get install curl gpgv xz-utils e2fsprogs fdisk util-linux mount git zerofree
+sudo apt-get install curl gpgv xz-utils e2fsprogs fdisk util-linux mount git openssh-client zerofree
 ```
 
 ```
-sudo image/bauen.sh                                    # HEAD, Version aus git describe
-sudo image/bauen.sh --ref v0.1.0 --cache /var/tmp/zenos-cache
+image/bauen.sh --nur-pruefen --ref v0.2.0              # nur Tag, Signatur, Kanal, Version (ohne root)
+sudo image/bauen.sh --ref v0.2.0 --cache /var/tmp/zenos-cache
+sudo image/bauen.sh --testbau-ohne-signatur            # Testbau von HEAD, Kanal dev, Version …-testbau
 sudo image/bauen.sh --nur-mechanik --xz-stufe 1        # Schnelltest ohne install.sh
 ```
 
+Ein Testbau (`--testbau-ohne-signatur`) baut auch einen Zweig, einen Commit oder einen unsignierten Tag und erlaubt
+einen anderen Kanal. Er warnt deutlich, die Version endet auf `-testbau`, und ohne gültige Signatur (oder mit anderem
+Kanal als dem des Tags) bekommt das Image keinen Zustand ab Werk. In GitHub Actions verweigert `bauen.sh` die Option;
+ein Release kommt nie aus einem Testbau.
+
 | Option | Standard | Bedeutung |
 |---|---|---|
-| `--ref REF` | `HEAD` | Stand für `/opt/zenos` (Tag, Zweig, Commit) |
-| `--version V` | `git describe`, ohne «v» | Version im Dateinamen |
+| `--ref REF` | `HEAD` (nur im Testbau) | Release-Tag `vX.Y.Z` oder `vX.Y.Z-rcN`, gültig signiert; im Testbau auch Zweig oder Commit |
+| `--version V` | der Tag ohne «v» | Version im Dateinamen; muss zum Tag passen (im Testbau ohne Tag: `git describe`) |
 | `--quelle ORDNER` | dieses Repo | Git-Repo mit zenOS |
 | `--origin URL` | origin der Quelle | origin in `/opt/zenos`, nur https ohne Zugangsdaten |
-| `--kanal K` | `dev` | Kanal für `zen update` |
+| `--kanal K` | aus dem Tag | `stabil` (`vX.Y.Z`) oder `vorschau` (`-rcN`); ein anderer, auch `dev`, nur im Testbau |
 | `--ubuntu V` | `26.04` | Ubuntu-Version auf cdimage.ubuntu.com |
 | `--arbeit ORDNER` | `/var/tmp/zenos-image` | Arbeitsordner |
 | `--ausgabe ORDNER` | `<arbeit>/ausgabe` | Ziel für `.img.xz`, Paketliste und `SHA256SUMS` |
@@ -95,13 +147,15 @@ sudo image/bauen.sh --nur-mechanik --xz-stufe 1        # Schnelltest ohne instal
 | `--zusatz-mib N` | `6144` | Vergrösserung vor dem chroot |
 | `--reserve-mib N` | `256` | Luft nach dem Verkleinern |
 | `--xz-stufe N` | `9` | Kompression |
-| `--nur-mechanik` | – | Test: im chroot nur Prüfbefehle (Architektur, `apt-get update`, `install.sh --hilfe`, `/var/tmp`, git) statt `install.sh`; Version bekommt `-mechanik` |
+| `--testbau-ohne-signatur` | – | lokaler Testbau ohne gültig signierten Tag; Version bekommt `-testbau`, kein Zustand ab Werk ohne Signatur; nie in GitHub Actions |
+| `--nur-mechanik` | – | Test: im chroot nur Prüfbefehle (Architektur, `apt-get update`, `install.sh --hilfe`, `/var/tmp`, git) statt `install.sh`; Version bekommt `-mechanik`; ohne Pflicht zur Signatur |
+| `--nur-pruefen` | – | nur Tag, Signatur, Kanal und Version prüfen und zeigen, dann Ende (ohne root, baut nichts) |
 
 Auf dem Mac in einem privilegierten Container (grosse Dateien bleiben im Container):
 
 ```
 docker run -d --name zenos-image --privileged -v "$PWD":/repo:ro ubuntu:24.04 sleep infinity
-docker exec zenos-image bash -c 'apt-get update && apt-get install -y curl ca-certificates gpgv xz-utils e2fsprogs fdisk util-linux mount git'
+docker exec zenos-image bash -c 'apt-get update && apt-get install -y curl ca-certificates gpgv xz-utils e2fsprogs fdisk util-linux mount git openssh-client'
 docker exec zenos-image /repo/image/bauen.sh --nur-mechanik --xz-stufe 1 --arbeit /srv/image
 docker rm -f zenos-image
 ```
@@ -111,8 +165,17 @@ docker rm -f zenos-image
 `.github/workflows/image.yml` läuft nur bei `push` von Tags `v*`. Alle Actions sind per Commit-SHA gepinnt,
 die Rechte sind minimal (`contents: read` beim Bau, `contents: write` nur im Release-Job).
 
-- **Image bauen** (`ubuntu-24.04-arm`, nativ arm64, für öffentliche Repos kostenlos, Timeout 180 min): Form des
-  Tags prüfen, auschecken (ganze Geschichte, ohne gespeicherte Zugangsdaten), `bauen.sh --ref refs/tags/<tag>`,
+- **Tag und Signatur** (`ubuntu-24.04`, 10 min): auschecken mit ganzer Geschichte (so kommen alle Tags als
+  Tag-Objekte, auch `vertrauen/NNNN` samt Commit; geprüft im Quelltext von `actions/checkout` v7.0.1), dann
+  `image/tag-pruefen.sh --commit <github.sha> <tag>` («verify-tag gegen system/vertrauen»). Scheitert er, läuft kein
+  anderer Job ausser der Prüfung. Seine Ausgabe (Version, Kanal, Release ja/nein, Fingerabdruck, Serie) nutzen alle
+  folgenden Jobs.
+- **Prüfung** (`uses: ./.github/workflows/pruefen.yml`, derselbe Stand): `scripts/pruefen.sh` wie bei jedem Push.
+  `pruefen.yml` läuft für den Tag ausserdem selbst (Auslöser `tags: v*`); die beiden Läufe brechen sich nicht ab
+  (eigene concurrency-Gruppe je Workflow).
+- **Image bauen** (`ubuntu-24.04-arm`, nativ arm64, für öffentliche Repos kostenlos, Timeout 180 min, braucht «Tag
+  und Signatur»): auschecken (ganze Geschichte, ohne gespeicherte Zugangsdaten),
+  `bauen.sh --ref refs/tags/<tag> --version <v> --kanal <kanal>` (prüft die Signatur noch einmal),
   `SHA256SUMS` (Image und Paketliste) und Grösse unter 2 GiB prüfen, Zusammenfassung im Lauf. Danach die
   Herkunftsbestätigung (`actions/attest-build-provenance` über `SHA256SUMS`; dafür hat nur dieser Job
   `id-token: write` und `attestations: write`), das Manifest für den Raspberry Pi Imager (mit `jq` aus
@@ -131,12 +194,14 @@ die Rechte sind minimal (`contents: read` beim Bau, `contents: write` nur im Rel
   (`env_reset`), ohne diese eine Variable stünden Warnungen und Fehler von `bauen.sh` nur im Log und nicht als
   `::warning::`/`::error::` im Lauf. Weitere Variablen reicht der Workflow nicht durch, der chroot bekommt
   ohnehin eine leere Umgebung.
-- **Tags mit `-rc`** (z. B. `v0.1.0-rc1`): nur das Artefakt, kein Release.
-- **Andere Tags**: Job «Release» (`ubuntu-24.04`, braucht «Image bauen» und «Quellcode») prüft beide Artefakte
-  erneut und erstellt mit `gh release create --verify-tag` das Release mit Image, Paketliste, `SHA256SUMS`,
-  Manifest, allen Quellen-Teilen, dem Quickshell-Archiv, `QUELLEN.txt` und `SHA256SUMS-quellen`. Tags mit
-  Bindestrich (z. B. `v0.2.0-beta1`) werden als Vorabversion markiert. Gibt es das Release schon (Workflow neu
-  gestartet), werden die Dateien ersetzt.
+- **Tags mit `-rc`** (z. B. `v0.1.0-rc4`, Kanal `vorschau`): nur das Artefakt, kein Release.
+- **`vX.Y.Z`** (Kanal `stabil`): Job «Release» (`ubuntu-24.04`, braucht «Tag und Signatur», «Prüfung», «Image bauen»
+  und «Quellcode», läuft also nur, wenn alle grün sind) prüft beide Artefakte erneut und erstellt mit
+  `gh release create --verify-tag` das Release mit Image, Paketliste, `SHA256SUMS`, Manifest, allen Quellen-Teilen,
+  dem Quickshell-Archiv, `QUELLEN.txt` und `SHA256SUMS-quellen`. Die Versionshinweise nennen Kanal und Fingerabdruck
+  des Release-Schlüssels. Gibt es das Release schon (Workflow neu gestartet), werden die Dateien ersetzt; mit
+  Immutable Releases (ANLEITUNG G) geht das nur, solange es noch ein Entwurf ist.
+- Andere Tags `v*` (etwa `v0.2.0-beta1`) scheitern schon bei «Tag und Signatur».
 
 Die Grundlage (Ubuntu-Datei und SHA-256) steht in den Versionshinweisen und in `<arbeit>/basis.txt`.
 
@@ -149,8 +214,13 @@ Die Grundlage (Ubuntu-Datei und SHA-256) steht in den Versionshinweisen und in `
   ergibt etwa 1,5 GB. Was zenOS dazu bringt, zeigt `bauen.sh` unter «Grösste Ordner».
 - **Kein `apt upgrade` beim Bau.** flash-kernel läuft im chroot nicht, ein neuer Kernel käme nicht nach
   `/boot/firmware`. Sicherheitsupdates holt unattended-upgrades nach dem ersten Start.
-- **Signatur:** Image und Paketliste haben eine Herkunftsbestätigung von GitHub (Sigstore, ohne eigenen Schlüssel),
-  geprüft mit `gh attestation verify`. Einen eigenen Signaturschlüssel gibt es nicht.
+- **Signatur:** Der Tag ist mit dem Release-Schlüssel signiert, und nur ein solcher Tag wird gebaut. Image und
+  Paketliste haben eine Herkunftsbestätigung von GitHub (Sigstore, ohne eigenen Schlüssel), geprüft mit
+  `gh attestation verify`. Eine eigene Signatur der Image-Dateien (`SHA256SUMS.sig`) gibt es noch nicht.
+- **Vertrauen in die CI:** Den Workflow und `bauen.sh` liest GitHub aus dem Stand des Tags. Wer auf GitHub einen
+  Tag mit eigenem Workflow schieben kann, kann auch die Prüfung darin ändern. Davor schützen die Regeln auf GitHub
+  (ANLEITUNG G: Tags `v*` und `vertrauen/*` nur für Admins verschiebbar und löschbar, kein Force-Push) und vor allem
+  die Geräte: Sie prüfen jeden Tag selbst gegen ihren eigenen Anker.
 - **Marke:** Das Image heisst zenOS und «basiert auf Ubuntu» (geprüft am 04.10.2026, `docs/image-und-releases.md`,
   «Name und Marke»).
 - **Quellen:** etwa 3 GB je Release, so lange online wie das Image (GPL). Sie hängen an der Paketliste aus genau

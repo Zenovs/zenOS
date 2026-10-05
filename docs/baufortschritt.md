@@ -112,7 +112,7 @@ Abnahme in einer echten VM (lima/Apple Virtualization, Ubuntu 26.04 arm64, virti
   im Sinn der Leitplanke, berührt aber die Sperre (sicherheitskritisch); eigener Schritt nach Zenos Entscheid.
 - **GitHub-Avatar und Vorschaubild** von Hand hochladen: `assets/zeichen/png/github-avatar-500.png` und
   `github-social-preview-1280x640.png` (`docs/bildmarke.md`, Abschnitt «GitHub»).
-- **`main`** auf `v0.1.0` vorspulen, damit `git clone` ohne `git switch dev` funktioniert (ANLEITUNG G7–G10); danach
+- **`main`** auf `v0.1.0` vorspulen, damit `git clone` ohne `git switch dev` funktioniert (ANLEITUNG G11–G14); danach
   entscheiden, ob Image und neue Installationen `main` folgen.
 - **fish als Login-Shell** (`chsh -s /usr/bin/fish`), damit auch SSH-Sitzungen Eingabezeile, `?` und die Warnung haben.
 - **Nubix** hat bis v4.4.4 keinen arm64-Build; ein arm64-`.deb` in der Release reicht, `zen apps` bietet es dann an.

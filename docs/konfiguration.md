@@ -23,7 +23,7 @@ Eine Datei unter `modi/`, `zustaende/` oder `raster/` mit ungültigem Inhalt feh
 | `/etc/xdg/zenos/kanal` | Kanal für `zen update`: `stabil`, `vorschau` oder `dev` | Installer beim ersten Mal |
 | `/etc/xdg/zenos/kanal-zeitpunkt` | wann geprüfte Updates automatisch kommen: `sperre` (Standard, auch ohne Datei), `fenster` mit `von`/`bis`, `jederzeit`, `hand`; gilt für das ganze Gerät | Einstellungen → System → Updates (pkexec, ohne Passwort) oder `sudo zen kanal zeitpunkt`, nie von Hand |
 | `/etc/xdg/zenos/kanal-automatik-aus` | Notschalter: Gibt es die Datei, holt und installiert die Automatik nichts (Timer aus, auch nach `install.sh`) | `sudo zen kanal automatik aus`, entfernt mit `sudo zen kanal automatik an` |
-| `/etc/zenos/vertrauen/` | Vertrauensanker: öffentliche Prüfschlüssel für signierte Releases | Installer, nur wenn er fehlt oder leer ist; danach `zenos-kanal` (Tag `vertrauen/NNNN`) oder `sudo zen kanal anker ORDNER` |
+| `/etc/zenos/vertrauen/` | Vertrauensanker: öffentliche Prüfschlüssel für signierte Releases | Image-Bau aus `system/vertrauen` des Tags (nur dort von selbst); sonst `zenos-kanal` (Tag `vertrauen/NNNN`) oder `sudo zen kanal anker ORDNER` |
 | `/etc/xdg/zenos/argon.json` | Lüfterkurve (optional) | von Hand mit sudo |
 | `/etc/xdg/zenos/argon-akkuprofil` | Freigabe: zenos-argon darf Argons Akkuprofil in den Messchip schreiben (Argon ONE UP) | `zen akku freigeben`, entfernt mit `zen akku sperren` |
 | `/etc/xdg/labwc-mimeapps.list` | Standard-Apps der zenOS-Sitzung (Ordner: Thunar) | Installer |
@@ -268,7 +268,7 @@ Damit Browser und Apps dort speichern, zeigen die XDG-Benutzerordner in `~/.conf
 
 - **`/etc/xdg/zenos/kanal`:** `stabil` (nur signierte `vX.Y.Z`), `vorschau` (dazu `vX.Y.Z-rcN`) oder `dev` (Branch
   dev, nur von Hand). Der Installer legt die Datei beim ersten Mal an (aus dem Branch der Quelle: `main` → `stabil`,
-  sonst `dev`; im Image `dev`) und ändert sie danach nicht mehr, ausser ein alter Wert `main` wird zu `stabil`. Eine
+  sonst `dev`; im Image der Kanal des Tags: `vX.Y.Z` → `stabil`, `vX.Y.Z-rcN` → `vorschau`) und ändert sie danach nicht mehr, ausser ein alter Wert `main` wird zu `stabil`. Eine
   fehlende Datei gilt als `dev`, ein unbekannter Wert blockiert den Kanal (`zen update` installiert nichts, der Notweg
   in ANLEITUNG F geht weiter).
 - **`/etc/zenos/vertrauen/`:** `release`, `wurzel`, `widerrufen`, `serie` (root, 0644, Ordner 0755). Nicht von Hand

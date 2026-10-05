@@ -7,6 +7,19 @@ an; eine Version entspricht einem Tag `v…` im Repo.
 
 ### Neu
 
+- **Images nur aus signierten Tags, mit Kanal und Anker:** `image.yml` prüft vor dem Bau im Job «Tag und Signatur»
+  mit dem neuen `image/tag-pruefen.sh`, ob der Tag ein Release-Tag `vX.Y.Z` oder `vX.Y.Z-rcN` ist und mit dem
+  Release-Schlüssel des Ankers `system/vertrauen` in seinem Stand gültig signiert (gehärtetes `git verify-tag` und
+  unabhängig `ssh-keygen -Y verify`, ab Serie 2 mit passendem `vertrauen/NNNN`); sonst wird nichts gebaut.
+  `image/bauen.sh` prüft dasselbe noch einmal, der Kanal folgt dem Tag (`vX.Y.Z` → stabil, `-rcN` → vorschau, statt
+  bisher dev), der Anker kommt aus `system/vertrauen`, und `zenos-kanal image <tag>` prüft im chroot ein drittes Mal
+  und legt den Zustand ab Werk an (`gut.json`, `hoechste`, `gesehen.json` aus dem Tag). Ein Release gibt es nur, wenn
+  `scripts/pruefen.sh` im selben Lauf grün ist (`pruefen.yml` als aufgerufener Workflow); `pruefen.yml` läuft auch für
+  jeden Tag `v*`. Lokale Testbauten ohne Signatur nur mit `--testbau-ohne-signatur` (Version `-testbau`, in GitHub
+  Actions verweigert), `bauen.sh --nur-pruefen` prüft ohne root und ohne Bau. ANLEITUNG G: GitHub-Rulesets für `v*`
+  und `vertrauen/*`, kein Force-Push auf `dev` und `main`, Immutable Releases, Release signieren mit
+  `scripts/release-signieren.sh` (`image/README.md`, «Signatur des Tags»; `docs/image-und-releases.md`, «Vom Tag zum
+  Image»).
 - **Automatische Updates über den signierten Kanal:** `zenos-kanal.timer` holt und prüft 10–20 Min. nach dem Start
   und danach alle 6 h. Installiert wird nur auf stabil und vorschau (nie auf dev), nur gültig signiert und ohne
   Änderung an Firewall, Netz oder Boot (sonst «wartet auf Zustimmung»), nach der Wartezeit (stabil 24 h ab dem ersten

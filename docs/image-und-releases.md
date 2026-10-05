@@ -7,17 +7,32 @@ Bau im Einzelnen läuft (Optionen, lokal im Container, Aufräumen), steht in `im
 
 `.github/workflows/image.yml` ruft `image/bauen.sh` auf.
 
-1. **Auslöser:** ein Tag `v*`, sonst nichts.
+1. **Auslöser:** ein Tag `v*`, sonst nichts. Gebaut wird nur ein Release-Tag `vX.Y.Z` oder `vX.Y.Z-rcN`, der mit dem
+   Release-Schlüssel gültig signiert ist:
+   - **Tag und Signatur** (eigener Job, vor allem anderen): `image/tag-pruefen.sh` prüft den Tag auf genau den Commit
+     des Laufs gegen den Anker `system/vertrauen` in diesem Commit, mit gehärtetem `git verify-tag` und unabhängig
+     davon mit `ssh-keygen -Y verify` (Regeln in `image/README.md`, «Signatur des Tags»). Ab Serie 2 muss der Tag
+     `vertrauen/NNNN` dazu passen. Scheitert das, wird nichts gebaut.
+   - **Kanal je nach Tag:** `vX.Y.Z` → `stabil`, `vX.Y.Z-rcN` → `vorschau` (Entscheid Zeno). `dev` bekommt kein Image.
+   - **Prüfung:** `scripts/pruefen.sh` läuft im selben Lauf für denselben Stand (`pruefen.yml` als aufgerufener
+     Workflow). Ein Release gibt es nur, wenn sie grün ist.
 2. **Runner:** `ubuntu-24.04-arm`. Er läuft nativ auf arm64 und ist für öffentliche Repos kostenlos.
 3. **Basis:** das offizielle Ubuntu 26.04 LTS Server-Image für den Raspberry Pi, die neueste Punktversion laut
    `SHA256SUMS` auf cdimage.ubuntu.com (derzeit `ubuntu-26.04.1-preinstalled-server-arm64+raspi.img.xz`). Die
    Signatur von `SHA256SUMS` wird mit GPG gegen den Ubuntu-Schlüssel geprüft (Fingerabdruck fest im Skript), danach
    die Prüfsumme der Datei.
-4. **Anpassen:** das Image vergrössern, als Loop-Gerät einhängen, `/opt/zenos` als Checkout des Tags anlegen und
-   per `chroot` `ZENOS_KANAL=dev /opt/zenos/scripts/install.sh --image` ausführen. Das Image enthält nur freie
+4. **Anpassen:** `bauen.sh` prüft Tag und Signatur selbst noch einmal (und bricht ab, wenn Kanal oder Version nicht
+   zum Tag passen), vergrössert das Image, hängt es als Loop-Gerät ein, legt `/opt/zenos` als Checkout des Tags an und
+   führt per `chroot` `ZENOS_KANAL=<kanal> /opt/zenos/scripts/install.sh --image` aus. Das Image enthält nur freie
    Pakete und zenOS; Quickshell wird dabei gebaut. Danach prüft `bauen.sh` im chroot die Kennung zenOS und die
    Ubuntu-Sicherheitsquelle (Umlenkung von os-release, `ID=zenos`, Codename wie Ubuntu, `51zenos-ubuntu-quellen`,
    `zenos-sicherheitsquelle` Exit 0, `zenos-kennung pruefen`, kein Ubuntu in `PRETTY_NAME`) und bricht sonst ab.
+   Dann **Kanal, Anker und Zustand ab Werk:** `/etc/xdg/zenos/kanal` ist der Kanal des Tags. Den Anker
+   `/etc/zenos/vertrauen` füllt `12-vertrauen` nur im Image, aus `system/vertrauen` des Stands (Datei für Datei
+   verglichen). `zenos-kanal image <tag>` prüft den Tag im chroot ein drittes Mal wie ein Gerät und legt in
+   `/var/lib/zenos/kanal` `gut.json` (der Tag als guter, installierter Stand), `hoechste` (seine Version) und
+   `gesehen.json` (der Tag als gültig gesehen) an. Ein neues Gerät kennt so ab dem ersten Start seinen Stand, geht nie
+   unter diese Version, und ein später verschobener Tag ist schon beim ersten Kontakt ALARM.
 5. **Erster Start und Paketliste** (Dateien aus `image/erststart/`):
    - `user-data` auf der Startpartition: Benutzer `user` mit Passwort `user` (muss bei der ersten Anmeldung geändert
      werden), Rechnername `zenos`, SSH nur mit Schlüssel (`ssh_pwauth: false` wie bei Ubuntu).
@@ -42,9 +57,10 @@ Bau im Einzelnen läuft (Optionen, lokal im Container, Aufräumen), steht in `im
    Prüfsummen), sonst von Launchpad (geprüft gegen die Prüfsummen der `.dsc`), dazu Quickshell als `git archive` am
    gebauten Commit. Fehlt eine Quelle, scheitert der Job, und es gibt kein Release.
 9. **Veröffentlichen:**
-   - Tags mit `-rc` (z. B. `v0.1.0-rc1`): nur Workflow-Artefakte (Image, Quellen), **kein Release**.
-   - Andere Tags: ein Release mit allen Dateien unter «Release-Dateien». Tags mit Bindestrich (z. B. `v0.2.0-beta1`)
-     werden als Vorabversion markiert.
+   - Tags mit `-rc` (z. B. `v0.1.0-rc4`, Kanal `vorschau`): nur Workflow-Artefakte (Image, Quellen), **kein Release**.
+   - `vX.Y.Z` (Kanal `stabil`): ein Release mit allen Dateien unter «Release-Dateien», nur wenn Signatur, Prüfung, Bau
+     und Quellen grün sind. Die Versionshinweise nennen Kanal und Fingerabdruck des Release-Schlüssels.
+   - Andere Tags `v*` (etwa `v0.2.0-beta1`) gehören zu keinem Kanal und scheitern schon bei der Signatur.
 
 ## Release-Dateien
 
@@ -66,9 +82,10 @@ Bau im Einzelnen läuft (Optionen, lokal im Container, Aufräumen), steht in `im
   dem Workflow dieses Repos zum Tag stammt (dasselbe für die Paketliste). Die Bestätigung erzeugt GitHub ohne eigenen
   Schlüssel über Sigstore; dabei landen Metadaten aus der CI (Repo, Workflow, Commit, Prüfsummen) im öffentlichen
   Transparenz-Log von Sigstore. Vom Rechner, auf dem zenOS läuft, geht dabei nichts weg.
-- Signatur des Tags: ab dem ersten signierten Release (siehe «Signierte Releases») mit
-  `git -c gpg.ssh.allowedSignersFile=system/vertrauen/release -c gpg.ssh.revocationFile=system/vertrauen/widerrufen verify-tag vX.Y.Z`.
-  Nur der Exit-Code zählt, und das Feld `tag` im Objekt (`git cat-file tag vX.Y.Z`) muss dem Namen entsprechen.
+- Signatur des Tags: im Repo `image/tag-pruefen.sh vX.Y.Z` (dieselbe Prüfung wie vor dem Bau). Von Hand geht
+  `git -c gpg.ssh.allowedSignersFile=system/vertrauen/release -c gpg.ssh.revocationFile=system/vertrauen/widerrufen verify-tag vX.Y.Z`;
+  dann zählt nur der Exit-Code, und das Feld `tag` im Objekt (`git cat-file tag vX.Y.Z`) muss dem Namen entsprechen.
+  Den Fingerabdruck des Release-Schlüssels nennen die Versionshinweise.
 
 ## Signierte Releases
 
@@ -78,7 +95,8 @@ Bau im Einzelnen läuft (Optionen, lokal im Container, Aufräumen), steht in `im
 und `zen rollback` laufen über `zenos-kanal` (siehe «Auf dem Gerät»): auf `stabil` und `vorschau` nur gültig
 signierte Tags, auf `dev` ein nicht durchgehend signierter Stand nur nach einem getippten «ja». Ein Gerät ohne Anker
 (`/etc/zenos/vertrauen`) meldet «Anker fehlt» und installiert über `stabil` und `vorschau` nichts (fail-closed).
-Automatische Updates mit einstellbarem Zeitpunkt kommen in einem zweiten Teil.
+Automatische Updates mit einstellbarem Zeitpunkt laufen über `zenos-kanal.timer` («Automatik»). Images entstehen nur
+aus gültig signierten Tags, folgen `stabil` bzw. `vorschau` und bringen den Anker mit («Vom Tag zum Image»).
 
 ### Schlüssel und Anker
 
@@ -142,6 +160,32 @@ scripts/release-signieren.sh v0.1.0-rc4
 Das Skript braucht keine eigene git-Einstellung: Es setzt `gpg.format`, `gpg.ssh.program` und `user.signingkey` nur
 für den eigenen Aufruf. Es läuft mit bash 3.2. Exit 0 heisst signiert, 1 abgebrochen (dann bleibt kein neuer Tag
 liegen), 2 falscher Aufruf.
+
+### Vom Tag zum Image
+
+Ein Release von Anfang bis Ende:
+
+1. **Stand:** alles auf `dev` committet und gepusht, `pruefen.yml` für diesen Commit grün.
+2. **Signieren** auf dem Mac in einem eigenen Terminal-Tab: `scripts/release-signieren.sh vX.Y.Z` (oder
+   `vX.Y.Z-rcN`). Es prüft Stand, CI und Anker, zeigt die Änderungen, signiert mit Touch ID und pusht nur den Tag.
+3. **Prüfen auf GitHub:** Der Tag startet `pruefen.yml` (Auslöser `tags: v*`) und `image.yml`. Dort prüft zuerst
+   «Tag und Signatur» den Tag gegen `system/vertrauen` im Stand. Ein unsignierter, fremd signierter, verschobener oder
+   falsch benannter Tag baut nichts.
+4. **Image:** `bauen.sh` prüft noch einmal, baut mit dem Kanal des Tags (`stabil` oder `vorschau`), legt den Anker
+   aus `system/vertrauen` nach `/etc/zenos/vertrauen` und den Zustand ab Werk an (`gut.json`, `hoechste`,
+   `gesehen.json` aus dem Tag). Für `vX.Y.Z` folgt das Release, wenn auch die Prüfung im selben Lauf grün ist.
+5. **Geräte:** Wer `vorschau` folgt, bekommt `-rcN` ohne Wartezeit, wer `stabil` folgt, `vX.Y.Z` 24 h nach dem ersten
+   Sehen, beide zum eingestellten Zeitpunkt. Jedes Gerät prüft den Tag selbst gegen seinen eigenen Anker; der Bau auf
+   GitHub ist dafür nicht nötig.
+
+Lokal lässt sich die Prüfung vor dem Bau ohne root nachspielen: `image/bauen.sh --nur-pruefen --ref vX.Y.Z`. Ein
+lokaler Testbau ohne gültig signierten Tag geht nur mit `--testbau-ohne-signatur`; seine Version endet auf
+`-testbau`, und in GitHub Actions verweigert `bauen.sh` die Option.
+
+Auf GitHub schützt Zeno die Tags zusätzlich (ANLEITUNG G): Rulesets für `v*` und `vertrauen/*` (nicht verschieben,
+nicht löschen, kein Force-Push, Ausnahme nur für Admins), kein Force-Push und kein Löschen auf `dev` und `main`,
+Immutable Releases. Ein veröffentlichtes Release bleibt dann, wie es ist (Dateien und Tag); löschen lässt es sich
+weiter, danach den Tag (Notbremse), nur der Name ist dann verbraucht.
 
 ### Den Anker ändern: Tag vertrauen/NNNN
 
@@ -606,6 +650,12 @@ Mit Wegwerf-Schlüsseln, im Container (git 2.53, OpenSSH 10.2) und auf dem Mac (
   install.sh belegt, greetd schon vorher ausgefallen, zurückgebliebene git-Sperren, Stand nach der Installation,
   Probelauf im Selbsttest, Syntaxfehler in zen.d, alte Bereitstellung ohne Tag, nur geprüfte Tags, Rückweg auf einen
   widerrufenen Schlüssel, «gescheitert» bleibt sichtbar, Stopp vor install.sh, belegte Prüfung, kein Netz.
+- Vor dem Image-Bau: `test/einheiten/image-signatur.test.py` spielt `image/tag-pruefen.sh` (auch auf dem Mac) und
+  `image/bauen.sh --nur-pruefen` (unter Linux) mit Wegwerf-Schlüsseln durch, die Fälle stehen in `image/README.md`,
+  «Signatur des Tags». Die Klasse `Image` in `test/einheiten/kanal.test.py` prüft `zenos-kanal image`: Zustand ab
+  Werk für rc auf vorschau und final auf stabil, danach «aktuell» beim ersten Lauf, rc nicht auf stabil, nie auf dev,
+  unsigniert, fremd und mit der Wurzel signiert, nicht auf dem Tag, nicht sauber, ohne Anker, nur in einem neuen
+  Zustand, später verschobener Tag ist ALARM, kein Downgrade unter den Stand ab Werk.
 
 ### Grenzen
 
@@ -618,11 +668,13 @@ Mit Wegwerf-Schlüsseln, im Container (git 2.53, OpenSSH 10.2) und auf dem Mac (
 - Ein Rückweg ist kein Schnappschuss: Pakete, Units und Dateien, die ein gescheiterter Stand neu brachte, bleiben
   liegen; zurück kommt der Code und was install.sh des alten Stands einrichtet.
 - Ein Abbruch mitten in apt bleibt bis zum nächsten `zen update` halb (dpkg); nachstart vollendet nur den Code.
-- Die Bestätigung einige Minuten nach dem Start (läuft der Login?) kommt erst mit der Automatik (Teil B): Ein
-  Update, das erst nach dem Neustart den Login bricht (greetd-Konfiguration, PAM), gilt bis dahin als gesund.
-- Offen für Teil B (Automatik): «erstmals» in `gesehen.json` entsteht mit der Uhr beim ersten Sehen, auch wenn sie
-  noch nicht synchronisiert ist (die 24 h auf stabil verschieben sich dann); ein `zen rollback` sperrt die Version,
-  von der er wegführt, nicht, und die Automatik brächte sie wieder.
+- Ein Update, das erst nach dem Neustart den Login bricht (greetd-Konfiguration, PAM), fällt der
+  Gesundheitsprüfung nicht auf. Nur ein automatisch installierter Stand wartet deshalb auf die Bestätigung nach dem
+  Start («Automatik»); ein `zen update` von Hand gilt sofort als gut.
+- Das Image vertraut der CI: Workflow und `bauen.sh` kommen aus dem Stand des Tags. Wer auf GitHub einen eigenen Tag
+  mit eigenem Workflow pushen kann, kann auch die Prüfung darin ändern; dagegen helfen die Regeln auf GitHub
+  (ANLEITUNG G). Die Geräte prüfen jeden Tag ohnehin selbst. Eine eigene Signatur der Image-Dateien
+  (`SHA256SUMS.sig`) gibt es noch nicht; Dritte prüfen die Herkunft über die Attestation von GitHub.
 - Ein Prozess, der als root läuft, kann den Kanal weiterhin anhalten (Sperre halten). Gegen root schützt nichts.
 
 ## Quellcode und Lizenzen
@@ -638,8 +690,11 @@ verschwinden. Im System stehen die Hinweise unter `/usr/local/share/doc/zenos/` 
 
 - Die Datei heisst `zenos-<version>-pi5-arm64.img.xz`, die Version ohne «v»: `v0.1.0` → `zenos-0.1.0-pi5-arm64.img.xz`.
 - Im Image steht `/opt/zenos` losgelöst auf dem Tag, mit allen Tags und `origin` auf GitHub.
-- Der Kanal für `zen update` ist im Image `dev`, wie auf dem Pi, bis es signierte Releases gibt (dann `stabil`).
-  Kanäle: `stabil` (nur `vX.Y.Z`), `vorschau` (auch `vX.Y.Z-rcN`), `dev`; ein alter Wert `main` gilt als `stabil`.
+- Der Kanal im Image folgt dem Tag: `vX.Y.Z` → `stabil`, `vX.Y.Z-rcN` → `vorschau` (`--kanal` von `bauen.sh`, nur
+  passend zum Tag). Kanäle: `stabil` (nur `vX.Y.Z`), `vorschau` (auch `vX.Y.Z-rcN`), `dev` (nur von Hand, nie im
+  Image ausser im Testbau); ein alter Wert `main` gilt als `stabil`.
+- Der Anker `/etc/zenos/vertrauen` kommt aus `system/vertrauen` des Tags, `/var/lib/zenos/kanal` hat den Zustand ab
+  Werk (`gut.json`, `hoechste`, `gesehen.json`).
 
 ## Grösse und Dauer
 
@@ -736,8 +791,8 @@ Seit der Systemkennung (`docs/module/kennung.md`, Modul `72-kennung`) gilt:
 Der Quellcode zu jedem Release liegt auf derselben Release-Seite («Quellcode und Lizenzen»), die Markenhinweise
 stehen auch in den Versionshinweisen und unter `/usr/local/share/doc/zenos/RECHTLICHES`. Offen vor einer Weitergabe
 an andere: die schriftliche Anfrage bei Canonical, eine Ähnlichkeitsrecherche zum Namen zenOS und ein signierter
-Update-Kanal «stabil». Das Signieren ist eingerichtet («Signierte Releases»), die Prüfung auf den Geräten fehlt noch:
-Heute zieht `zen update` den Zweig `dev` ohne Signaturprüfung.
+Update-Kanal «stabil». Signieren, Prüfung auf den Geräten und Images nur aus signierten Tags sind eingerichtet
+(«Signierte Releases»); das erste signierte Release `vX.Y.Z` steht noch aus.
 
 ## Bürorechner
 

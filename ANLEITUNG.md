@@ -824,65 +824,103 @@ mehr:
 sudo rm /etc/sudoers.d/zenos-bau
 ```
 
-**G2.** Final taggen, auf dem Mac. Der Tag startet auf GitHub den Bau des Images. Lass vorher in `CHANGELOG.md` einen
-Abschnitt «0.1.0» mit Datum ergänzen (was sich seit `v0.1.0-rc2` geändert hat). In den Ordner wechseln:
+**G2 bis G5: GitHub absichern** (einmalig, im Browser; das kannst nur du einstellen). Tags `v*` und `vertrauen/*`
+lassen sich danach nicht mehr verschieben oder löschen, ausser von dir als Admin, auf `dev` und `main` gibt es keinen
+Force-Push mehr, und ein veröffentlichtes Release bleibt, wie es ist. Die Geräte prüfen die Signatur ohnehin selbst;
+das hier ist die zweite Schicht (`docs/sicherheit.md`, «Repo und Releases»).
+
+**G2.** Regeln für die Tags. Auf GitHub im Repo zenOS: Settings › Rules › Rulesets › «New ruleset» › «New tag
+ruleset»:
+- Ruleset Name: `Release-Tags`, Enforcement status: «Active».
+- Bypass list: «Add bypass» › «Repository admin», «Always allow». Sonst niemand.
+- Target tags: «Add target» › «Include by pattern» › `v*`, dann noch einmal mit `vertrauen/*`.
+- Rules: «Restrict updates», «Restrict deletions» und «Block force pushes» anhaken, sonst nichts.
+- «Create».
+
+**G3.** Regeln für `dev` und `main`. Wieder «New ruleset», diesmal «New branch ruleset»:
+- Ruleset Name: `dev und main`, Enforcement status: «Active».
+- Bypass list: leer lassen.
+- Target branches: «Add target» › «Include by pattern» › `dev`, dann noch einmal mit `main`.
+- Rules: nur «Restrict deletions» und «Block force pushes» (meist schon angehakt). Keine weiteren Regeln, sonst gehen
+  normale Pushes auf `dev` nicht mehr.
+- «Create».
+
+**G4.** Unveränderliche Releases: Settings › General › Abschnitt «Releases» › «Enable release immutability»
+anhaken. Das gilt für Releases, die danach erscheinen. Ein Release lässt sich weiter löschen (Notbremse), nur sein
+Name ist danach verbraucht.
+
+**G5.** Prüfen, auf dem Mac. Es zeigt beide Rulesets als aktiv:
+
+```
+gh ruleset list
+```
+
+**G6 bis G10: Final signieren.** Der signierte Tag startet auf GitHub den Bau des Images. Lass vorher in
+`CHANGELOG.md` einen Abschnitt «0.1.0» mit Datum ergänzen (was sich seit `v0.1.0-rc2` geändert hat), committen und
+pushen; die Prüfung `pruefen.yml` für diesen Stand muss grün sein. Für jedes `-rc` gehst du genauso vor, nur mit
+dessen Namen (etwa `v0.1.0-rc4`).
+
+**G6.** Öffne einen eigenen Terminal-Tab, in dem Claude Code nicht läuft, und wechsle in den Ordner:
 
 ```
 cd ~/Documents/github/zenOS
 ```
 
-**G3.**
+**G7.**
 
 ```
 git switch dev
 ```
 
-**G4.**
+**G8.**
 
 ```
 git pull
 ```
 
-**G5.**
+**G9.** Signieren. Das Skript zeigt die Commits seit dem letzten Release, gesondert die sensiblen Pfade und die
+Fingerabdrücke des Ankers; vergleiche den Release-Schlüssel mit «zenOS Release» in 1Password. Das erste «ja»
+signiert (Touch ID), das zweite pusht nur den Tag. Danach 1Password sperren.
 
 ```
-git tag -a v0.1.0 -m "zenOS 0.1.0"
+scripts/release-signieren.sh v0.1.0
 ```
 
-**G6.**
-
-```
-git push origin v0.1.0
-```
+**G10.** Auf GitHub unter Actions den Lauf «Image» für `v0.1.0` ansehen: «Tag und Signatur» ist grün, und seine
+Zusammenfassung nennt Kanal `stabil` und den Release-Schlüssel `SHA256:6CAhnfU9…`. Ist er rot, wird nichts gebaut;
+der Grund steht im Lauf. «Prüfung» muss ebenfalls grün sein, sonst gibt es kein Release.
 
 Nach dem Bau liegen unter Releases auf GitHub: `zenos-0.1.0-pi5-arm64.img.xz`, die Paketliste, `SHA256SUMS`, das
 Manifest für den Raspberry Pi Imager und der Quellcode aller Pakete (`docs/image-und-releases.md`, «Release-Dateien»).
-Den Stand des Baus zeigt GitHub unter Actions; der Quellcode-Job braucht je nach Netz bis zu einigen Stunden.
+Den Stand des Baus zeigt GitHub unter Actions; der Quellcode-Job braucht je nach Netz bis zu einigen Stunden. Ein
+Image aus `v0.1.0` folgt dem Kanal `stabil`, eines aus einem `-rc` dem Kanal `vorschau`; beide bringen den Anker mit
+und aktualisieren sich danach selbst.
 
-**G7 bis G10: `main` auf den Stand bringen** (deine Entscheidung). Solange `main` nur den Start-Commit enthält,
+**G11 bis G14: `main` auf den Stand bringen** (deine Entscheidung). Solange `main` nur den Start-Commit enthält,
 braucht jede Installation `git switch dev`. Vorschlag: `main` auf `v0.1.0` vorspulen. Dann funktionieren
 `git clone … ~/zenOS` und `./scripts/install.sh` ohne `git switch dev`, und neue Installationen folgen dem Kanal
-`stabil` (aus `main`). Der Pi bleibt auf dem Kanal `dev` (steht in `/etc/xdg/zenos/kanal`).
+`stabil` (aus `main`). Dein Pi bleibt auf seinem Kanal (steht in `/etc/xdg/zenos/kanal`). Ein Push auf `main`
+ist mit den Regeln aus G3 nur vorwärts möglich, ohne Force-Push.
 
-**G7.**
+**G11.**
 
 ```
 git switch main
 ```
 
-**G8.**
+**G12.**
 
 ```
 git merge --ff-only v0.1.0
 ```
 
-**G9.**
+**G13.**
 
 ```
 git push origin main
 ```
 
-**G10.**
+**G14.**
 
 ```
 git switch dev
@@ -900,8 +938,9 @@ git switch dev
 - Rahmen von Chrome: Chrome zeichnet heute seinen eigenen, ohne zenOS-Titelzeile und Akzentrand, und eingerastet ragt
   sein Schatten in die Lücke. Den zenOS-Rahmen bekommt es in Chrome unter «Darstellung» mit Titelleiste und Rahmen
   des Systems (pro Chrome-Profil). Ob zenOS das vorgibt, siehe `docs/module/m9.md`, «Apps mit eigenem Rahmen».
-- Kanal des Images: Es folgt heute `dev`. Gibt es signierte Releases, wechselt es auf `stabil` (Option `--kanal` von
-  `image/bauen.sh` im Workflow).
+- Prüfsummen der Images selbst signieren (`SHA256SUMS.sig` mit `ssh-keygen -Y sign`, ein Touch-ID-Schritt mehr je
+  Release): Für Dritte wäre das die einzige Bindung der Image-Dateien an dich, die Attestation von GitHub bestätigt
+  nur den Bau. Heute gibt es sie nicht.
 - fish als Login-Shell, damit auch SSH-Sitzungen Eingabezeile, `?` und die Warnung haben: `chsh -s /usr/bin/fish`.
 - Bootsplash einschalten: per SSH `zen bootsplash aktivieren`. Es zeigt jeden Schritt vorher (Pakete, Standard-Theme,
   «quiet splash» in der Boot-Kommandozeile, neues initramfs) und fragt nach. Danach startet der Pi zweimal. Zurück mit

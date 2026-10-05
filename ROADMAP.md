@@ -67,6 +67,8 @@ Jeder Checkpoint endet mit einem Tag und einer Abnahme durch Zeno auf echter Har
 
 - GitHub Actions baut `zenos-<version>-pi5-arm64.img.xz`
 - Release mit Prüfsummen, Download direkt von GitHub (0.1: Tags mit `-rc` bauen nur ein Workflow-Artefakt)
+- Image nur aus einem mit dem Release-Schlüssel signierten Tag, Kanal aus dem Tag (`vX.Y.Z` → stabil, `-rcN` →
+  vorschau), Anker und Zustand ab Werk im Image; Release nur bei grüner Prüfung
 
 **Abnahme:** Ein frischer Pi wird mit dem Image in zehn Minuten zu zenOS.
 

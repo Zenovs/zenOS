@@ -57,8 +57,9 @@ Grundsatz 1: Sicherheit ist Standard und geht vor Design und Bequemlichkeit. Sie
   Rechte, Sandbox) die Tags `v*` und den Branch `dev` von origin, also `github.com` (die https-Adresse aus
   `/opt/zenos/.git/config`). Das ist ein gewöhnlicher `git fetch` ohne Zugangsdaten: GitHub sieht die IP-Adresse, die
   Zeit und die git-Version im User-Agent, sonst nichts über das Gerät; gesendet wird nichts. Installiert wird danach
-  nur Gültiges zum eingestellten Zeitpunkt (unten, «Signierte Releases»). Ausschalten: `sudo zen kanal automatik aus`
-  (Timer aus, `install.sh` lässt sie aus); `zen update` holt dann nur noch von Hand.
+  nur Gültiges zum eingestellten Zeitpunkt (unten, «Signierte Releases»). Das gilt auch für ein frisch geflashtes
+  Image: Es folgt ab dem ersten Start dem Kanal seines Tags (`stabil` oder `vorschau`). Ausschalten:
+  `sudo zen kanal automatik aus` (Timer aus, `install.sh` lässt sie aus); `zen update` holt dann nur noch von Hand.
 - **Ohne snapd und landscape-common** (Regel 8, `scripts/module/22-aufraeumen.sh`): snapd ist Store-Software, die von
   selbst ins Netz geht, deshalb entfernt zenOS es samt landscape-common (nur die Marke Landscape, ohne Funktion) und
   sperrt snapd mit `/etc/apt/preferences.d/zenos-ohne-snapd` (Priorität -10), damit apt es nie als Empfehlung
@@ -421,11 +422,24 @@ Telemetrie).
 ## Repo und Releases
 
 - Keine Geheimnisse und keine persönlichen Daten im Repo. gitleaks läuft als Pre-Commit-Hook und in GitHub Actions.
-- GitHub nur mit 2FA. Das Repo ist das System: Wer das Konto übernimmt, bringt Code auf die Rechner.
+- GitHub nur mit 2FA. Das Repo ist das System: Wer das Konto übernimmt, kann Code auf GitHub bringen; auf die Geräte
+  kommt über den Kanal nur, was Zenos Release-Schlüssel signiert hat (siehe «Signierte Releases»).
+- **Regeln auf GitHub** (stellt Zeno selbst ein, ANLEITUNG G): Rulesets für die Tags `v*` und `vertrauen/*` (nicht
+  verschieben, nicht löschen, kein Force-Push, Ausnahme nur für Admins), auf `dev` und `main` kein Force-Push und kein
+  Löschen, Immutable Releases. Sie sind eine zweite Schicht: Ein Token mit Schreibrecht kann damit keinen Tag mehr
+  verschieben, und ein veröffentlichtes Release bleibt, wie es ist.
 - Releases enthalten `SHA256SUMS` und eine Herkunftsbestätigung von GitHub (Artifact Attestation über Sigstore,
-  prüfbar mit `gh attestation verify`), dazu den Quellcode aller Pakete. Die Tags signiert Zeno künftig selbst, der
-  erste signierte ist `v0.1.0-rc4` oder höher (siehe «Signierte Releases»). Die Image-Dateien tragen keine eigene
+  prüfbar mit `gh attestation verify`), dazu den Quellcode aller Pakete. Die Tags signiert Zeno selbst, der erste
+  signierte ist `v0.1.0-rc4` oder höher (siehe «Signierte Releases»). Die Image-Dateien tragen keine eigene
   Signatur.
+- **Image nur aus einem signierten Tag:** `image.yml` prüft vor dem Bau mit `image/tag-pruefen.sh`, ob der Tag mit dem
+  Release-Schlüssel des Ankers in seinem Stand gültig signiert ist (gehärtetes `git verify-tag` und unabhängig
+  `ssh-keygen -Y verify`, ab Serie 2 mit passendem `vertrauen/NNNN`); `bauen.sh` prüft noch einmal, und im chroot
+  prüft `zenos-kanal` ein drittes Mal wie ein Gerät. Sonst entsteht kein Image. Ein Release (`vX.Y.Z`) gibt es nur,
+  wenn auch `scripts/pruefen.sh` im selben Lauf grün ist. Einen lokalen Testbau ohne Signatur gibt es nur mit
+  `--testbau-ohne-signatur`; GitHub Actions verweigert ihn. Grenze: Workflow und `bauen.sh` kommen aus dem Stand des
+  Tags; wer auf GitHub einen eigenen Tag mit eigenem Workflow pushen kann, kann die Prüfung dort ändern. Dagegen
+  helfen die Regeln auf GitHub, und die Geräte prüfen ohnehin selbst.
 - Im Image hat der Standardbenutzer (`user`, nur ohne Einstellungen aus dem Imager) **kein sudo ohne Passwort**
   (`/etc/cloud/cloud.cfg.d/90-zenos-benutzer.cfg`, `sudo: null`), sein Startpasswort ist abgelaufen und muss zuerst
   geändert werden, SSH nimmt nur Schlüssel an. Ubuntus Vorgabe wäre `NOPASSWD:ALL`; damit wären Passwortabfragen
@@ -445,7 +459,10 @@ stehen in `docs/image-und-releases.md`, Abschnitt «Signierte Releases».
   also nicht übernehmen, und es gibt einen Widerruf über das Netz.
 - **Anker im Repo und im Image:** `system/vertrauen/` enthält nur öffentliche Prüfschlüssel mit neutralen Prinzipalen
   (`zenos-release`, `zenos-wurzel`). Das erlaubt Manifest 0 ausdrücklich, und gitleaks lässt sie durch. Private
-  Schlüssel liegen nie in einer Datei.
+  Schlüssel liegen nie in einer Datei. Nur beim Image-Bau füllt sich der Anker des Geräts automatisch aus dem Repo
+  (`12-vertrauen` mit `--image`, aus dem gültig signierten Tag); auf einem laufenden Gerät nie, dort nur über
+  `vertrauen/NNNN` oder von Hand. Dazu bekommt das Image den Zustand ab Werk: guter Stand und `hoechste` aus dem Tag,
+  der Tag im Hauptbuch (ein später verschobener Tag ist schon beim ersten Kontakt ALARM).
 - **Fail-closed:** Solange der Anker keine Schlüssel enthält, signiert `scripts/release-signieren.sh` nichts, und ein
   Gerät meldet «Anker fehlt»: nichts gilt als gültig, auf `stabil` und `vorschau` installiert `zen update` nichts. Der
   Weg von Hand über `dev` bleibt, aber nur mit einem getippten «ja» für genau den gezeigten Commit.
@@ -508,4 +525,5 @@ stehen in `docs/image-und-releases.md`, Abschnitt «Signierte Releases».
   OpenPGP beim Prüfen abgeschaltet.
 - **Grenzen:** Eine Signatur bestätigt die Herkunft, nicht den Inhalt. Geht der Wurzel-Schlüssel verloren, braucht
   jedes Gerät ein neues Image oder einen neuen Anker von Hand. GitHub-Regeln für Tags (`v*`, `vertrauen/*` nicht
-  verschieben oder löschen) und Immutable Releases sind eine zweite Schicht, die Zeno auf GitHub einschaltet.
+  verschieben oder löschen) und Immutable Releases sind eine zweite Schicht, die Zeno auf GitHub einschaltet
+  (ANLEITUNG G).
