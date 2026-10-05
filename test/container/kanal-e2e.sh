@@ -53,10 +53,13 @@
 #   nach-automatik   bestätigt nach dem Neustart (gut.json), dann ein automatisches Update ohne Login → Neustart nötig
 #   nach-automatik-2 erster Start ohne Login: gezählt (wartet 3 Min.) → Neustart nötig
 #   nach-automatik-3 zweiter Start ohne Login: gesperrt, zurück auf den guten Stand, greetd neu gestartet; aufräumen
+#   automatik-uhr    (danach) stabil mit verstellter Zeit im Hauptbuch: erst gesehen, dann «erstmals» 25 h zurück
+#                    (die Uhr sprang, seit dem Start verging kaum etwas: wartet), dann auch die Zeit seit dem Start
+#                    25 h zurück (installiert)
 #
 # Die Timer der Automatik lösen im Test nie von selbst aus (einrichten legt einen Laufzeit-Drop-in an); der Test startet
 # ihre Units von Hand. Für «automatik» in einem frischen Container: als root /etc/xdg/zenos/kanal-automatik-aus anlegen,
-# origin von ~/zenOS auf die Adresse unten setzen, als tester install.sh, dann einrichten, bedienung, automatik.
+# origin von ~/zenOS auf die Adresse unten setzen, als tester install.sh, dann einrichten und automatik.
 
 set -euo pipefail
 
@@ -150,10 +153,11 @@ anker_schreiben() { # mit Wegwerf-Schlüsseln, Serie 1
   chmod 0644 /etc/zenos/vertrauen/*
 }
 
-anker_leeren() { # wie heute im Repo: nur Kommentare
+anker_leeren() { # ohne Schlüssel: nur die Kommentare aus dem Repo (wie vor den ersten Schlüsseln, die seit 04a5e86 dort stehen)
   local name
   for name in release wurzel widerrufen serie; do
-    install -m 0644 "/repo/system/vertrauen/$name" "/etc/zenos/vertrauen/$name"
+    grep -E '^[[:space:]]*(#|$)' "/repo/system/vertrauen/$name" > "/etc/zenos/vertrauen/$name" || true
+    chmod 0644 "/etc/zenos/vertrauen/$name"
   done
 }
 
@@ -1171,6 +1175,43 @@ s_nach_automatik_3() {
   ok "aufgeräumt"
 }
 
+s_automatik_uhr() {
+  schritt "automatik-uhr: stabil wartet 24 h, ein Sprung der Uhr verkürzt nichts"
+  local v vorher neu jetzt seit
+  v=$(cat "$E2E/automatik-version")
+  /usr/bin/python3 -I "$PROGRAMM" automatik an > /dev/null
+  automatik_timer_zahm
+  kanal stabil
+  zeitpunkt jederzeit
+  vorher=$(kopf)
+  neu=$(neuer_commit "e2e: automatik stabil" e2e/automatik "6")
+  signieren "$v"
+  automatik
+  erwarte_kopf "$vorher" "eben gesehen: nichts"
+  erwarte_lauf wartet "24 h" "Automatik auf stabil"
+  [[ "$(json "$STAND/gesehen.json" ".tags[\"$v\"].erstmals")" != null ]] || fehler "erstmals fehlt (Uhr synchron)"
+  ok "erstmals gesehen: $(json "$STAND/gesehen.json" ".tags[\"$v\"].erstmals")"
+  # Die Uhr springt 25 h vor (NTP): «erstmals» liegt 25 h zurück, seit dem Start verging aber kaum etwas
+  jetzt=$(date -u -d '-25 hours' +%Y-%m-%dT%H:%M:%SZ)
+  jq --arg v "$v" --arg t "$jetzt" '.tags[$v].erstmals = $t' "$STAND/gesehen.json" > "$STAND/.gesehen.e2e"
+  mv "$STAND/.gesehen.e2e" "$STAND/gesehen.json"
+  automatik
+  erwarte_kopf "$vorher" "Uhr gesprungen: nichts"
+  erwarte_lauf wartet "24 h" "Automatik nach dem Sprung der Uhr"
+  # Jetzt vergehen die 25 h auch seit dem Start
+  seit=$(awk '{ printf "%d", $1 - 25 * 3600 }' /proc/uptime)
+  jq --argjson s "$seit" --arg v "$v" '.tags[$v].erstmals_start.seit_start = $s' "$STAND/gesehen.json" \
+    > "$STAND/.gesehen.e2e"
+  mv "$STAND/.gesehen.e2e" "$STAND/gesehen.json"
+  automatik
+  erwarte_kopf "$neu" "25 h vergangen: installiert"
+  erwarte_lauf installiert "" "Automatik nach 24 h"
+  kanal vorschau
+  rm -f /etc/xdg/zenos/kanal-zeitpunkt
+  /usr/bin/python3 -I "$PROGRAMM" automatik aus > /dev/null
+  ok "aufgeräumt"
+}
+
 case "${1:-}" in
   einrichten) s_einrichten ;;
   migration) s_migration ;;
@@ -1196,5 +1237,6 @@ case "${1:-}" in
   nach-automatik) s_nach_automatik ;;
   nach-automatik-2) s_nach_automatik_2 ;;
   nach-automatik-3) s_nach_automatik_3 ;;
-  *) sed -n '2,60p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  automatik-uhr) s_automatik_uhr ;;
+  *) sed -n '2,62p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

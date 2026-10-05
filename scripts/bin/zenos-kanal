@@ -44,7 +44,7 @@ Aufruf:
                                        lauf ohne Holen, damit «bei Sperre» und das Zeitfenster getroffen werden
   zenos-kanal bestaetigen              zenos-kanal-bestaetigen.service (2 Min. nach dem Start): Kommt nach einem
                                        automatischen Update der Login (greetd mit Greeter oder Sitzung)? Erst dann gilt
-                                       der Stand als gut; fehlt die Bestätigung bei zwei Starts, zurück auf den guten
+                                       der Stand als gut; fehlt er bei zwei Starts, geht es auf den guten Stand zurück
   zenos-kanal holen-intern             nur für zenos-kanal-holen.service: holt ohne Rechte von origin
 
 Holen (zenos-kanal-holen.service, DynamicUser, nur mit Netz und in einer Sandbox): «git fetch» von der https-Adresse
