@@ -512,6 +512,18 @@ systemctl --user start zenos-shell.service
 - [ ] Während `zen update` installiert (im System-Menü schauen, solange «install.sh aus …» läuft): Bei Neustart und
   Ausschalten steht «Update läuft»; ein Klick schliesst das Menü und sagt, dass es erst danach geht. Danach ist der
   Wert wieder weg. Gesperrt zeigt der Sperrbildschirm nichts davon.
+- [ ] Automatik: `systemctl list-timers 'zenos-kanal*'` zeigt `zenos-kanal.timer` (nächstes Holen in höchstens 6 h),
+  `zenos-kanal-gelegenheit.timer` (alle 15 Min.) und `zenos-kanal-bestaetigen.timer`. `zen kanal automatik` sagt «an»
+  und was sie zuletzt tat; auf dem Kanal `dev` steht dort «Kanal dev: Automatisch kommt nie etwas».
+- [ ] Erst wenn der Pi auf `vorschau` ist und ein neues signiertes rc bereit steht (`zen kanal status`: «neue Version
+  bereit»): sperren (Super+L) und mindestens 20 Minuten warten. Danach kommt still «zenOS aktualisiert» in die
+  Zentrale, und `zen kanal status` sagt unter «Update» «… automatisch installiert …, gilt als gut nach einem Neustart
+  mit Login». Neustart; nach etwa 5 Minuten steht unter «Update» der neue Stand als gut (`journalctl -u
+  zenos-kanal-bestaetigen.service`: «Bestätigt»).
+- [ ] Ausschalten nach langer Sperre wartet auf ein laufendes Update: Solange `zenos-kanal-installieren.service` läuft,
+  sagt `/opt/zenos/scripts/bin/zenos-energie status` «nein: Update läuft (zenos-kanal-…)».
+- [ ] Notschalter: `sudo zen kanal automatik aus`, dann `systemctl list-timers 'zenos-kanal*'`: nur noch die
+  Bestätigung. `zen doctor` nennt «Automatik aus». Wieder an: `sudo zen kanal automatik an`.
 - [ ] Die Temperatur steht in der Leiste, der Lüfter im System-Menü (Argon ONE). Unter Last (in kitty viermal
   `yes > /dev/null &`, danach `pkill yes`) wird der Lüfter hörbar schneller und später wieder leiser.
 - [ ] Argon-Knopf: Doppeltipp startet neu, drei Sekunden halten schaltet aus, einmal kurz drücken tut nichts.

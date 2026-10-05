@@ -46,12 +46,19 @@ Grundsatz 1: Sicherheit ist Standard und geht vor Design und Bequemlichkeit. Sie
     `sudo pro config set apt_news=true`. `install.sh`
     schaltet beides beim nächsten Lauf wieder ab; dauerhaft nur, wenn `_sicherheit_nachrichten` aus
     `modul_system` in `scripts/module/70-sicherheit.sh` entfernt wird.
-  - Es bleiben die Verbindungen, die Updates holen: apt und `unattended-upgrades` und
+  - Es bleiben die Verbindungen, die Updates holen: der signierte Kanal von zenOS (unten), apt und `unattended-upgrades` und
     `esm-cache` von `ubuntu-pro-client` (snapd nur, solange eigene Snaps es halten, siehe unten). Dieser fragt bei `apt update` `contracts.canonical.com` nach verfügbaren
     Diensten (mit Architektur, Serie, Kernel und Virtualisierung, das Ergebnis wird zwischengespeichert) und lädt
     Paketlisten von `esm.ubuntu.com`. Ob er auch abgeschaltet werden soll, ist offen (`docs/module/m11.md`).
   - `apport` sammelt Absturzberichte nur lokal; gesendet wird erst mit `ubuntu-bug` (whoopsie gehört nicht zu
     Ubuntu Server).
+- **Automatische Verbindung des Kanals (Regel 8, Entscheid Zeno: ab Werk an):** `zenos-kanal.timer` holt 10–20
+  Minuten nach dem Start und danach alle 6 Stunden über `zenos-kanal-holen.service` (flüchtiger Systembenutzer ohne
+  Rechte, Sandbox) die Tags `v*` und den Branch `dev` von origin, also `github.com` (die https-Adresse aus
+  `/opt/zenos/.git/config`). Das ist ein gewöhnlicher `git fetch` ohne Zugangsdaten: GitHub sieht die IP-Adresse, die
+  Zeit und die git-Version im User-Agent, sonst nichts über das Gerät; gesendet wird nichts. Installiert wird danach
+  nur Gültiges zum eingestellten Zeitpunkt (unten, «Signierte Releases»). Ausschalten: `sudo zen kanal automatik aus`
+  (Timer aus, `install.sh` lässt sie aus); `zen update` holt dann nur noch von Hand.
 - **Ohne snapd und landscape-common** (Regel 8, `scripts/module/22-aufraeumen.sh`): snapd ist Store-Software, die von
   selbst ins Netz geht, deshalb entfernt zenOS es samt landscape-common (nur die Marke Landscape, ohne Funktion) und
   sperrt snapd mit `/etc/apt/preferences.d/zenos-ohne-snapd` (Priorität -10), damit apt es nie als Empfehlung
@@ -150,7 +157,8 @@ keine Shell). Die polkit-Aktionen in `system/polkit/org.zenos.kanal.policy` (→
   geprüfter Stand, der kein «ja» braucht; was eines bräuchte (unsigniert, Firewall, Netz, Boot, gesperrt, Rückschritt),
   bleibt liegen. Ein Angreifer mit Zugriff auf die Sitzung gewinnt damit nichts, was nicht ohnehin signiert ist. Der
   Zeitpunkt nimmt nur `sperre`, `fenster VON BIS` (HH:MM, streng geprüft, mindestens eine Stunde), `jederzeit` und
-  `hand` an; Signatur und Rückfrage gelten bei jeder Wahl, und auf `dev` kommt nie etwas automatisch.
+  `hand` an; Signatur und Rückfrage gelten bei jeder Wahl, und auf `dev` kommt nie etwas automatisch. Er gilt für das
+  ganze Gerät, weil die Automatik als root ihn liest.
 - **Mit Passwort:** «Zustimmen …» erscheint nur, wenn ein gültig signierter Stand Firewall, Netz oder Boot ändert. Es
   startet `zenos-kanal-zustimmen@OBJEKT.service`: das «ja» für genau das Tag-Objekt, das die Einstellungen zeigten,
   ohne neues Holen. Nennt die Prüfung inzwischen ein anderes Objekt, geschieht nichts. Unsigniertes, `dev` und
@@ -225,7 +233,8 @@ sparen darf die Sperre nie schwächen.
   60 s bis 5 Min. alt nach Laufzeit (ein Sprung der Uhr verkürzt nichts) und nur einmal gültig, verbraucht erst
   unmittelbar vor dem Ausschalten (eine Eingabe bricht bis zuletzt ab), gesperrt, keine Fern-Sitzung (logind
   `Remote=yes`) und keine SSH-Verbindung, kein tmux- oder screen-Server, keine Installation (Sperre von `install.sh`,
-  nur lesend geöffnet und kurz geteilt gesperrt), kein apt oder dpkg, keine automatischen Updates, kein Block-Hemmer
+  nur lesend geöffnet und kurz geteilt gesperrt; keine laufende Unit `zenos-kanal-*`, laut systemd, denn die Sperren
+  des Kanals sieht ein Benutzer nicht), kein apt oder dpkg, keine automatischen Updates, kein Block-Hemmer
   «shutdown», logind erlaubt es ohne Passwort (`CanPowerOff`). Was sich nicht prüfen lässt, gilt als blockiert. Jeder
   Entscheid steht mit Grund im Journal (`journalctl -t zenos-energie`). Fällt die Oberfläche aus, wird nicht
   ausgeschaltet. Am Login-Bildschirm gilt dasselbe (fest nach 30 Min. im Akkubetrieb, `shell/greeter/Leerlauf.qml`),
@@ -458,9 +467,21 @@ stehen in `docs/image-und-releases.md`, Abschnitt «Signierte Releases».
   installieren und nachstart als Probelauf in einem Wegwerf-Zustand durch? Scheitert etwas, geht es auf den Stand davor
   zurück (dort ohne Probelauf), die Version ist gesperrt. Was der Selbsttest nicht fängt, holt der Notweg: die vorige
   Fassung `zenos-kanal.vorher` zurück, dann `zen rollback`. Erst danach kommt der git-Notweg in `ANLEITUNG.md`,
-  Abschnitt F; er prüft den Tag gegen den Anker des Geräts und nimmt `dev` nur, solange der Anker fehlt. Grenzen: Ein
-  Fehler, der erst nach einem Neustart auftritt (Login, PAM), fällt der Gesundheitsprüfung nicht auf; eine Bestätigung
-  nach dem Start kommt mit Teil B.
+  Abschnitt F; er prüft den Tag gegen den Anker des Geräts und nimmt `dev` nur, solange der Anker fehlt. Ein Fehler,
+  der erst nach einem Neustart auftritt (Login, PAM), fällt der Gesundheitsprüfung nicht auf: Ein automatisch
+  installierter Stand gilt deshalb erst als gut, wenn nach einem Neustart der Login kommt; fehlt das bei zwei Starts,
+  geht es auf den guten Stand zurück, und die Version ist gesperrt (Bestätigung nach dem Start).
+- **Automatik** (Entscheid Zeno): Automatisch installiert wird nur auf `stabil` und `vorschau`, nie auf `dev`, nur ein
+  gültig signierter Stand ohne Rückfrage-Pfade (sonst «wartet auf Zustimmung» mit Mitteilung) und nur zum Zeitpunkt
+  des Geräts: «bei Sperre» (Standard) heisst, jede Sitzung auf seat0 ist seit 5 Minuten gesperrt, und die Oberfläche
+  bestätigt die Sperre selbst (ext-session-lock), oder niemand ist angemeldet; dazu «Zeitfenster», «jederzeit» und
+  «von Hand» (nie). Die Wartezeit auf stabil (24 h, gegen einen gestohlenen Release-Schlüssel: Widerruf und Löschen
+  kommen so noch rechtzeitig an) beginnt erst mit synchronisierter Uhr und zählt im selben Start nach der Zeit seit dem
+  Start; ein Sprung der Uhr durch NTP verkürzt sie nicht (ein dauerhaft lügendes NTP schon, Restrisiko). Ein
+  `zen rollback` stellt die verlassene Version für die Automatik zurück. Das Programm, das die Sperre prüft, läuft als
+  root in einer Sandbox ohne Netz und fragt die Oberfläche als der Benutzer der Sitzung (setpriv, Argumentliste); ein
+  Benutzer kann so höchstens seine eigene Sitzung als gesperrt ausgeben, und auch dann kommt nur Signiertes. Der
+  Notschalter (`sudo zen kanal automatik aus`) schaltet die Automatik ab, nie die Prüfung.
 - **Lokale Benutzer:** Sperren und der Vermerk eines `install.sh` von Hand liegen in `/run/zenos-sperre` (nur root,
   0700). Früher lagen sie in `/run/lock`, für alle beschreibbar: Jeder Prozess als Benutzer (etwa ein Agent nach einer
   Prompt-Injection) konnte eine Sperre halten, den Kanal abschneiden und über die Kette Versuch → gesperrt → Rückweg

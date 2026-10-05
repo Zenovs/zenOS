@@ -22,6 +22,7 @@ Eine Datei unter `modi/`, `zustaende/` oder `raster/` mit ungültigem Inhalt feh
 | `~/.config/Thunar/uca.xml` | Thunar-Aktion «Terminal hier öffnen» (kitty) | Installer, solange die erste Zeile die zenOS-Marke trägt; danach Thunar (eigene Aktionen) |
 | `/etc/xdg/zenos/kanal` | Kanal für `zen update`: `stabil`, `vorschau` oder `dev` | Installer beim ersten Mal |
 | `/etc/xdg/zenos/kanal-zeitpunkt` | wann geprüfte Updates automatisch kommen: `sperre` (Standard, auch ohne Datei), `fenster` mit `von`/`bis`, `jederzeit`, `hand`; gilt für das ganze Gerät | Einstellungen → System → Updates (pkexec, ohne Passwort) oder `sudo zen kanal zeitpunkt`, nie von Hand |
+| `/etc/xdg/zenos/kanal-automatik-aus` | Notschalter: Gibt es die Datei, holt und installiert die Automatik nichts (Timer aus, auch nach `install.sh`) | `sudo zen kanal automatik aus`, entfernt mit `sudo zen kanal automatik an` |
 | `/etc/zenos/vertrauen/` | Vertrauensanker: öffentliche Prüfschlüssel für signierte Releases | Installer, nur wenn er fehlt oder leer ist; danach `zenos-kanal` (Tag `vertrauen/NNNN`) oder `sudo zen kanal anker ORDNER` |
 | `/etc/xdg/zenos/argon.json` | Lüfterkurve (optional) | von Hand mit sudo |
 | `/etc/xdg/zenos/argon-akkuprofil` | Freigabe: zenos-argon darf Argons Akkuprofil in den Messchip schreiben (Argon ONE UP) | `zen akku freigeben`, entfernt mit `zen akku sperren` |

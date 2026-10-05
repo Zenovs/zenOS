@@ -178,8 +178,9 @@ Was ein Gerät prüft (`zenos-kanal`, siehe «Auf dem Gerät»):
 
 `scripts/bin/zenos-kanal` (Python, nur Standardbibliothek, `python3 -I`) liegt als root-eigene Kopie unter
 `/usr/local/libexec/zenos/zenos-kanal` (Modul `14-kanal`). Die Units und `zen update` führen diese Kopie aus, nie
-`/opt/zenos`. Automatisch installiert diese Fassung nichts: nur `zen update`, `zen rollback` und die Knöpfe in
-Einstellungen › System › Updates (die Automatik folgt; ihren Zeitpunkt stellt der Benutzer am Gerät schon ein).
+`/opt/zenos`. Installiert wird von Hand (`zen update`, `zen rollback`, die Knöpfe in Einstellungen › System ›
+Updates) und automatisch über `zenos-kanal.timer`, aber nur auf stabil und vorschau, nur gültig signiert, ohne
+Rückfrage-Pfade, nach der Wartezeit und zum Zeitpunkt, den der Benutzer am Gerät einstellt (siehe «Automatik» unten).
 
 | Befehl | Wer | Was |
 |---|---|---|
@@ -190,6 +191,8 @@ Einstellungen › System › Updates (die Automatik folgt; ihren Zeitpunkt stell
 | `zen kanal anker` | alle | zeigt den Anker des Geräts |
 | `zen kanal zeitpunkt` | alle | zeigt, wann geprüfte Updates automatisch kommen (`/etc/xdg/zenos/kanal-zeitpunkt`, ohne Datei `sperre`) |
 | `sudo zen kanal zeitpunkt sperre\|jederzeit\|hand`, `… fenster VON BIS` | root | setzt ihn (dasselbe wie in den Einstellungen; VON und BIS als HH:MM, mindestens eine Stunde, über Mitternacht erlaubt) |
+| `zen kanal automatik` | alle | ob die Automatik an ist, nächstes Holen, was sie zuletzt tat, ein Stand, der auf die Bestätigung wartet, eine zurückgestellte Version |
+| `sudo zen kanal automatik an\|aus` | root | Notschalter: Timer ein bzw. aus, Vermerk `/etc/xdg/zenos/kanal-automatik-aus` (install.sh hält sich daran). `zen update` geht immer, die Signaturprüfung bleibt |
 | `sudo zen kanal anker ORDNER` | root, nur im Terminal | setzt den Anker von Hand: den Fingerabdruck der Wurzel und von jedem Release-Schlüssel die ersten 8 Zeichen nach `SHA256:` aus 1Password eintippen. Die Werte aus dem Ordner zeigt es erst danach (auch nach einer falschen Eingabe nicht), damit niemand abtippt, was auf dem Bildschirm steht. Bei gleicher Wurzel nie mit kleinerer Serie, Widerrufe des Geräts bleiben |
 
 Ablauf:
@@ -229,7 +232,8 @@ Ablauf:
      Datei für Datei atomar geschrieben: `release`, `widerrufen`, die Serie zuletzt. Bricht es dazwischen ab, ist jeder
      Zwischenstand ein gültiger Anker, und der nächste Lauf vollendet den Wechsel (früher zuerst `widerrufen`: Der
      alte Release-Schlüssel stand dann zugleich in `release` und `widerrufen`, «Anker fehlt» für immer).
-   - Hauptbuch `gesehen.json` (nur Namen, die gültig waren: Objekt, Commit, erstmals gesehen): Zeigt ein schon
+   - Hauptbuch `gesehen.json` (nur Namen, die gültig waren: Objekt, Commit, erstmals gesehen mit Uhrzeit und Start,
+     beides nur mit synchronisierter Uhr, siehe «Automatik»): Zeigt ein schon
      gültiger Name gültig signiert auf einen anderen Commit, ist der Kanal «blockiert» (ALARM), bis der Name wieder
      auf den alten Commit zeigt. Derselbe Commit in einem anderen Tag-Objekt ist kein Alarm, das Hauptbuch übernimmt
      die neue Objekt-ID: Die Base64-Zeilen der Signatur lassen sich ohne Schlüssel anders umbrechen oder mit einer
@@ -241,8 +245,9 @@ Ablauf:
      in `/opt/zenos` (nur lesend, nicht flach). Fehlt `hoechste` und gehört der installierte Stand zu keiner
      signierten Version, ist der Kanal «blockiert», ausser der Stand liegt vor allen gültigen Versionen.
    - Ziel: die höchste gültige Version des Kanals über `hoechste`, ohne Versionen in `/var/lib/zenos/kanal/gesperrt/`.
-     `stabil` nimmt nur `vX.Y.Z` und gibt sie erst 24 h nach dem ersten Sehen für die Automatik frei (`frei_ab`),
-     `vorschau` auch `vX.Y.Z-rcN` sofort.
+     `stabil` nimmt nur `vX.Y.Z` und gibt sie erst 24 h nach dem ersten Sehen für die Automatik frei (`frei_ab`,
+     `frei`), `vorschau` auch `vX.Y.Z-rcN` sofort. Eine nach `zen rollback` zurückgestellte Version ist kein Ziel der
+     Prüfung (`zen update` von Hand nimmt sie).
    - `dev`: Neuer Stand von `origin/dev`, ob der installierte Stand darin liegt und ob jeder Commit
      dazwischen gültig mit einem Release-Schlüssel signiert ist (`%G?` gleich `G`; ein unsignierter Commit unter
      einer signierten Spitze zählt). Sonst nur von Hand mit «ja». Automatisch kommt auf dev nie etwas.
@@ -252,8 +257,10 @@ Ablauf:
      dazunehmen. Lässt sich der Weg nicht vergleichen (installierter Stand unbekannt), gilt ebenfalls `zustimmung`.
 4. **Stand:** `/var/lib/zenos/kanal/stand.json` (0644, atomar): `kanal`, `zustand`, `grund`, `geprueft`,
    `letzter_kontakt`, `holen_fehler`, `anker` (Serie und Fingerabdrücke), `anker_problem`, `installiert`,
-   `hoechste`, `bereit` (Version, Commit, Objekt, `erstmals`, `frei_ab`, `rueckfrage`), `dev`, `gueltig`,
-   `abgelehnt`, `hinweise`, `wunsch` (Antwort auf `zen update` bzw. `zen rollback`, siehe unten), `installation`
+   `hoechste`, `bereit` (Version, Commit, Objekt, `erstmals`, `frei_ab`, `frei`, `rueckfrage`), `dev`, `gueltig`,
+   `abgelehnt`, `hinweise`, `uhr_synchron`, `automatik` (`an`), `unbestaetigt` (automatisch installierter Stand vor
+   der Bestätigung), `zurueckgestellt` (Version nach `zen rollback`), `wunsch` (Antwort auf `zen update` bzw.
+   `zen rollback` oder die Automatik, siehe unten), `installation`
    (Prüfsumme von `letzte.json` und `gut.json`: Weicht sie ab, zeigt `zen kanal status` «veraltet: Seit der letzten
    Prüfung wurde installiert», statt alte Angaben als aktuell auszugeben). Nach jeder Installation prüft `zen update`
    ohne Netz und ohne Wunsch neu.
@@ -332,7 +339,9 @@ Bereitstellung (Commit ohne Änderungen von Hand). Dann:
    Probelauf selbst einen Fehler hatte).
 5. Gesund: `gut.json`, `hoechste` (nur bei einem Update, nie bei einem Rollback), alte Bereitstellungen weg, Marker
    `angehalten` weg, daemon-reload der Benutzerinstanz einer Sitzung auf seat0; die übrigen Benutzerteile richtet
-   `zen update` danach als Benutzer ein (sonst die nächste Anmeldung). Ergebnis `installiert`.
+   `zen update` danach als Benutzer ein (sonst die nächste Anmeldung). Ergebnis `installiert`. Kam der Stand von der
+   Automatik, entsteht statt `gut.json` erst `unbestaetigt.json`; die Bereitstellung des guten Stands bleibt (siehe
+   «Bestätigung nach dem Start»). Nach `zen rollback` auf eine ältere Version entsteht `zurueckgestellt.json`.
 6. Nicht gesund: Die Version kommt nach `gesperrt/` (Grund, Zeit), dann derselbe Lauf mit dem Rückweg. Ist er gesund,
    Ergebnis `zurueck` (Exit 4), sonst `kaputt` (Exit 5, keine weiteren Versuche; die Meldung nennt zuerst den Grund,
    ANLEITUNG F «Kaputt»). Ist das Ziel der laufende Stand selbst, gibt es keinen Rückweg und keine Sperre
@@ -362,7 +371,11 @@ wenn der Commit gleich ist.
 | `auftrag.json` | bereitgestelltes Ziel für das Installieren |
 | `bereit/<commit>/` | Bereitstellungen: das Ziel und der gute Stand |
 | `laeuft.json` | laufende oder unterbrochene Installation |
-| `gut.json` | zuletzt gesund installierter Stand |
+| `gut.json` | zuletzt gesund installierter Stand (nach einem automatischen Update erst nach der Bestätigung, dann mit `bestaetigt`) |
+| `unbestaetigt.json` | automatisch installierter Stand, der auf den Neustart mit Login wartet (Start der Installation, gezählte Starts ohne Login, guter Stand) |
+| `zurueckgestellt.json` | nach `zen rollback` verlassene Version, für die Automatik zurückgestellt |
+| `automatik-bereit` | ein bereiter Stand auf stabil oder vorschau: Bedingung für `zenos-kanal-gelegenheit.service` |
+| `automatik.json` | letzter Lauf der Automatik (Art, Ergebnis, Grund, Ziel) |
 | `letzte.json` | Ergebnis der letzten Installation |
 | `gesperrt/<version oder commit>` | gescheiterte Ziele mit Grund |
 | `angehalten` | Stand von Hand aus einem Arbeits-Checkout |
@@ -438,6 +451,110 @@ Mitteilungen (Absender zenOS, jede nur einmal je Zustand, gemerkt in `~/.local/s
 Im System-Menü steht bei Neustart und Ausschalten «Update läuft», solange `/run/zenos-kanal/uebernahme` besteht
 (install.sh aus dem Kanal mit Block-Inhibitor; systemctl lehnte dann ab). Ein Klick sagt das als Hinweis, statt
 still nichts zu tun. Der Sperrbildschirm zeigt nichts davon.
+
+#### Automatik
+
+Entscheide Zeno (Oktober 2026): ab Werk an, Zeitpunkt am Gerät einstellbar (Standard «bei Sperre»), Wartezeit stabil
+24 h und vorschau keine, dev nie automatisch, Bestätigung nach dem Neustart. Drei Timer (Modul `14-kanal`):
+
+| Timer | Wann | Unit | Was |
+|---|---|---|---|
+| `zenos-kanal.timer` | 10–20 Min. nach dem Start, danach alle 6 h (00, 06, 12, 18 Uhr plus bis zu 10 Min. Zufall), `Persistent` holt einen verpassten Lauf nach | `zenos-kanal-automatik.service` (`zenos-kanal automatik lauf`) | bis 2 Min. auf eine synchronisierte Uhr warten, holen, prüfen, installieren, wenn alles passt |
+| `zenos-kanal-gelegenheit.timer` | alle 15 Min. | `zenos-kanal-gelegenheit.service` (`… automatik gelegenheit`), startet nur mit `automatik-bereit` oder `laeuft.json` | dasselbe ohne Holen: So trifft die Automatik die Sperre oder das Zeitfenster, auch wenn der 6-Stunden-Lauf daneben lag |
+| `zenos-kanal-bestaetigen.timer` | 2 Min. nach jedem Start | `zenos-kanal-bestaetigen.service` (`zenos-kanal bestaetigen`), startet nur mit `unbestaetigt.json` | Bestätigung nach dem Start, siehe unten |
+
+Automatisch installiert wird nur, wenn alles zutrifft:
+
+- Kanal `stabil` oder `vorschau`, nie `dev` (dort holt und prüft die Automatik nur, für Status und Oberfläche).
+- Ein Stand, den die Prüfung `bereit` nennt: gültig signiert, über `hoechste`, nicht gesperrt, nicht zurückgestellt,
+  ohne Rückfrage-Pfade. Trifft er Firewall, Netz oder Boot, bleibt er `zustimmung`; die Oberfläche meldet
+  «Update wartet auf deine Zustimmung» (mit Passwort in den Einstellungen oder `zen update`).
+- Die Wartezeit ist um (`frei`): stabil 24 h ab dem ersten Sehen, vorschau sofort.
+- Der Zeitpunkt passt, einmal vor dem Prüfen und noch einmal unmittelbar vor dem Installieren (inzwischen entsperrt
+  oder das Fenster vorbei: Der Auftrag wird verworfen).
+- Kein `install.sh` von Hand läuft, keine andere Bedienung (Sperre `bedienung.lock` wie `zen update`).
+
+| Zeitpunkt (`/etc/xdg/zenos/kanal-zeitpunkt`) | Wann die Automatik installiert |
+|---|---|
+| `sperre` (Standard, auch ohne Datei) | Jede Sitzung von Menschen auf `seat0` (logind, Klasse `user…`, nicht beim Schliessen) ist seit mindestens 5 Minuten gesperrt: Der Marker der Oberfläche `/run/user/<uid>/zenos/gesperrt` (vor der Sperre angelegt, erst nach dem Entsperren gelöscht, Besitzer der Benutzer, kein Verweis) ist so alt, und die Oberfläche bestätigt es selbst: `zenos-ipc sperre status` als dieser Benutzer (`setpriv`, Argumentliste) antwortet `gesperrt` (ext-session-lock, vom Compositor bestätigt). Antwortet sie nicht, gilt die Sitzung als offen. Ohne Sitzung auf `seat0` (Login-Bildschirm, niemand angemeldet) ist es ruhig. Fern-Sitzungen (SSH) haben keinen Sitz und zählen nicht. |
+| `fenster` (von, bis) | nur zwischen von und bis (Ortszeit, `bis` gehört nicht dazu, über Mitternacht erlaubt, etwa 22:00–04:00) und nur mit synchronisierter Uhr |
+| `jederzeit` | sobald ein Stand bereit ist |
+| `hand` | nie. Die Prüfung schreibt `stand.json`, die Oberfläche meldet «Update bereit» einmal je Tag-Objekt; installiert wird über «Jetzt installieren» oder `zen update` |
+
+Uhr: `time-sync.target` wartet nicht (`systemd-time-wait-sync` ist aus), und der Pi hat keine Uhr mit Batterie. Ob die
+Uhr synchronisiert ist, sagt `timedatectl` (`NTPSynchronized`, aus dem Kern, auch mit chrony); das Prüfen fragt es
+über D-Bus. «Erstmals gesehen» trägt das Prüfen nur mit synchronisierter Uhr ins Hauptbuch ein, mit der Start-ID und der
+Zeit seit dem Start (`erstmals_start`); bis dahin heisst es «automatisch erst mit synchronisierter Uhr». Für die 24 h
+zählt im selben Start die Zeit seit dem Start (ein Sprung der Uhr durch NTP verkürzt nichts), nach einem Neustart die
+Uhr, und die nur, wenn sie synchronisiert ist. Gegen ein NTP, das dauerhaft lügt, hilft das nicht (Restrisiko, NTS).
+Damit `zenos-kanal-pruefen.service` die Start-ID lesen kann, hat es kein `ProcSubset=pid` mehr (die übrige Sandbox
+bleibt).
+
+Ein Lauf (`automatik lauf` bzw. `gelegenheit`, root, in einer Sandbox ohne Netz: `/run/user` und `/home` nur lesend,
+setuid bleibt für den Blick auf die Sperre):
+
+1. Notschalter gesetzt: nichts. Sperre der Bedienung belegt oder `install.sh` von Hand: Exit 75, beim nächsten Mal.
+2. Nur `lauf`: bis 2 Min. auf die Uhr warten, dann `zenos-kanal-holen.service` (scheitert es, gilt der letzte Stand).
+3. Ist eine Installation unterbrochen (`laeuft.json`), setzt die Automatik sie fort, wenn der Zeitpunkt passt (nicht
+   bei `hand`); ihr Ziel war schon geprüft und bereitgestellt, auch ein «ja» von Hand gilt weiter.
+4. Kanal dev, Zeitpunkt passt nicht: nur prüfen (ohne Wunsch), damit `stand.json` stimmt.
+5. Sonst `wunsch.json` mit `art: automatik` (nie mit «ja») und prüfen: Das Prüfen stellt genau den Stand bereit, den
+   es eben `bereit` nennt, nach der Wartezeit, ohne Grund für ein «ja» (Rückschritt, gesperrt, Firewall, Netz, Boot),
+   nie auf dev; `auftrag.json` mit `von_hand: false` (install.sh läuft mit `--ruhig`).
+6. Zeitpunkt noch einmal, dann `zenos-kanal-installieren.service` (Gesundheit, Rückweg wie bei `zen update`), danach
+   prüfen ohne Wunsch.
+
+`automatik.json` hält den letzten Lauf fest (`zen kanal automatik`, `zen kanal status`). Holen und Prüfen enden bei
+«Anker fehlt» oder «wartet» mit Exit ungleich 0; die Automatik setzt ihren Zustand «failed» danach zurück (es sind
+Zustände des Kanals, keine Ausfälle des Systems). Die Automatik-Units nehmen Exit 10 (wartet) und 75 (belegt) als Erfolg;
+4 (zurück) und 5 (kaputt) bleiben «failed» und stehen in `zen doctor`.
+
+**Rückstellung nach `zen rollback`:** Geht ein Rollback auf eine ältere Version, stellt `zurueckgestellt.json` die
+verlassene Version für die Automatik zurück: Sie käme sonst gleich wieder. Die Prüfung nennt sie nicht `bereit`
+(«… ist nach «zen rollback» zurückgestellt; zurück dorthin: zen update»). Aufgehoben wird das durch ein gelungenes
+Update von Hand (`zen update`, «Jetzt installieren») oder eine neuere Version, die die Automatik installiert.
+
+**Bestätigung nach dem Start:** Ein automatisch installierter Stand gilt erst als gut, wenn nach einem Neustart der
+Login kommt: greetd und PAM brechen manchmal erst dann. Bis dahin steht er in `unbestaetigt.json` (mit der Kennung des
+Starts der Installation: Start-ID des Kerns und Startzeit von PID 1), `gut.json` bleibt beim guten Stand, und dessen
+Bereitstellung bleibt liegen. 2 Minuten nach jedem Start schaut `zenos-kanal-bestaetigen.service` bis zu 3 Minuten:
+greetd aktiv und ein Login-Bildschirm (ein Prozess `quickshell` von `_greetd`, seit mindestens 20 s; ein Greeter, den
+greetd immer wieder neu startet, zählt so nicht) oder eine Sitzung auf `seat0`. War greetd bei der Installation nicht
+aktiviert, gibt es keinen Login zu prüfen.
+
+- Im selben Start wie die Installation: nichts.
+- Login da: `gut.json` (mit `bestaetigt`), `unbestaetigt.json` weg.
+- Kein Login: Dieser Start zählt (`fehlstarts`, je Start einmal; Exit 10). Beim zweiten: Die Version kommt nach
+  `gesperrt/`, der gute Stand wird über `zenos-kanal-installieren.service` wieder installiert (Auftrag `art:
+  bestaetigung`, ohne neue Signaturprüfung wie ein Rückweg), `letzte.json` sagt `zurueck`, und ist niemand angemeldet,
+  startet greetd neu. Gibt es keinen guten Stand (das allererste Update über den Kanal kam automatisch), heisst es
+  `kaputt` (ANLEITUNG F).
+
+Ein Update von Hand gilt sofort als gut (der Mensch sitzt davor); es ersetzt einen unbestätigten Stand. Eine Prüfung
+nennt einen unbestätigten Stand «schon installiert», `zen doctor` zeigt ihn als Hinweis.
+
+**Notschalter:** `sudo zen kanal automatik aus` legt `/etc/xdg/zenos/kanal-automatik-aus` an und schaltet
+`zenos-kanal.timer` und `zenos-kanal-gelegenheit.timer` aus (`systemctl disable --now`); `install.sh` lässt sie dann
+aus, und die Units starten nicht (`ConditionPathExists=!…`). `… an` macht beides rückgängig. Er schaltet nur die
+Automatik, nie die Prüfung: Signatur, Anker und Rückfrage gelten bei `zen update` weiter. Die Bestätigung nach dem
+Start bleibt an.
+
+**Ausschalten während eines Updates:** Während `install.sh` hält der Kanal einen Block-Hemmer (Ausschalten und
+Ruhezustand). Davor und danach (Bereitstellen, Gesundheitsprüfung, Rückweg) nicht, und die Sperren in
+`/run/zenos-sperre` sieht kein Benutzer. `zenos-energie` (Ausschalten nach langer Sperre, am Login-Bildschirm) fragt
+deshalb zusätzlich systemd: Solange eine Unit `zenos-kanal-*` läuft, schaltet es nicht aus («Update läuft (…)»).
+
+Geprüft: Einheitentests in `test/einheiten/kanal-automatik.test.py` (Zeitpunkt, Fenster über Mitternacht, Sitzungen
+und Sperre mit Attrappen für loginctl, setpriv und zenos-ipc, Uhr und Sprung der Uhr, Wartezeit nach einem Neustart,
+lauf und gelegenheit, Notschalter, dev, Zustimmung, unterbrochene Installation, Rückstellung, Bestätigung und der Weg
+zurück, auch ohne guten Stand) und `test/einheiten/energie.test.py` (Kanal-Units als Wächter). Ende-zu-Ende im
+Container (`test/container/kanal-e2e.sh automatik`, `nach-automatik`, `nach-automatik-2`, `nach-automatik-3`, mit
+echtem systemd): Timer und Notschalter auch über `install.sh`, dev nie, «von Hand» nur bereit, Zeitfenster über die
+Gelegenheit ohne Holen, `zenos-energie` als Benutzer sagt während der Installation «Update läuft», «bei Sperre» mit
+einer über PAM gestellten Sitzung auf seat0 und der echten Sperre der Oberfläche (eben gesperrt: noch nicht; seit
+10 Min.: installiert, aus der Sandbox der Unit heraus gefragt), Rückstellung nach `zen rollback`, Bestätigung durch den
+echten Timer nach einem Neustart des Containers, zwei Starts ohne Login mit Rückweg und Neustart von greetd. greetd und
+der Login-Bildschirm sind im Container nachgestellt (kein VT).
 
 ### Einmalig einrichten (Zeno)
 

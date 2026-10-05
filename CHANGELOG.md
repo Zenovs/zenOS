@@ -7,6 +7,21 @@ an; eine Version entspricht einem Tag `v…` im Repo.
 
 ### Neu
 
+- **Automatische Updates über den signierten Kanal:** `zenos-kanal.timer` holt und prüft 10–20 Min. nach dem Start
+  und danach alle 6 h. Installiert wird nur auf stabil und vorschau (nie auf dev), nur gültig signiert und ohne
+  Änderung an Firewall, Netz oder Boot (sonst «wartet auf Zustimmung»), nach der Wartezeit (stabil 24 h ab dem ersten
+  Sehen, vorschau sofort) und zum eingestellten Zeitpunkt: «Bei Sperre» heisst, jede Sitzung am Gerät ist seit
+  5 Min. gesperrt (die Oberfläche bestätigt es) oder niemand ist angemeldet; dazu Zeitfenster (auch über
+  Mitternacht), Jederzeit und Von Hand (nie, nur «Update bereit»). `zenos-kanal-gelegenheit.timer` schaut dafür alle
+  15 Min. ohne Holen. «Erstmals gesehen» entsteht nur mit synchronisierter Uhr, und im selben Start zählt die Zeit
+  seit dem Start: Ein Sprung der Uhr verkürzt die Wartezeit nicht. Ein `zen rollback` stellt die verlassene Version
+  für die Automatik zurück, bis ein Update von Hand gelingt. Ein automatisch installierter Stand gilt erst als gut,
+  wenn nach einem Neustart der Login kommt (`zenos-kanal-bestaetigen.timer`); fehlt er bei zwei Starts, geht es
+  zurück auf den guten Stand, und die Version ist gesperrt. Notschalter: `sudo zen kanal automatik an|aus`
+  (`/etc/xdg/zenos/kanal-automatik-aus`, install.sh hält sich daran); `zen kanal automatik` zeigt den Stand. Das
+  Ausschalten nach langer Sperre wartet, solange eine Unit des Kanals läuft. Einstellungen › System › Updates zeigen
+  Notschalter, Bestätigung und Rückstellung (`docs/image-und-releases.md`, «Automatik»; GitHub als automatische
+  Verbindung in `docs/sicherheit.md`).
 - **Updates in den Einstellungen:** Einstellungen › System › Updates zeigt den signierten Kanal: Zustand mit
   Erklärung, Kanal, installierte und bereite Version, letzte Prüfung, Kontakt mit origin und den Anker mit kurzen
   Fingerabdrücken. «Jetzt prüfen» und «Jetzt installieren» gehen ohne Passwort, aber nur in der aktiven Sitzung am

@@ -107,7 +107,9 @@ nicht warten:
    - keine Fern-Sitzung (logind `Remote=yes`) und keine SSH-Verbindung (`sshd-session`),
    - kein tmux- und kein screen-Server,
    - keine Installation (Sperre `/run/lock/zenos-install.lock` von `install.sh`, nur lesend und kurz geteilt
-     gesperrt; `zen update`, `zen rollback`),
+     gesperrt; `zen update`, `zen rollback`; keine laufende Unit `zenos-kanal-*` laut `systemctl list-units`: Der
+     Kanal arbeitet als root in Units, seine Sperren in `/run/zenos-sperre` sieht kein Benutzer, und sein Block-Hemmer
+     gilt nur während `install.sh`, nicht beim Bereitstellen, bei der Gesundheitsprüfung oder beim Rückweg),
    - kein apt, apt-get, aptitude oder dpkg, kein laufendes `unattended-upgrade` (nicht der ständige
      `-shutdown`-Prozess), kein aktives `apt-daily(-upgrade).service`,
    - kein logind-Hemmer «shutdown» im Modus block (`busctl … ListInhibitors`),

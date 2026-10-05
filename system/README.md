@@ -20,6 +20,12 @@ Verweis angelegt; was generiert wird, erzeugen die Programme unter `scripts/bin/
 | `systemd/system/zenos-kanal-nachstart.service` | `/etc/systemd/system/` (`14-kanal`, aktiviert) | nach einem Abbruch beim Start vor greetd die Übernahme des Codes vollenden (`install.sh --nur-code`, ohne Netz) |
 | `systemd/system/zenos-kanal-jetzt.service` | `/etc/systemd/system/` (`14-kanal`, statisch) | «Jetzt installieren» in den Einstellungen: wie `zen update` ohne Terminal und ohne Frage (nur über `zenos-kanal-bedienen`) |
 | `systemd/system/zenos-kanal-zustimmen@.service` | `/etc/systemd/system/` (`14-kanal`, statisch) | «Zustimmen …» in den Einstellungen: das «ja» für genau das Tag-Objekt der Instanz, nur gültig signiert (nur über `zenos-kanal-bedienen`) |
+| `systemd/system/zenos-kanal.timer` | `/etc/systemd/system/` (`14-kanal`, aktiviert, ausser mit Notschalter) | Automatik: 10–20 Min. nach dem Start, dann alle 6 h, `Persistent` |
+| `systemd/system/zenos-kanal-automatik.service` | `/etc/systemd/system/` (`14-kanal`, statisch) | ein Lauf der Automatik: auf die Uhr warten, holen, prüfen, installieren, wenn der Zeitpunkt passt (nie dev) |
+| `systemd/system/zenos-kanal-gelegenheit.timer` | `/etc/systemd/system/` (`14-kanal`, aktiviert, ausser mit Notschalter) | Automatik: alle 15 Min. eine Gelegenheit zum Installieren |
+| `systemd/system/zenos-kanal-gelegenheit.service` | `/etc/systemd/system/` (`14-kanal`, statisch) | wie die Automatik ohne Holen, nur wenn ein Stand bereit ist oder eine Installation unterbrochen wurde |
+| `systemd/system/zenos-kanal-bestaetigen.timer` | `/etc/systemd/system/` (`14-kanal`, aktiviert) | 2 Min. nach jedem Start: Bestätigung eines automatischen Updates |
+| `systemd/system/zenos-kanal-bestaetigen.service` | `/etc/systemd/system/` (`14-kanal`, statisch) | Login nach dem Neustart da? Dann gilt der Stand als gut; bei zwei Starts ohne Login zurück auf den guten Stand |
 | `modprobe/zenos-brcmfmac.conf` | `/etc/modprobe.d/` (von `zen netzwerk umstellen` bzw. im Image) | WPA3 im WLAN-Treiber des Raspberry Pi aus (`docs/module/netzwerk.md`) |
 | `cloud/99-zenos-netzwerk.cfg` | `/etc/cloud/cloud.cfg.d/` (von `zen netzwerk umstellen`, nie im Image) | cloud-init schreibt keine Netzwerk-Konfiguration mehr |
 | `doc/RECHTLICHES`, `doc/QUELLEN` | `/usr/local/share/doc/zenos/` (Modul `72-kennung`, neben `copyright` aus `LICENSE`) | Lizenzen, Markenhinweise und wo der Quellcode liegt; `/etc/legal` verweist darauf |
