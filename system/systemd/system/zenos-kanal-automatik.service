@@ -1,0 +1,45 @@
+# zenOS: ein Lauf der Automatik (zenos-kanal automatik lauf), gestartet von zenos-kanal.timer. Wartet bis zu 2 Minuten
+# auf eine synchronisierte Uhr (time-sync.target wartet nicht), holt über zenos-kanal-holen.service (ohne Rechte),
+# prüft über zenos-kanal-pruefen.service (ohne Netz) und installiert über zenos-kanal-installieren.service, aber nur:
+# auf stabil und vorschau (nie dev), einen gültig signierten Stand ohne Rückfrage-Pfade, nach der Wartezeit (stabil
+# 24 h) und zum Zeitpunkt aus /etc/xdg/zenos/kanal-zeitpunkt (sperre, fenster, jederzeit; hand nie).
+#
+# Für «sperre» liest es die Sitzungen auf seat0 (loginctl), den Marker der Oberfläche in /run/user/<uid>/zenos und
+# fragt die Oberfläche als dieser Benutzer (setpriv, zenos-ipc sperre status). Deshalb sieht es /run/user und /home
+# (nur lesend) und behält setuid. Das Programm selbst braucht kein Netz; das Holen läuft in seiner eigenen Unit.
+# Exit 10 (wartet) und 75 (ein zen update läuft) sind kein Ausfall; 4 (zurück) und 5 (kaputt) schon.
+[Unit]
+Description=zenOS: Kanal automatisch (holen, prüfen, installieren)
+Documentation=file:///opt/zenos/docs/image-und-releases.md
+ConditionPathExists=/usr/local/libexec/zenos/zenos-kanal
+ConditionPathExists=!/etc/xdg/zenos/kanal-automatik-aus
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/zenos/zenos-kanal automatik lauf
+Environment=LANG=C.UTF-8
+StateDirectory=zenos/kanal
+StateDirectoryMode=0755
+RuntimeDirectory=zenos-sperre
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+UMask=0022
+SuccessExitStatus=10 75
+TimeoutStartSec=4h
+Nice=10
+SyslogIdentifier=zenos-kanal
+
+PrivateNetwork=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes

@@ -1,0 +1,19 @@
+# zenOS: Automatik des signierten Kanals. 10 bis 20 Minuten nach dem Start, danach alle 6 Stunden (00, 06, 12, 18 Uhr
+# plus bis zu 10 Minuten Zufall), verpasste Läufe holt Persistent nach. Startet zenos-kanal-automatik.service: holen,
+# prüfen und, wenn der Zeitpunkt des Geräts passt, installieren (nur stabil und vorschau, nie dev).
+# Ein- und ausschalten: sudo zen kanal automatik an|aus (install.sh hält sich daran, Vermerk
+# /etc/xdg/zenos/kanal-automatik-aus). Das Holen ist die einzige automatische Verbindung des Kanals (docs/sicherheit.md).
+[Unit]
+Description=zenOS: Kanal automatisch holen, prüfen und installieren (alle 6 h)
+Documentation=file:///opt/zenos/docs/image-und-releases.md
+
+[Timer]
+OnBootSec=10min
+OnCalendar=*-*-* 00/6:00:00
+RandomizedDelaySec=10min
+AccuracySec=1min
+Persistent=true
+Unit=zenos-kanal-automatik.service
+
+[Install]
+WantedBy=timers.target

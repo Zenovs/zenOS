@@ -17,7 +17,9 @@ pruefe_kanal() {
     warnung "$programm weicht vom Stand in /opt/zenos ab (install.sh stellt ihn wieder her)"
   fi
   for einheit in zenos-kanal-holen.service zenos-kanal-pruefen.service zenos-kanal-installieren.service \
-    zenos-kanal-nachstart.service zenos-kanal-jetzt.service zenos-kanal-zustimmen@.service; do
+    zenos-kanal-nachstart.service zenos-kanal-jetzt.service zenos-kanal-zustimmen@.service \
+    zenos-kanal-automatik.service zenos-kanal.timer zenos-kanal-gelegenheit.service zenos-kanal-gelegenheit.timer \
+    zenos-kanal-bestaetigen.service zenos-kanal-bestaetigen.timer; do
     [[ -f "/etc/systemd/system/$einheit" ]] || warnung "$einheit fehlt (install.sh)"
   done
   [[ -f /usr/share/polkit-1/actions/org.zenos.kanal.policy ]] ||
@@ -26,9 +28,31 @@ pruefe_kanal() {
     [[ "$(systemctl is-enabled zenos-kanal-nachstart.service 2>/dev/null)" != enabled ]]; then
     warnung "zenos-kanal-nachstart.service ist nicht aktiviert: Nach einem Abbruch vollendet niemand die Übernahme vor dem Login (install.sh)"
   fi
+  _kanal_automatik
   _kanal_anker
   _kanal_stand "$programm"
   _kanal_installation "$programm"
+}
+
+# Automatik: Timer an (ausser mit Notschalter), Bestätigung nach dem Start an
+_kanal_automatik() {
+  local timer zustand aus=/etc/xdg/zenos/kanal-automatik-aus
+  [[ -f /etc/systemd/system/zenos-kanal.timer ]] || return 0
+  if [[ -e "$aus" ]]; then
+    hinweis "Automatik aus (Notschalter $aus): nichts wird automatisch geholt oder installiert (sudo zen kanal automatik an)"
+  else
+    for timer in zenos-kanal.timer zenos-kanal-gelegenheit.timer; do
+      zustand=$(systemctl is-enabled "$timer" 2>/dev/null) || true
+      if [[ "$zustand" != enabled ]]; then
+        warnung "$timer ist nicht aktiviert (${zustand:-unbekannt}): Die Automatik läuft nicht (install.sh)"
+      elif [[ -d /run/systemd/system ]] && ! systemctl --quiet is-active "$timer" 2>/dev/null; then
+        warnung "$timer ist aktiviert, läuft aber nicht (sudo systemctl start $timer)"
+      fi
+    done
+  fi
+  zustand=$(systemctl is-enabled zenos-kanal-bestaetigen.timer 2>/dev/null) || true
+  [[ "$zustand" == enabled ]] ||
+    warnung "zenos-kanal-bestaetigen.timer ist nicht aktiviert: Ein automatisches Update wird nach dem Start nie bestätigt (install.sh)"
 }
 
 # Gehört PFAD und jeder Ordner darüber root, und ist nichts davon für andere schreibbar?
@@ -87,6 +111,7 @@ _kanal_installation() {
   text=${zeile#* }
   case "$schluessel" in
     gut) ok "Installation: $text" ;;
+    unbestaetigt) hinweis "Installation: $text" ;;
     keine | "") hinweis "Installation: noch nichts über den Kanal installiert (zen update)" ;;
     angehalten) hinweis "Installation angehalten: $text" ;;
     zurueck) warnung "Letzte Installation gescheitert, Rückweg gelungen $text" ;;

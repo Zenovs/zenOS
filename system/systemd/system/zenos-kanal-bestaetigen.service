@@ -1,0 +1,42 @@
+# zenOS: Bestätigung nach dem Start (zenos-kanal bestaetigen), gestartet von zenos-kanal-bestaetigen.timer, nur wenn
+# ein automatisch installierter Stand wartet (/var/lib/zenos/kanal/unbestaetigt.json). Gezählt wird nur ein Start nach
+# der Installation. Bis zu 3 Minuten wartet es auf den Login: greetd aktiv und ein Login-Bildschirm (quickshell als
+# _greetd, seit mindestens 20 s) oder eine Sitzung auf seat0. Dann wird der Stand der gute (gut.json). Sonst zählt
+# dieser Start; beim zweiten sperrt es die Version und installiert den guten Stand über
+# zenos-kanal-installieren.service wieder, danach startet es greetd neu, wenn niemand angemeldet ist.
+# Exit 10 (erster Start ohne Login) ist kein Ausfall.
+[Unit]
+Description=zenOS: Kanal, automatisches Update nach dem Start bestätigen
+Documentation=file:///opt/zenos/docs/image-und-releases.md
+After=greetd.service
+ConditionPathExists=/usr/local/libexec/zenos/zenos-kanal
+ConditionPathExists=/var/lib/zenos/kanal/unbestaetigt.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/zenos/zenos-kanal bestaetigen
+Environment=LANG=C.UTF-8
+StateDirectory=zenos/kanal
+StateDirectoryMode=0755
+RuntimeDirectory=zenos-sperre
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+UMask=0022
+SuccessExitStatus=10 75
+TimeoutStartSec=4h
+SyslogIdentifier=zenos-kanal
+
+PrivateNetwork=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes

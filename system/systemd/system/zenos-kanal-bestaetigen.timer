@@ -1,0 +1,14 @@
+# zenOS: Bestätigung nach dem Start. 2 Minuten nach jedem Start schaut zenos-kanal-bestaetigen.service, ob nach einem
+# automatischen Update der Login kommt (greetd mit Login-Bildschirm oder eine Sitzung). Erst dann gilt der Stand als
+# gut; fehlt das bei zwei Starts, geht es auf den guten Stand zurück. Ohne automatisches Update startet die Unit nicht.
+[Unit]
+Description=zenOS: Kanal, automatisches Update nach dem Start bestätigen
+Documentation=file:///opt/zenos/docs/image-und-releases.md
+
+[Timer]
+OnBootSec=2min
+AccuracySec=10s
+Unit=zenos-kanal-bestaetigen.service
+
+[Install]
+WantedBy=timers.target

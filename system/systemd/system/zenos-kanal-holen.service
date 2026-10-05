@@ -2,7 +2,8 @@
 # Systembenutzer (DynamicUser) in einer Sandbox: nur Netz und der eigene Ordner /var/lib/zenos-kanal-holen, kein
 # Home, keine Geräte, keine Rechte. Geholt werden nur die Tags v* und der Branch dev; der Spiegel wird danach
 # aufgeräumt. Das Ergebnis ist ein Bundle (uebergabe.bundle), das zenos-kanal-pruefen.service als root ohne Netz prüft.
-# Gestartet von «zen update», «zen rollback» und «sudo zen kanal pruefen» (kein Timer in dieser Fassung).
+# Gestartet von «zen update», «zen rollback», «sudo zen kanal pruefen», den Einstellungen und alle 6 h von der
+# Automatik (zenos-kanal.timer → zenos-kanal-automatik.service).
 [Unit]
 Description=zenOS: Kanal holen (ohne Rechte)
 Documentation=file:///opt/zenos/docs/image-und-releases.md

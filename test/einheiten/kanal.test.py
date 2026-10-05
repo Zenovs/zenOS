@@ -97,6 +97,8 @@ class Basis(unittest.TestCase):
         werte = {
             "CODE_DIR": self.pfad("opt-zenos"),
             "CHANNEL_FILE": self.pfad("etc", "xdg", "zenos", "kanal"),
+            "SCHEDULE_FILE": self.pfad("etc", "xdg", "zenos", "kanal-zeitpunkt"),
+            "AUTOMATIC_OFF_FILE": self.pfad("etc", "xdg", "zenos", "kanal-automatik-aus"),
             "ANCHOR_DIR": self.pfad("etc", "zenos", "vertrauen"),
             "STATE_DIR": self.pfad("var", "lib", "zenos", "kanal"),
             "FETCH_DIR": self.pfad("var", "lib", "zenos-kanal-holen"),
@@ -109,6 +111,9 @@ class Basis(unittest.TestCase):
         for name, wert in werte.items():
             self.addCleanup(setattr, K, name, getattr(K, name))
             setattr(K, name, wert)
+        # Die Uhr gilt als synchronisiert (timedatectl gibt es hier nicht); Tests zur Uhr setzen das selbst
+        self.addCleanup(setattr, K, "clock_synced", K.clock_synced)
+        K.clock_synced = lambda: True
         for teil in (("etc", "xdg", "zenos"), ("var", "lib", "zenos"), ("run",)):
             os.makedirs(self.pfad(*teil), mode=0o755, exist_ok=True)
 
@@ -220,6 +225,15 @@ class Basis(unittest.TestCase):
         self.assertEqual(r.returncode, 0, "git nimmt die neue Hülle an: " + r.stderr)
         self.git("update-ref", f"refs/tags/{name}", oid)
         return oid
+
+    def spaeter_seit_start(self, sekunden, anderer_start=False):
+        """Die Zeit seit dem Start um SEKUNDEN weiter (anderer_start: ein Neustart dazwischen)."""
+        echt = K.boot_clock
+        self.addCleanup(setattr, K, "boot_clock", echt)
+        boot, uhr = echt()
+        if boot is None:
+            boot, uhr = "0123456789abcdef-0000", 1000.0
+        K.boot_clock = lambda: ("fedcba9876543210-1111" if anderer_start else boot, uhr + sekunden)
 
     def abgelehnt(self, stand):
         return {e["tag"]: e["grund"] for e in stand["abgelehnt"]}
@@ -383,13 +397,16 @@ class Releases(Basis):
         erstmals = K.parse_iso(stand["bereit"]["erstmals"])
         self.assertEqual(K.parse_iso(stand["bereit"]["frei_ab"]) - erstmals, datetime.timedelta(hours=24))
         self.assertIn("24 h Wartezeit", stand["grund"])
-        # Später: «erstmals» bleibt, die Wartezeit ist um
+        self.assertIs(stand["bereit"]["frei"], False)
+        # Später: «erstmals» bleibt, die Wartezeit ist um (auch seit dem Start, falls es ihn gibt)
         spaeter = erstmals + datetime.timedelta(hours=30)
         self.addCleanup(setattr, K, "now", K.now)
         K.now = lambda: spaeter
+        self.spaeter_seit_start(30 * 3600)
         _, stand = self.pruefen()
         self.assertEqual(stand["bereit"]["erstmals"], K.iso(erstmals))
         self.assertNotIn("Wartezeit", stand["grund"])
+        self.assertIs(stand["bereit"]["frei"], True)
 
     def test_gesperrte_version(self):
         self.commit("zwei")
@@ -503,7 +520,7 @@ class Hauptbuch(Basis):
         rc, stand = self.lauf()
         self.assertEqual(rc, 0, stand["grund"])
         self.assertEqual(self.hauptbuch(), {"v0.1.0": {"objekt": objekt, "gueltig": True, "commit": commit,
-                                                       "erstmals": "2026-10-01T00:00:00Z"}})
+                                                       "erstmals": "2026-10-01T00:00:00Z", "erstmals_start": None}})
 
     def test_verschoben_ungueltig(self):
         self.commit("zwei")
@@ -514,8 +531,9 @@ class Hauptbuch(Basis):
         rc, stand = self.lauf()
         self.assertEqual((rc, stand["zustand"]), (0, "aktuell"))
         self.assertIn("auf origin verschoben", self.abgelehnt(stand)["v0.1.0"])
-        self.assertEqual(self.hauptbuch()["v0.1.0"], {"objekt": vorher, "gueltig": True, "commit": self.git(
-            "rev-parse", "HEAD"), "erstmals": self.hauptbuch()["v0.1.0"]["erstmals"]})
+        eintrag = self.hauptbuch()["v0.1.0"]
+        self.assertEqual(eintrag, {"objekt": vorher, "gueltig": True, "commit": self.git("rev-parse", "HEAD"),
+                                   "erstmals": eintrag["erstmals"], "erstmals_start": eintrag["erstmals_start"]})
 
     def test_geloescht(self):
         self.commit("zwei")

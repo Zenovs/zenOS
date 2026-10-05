@@ -1,7 +1,7 @@
 #!/usr/bin/python3 -I
 """zenos-kanal: der signierte Update-Kanal von zenOS. Holt die Tags und Branches von origin, prüft sie gegen den
 Vertrauensanker des Geräts, stellt einen geprüften Stand bereit und installiert ihn, mit Gesundheitsprüfung und Rückweg.
-Automatisch installiert diese Fassung nichts: nur auf «zen update» oder «zen rollback».
+Von Hand mit «zen update» und «zen rollback», automatisch über zenos-kanal.timer (siehe «Automatik» unten).
 
 Aufruf:
   zenos-kanal update                   zen update: holen, prüfen, bei Bedarf «ja», bereitstellen, installieren (root,
@@ -33,6 +33,18 @@ Aufruf:
                                        der Wurzel und von jedem Release-Schlüssel die ersten 8 Zeichen werden aus
                                        1Password eingetippt; die Werte aus dem Ordner zeigt es erst danach)
   zenos-kanal anker --pruefen ORDNER   prüft nur den Inhalt eines Ankers: vollständig (Exit 0), leer (1), ungültig (3)
+  zenos-kanal automatik                zeigt, ob die Automatik an ist, wann sie läuft und was sie zuletzt tat
+  zenos-kanal automatik an|aus         Notschalter (root, sudo zen kanal automatik an|aus): schaltet die Timer ein bzw.
+                                       aus und vermerkt das in /etc/xdg/zenos/kanal-automatik-aus (install.sh hält sich
+                                       daran). Die Signaturprüfung bleibt in jedem Fall
+  zenos-kanal automatik lauf           zenos-kanal-automatik.service (zenos-kanal.timer, alle 6 h): bis 2 Min. auf eine
+                                       synchronisierte Uhr warten, holen, prüfen, und wenn der Zeitpunkt passt,
+                                       installieren
+  zenos-kanal automatik gelegenheit    zenos-kanal-gelegenheit.service (alle 15 Min., nur wenn etwas bereit ist): wie
+                                       lauf ohne Holen, damit «bei Sperre» und das Zeitfenster getroffen werden
+  zenos-kanal bestaetigen              zenos-kanal-bestaetigen.service (2 Min. nach dem Start): Kommt nach einem
+                                       automatischen Update der Login (greetd mit Greeter oder Sitzung)? Erst dann gilt
+                                       der Stand als gut; fehlt die Bestätigung bei zwei Starts, zurück auf den guten
   zenos-kanal holen-intern             nur für zenos-kanal-holen.service: holt ohne Rechte von origin
 
 Holen (zenos-kanal-holen.service, DynamicUser, nur mit Netz und in einer Sandbox): «git fetch» von der https-Adresse
@@ -92,11 +104,29 @@ wird die Version gesperrt und der Rückweg genommen. Danach prüft zen update de
 Zeitpunkt (/etc/xdg/zenos/kanal-zeitpunkt, root, 0644; setzt der Benutzer am Gerät über zenos-kanal-bedienen und
 polkit oder mit «sudo zen kanal zeitpunkt»): «sperre» (Standard: nur gesperrt oder ohne Sitzung), «fenster» mit von
 und bis (HH:MM, mindestens eine Stunde, über Mitternacht erlaubt), «jederzeit» oder «hand» (nie automatisch, nur
-die Mitteilung «Update bereit»). Diese Fassung liest ihn nur; die Automatik richtet sich danach.
+die Mitteilung «Update bereit»).
+
+Automatik (Entscheid Zeno, Oktober 2026): Automatisch installiert wird nur auf stabil und vorschau, nie auf dev, nur
+ein gültig signierter Stand ohne Rückfrage-Pfade («zustimmung» bleibt liegen, die Oberfläche meldet es), nur nach der
+Wartezeit (stabil 24 h ab dem ersten Sehen, vorschau sofort) und nur zum Zeitpunkt:
+  sperre     jede Sitzung auf seat0 ist seit mindestens 5 Min. gesperrt: Marker der Oberfläche
+             /run/user/<uid>/zenos/gesperrt (Besitzer der Benutzer) und «zenos-ipc sperre status» als dieser Benutzer
+             sagt «gesperrt» (ext-session-lock bestätigt). Ohne Sitzung auf seat0 (Login-Bildschirm, niemand angemeldet)
+             gilt die Lage als ruhig. Fern-Sitzungen (SSH) zählen nicht.
+  fenster    nur zwischen von und bis (Ortszeit, auch über Mitternacht) und nur mit synchronisierter Uhr
+  jederzeit  sobald es bereit ist
+  hand       nie; nur stand.json und die Mitteilung «Update bereit» der Oberfläche
+«erstmals gesehen» (gesehen.json) entsteht nur mit synchronisierter Uhr (timedatectl NTPSynchronized; time-sync.target
+wartet nicht) und merkt sich den Start: Im selben Start zählt für die 24 h die Zeit seit dem Start, sonst die Uhr, und
+auch die nur synchronisiert. Ein «zen rollback» stellt die verlassene Version für die Automatik zurück
+(zurueckgestellt.json), bis ein Update von Hand gelingt. Ein automatisch installierter Stand gilt erst als gut, wenn
+nach einem Neustart der Login kommt (unbestaetigt.json, zenos-kanal bestaetigen); fehlt das bei zwei Starts, geht es
+auf den guten Stand zurück, und die Version wird gesperrt.
 
 Dateien: /etc/xdg/zenos/kanal (Kanal: stabil, vorschau, dev; main gilt als stabil), /etc/zenos/vertrauen (Anker),
-/var/lib/zenos/kanal/{stand.json, gesehen.json, hoechste, gesperrt/, wunsch.json, auftrag.json, laeuft.json, gut.json,
-letzte.json, angehalten, bereit/} (root, alles für alle lesbar), /var/lib/zenos-kanal-holen/{spiegel.git,
+/etc/xdg/zenos/kanal-automatik-aus (Notschalter), /var/lib/zenos/kanal/{stand.json, gesehen.json, hoechste, gesperrt/,
+wunsch.json, auftrag.json, laeuft.json, gut.json, unbestaetigt.json, zurueckgestellt.json, automatik-bereit,
+automatik.json, letzte.json, angehalten, bereit/} (root, alles für alle lesbar), /var/lib/zenos-kanal-holen/{spiegel.git,
 uebergabe.bundle, holen.json} (Holer), /run/zenos-sperre/{kanal.lock, bedienung.lock, install.lock, hand} (nur root).
 
 Exit: 0 in Ordnung (aktuell, bereit, installiert) · 1 Fehler · 2 Aufruf · 3 abgelehnt, blockiert oder Anker fehlt ·
@@ -111,6 +141,7 @@ import fcntl
 import hashlib
 import json
 import os
+import pwd
 import re
 import secrets
 import shutil
@@ -131,6 +162,9 @@ SYSTEM_PATH = "/usr/bin:/bin"
 CODE_DIR = "/opt/zenos"
 CHANNEL_FILE = "/etc/xdg/zenos/kanal"
 SCHEDULE_FILE = "/etc/xdg/zenos/kanal-zeitpunkt"
+# Notschalter der Automatik (sudo zen kanal automatik aus): Gibt es die Datei, laufen die Timer nicht, und install.sh
+# schaltet sie nicht wieder ein
+AUTOMATIC_OFF_FILE = "/etc/xdg/zenos/kanal-automatik-aus"
 ANCHOR_DIR = "/etc/zenos/vertrauen"
 STATE_DIR = "/var/lib/zenos/kanal"
 FETCH_DIR = "/var/lib/zenos-kanal-holen"
@@ -168,6 +202,8 @@ JOURNALCTL = "/usr/bin/journalctl"
 LOGINCTL = "/usr/bin/loginctl"
 LOGGER = "/usr/bin/logger"
 SYSTEMD_INHIBIT = "/usr/bin/systemd-inhibit"
+TIMEDATECTL = "/usr/bin/timedatectl"
+SETPRIV = "/usr/bin/setpriv"
 QUICKSHELL = "/usr/local/bin/quickshell"
 INSTALL_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
@@ -192,6 +228,21 @@ WAIT_STABLE = datetime.timedelta(hours=24)
 MAX_AGE = datetime.timedelta(hours=1)
 BOOT_ID = "/proc/sys/kernel/random/boot_id"
 PROC = "/proc"
+# Automatik: so lange vor dem Holen auf eine synchronisierte Uhr warten (time-sync.target wartet nicht), so lange muss
+# eine Sitzung gesperrt sein, so lange wartet die Bestätigung nach dem Start auf den Login, so alt muss der Greeter sein
+# (ein Greeter, der immer wieder abstürzt, zählt nicht), so viele Starts ohne Login führen zurück
+CLOCK_WAIT = 120
+CLOCK_POLL = 5
+MIN_LOCKED = datetime.timedelta(minutes=5)
+CONFIRM_WAIT = 180
+CONFIRM_POLL = 10
+GREETER_MIN_AGE = 20
+GREETER_USER = "_greetd"
+GREETER_COMM = "quickshell"
+MAX_UNCONFIRMED = 2
+TIMERS = ("zenos-kanal.timer", "zenos-kanal-gelegenheit.timer")
+USER_PATH = "/usr/local/bin:/usr/bin:/bin"
+RUN_USER = "/run/user"
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -208,6 +259,11 @@ UNITS = {
     "pruefen": "zenos-kanal-pruefen.service",
     "installieren": "zenos-kanal-installieren.service",
 }
+# Zustandsdateien der Automatik in /var/lib/zenos/kanal
+UNCONFIRMED = "unbestaetigt.json"
+HOLD = "zurueckgestellt.json"
+READY_MARK = "automatik-bereit"
+AUTO_LOG = "automatik.json"
 
 # Rückfrage-Pfade: Ein Update, das einen davon ändert, installiert nur nach Zustimmung (Firewall, Netz, Boot). Dieselben
 # wie die Gruppen firewall, netz und boot in scripts/lib/sensible-pfade (ein Einheitentest hält beide gleich). Fest im
@@ -387,6 +443,45 @@ def stamp_age(data, t):
 def fresh(data, t):
     age = stamp_age(data, t)
     return age is not None and abs(age) <= MAX_AGE
+
+
+def clock_synced():
+    """Ist die Uhr synchronisiert (timedatectl: NTPSynchronized=yes, aus dem Kernel, auch mit chrony)? Nicht
+    feststellbar heisst nein. time-sync.target allein sichert das nicht (systemd-time-wait-sync ist aus)."""
+    if not os.access(TIMEDATECTL, os.X_OK):
+        return False
+    r = run([TIMEDATECTL, "show", "--property=NTPSynchronized", "--value"],
+            env={"PATH": SYSTEM_PATH, "LANG": "C.UTF-8", "SYSTEMD_PAGER": ""}, timeout=30)
+    return r.returncode == 0 and r.stdout.strip() == "yes"
+
+
+def start_id():
+    """Kennung dieses Systemstarts: Start-ID des Kerns und Startzeit von PID 1 (so ist auch ein neu gestarteter
+    Container ein neuer Start). None, wenn sie sich nicht lesen lässt."""
+    boot, _ = boot_clock()
+    try:
+        with open(os.path.join(PROC, "1", "stat"), encoding="ascii", errors="replace") as f:
+            fields = f.read(4096).rsplit(")", 1)[1].split()
+        started = fields[19]  # Feld 22 (starttime), gezählt ab dem Feld nach «(comm)»
+    except (OSError, IndexError):
+        return None
+    return f"{boot}:{started}" if boot and started.isdigit() else None
+
+
+def wait_over(entry, wait, t, synced):
+    """Ist die Wartezeit WAIT seit dem ersten Sehen (Eintrag im Hauptbuch) um? Ohne Wartezeit ja. Sonst braucht es
+    «erstmals» (das nur mit synchronisierter Uhr entsteht); im selben Start zählt die Zeit seit dem Start (ein Sprung der
+    Uhr verkürzt nichts), über einen Neustart hinweg die Uhr, und die nur, wenn sie jetzt synchronisiert ist."""
+    if wait <= datetime.timedelta(0):
+        return True
+    first = parse_iso((entry or {}).get("erstmals"))
+    if not first or t - first < wait:
+        return False
+    seen = (entry or {}).get("erstmals_start") or {}
+    boot, clock = boot_clock()
+    if boot and isinstance(seen, dict) and seen.get("start") == boot and isinstance(seen.get("seit_start"), (int, float)):
+        return clock - seen["seit_start"] >= wait.total_seconds()
+    return bool(synced)
 
 
 def git_env():
@@ -1417,8 +1512,9 @@ class Current(Exception):
 
 
 def write_wish(art, tag=None, ja=None, only_signed=False):
-    """Wunsch von zen update oder zen rollback für den nächsten Lauf von «pruefen»; gibt seine Kennung zurück.
-    only_signed («Zustimmen …» in den Einstellungen): Das «ja» gilt nur für ein gültig signiertes Ziel."""
+    """Wunsch von zen update oder zen rollback (bzw. der Automatik, art «automatik») für den nächsten Lauf von
+    «pruefen»; gibt seine Kennung zurück. only_signed («Zustimmen …» in den Einstellungen): Das «ja» gilt nur für ein
+    gültig signiertes Ziel."""
     wish_id = secrets.token_hex(8)
     os.makedirs(STATE_DIR, mode=0o755, exist_ok=True)
     write_json(state_path("wunsch.json"), {"version": 1, "id": wish_id, "art": art, "tag": tag, "ja": ja,
@@ -1438,8 +1534,10 @@ def take_wish(t):
     if not fresh(data, t):
         return None
     art, tag, ja = data.get("art"), data.get("tag"), data.get("ja")
-    if art not in ("update", "rollback") or (ja is not None and not OID_RE.fullmatch(str(ja))):
+    if art not in ("update", "rollback", "automatik") or (ja is not None and not OID_RE.fullmatch(str(ja))):
         return None
+    if art == "automatik" and ja is not None:
+        return None  # Die Automatik stimmt nie zu
     if art == "rollback" and not TAG_NAME_RE.fullmatch(str(tag)):
         return None
     # Fehlt das Feld, kommt der Wunsch von zen update (älteres Format); ein unklarer Wert gilt als das strengere
@@ -1603,6 +1701,8 @@ class Check:
         self.ledger = {}
         self.floor_value = None
         self.channel = None
+        # Uhr synchronisiert? (einmal je Lauf; «erstmals» entsteht nur so)
+        self.synced = None
         self.stand = {
             "version": 1,
             "kanal": None,
@@ -1622,6 +1722,10 @@ class Check:
             "hinweise": self.notes,
             "wunsch": None,
             "installation": installation_marks(),
+            "uhr_synchron": None,
+            "automatik": {"an": not automatic_off()},
+            "unbestaetigt": unconfirmed_summary(),
+            "zurueckgestellt": hold_summary(),
         }
 
     # -- Zustand auf der Platte --
@@ -1640,8 +1744,10 @@ class Check:
                 if (isinstance(entry, dict) and isinstance(name, str) and OID_RE.fullmatch(str(entry.get("objekt")))
                         and entry.get("gueltig") is True):
                     commit = entry.get("commit")
+                    seen = entry.get("erstmals_start")
                     ledger[name] = {"objekt": entry["objekt"], "gueltig": True,
                                     "erstmals": entry.get("erstmals") if parse_iso(entry.get("erstmals")) else None,
+                                    "erstmals_start": seen if valid_start_stamp(seen) else None,
                                     "commit": commit if OID_RE.fullmatch(str(commit)) else None}
         return ledger
 
@@ -1674,6 +1780,8 @@ class Check:
         if problem:
             raise Failure(f"Zustand unsicher: {problem}")
         self.wish = take_wish(self.t)
+        self.synced = clock_synced()
+        self.stand["uhr_synchron"] = self.synced
         code = self.check()
         if self.wish:
             code = self.fulfil(code)
@@ -1891,24 +1999,39 @@ class Check:
             return self.finish("dev", self.dev_text(), EXIT_OK)
 
         locked = self.locked_versions()
+        held = held_version()
         candidates = [n for n in valid if in_channel(n, channel) and n not in locked
                       and (floor is None or version_key(n) > version_key(floor))]
+        if held in candidates:
+            # Nach «zen rollback» bringt die Automatik die verlassene Version nicht wieder (zen update von Hand schon)
+            candidates.remove(held)
+            self.notes.append(f"{held} ist nach «zen rollback» für die Automatik zurückgestellt; zen update holt es")
         target = highest(candidates)
         if not target:
-            return self.finish("aktuell", f"Keine neuere gültig signierte Version im Kanal {channel}.", EXIT_OK)
-        first = parse_iso(ledger[target].get("erstmals")) or self.t
-        free = first + (WAIT_STABLE if channel == "stabil" else datetime.timedelta(0))
+            text = f"Keine neuere gültig signierte Version im Kanal {channel}."
+            if held:
+                text += f" {held} ist nach «zen rollback» zurückgestellt; zurück dorthin: zen update."
+            return self.finish("aktuell", text, EXIT_OK)
+        wait = WAIT_STABLE if channel == "stabil" else datetime.timedelta(0)
+        first = parse_iso(ledger[target].get("erstmals"))
+        free_at = first + wait if first else (self.t if not wait else None)
+        free = wait_over(ledger[target], wait, self.t, self.synced)
         self.import_installed()
         hits = consent_hits(self.repo, self.installed, valid[target])
         self.stand["bereit"] = {"version": target, "commit": valid[target], "objekt": refs["tags"][target][0],
-                                "erstmals": iso(first), "frei_ab": iso(free), "rueckfrage": hits}
+                                "erstmals": iso(first) if first else None,
+                                "frei_ab": iso(free_at) if free_at else None, "frei": free, "rueckfrage": hits}
         if hits is None or hits:
             what = ", ".join(hits[:5]) if hits else "der Vergleich mit dem installierten Stand ist nicht möglich"
             return self.finish("zustimmung", f"{target} ist gültig signiert, betrifft aber Firewall, Netz oder Boot "
                                f"({what}). Installiert wird nur mit Zustimmung: zen update.", EXIT_WAIT)
         text = f"{target} ist gültig signiert und neuer als der installierte Stand. Installieren: zen update."
-        if free > self.t:
-            text += f" Automatisch frühestens ab {local_time(iso(free))} (24 h Wartezeit auf stabil)."
+        if not free and not first:
+            text += " Automatisch erst 24 h, nachdem es mit synchronisierter Uhr gesehen wurde (Wartezeit auf stabil)."
+        elif not free and free_at > self.t:
+            text += f" Automatisch frühestens ab {local_time(iso(free_at))} (24 h Wartezeit auf stabil)."
+        elif not free:
+            text += " Automatisch, sobald die Uhr synchronisiert ist (24 h Wartezeit auf stabil)."
         return self.finish("bereit", text, EXIT_OK)
 
     def ledger_update(self, ledger, name, result):
@@ -1920,12 +2043,16 @@ class Check:
         entry = ledger.get(name)
         if entry is None:
             if result.ok:
-                ledger[name] = {"objekt": result.oid, "gueltig": True, "erstmals": iso(self.t), "commit": result.commit}
+                ledger[name] = {"objekt": result.oid, "gueltig": True, "erstmals": None, "erstmals_start": None,
+                                "commit": result.commit}
+                self.first_seen(ledger[name])
                 self.ledger_changed = True
             return None
         if entry["objekt"] == result.oid:
             if result.ok and entry.get("commit") != result.commit:
                 entry["commit"] = result.commit  # Eintrag einer älteren Fassung ohne Commit
+                self.ledger_changed = True
+            if result.ok and not entry.get("erstmals") and self.first_seen(entry):
                 self.ledger_changed = True
             return None
         if not result.ok:
@@ -1941,6 +2068,17 @@ class Check:
         return (f"ALARM: {name} zeigt jetzt gültig signiert auf einen anderen Commit (vorher {before}, jetzt "
                 f"{result.commit[:12]}). Ist ein Schlüssel in falschen Händen? Es gilt nichts mehr, bis das geklärt "
                 "ist.")
+
+    def first_seen(self, entry):
+        """Trägt «erstmals» (Uhrzeit und Start) ein, aber nur mit synchronisierter Uhr: Eine Uhr, die nach dem Start
+        noch falsch geht (der Pi hat keine Uhr mit Batterie) oder später springt, verkürzte sonst die Wartezeit auf
+        stabil. True, wenn eingetragen."""
+        if not self.synced:
+            return False
+        boot, clock = boot_clock()
+        entry["erstmals"] = iso(self.t)
+        entry["erstmals_start"] = {"start": boot, "seit_start": clock} if boot else None
+        return True
 
     def save_ledger(self, ledger):
         if self.ledger_changed:
@@ -2086,6 +2224,8 @@ class Check:
         try:
             if self.wish["art"] == "rollback":
                 target = self.rollback_target(self.wish["tag"], trusted)
+            elif self.wish["art"] == "automatik":
+                target = self.automatic_target(trusted)
             elif self.channel == "dev":
                 target = self.dev_target(trusted)
             else:
@@ -2138,7 +2278,7 @@ class Check:
         except Failure as e:
             return self.answer("abgelehnt", str(e), EXIT_ERROR)
         order = {"version": 1, **target, "pfad": folder, "kanal": self.channel, "art": self.wish["art"],
-                 "von_hand": True, **stamp()}
+                 "von_hand": self.wish["art"] != "automatik", **stamp()}
         write_json(state_path("auftrag.json"), order)
         what = ("mit deinem «ja»" if target["freigabe"] else "jeder neue Commit gültig signiert" if target["bereich_von"]
                 else "gültig signiert")
@@ -2150,7 +2290,9 @@ class Check:
         if target["commit"] != self.installed:
             return False
         gut = load_json(state_path("gut.json"), trusted=True) or {}
-        if gut.get("commit") != target["commit"] or os.path.lexists(state_path("angehalten")):
+        pending = load_json(state_path(UNCONFIRMED), trusted=True) or {}
+        if target["commit"] not in (gut.get("commit"), pending.get("commit")) or os.path.lexists(
+                state_path("angehalten")):
             return False
         if os.path.lexists(state_path("laeuft.json")):
             return False
@@ -2240,6 +2382,37 @@ class Check:
                 "id": oid, "hoechste": True, "gruende": reasons, "commits": None,
                 "refspecs": [f"+refs/eingang/tags/{name}:refs/tags/{name}"]}
 
+    def automatic_target(self, trusted):
+        """Ziel der Automatik: genau der Stand, den diese Prüfung «bereit» nennt, nach der Wartezeit, ohne Grund für ein
+        «ja» (Rückschritt, gesperrt, Firewall, Netz, Boot prüft fulfil danach), nie auf dev und nie eine Version, die
+        nach «zen rollback» zurückgestellt ist."""
+        if self.channel == "dev":
+            raise Refusal("Kanal dev: Automatisch kommt nie etwas, nur von Hand mit zen update.")
+        ready = self.stand.get("bereit")
+        if self.stand["zustand"] == "zustimmung":
+            raise Current(f"{ready['version'] if ready else 'Das Update'} wartet auf Zustimmung (Firewall, Netz oder "
+                          "Boot); automatisch kommt es nicht.")
+        if self.stand["zustand"] != "bereit" or not ready:
+            raise Current(f"Nichts für die Automatik ({STATE_TEXT.get(self.stand['zustand'], self.stand['zustand'])}).")
+        if not ready.get("frei"):
+            raise Current(f"{ready['version']} wartet noch (24 h Wartezeit auf stabil, nur mit synchronisierter Uhr).")
+        held = held_version()
+        if held == ready["version"]:
+            raise Current(f"{held} ist nach «zen rollback» für die Automatik zurückgestellt.")
+        if not self.anchor or not trusted:
+            raise Refusal(f"Kanal {STATE_TEXT.get(self.stand['zustand'], self.stand['zustand'])}: nichts automatisch.")
+        name = ready["version"]
+        if (name not in self.valid or not in_channel(name, self.channel) or self.valid[name] != ready["commit"]
+                or self.refs["tags"].get(name, (None,))[0] != ready["objekt"]):
+            raise Refusal(f"{name} ist nicht mehr der bereite Stand dieser Prüfung.")
+        commit, oid = ready["commit"], ready["objekt"]
+        if (self.installed and commit != self.installed and has_commit(self.repo, self.installed)
+                and is_ancestor(self.repo, commit, self.installed)):
+            raise Refusal(f"{name} wäre ein Rückschritt: Der installierte Stand ist neuer.")
+        return {"commit": commit, "zweig": None, "tag": name, "objekt": oid, "version": name, "signiert": True,
+                "id": oid, "hoechste": True, "gruende": [], "commits": None,
+                "refspecs": [f"+refs/eingang/tags/{name}:refs/tags/{name}"]}
+
     def rollback_target(self, name, trusted):
         if TRUST_RE.fullmatch(name):
             raise Refusal(f"{name} ist ein Vertrauens-Tag, kein Stand.")
@@ -2302,6 +2475,7 @@ def cmd_check(argv):
             code = check.answer("abgelehnt", check.stand["grund"] or "Prüfung abgebrochen.", code or EXIT_ERROR)
         if os.path.isdir(STATE_DIR) and not path_problem(STATE_DIR):
             write_json(os.path.join(STATE_DIR, "stand.json"), check.stand)
+            ready_mark(check.stand)
     except OSError as e:
         print(f"{NAME}: stand.json nicht geschrieben: {e.strerror}", file=sys.stderr)
         code = code or EXIT_ERROR
@@ -2309,6 +2483,19 @@ def cmd_check(argv):
         lock.release()
     print_check(check.stand)
     return code
+
+
+def ready_mark(stand):
+    """automatik-bereit: Gibt es auf stabil oder vorschau einen bereiten Stand, schaut zenos-kanal-gelegenheit.service
+    alle 15 Min., ob der Zeitpunkt passt (ConditionPathExists); sonst startet es gar nicht erst."""
+    path = state_path(READY_MARK)
+    ready = stand.get("bereit")
+    if stand.get("zustand") == "bereit" and stand.get("kanal") in ("stabil", "vorschau") and ready:
+        write_json(path, {"version": ready.get("version"), "objekt": ready.get("objekt"), "frei": ready.get("frei"),
+                          "frei_ab": ready.get("frei_ab")})
+    else:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(path)
 
 
 def print_check(stand):
@@ -2780,6 +2967,13 @@ class Installation:
         folder = entry["pfad"]
         if not repo_intact(folder, entry["commit"]):
             raise Failure("Bereitstellung fehlt, ist verändert oder nicht root-eigen")
+        if entry.get("art") == "bestaetigung":
+            # Zurück auf den guten Stand, weil nach einem automatischen Update der Login fehlte: Er lief schon gesund
+            # und bestätigt (wie der Rückweg ohne neue Signaturprüfung; sein Schlüssel kann inzwischen widerrufen sein)
+            gut = load_json(state_path("gut.json"), trusted=True) or {}
+            if gut.get("commit") != entry["commit"]:
+                raise Failure("der gute Stand hat sich geändert")
+            return
         if entry.get("signiert"):
             try:
                 anchor = load_device_anchor()
@@ -2833,9 +3027,12 @@ class Installation:
         if head == target["commit"]:
             return None
         gut = load_json(state_path("gut.json"), trusted=True) or {}
+        pending = load_json(state_path(UNCONFIRMED), trusted=True) or {}
         folder = state_path("bereit", head)
         if gut.get("commit") == head and repo_intact(folder, head):
             return {**{k: gut.get(k) for k in ENTRY_KEYS}, "pfad": folder, "quelle": "gut"}
+        if pending.get("commit") == head and repo_intact(folder, head):
+            return {**{k: pending.get(k) for k in ENTRY_KEYS}, "pfad": folder, "quelle": "unbestaetigt"}
         if os.path.lexists(state_path("angehalten")) or git(CODE_DIR, "status", "--porcelain").stdout.strip():
             self.result["hinweise"].append(f"Rückweg ist der Commit {head[:12]} ohne die Änderungen, die von Hand in "
                                            f"{CODE_DIR} kamen.")
@@ -2882,19 +3079,64 @@ class Installation:
 
     def success(self, running, phase, failure):
         entry = running[phase]
-        gut = {k: entry.get(k) for k in ENTRY_KEYS}
-        gut["zeit"] = iso(now())
-        write_json(state_path("gut.json"), gut)
+        done = {k: entry.get(k) for k in ENTRY_KEYS}
+        done["zeit"] = iso(now())
+        pending = load_json(state_path(UNCONFIRMED), trusted=True) or {}
+        gut = load_json(state_path("gut.json"), trusted=True) or {}
+        keep = {entry["commit"]}
+        automatic = phase == "ziel" and entry.get("art") == "automatik"
+        if automatic:
+            # Erst wenn nach einem Neustart der Login kommt (zenos-kanal bestaetigen), gilt der Stand als gut. Bis dahin
+            # bleibt gut.json beim guten Stand, und seine Bereitstellung bleibt für den Weg zurück.
+            greetd = unit_value(["is-enabled", "greetd.service"]) if os.path.isdir(SYSTEMD_RUN_DIR) else ""
+            write_json(state_path(UNCONFIRMED), {**done, "start": start_id(), "fehlstarts": [],
+                                                 "guter_stand": gut.get("commit"), "greetd": greetd})
+            if OID_RE.fullmatch(str(gut.get("commit"))):
+                keep.add(gut["commit"])
+        elif phase == "rueckweg" and pending.get("commit") == entry["commit"]:
+            # Zurück auf einen automatisch installierten, noch unbestätigten Stand: Er bleibt unbestätigt
+            if OID_RE.fullmatch(str(gut.get("commit"))):
+                keep.add(gut["commit"])
+        else:
+            write_json(state_path("gut.json"), done)
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(state_path(UNCONFIRMED))
         if phase == "ziel" and entry.get("signiert") and entry.get("hoechste") and version_key(entry.get("version")):
             raise_floor(entry["version"])
+        if phase == "ziel":
+            self.hold_after(running, entry)
         self.remove_running()
         with contextlib.suppress(FileNotFoundError):
             os.unlink(state_path("angehalten"))
-        cleanup_staged({entry["commit"]})
+        cleanup_staged(keep)
         reload_user_managers()
+        if phase == "ziel" and entry.get("art") == "bestaetigung":
+            return self.finish("zurueck", "Nach dem automatischen Update kam nach dem Neustart kein Login. Zurück auf "
+                               f"dem guten Stand {target_label(entry)}, gesund.", EXIT_OK)
         if phase == "ziel":
-            return self.finish("installiert", f"{target_label(entry)} ist installiert und gesund.", EXIT_OK)
+            what = " (automatisch; gilt als gut, sobald nach einem Neustart der Login kommt)" if automatic else ""
+            return self.finish("installiert", f"{target_label(entry)} ist installiert und gesund{what}.", EXIT_OK)
         return self.finish("zurueck", f"{failure}. Zurück auf {target_label(entry)}, gesund.", EXIT_FAILED)
+
+    def hold_after(self, running, entry):
+        """Nach einem gelungenen «zen rollback» auf eine ältere Version: Die verlassene Version ist für die Automatik
+        zurückgestellt (sie käme sonst gleich wieder). Ein gelungenes Update von Hand (zen update, «Jetzt
+        installieren») oder eine neuere Version hebt das auf."""
+        left = (running.get("rueckweg") or {}).get("version")
+        if entry.get("art") == "rollback":
+            target = entry.get("version")
+            if version_key(left) and (not version_key(target) or version_key(left) > version_key(target)):
+                write_json(state_path(HOLD), {"version": 1, "zurueckgestellt": left, "nach": target or entry["commit"],
+                                              "zeit": iso(now())})
+                self.result["hinweise"].append(f"{left} ist für die Automatik zurückgestellt; zen update holt es")
+            return
+        if entry.get("art") == "bestaetigung":
+            return
+        held = held_version()
+        newer = version_key(entry.get("version")) and version_key(entry["version"]) > version_key(held or "v0.0.0")
+        if held and (entry.get("von_hand") or newer):
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(state_path(HOLD))
 
     def broken(self, running, reason):
         self.remove_running()
@@ -3018,7 +3260,8 @@ def cmd_after_boot(argv):
 # Was der Probelauf im Selbsttest umbiegt (und danach zurückstellt)
 SELFTEST_GLOBALS = ("STATE_DIR", "ANCHOR_DIR", "LOCK_FILE", "UI_LOCK_FILE", "HAND_MARK", "RUNTIME_DIR", "DRY_RUN",
                     "start_unit", "interactive")
-SELFTEST_COPY = ("gesehen.json", "hoechste", "gut.json", "letzte.json", "stand.json", "angehalten")
+SELFTEST_COPY = ("gesehen.json", "hoechste", "gut.json", "letzte.json", "stand.json", "angehalten", UNCONFIRMED, HOLD,
+                 AUTO_LOG)
 
 
 def cmd_selftest(argv):
@@ -3095,7 +3338,7 @@ def selftest_dry_run():
                  DRY_RUN=True, start_unit=dry_unit, interactive=lambda: False)
         steps = (("status", ["status"]), ("status --json", ["status", "--json"]),
                  ("status --kurz", ["status", "--kurz"]), ("status --installation", ["status", "--installation"]),
-                 ("anker", ["anker"]), ("zeitpunkt", ["zeitpunkt"]), ("update", ["update"]),
+                 ("anker", ["anker"]), ("zeitpunkt", ["zeitpunkt"]), ("automatik", ["automatik"]), ("update", ["update"]),
                  ("rollback", ["rollback", tag]), ("jetzt", ["jetzt"]), ("zustimmen", ["zustimmen", "0" * 40]),
                  ("installieren", ["installieren"]), ("nachstart", ["nachstart"]))
         with open(os.devnull, "w", encoding="utf-8") as null, contextlib.redirect_stdout(null), \
@@ -3113,6 +3356,579 @@ def selftest_dry_run():
         g.update(saved)
         shutil.rmtree(base, ignore_errors=True)
     return None
+
+
+# --- Automatik (Timer, Zeitpunkt, Bestätigung nach dem Start) ------------------------------------------------------
+
+
+def automatic_off():
+    """Ist der Notschalter gesetzt (sudo zen kanal automatik aus)?"""
+    return os.path.lexists(AUTOMATIC_OFF_FILE)
+
+
+def valid_start_stamp(data):
+    """Ist DATA ein Start-Stempel {start, seit_start} wie von boot_clock()?"""
+    return (isinstance(data, dict) and isinstance(data.get("start"), str)
+            and re.fullmatch(r"[0-9a-f-]{16,40}", data["start"]) is not None
+            and isinstance(data.get("seit_start"), (int, float)) and not isinstance(data.get("seit_start"), bool))
+
+
+def held_version():
+    """Version, die nach «zen rollback» für die Automatik zurückgestellt ist (zurueckgestellt.json), sonst None."""
+    held = (load_json(state_path(HOLD), trusted=True) or {}).get("zurueckgestellt")
+    return held if isinstance(held, str) and version_key(held) else None
+
+
+def hold_summary():
+    held = held_version()
+    if not held:
+        return None
+    data = load_json(state_path(HOLD), trusted=True) or {}
+    return {"version": held, "seit": data.get("zeit") if parse_iso(data.get("zeit")) else None}
+
+
+def unconfirmed_summary():
+    """Automatisch installierter Stand, der noch auf die Bestätigung nach einem Neustart wartet, sonst None."""
+    data = load_json(state_path(UNCONFIRMED), trusted=True) or {}
+    if not OID_RE.fullmatch(str(data.get("commit"))):
+        return None
+    fails = data.get("fehlstarts") if isinstance(data.get("fehlstarts"), list) else []
+    return {"commit": data["commit"], "version": data.get("version") if version_key(data.get("version")) else None,
+            "tag": data.get("tag") if TAG_NAME_RE.fullmatch(str(data.get("tag"))) else None,
+            "seit": data.get("zeit") if parse_iso(data.get("zeit")) else None, "fehlstarts": len(fails)}
+
+
+def systemd_env():
+    return {"PATH": SYSTEM_PATH, "LANG": "C.UTF-8", "SYSTEMD_PAGER": "", "SYSTEMD_COLORS": "0"}
+
+
+def seat_sessions():
+    """Sitzungen von Menschen auf seat0 (Klasse user…, nicht beim Schliessen) als [(id, uid, name)]. Greeter, Sperre,
+    Hintergrund und Benutzerdienste zählen nicht, Fern-Sitzungen (SSH) haben keinen Sitz. None, wenn logind nicht
+    antwortet; ohne systemd keine."""
+    if not os.path.isdir(SYSTEMD_RUN_DIR):
+        return []
+    r = run([LOGINCTL, "list-sessions", "--json=short", "--no-pager"], env=systemd_env(), timeout=CHECK_TIMEOUT)
+    try:
+        items = json.loads(r.stdout) if r.returncode == 0 else None
+    except ValueError:
+        items = None
+    if not isinstance(items, list):
+        return None
+    found = []
+    for item in items:
+        if not isinstance(item, dict) or item.get("seat") != "seat0" or not str(item.get("class")).startswith("user"):
+            continue
+        sid, uid, name = str(item.get("session")), item.get("uid"), str(item.get("user"))
+        if (not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", sid) or not isinstance(uid, int) or isinstance(uid, bool)
+                or not USER_RE.fullmatch(name)):
+            return None
+        r = run([LOGINCTL, "show-session", sid, "--property=State", "--value"], env=systemd_env(),
+                timeout=CHECK_TIMEOUT)
+        if r.returncode != 0 or r.stdout.strip() == "closing":
+            continue  # inzwischen beendet bzw. beim Schliessen
+        found.append((sid, uid, name))
+    return found
+
+
+def session_locked(uid, name, t):
+    """(gesperrt, Grund) für die Sitzung des Benutzers UID: Der Marker der Oberfläche (/run/user/<uid>/zenos/gesperrt,
+    entsteht vor der Sperre, geht erst nach dem Entsperren) ist mindestens MIN_LOCKED alt, und die Oberfläche bestätigt
+    die Sperre selbst: «zenos-ipc sperre status» als dieser Benutzer antwortet «gesperrt» (ext-session-lock, vom
+    Compositor bestätigt). Antwortet sie nicht, gilt die Sitzung als nicht gesperrt."""
+    runtime = os.path.join(RUN_USER, str(uid))
+    try:
+        st = os.lstat(os.path.join(runtime, "zenos", "gesperrt"))
+    except OSError:
+        return False, f"{name} ist angemeldet, nicht gesperrt"
+    if not stat.S_ISREG(st.st_mode) or st.st_uid != uid:
+        return False, f"Sperr-Marker von {name} ist ungültig"
+    since = datetime.datetime.fromtimestamp(st.st_mtime, datetime.timezone.utc)
+    if t - since < MIN_LOCKED:
+        return False, f"{name} ist erst seit Kurzem gesperrt (mindestens {MIN_LOCKED.seconds // 60} Min.)"
+    try:
+        account = pwd.getpwuid(uid)
+    except KeyError:
+        return False, f"Benutzer {uid} ist unbekannt"
+    ipc = os.path.join(CODE_DIR, "scripts", "bin", "zenos-ipc")
+    if not os.access(SETPRIV, os.X_OK) or not os.path.isfile(ipc):
+        return False, "Sperre nicht prüfbar (setpriv oder zenos-ipc fehlt)"
+    r = run([SETPRIV, f"--reuid={uid}", f"--regid={account.pw_gid}", "--init-groups", "--no-new-privs", "--", ipc,
+             "sperre", "status"], env={"PATH": USER_PATH, "HOME": account.pw_dir, "XDG_RUNTIME_DIR": runtime,
+                                        "LANG": "C.UTF-8"}, timeout=30)
+    lines = [z.strip() for z in r.stdout.split("\n") if z.strip()]
+    if r.returncode == 0 and lines and lines[-1] == "gesperrt":
+        return True, ""
+    return False, f"die Oberfläche von {name} bestätigt keine Sperre"
+
+
+def local_now():
+    return datetime.datetime.now()
+
+
+def in_window(schedule, moment):
+    """Liegt MOMENT (Ortszeit) im Zeitfenster [von, bis)? Über Mitternacht (22:00–04:00) gehört beides dazu."""
+    a, b = clock_minutes(schedule.get("von")), clock_minutes(schedule.get("bis"))
+    if a is None or b is None or a == b:
+        return False
+    m = moment.hour * 60 + moment.minute
+    return a <= m < b if a < b else (m >= a or m < b)
+
+
+def quiet_now(schedule):
+    """(ruhig, Grund): Darf die Automatik jetzt installieren, nach dem Zeitpunkt des Geräts?"""
+    art = schedule.get("art")
+    if art == "hand":
+        return False, "Zeitpunkt «von Hand»: automatisch wird nichts installiert"
+    if art == "jederzeit":
+        return True, "Zeitpunkt «jederzeit»"
+    if art == "fenster":
+        if not clock_synced():
+            return False, f"Zeitfenster {schedule['von']}–{schedule['bis']}, aber die Uhr ist nicht synchronisiert"
+        moment = local_now()
+        if in_window(schedule, moment):
+            return True, f"im Zeitfenster {schedule['von']}–{schedule['bis']}"
+        return False, f"ausserhalb des Zeitfensters {schedule['von']}–{schedule['bis']} (jetzt {moment:%H:%M})"
+    sessions = seat_sessions()
+    if sessions is None:
+        return False, "Sitzungen nicht prüfbar (loginctl)"
+    if not sessions:
+        return True, "niemand angemeldet"
+    t = now()
+    for _sid, uid, name in sessions:
+        locked, why = session_locked(uid, name, t)
+        if not locked:
+            return False, why
+    return True, "gesperrt"
+
+
+def wait_for_clock():
+    """Wartet bis CLOCK_WAIT Sekunden auf eine synchronisierte Uhr. True, wenn sie es ist."""
+    end = time.monotonic() + CLOCK_WAIT
+    while not clock_synced():
+        if time.monotonic() >= end:
+            return False
+        time.sleep(CLOCK_POLL)
+    return True
+
+
+def reset_failed(*units):
+    """«wartet», «Anker fehlt» oder «blockiert» lassen holen und prüfen mit Exit ungleich 0 enden: Das sind Zustände des
+    Kanals (stand.json), keine Ausfälle des Systems. Ohne systemd nichts."""
+    if not DRY_RUN and os.path.isdir(SYSTEMD_RUN_DIR):
+        run([SYSTEMCTL, "reset-failed", "--", *units], env=systemd_env(), timeout=CHECK_TIMEOUT)
+
+
+class AutoRun:
+    """Ein Lauf der Automatik: «lauf» (zenos-kanal.timer, mit Holen) oder «gelegenheit» (alle 15 Min., ohne Holen).
+    Hält die Sperre der Bedienung (wie zen update), die Arbeit machen die Units."""
+
+    def __init__(self, fetch):
+        self.fetch = fetch
+        self.log = {"version": 1, "art": "lauf" if fetch else "gelegenheit", "beginn": iso(now()), "ende": None,
+                    "ergebnis": None, "grund": "", "zeitpunkt": None, "ziel": None}
+
+    def done(self, result, reason, code):
+        self.log.update(ergebnis=result, grund=short(reason, 300), ende=iso(now()))
+        print(f"Automatik: {reason}")
+        return code
+
+    def refresh(self):
+        """Nach dem Holen den Stand neu prüfen (ohne Wunsch), damit stand.json und die Oberfläche ihn kennen."""
+        if self.fetch:
+            start_unit("pruefen")
+
+    def installed_result(self, code, begin):
+        last = load_json(state_path("letzte.json")) or {}
+        ended = parse_iso(last.get("ende"))
+        if ended and ended >= begin - datetime.timedelta(seconds=2):
+            self.log["ziel"] = target_label(last.get("ziel")) if last.get("ziel") else None
+            return self.done(last.get("ergebnis") or "fehler", last.get("grund") or f"Exit {code}", code)
+        return self.done("fehler" if code not in (EXIT_OK, EXIT_BUSY) else "nichts",
+                         f"Installieren endete mit Exit {code} (journalctl -u {UNITS['installieren']})", code)
+
+    def run(self):
+        if automatic_off():
+            return self.done("aus", f"aus ({AUTOMATIC_OFF_FILE}; einschalten: sudo zen kanal automatik an)", EXIT_OK)
+        if not installed_commit():
+            return self.done("nichts", f"{CODE_DIR} ist nicht installiert", EXIT_OK)
+        pid = hand_run()
+        if pid:
+            return self.done("wartet", hand_text(pid), EXIT_BUSY)
+        schedule, note = read_schedule()
+        self.log["zeitpunkt"] = schedule.get("art")
+        if note:
+            print(f"Hinweis: {note}")
+        try:
+            channel, _ = read_channel()
+        except Failure as e:
+            channel = None
+            print(f"Hinweis: {e}")
+        if self.fetch:
+            if not wait_for_clock():
+                print(f"Die Uhr ist nach {CLOCK_WAIT} s nicht synchronisiert: Neue Versionen gelten erst als gesehen, "
+                      "wenn sie es ist (Wartezeit auf stabil).")
+            print("Hole von origin (ohne Rechte) …")
+            if start_unit("holen") != EXIT_OK:
+                print(f"Holen ist gescheitert (journalctl -u {UNITS['holen']}); geprüft wird der letzte Stand.")
+
+        if os.path.lexists(state_path("laeuft.json")):
+            # Eine unterbrochene Installation (Strom, kill) setzt die Automatik fort, wenn der Zeitpunkt passt: Ihr Ziel
+            # wurde schon bereitgestellt und geprüft (auch ein «ja» von Hand gilt weiter)
+            quiet, why = quiet_now(schedule)
+            if not quiet:
+                self.refresh()
+                return self.done("wartet", f"Eine Installation ist unterbrochen, fortgesetzt wird sie später ({why}).",
+                                 EXIT_OK)
+            print(f"Setze die unterbrochene Installation fort ({why}) …")
+            begin = now()
+            code = start_unit("installieren")
+            start_unit("pruefen")
+            return self.installed_result(code, begin)
+
+        if channel == "dev":
+            self.refresh()
+            return self.done("nichts", "Kanal dev: Automatisch kommt nie etwas (zen update von Hand).", EXIT_OK)
+        if channel not in ("stabil", "vorschau"):
+            self.refresh()
+            return self.done("nichts", "Kanal unbekannt: nichts automatisch.", EXIT_OK)
+        quiet, why = quiet_now(schedule)
+        if not quiet:
+            self.refresh()
+            return self.done("wartet", f"Nicht jetzt: {why}.", EXIT_OK)
+
+        # Prüfen mit dem Wunsch der Automatik: Nur ein bereiter Stand nach der Wartezeit, ohne «ja», wird bereitgestellt
+        wish_id = write_wish("automatik")
+        code = start_unit("pruefen")
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(state_path("wunsch.json"))
+        answer = (read_stand() or {}).get("wunsch") or {}
+        if answer.get("id") != wish_id:
+            if code == EXIT_BUSY:
+                return self.done("wartet", "Eine Prüfung oder Installation lief gerade; beim nächsten Mal.", EXIT_BUSY)
+            return self.done("fehler", f"Die Prüfung hat nicht geantwortet (Exit {code}; journalctl -u "
+                             f"{UNITS['pruefen']}).", EXIT_ERROR)
+        if answer.get("ergebnis") != "bereitgestellt":
+            # «aktuell» heisst hier auch: bereit, aber noch in der Wartezeit oder wartet auf Zustimmung
+            idle = answer.get("ergebnis") == "aktuell" and (read_stand() or {}).get("zustand") == "aktuell"
+            return self.done("nichts" if idle else "wartet", answer.get("grund") or "Nichts bereit.", EXIT_OK)
+        order = answer.get("auftrag") or {}
+        self.log["ziel"] = target_label(order)
+        # Unmittelbar davor noch einmal: Passt der Zeitpunkt noch (inzwischen entsperrt, Fenster vorbei)?
+        quiet, why = quiet_now(schedule)
+        if not quiet:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(state_path("auftrag.json"))
+            return self.done("wartet", f"{target_label(order)} war bereit, aber jetzt nicht mehr: {why}.", EXIT_OK)
+        print(f"Installiere {target_label(order)} ({why}) …")
+        begin = now()
+        code = start_unit("installieren")
+        start_unit("pruefen")
+        return self.installed_result(code, begin)
+
+
+def automatic_switch(on):
+    """Notschalter: Timer ein- bzw. ausschalten und den Vermerk setzen bzw. entfernen (install.sh hält sich daran)."""
+    if os.geteuid() not in TRUSTED_UIDS:
+        print(f"{NAME} automatik: nur als root (sudo zen kanal automatik {'an' if on else 'aus'})", file=sys.stderr)
+        return EXIT_USAGE
+    os.umask(0o022)
+    folder = os.path.dirname(AUTOMATIC_OFF_FILE)
+    os.makedirs(folder, mode=0o755, exist_ok=True)
+    problem = path_problem(folder)
+    if problem:
+        print(f"{NAME} automatik: {problem}. Nichts geändert.", file=sys.stderr)
+        return EXIT_BLOCKED
+    if on:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(AUTOMATIC_OFF_FILE)
+    else:
+        write_atomic(AUTOMATIC_OFF_FILE, "# zenOS: Automatik des Kanals aus (sudo zen kanal automatik aus). Die Timer "
+                                         "laufen nicht, install.sh schaltet sie nicht ein.\n# Einschalten: sudo zen "
+                                         f"kanal automatik an\nseit={iso(now())}\n")
+    code = EXIT_OK
+    if os.path.isdir(SYSTEMD_RUN_DIR):
+        r = run([SYSTEMCTL, "enable" if on else "disable", "--now", "--quiet", "--", *TIMERS], env=systemd_env(),
+                timeout=CHECK_TIMEOUT)
+        if r.returncode != 0:
+            print(f"{NAME} automatik: systemctl: {first_line(r.stderr) or r.returncode} (Timer fehlen? install.sh)",
+                  file=sys.stderr)
+            code = EXIT_ERROR
+    via = (f"pkexec, uid {os.environ['PKEXEC_UID']}" if str(os.environ.get("PKEXEC_UID", "")).isdigit()
+           else f"sudo, uid {os.environ['SUDO_UID']}" if str(os.environ.get("SUDO_UID", "")).isdigit() else "root")
+    journal(f"Automatik {'an' if on else 'aus'} ({via})")
+    print("Automatik an: holt alle 6 h, installiert nach dem Zeitpunkt (zen kanal zeitpunkt)." if on else
+          "Automatik aus: nichts wird mehr automatisch geholt oder installiert. zen update geht weiter; einschalten: "
+          "sudo zen kanal automatik an")
+    return code
+
+
+def timer_next(timer):
+    """Nächster Lauf eines Timers als Text, sonst ""."""
+    if not os.path.isdir(SYSTEMD_RUN_DIR):
+        return ""
+    r = run([SYSTEMCTL, "show", "--property=NextElapseUSecRealtime", "--value", "--", timer], env=systemd_env(),
+            timeout=CHECK_TIMEOUT)
+    value = r.stdout.strip()
+    return short(value, 40) if r.returncode == 0 and value and value not in ("n/a", "0") else ""
+
+
+def timer_active(timer):
+    if not os.path.isdir(SYSTEMD_RUN_DIR):
+        return None
+    return run([SYSTEMCTL, "is-active", "--quiet", "--", timer], env=systemd_env(),
+               timeout=CHECK_TIMEOUT).returncode == 0
+
+
+def automatic_lines(with_pending=True):
+    """Zeilen zur Automatik für status und «zenos-kanal automatik» (with_pending: auch den unbestätigten Stand; status
+    zeigt ihn schon unter «Update»)."""
+    lines = []
+    if automatic_off():
+        lines.append(f"{'Automatik':<12}aus (sudo zen kanal automatik an)")
+    else:
+        active = timer_active(TIMERS[0])
+        nxt = timer_next(TIMERS[0])
+        state = "an" if active in (True, None) else "an, aber zenos-kanal.timer läuft nicht (install.sh)"
+        lines.append(f"{'Automatik':<12}{state}" + (f" · nächstes Holen {nxt}" if nxt else ""))
+    log = load_json(state_path(AUTO_LOG)) or {}
+    if parse_iso(log.get("ende")):
+        lines.append(f"{'':<12}zuletzt {local_time(log['ende'])} ({log.get('art')}): {short(log.get('grund'), 160)}")
+    pending = unconfirmed_summary() if with_pending else None
+    if pending:
+        label = pending["tag"] or pending["commit"][:12]
+        more = f", {pending['fehlstarts']} Start ohne Login" if pending["fehlstarts"] else ""
+        lines.append(f"{'Bestätigung':<12}{label} automatisch installiert am {local_time(pending['seit'])}: gilt als "
+                     f"gut, sobald nach einem Neustart der Login kommt{more}")
+    hold = hold_summary()
+    if hold:
+        lines.append(f"{'Zurückgest.':<12}{hold['version']} (seit {local_time(hold['seit'])} nach zen rollback; die "
+                     "Automatik bringt es nicht wieder, zen update schon)")
+    return lines
+
+
+def cmd_automatic(argv):
+    usage = f"{NAME} automatik [an|aus|lauf|gelegenheit]"
+    if not argv:
+        schedule, note = read_schedule()
+        print("\n".join(automatic_lines()))
+        print(f"{'Zeitpunkt':<12}{schedule_text(schedule)}" + (f" ({note})" if note else ""))
+        return EXIT_OK
+    if argv in (["an"], ["aus"]):
+        return automatic_switch(argv[0] == "an")
+    if argv not in (["lauf"], ["gelegenheit"]):
+        print(usage, file=sys.stderr)
+        return EXIT_USAGE
+    if os.geteuid() not in TRUSTED_UIDS:
+        print(f"{NAME} automatik {argv[0]}: nur als root (zenos-kanal.timer)", file=sys.stderr)
+        return EXIT_USAGE
+    os.umask(0o022)
+    try:
+        lock = take_lock(UI_LOCK_FILE)
+    except Failure as e:
+        print(f"{NAME}: {e}", file=sys.stderr)
+        return EXIT_ERROR
+    if lock is None:
+        holder = lock_holder(UI_LOCK_FILE)
+        print(f"Automatik: Ein zen update, zen rollback oder ein Knopf der Einstellungen läuft gerade"
+              f"{f' ({holder})' if holder else ''}; beim nächsten Mal.")
+        return EXIT_BUSY
+    auto = AutoRun(fetch=argv[0] == "lauf")
+    try:
+        try:
+            code = auto.run()
+        except Failure as e:
+            code = auto.done("fehler", str(e), EXIT_ERROR)
+    finally:
+        os.close(lock)
+        reset_failed(UNITS["holen"], UNITS["pruefen"])
+    with contextlib.suppress(OSError):
+        if os.path.isdir(STATE_DIR) and not path_problem(STATE_DIR):
+            write_json(state_path(AUTO_LOG), auto.log)
+    return code
+
+
+# --- Bestätigung nach dem Start (ein automatisch installierter Stand) ------------------------------------------
+
+
+def unit_value(args):
+    r = run([SYSTEMCTL, *args], env=systemd_env(), timeout=CHECK_TIMEOUT)
+    return r.stdout.strip().split("\n")[0] if r.stdout.strip() else ""
+
+
+def greeter_running():
+    """Läuft der Login-Bildschirm: ein Prozess «quickshell» des Benutzers _greetd, seit mindestens GREETER_MIN_AGE
+    Sekunden (ein Greeter, den greetd immer wieder neu startet, zählt so nicht)?"""
+    try:
+        uid = pwd.getpwnam(GREETER_USER).pw_uid
+        with open(os.path.join(PROC, "uptime"), encoding="ascii") as f:
+            up = float(f.read(64).split()[0])
+        tick = os.sysconf("SC_CLK_TCK")
+        pids = [p for p in os.listdir(PROC) if p.isdigit()]
+    except (KeyError, OSError, ValueError, IndexError):
+        return False
+    for pid in pids:
+        try:
+            if os.stat(os.path.join(PROC, pid)).st_uid != uid:
+                continue
+            with open(os.path.join(PROC, pid, "stat"), encoding="utf-8", errors="replace") as f:
+                raw = f.read(4096)
+            comm = raw[raw.index("(") + 1:raw.rindex(")")]
+            started = int(raw.rsplit(")", 1)[1].split()[19]) / tick
+        except (OSError, ValueError, IndexError):
+            continue
+        if comm == GREETER_COMM and up - started >= GREETER_MIN_AGE:
+            return True
+    return False
+
+
+GREETD_ON = ("enabled", "enabled-runtime", "static", "alias", "indirect", "generated")
+
+
+def login_state(need_greetd):
+    """(gut, Grund): Kommt der Login? greetd läuft, und ein Greeter läuft oder eine Sitzung auf seat0 ist offen. Ohne
+    need_greetd (greetd war bei der Installation nicht aktiviert) und ohne aktiviertes greetd gibt es keinen Login zu
+    prüfen."""
+    if not os.path.isdir(SYSTEMD_RUN_DIR):
+        return True, "ohne systemd"
+    enabled = unit_value(["is-enabled", "greetd.service"])
+    if enabled not in GREETD_ON and not need_greetd:
+        return True, f"greetd ist nicht aktiviert ({enabled or '?'}), kein Login zu prüfen"
+    active = unit_value(["is-active", "greetd.service"])
+    if active != "active":
+        return False, f"greetd läuft nicht ({active or '?'})"
+    sessions = seat_sessions()
+    if sessions:
+        return True, "eine Sitzung ist offen"
+    if greeter_running():
+        return True, "der Login-Bildschirm läuft"
+    return False, "greetd läuft, aber weder Login-Bildschirm noch Sitzung"
+
+
+def wait_for_login(need_greetd):
+    end = time.monotonic() + CONFIRM_WAIT
+    while True:
+        ok, why = login_state(need_greetd)
+        if ok or time.monotonic() >= end:
+            return ok, why
+        time.sleep(CONFIRM_POLL)
+
+
+def broken_note(pending, reason):
+    """letzte.json «kaputt», wenn es nach fehlender Bestätigung keinen Weg zurück gibt."""
+    write_json(state_path("letzte.json"), {"version": 1, "ergebnis": "kaputt", "grund": short(reason, 600),
+                                           "beginn": iso(now()), "ende": iso(now()),
+                                           "ziel": {k: pending.get(k) for k in ENTRY_KEYS}, "rueckweg": None,
+                                           "versuche": None, "hinweise": []})
+
+
+def back_to_good(pending, why):
+    """Zweimal kein Login nach dem Start: die Version sperren und den guten Stand (gut.json) über
+    zenos-kanal-installieren.service wieder installieren."""
+    label = target_label(pending)
+    reason = f"Nach dem automatischen Update auf {label} kam bei {MAX_UNCONFIRMED} Starts kein Login ({why})"
+    locked = lock_target(pending, reason)
+    with contextlib.suppress(FileNotFoundError):
+        os.unlink(state_path(UNCONFIRMED))
+    journal(f"{reason}: {locked} gesperrt, zurück auf den guten Stand")
+    gut = load_json(state_path("gut.json"), trusted=True) or {}
+    commit = gut.get("commit")
+    if not OID_RE.fullmatch(str(commit)) or commit == pending["commit"]:
+        broken_note(pending, f"{reason}; einen guten Stand für den Weg zurück gibt es nicht. ANLEITUNG.md, Abschnitt F.")
+        print(f"{reason}. Kein guter Stand für den Weg zurück.", file=sys.stderr)
+        return EXIT_BROKEN
+    folder = state_path("bereit", commit)
+    if not repo_intact(folder, commit):
+        branch = gut.get("zweig") if BRANCH_RE.fullmatch(str(gut.get("zweig"))) else None
+        try:
+            origin = origin_url()
+        except Failure:
+            origin = None
+        try:
+            folder = stage(CODE_DIR, [f"+{commit}:refs/heads/{branch or 'zenos-gut'}"], commit, branch, origin)
+        except (Waiting, Failure) as e:
+            broken_note(pending, f"{reason}; der gute Stand {target_label(gut)} liess sich nicht bereitstellen ({e}).")
+            print(f"{reason}. Guter Stand nicht bereitzustellen: {e}", file=sys.stderr)
+            return EXIT_BROKEN
+    order = {"version": 1, **{k: gut.get(k) for k in ENTRY_KEYS}, "pfad": folder, "art": "bestaetigung",
+             "von_hand": False, "hoechste": False, "quelle": "gut", **stamp()}
+    write_json(state_path("auftrag.json"), order)
+    print(f"{reason}. Zurück auf den guten Stand {target_label(gut)} …")
+    code = start_unit("installieren")
+    if (code == EXIT_OK and not DRY_RUN and os.path.isdir(SYSTEMD_RUN_DIR) and seat_sessions() == []
+            and unit_value(["is-enabled", "greetd.service"]) in GREETD_ON):
+        # Niemand ist angemeldet: den Login gleich neu starten, nicht erst beim nächsten Start
+        run([SYSTEMCTL, "restart", "greetd.service"], env=systemd_env(), timeout=CHECK_TIMEOUT)
+    start_unit("pruefen")
+    return code
+
+
+def cmd_confirm(argv):
+    """bestaetigen (zenos-kanal-bestaetigen.timer, 2 Min. nach dem Start): Kommt nach einem automatischen Update der
+    Login, gilt der Stand als gut (gut.json). Sonst zählt dieser Start; beim zweiten geht es zurück."""
+    if argv:
+        print(f"{NAME} bestaetigen: keine Argumente erwartet", file=sys.stderr)
+        return EXIT_USAGE
+    if os.geteuid() not in TRUSTED_UIDS:
+        print(f"{NAME} bestaetigen: nur als root", file=sys.stderr)
+        return EXIT_USAGE
+    os.umask(0o022)
+    try:
+        lock = take_lock(UI_LOCK_FILE)
+    except Failure as e:
+        print(f"{NAME}: {e}", file=sys.stderr)
+        return EXIT_ERROR
+    if lock is None:
+        print("Ein zen update, zen rollback oder die Automatik läuft gerade; bestätigt wird beim nächsten Start.")
+        return EXIT_BUSY
+    try:
+        return confirm_locked()
+    finally:
+        os.close(lock)
+
+
+def confirm_locked():
+    pending = load_json(state_path(UNCONFIRMED), trusted=True)
+    if not pending:
+        print("Nichts zu bestätigen.")
+        return EXIT_OK
+    problem = entry_problem(pending)
+    if problem:
+        os.replace(state_path(UNCONFIRMED), state_path("unbestaetigt.kaputt.json"))
+        print(f"{NAME}: {UNCONFIRMED} ist unbrauchbar ({problem}); beiseite gelegt.", file=sys.stderr)
+        return EXIT_ERROR
+    label = target_label(pending)
+    if installed_commit() != pending["commit"]:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(state_path(UNCONFIRMED))
+        print(f"{label} ist nicht mehr installiert; nichts zu bestätigen.")
+        return EXIT_OK
+    sid = start_id()
+    if not sid or sid == pending.get("start"):
+        print(f"{label}: Seit der automatischen Installation kein Neustart; bestätigt wird nach dem nächsten Start.")
+        return EXIT_OK
+    ok, why = wait_for_login(pending.get("greetd") in GREETD_ON)
+    if ok:
+        gut = {k: pending.get(k) for k in ENTRY_KEYS}
+        gut.update(zeit=pending.get("zeit") if parse_iso(pending.get("zeit")) else iso(now()), bestaetigt=iso(now()))
+        write_json(state_path("gut.json"), gut)
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(state_path(UNCONFIRMED))
+        cleanup_staged({pending["commit"]})
+        journal(f"Bestätigt nach dem Neustart: {label} ({why})")
+        print(f"Bestätigt: {label} ist der gute Stand ({why}).")
+        return EXIT_OK
+    fails = [x for x in pending.get("fehlstarts") or [] if isinstance(x, str)]
+    if sid not in fails:
+        fails.append(sid)
+    pending["fehlstarts"] = fails[-10:]
+    write_json(state_path(UNCONFIRMED), pending)
+    journal(f"Nach dem Neustart kein Login für {label} ({why}), {len(fails)}. Start")
+    if len(fails) < MAX_UNCONFIRMED:
+        print(f"Nach dem Neustart kein Login ({why}). Fehlt er auch beim nächsten Start, geht es zurück auf den guten "
+              "Stand.")
+        return EXIT_WAIT
+    return back_to_good(pending, why)
 
 
 # --- zen update und zen rollback (root, im Terminal) ---------------------------------------------------------------
@@ -3398,7 +4214,7 @@ def installation_marks():
 
 def installation_summary():
     """(Schlüssel, Text) zur Installation über den Kanal, für status, zen doctor und zen version. Schlüssel:
-    unterbrochen, kaputt, angehalten, zurueck, gescheitert, fehler, gut, keine."""
+    unterbrochen, kaputt, angehalten, zurueck, gescheitert, fehler, unbestaetigt, gut, keine."""
     running = load_json(state_path("laeuft.json"))
     if running:
         phase = running.get("phase") if running.get("phase") in ("ziel", "rueckweg") else "ziel"
@@ -3417,6 +4233,10 @@ def installation_summary():
                                   f"({str(data.get('commit') or '?')[:12]}); zen update kehrt zum Kanal zurück")
     if problem:
         return last["ergebnis"], f"am {local_time(last.get('ende'))}: {last.get('grund')}"
+    pending = unconfirmed_summary()
+    if pending:
+        return "unbestaetigt", (f"{pending['tag'] or pending['commit'][:12]} automatisch installiert am "
+                                f"{local_time(pending['seit'])}, gilt als gut nach einem Neustart mit Login")
     gut = load_json(state_path("gut.json")) or {}
     if gut.get("commit"):
         return "gut", f"{target_label(gut)}, installiert am {local_time(gut.get('zeit'))}"
@@ -3489,13 +4309,15 @@ def cmd_status(argv):
             lines.append(f"{'Hinweise' if i == 0 else '':<12}{note}")
     schedule, note = read_schedule()
     lines.append(f"{'Zeitpunkt':<12}{schedule_text(schedule)}" + (f" ({note})" if note else ""))
+    lines += automatic_lines(with_pending=False)
     key, text = installation_summary()
     lines.append(f"{'Update':<12}{text}")
     gut = load_json(state_path("gut.json")) or {}
+    pending = unconfirmed_summary() or {}
     if key not in ("gut", "keine") and gut.get("commit"):
         lines.append(f"{'Guter Stand':<12}{target_label(gut)}, installiert am {local_time(gut.get('zeit'))}")
     if (stand and not outdated and gut.get("commit")
-            and (stand.get("installiert") or {}).get("commit") not in (None, gut["commit"])):
+            and (stand.get("installiert") or {}).get("commit") not in (None, gut["commit"], pending.get("commit"))):
         lines.append(f"{'':<12}{CODE_DIR} steht nicht auf dem guten Stand (von Hand geändert?)")
     locked = locked_entries()
     for i, (name, entry) in enumerate(sorted(locked.items())):
@@ -3618,7 +4440,7 @@ def main(argv):
     commands = {"status": cmd_status, "pruefen": cmd_check, "anker": cmd_anchor, "holen-intern": cmd_fetch_internal,
                 "update": cmd_update, "rollback": cmd_rollback, "jetzt": cmd_now, "zustimmen": cmd_consent,
                 "zeitpunkt": cmd_schedule, "installieren": cmd_install, "nachstart": cmd_after_boot,
-                "selbsttest": cmd_selftest}
+                "selbsttest": cmd_selftest, "automatik": cmd_automatic, "bestaetigen": cmd_confirm}
     command = commands.get(argv[0])
     if not command:
         print(f"{NAME}: unbekannter Befehl «{short(argv[0], 30)}» (--hilfe)", file=sys.stderr)

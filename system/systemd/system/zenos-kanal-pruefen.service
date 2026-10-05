@@ -3,7 +3,8 @@
 # Auftrag und die Bereitstellungen in bereit/), /etc/zenos/vertrauen (nur über einen gültigen Tag vertrauen/NNNN) und
 # die Sperren in /run/zenos-sperre (nur root, 0700; bleibt nach dem Lauf stehen). /opt/zenos liest es nur. Installieren
 # ist Sache von zenos-kanal-installieren.service.
-# Gestartet von «zen update», «zen rollback» und «sudo zen kanal pruefen».
+# Gestartet von «zen update», «zen rollback», «sudo zen kanal pruefen», den Einstellungen und der Automatik
+# (zenos-kanal-automatik.service, zenos-kanal-gelegenheit.service).
 [Unit]
 Description=zenOS: Kanal prüfen und bereitstellen (ohne Netz)
 Documentation=file:///opt/zenos/docs/image-und-releases.md
@@ -41,7 +42,8 @@ ProtectControlGroups=yes
 ProtectClock=yes
 ProtectHostname=yes
 ProtectProc=invisible
-ProcSubset=pid
+# Kein ProcSubset=pid: Die Start-ID (/proc/sys/kernel/random/boot_id) misst Wartezeiten und Wünsche seit dem Start, ein
+# Sprung der Uhr verkürzt sie so nicht. Ob die Uhr synchronisiert ist, fragt es timedatectl (D-Bus, nur lesend).
 RestrictNamespaces=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes

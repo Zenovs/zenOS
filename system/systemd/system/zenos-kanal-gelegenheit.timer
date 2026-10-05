@@ -1,0 +1,16 @@
+# zenOS: Gelegenheit für die Automatik. Alle 15 Minuten schaut zenos-kanal-gelegenheit.service, ob ein bereiter Stand
+# jetzt installiert werden darf (gesperrt, im Zeitfenster), ohne zu holen. Die Unit startet nur, wenn etwas bereit ist
+# (/var/lib/zenos/kanal/automatik-bereit) oder eine Installation unterbrochen wurde; sonst nur ein Eintrag im Journal.
+# Geholt wird nur von zenos-kanal.timer (alle 6 h). Ein- und ausschalten mit sudo zen kanal automatik an|aus.
+[Unit]
+Description=zenOS: Kanal-Automatik, Gelegenheit zum Installieren (alle 15 Min.)
+Documentation=file:///opt/zenos/docs/image-und-releases.md
+
+[Timer]
+OnCalendar=*:0/15
+RandomizedDelaySec=1min
+AccuracySec=1min
+Unit=zenos-kanal-gelegenheit.service
+
+[Install]
+WantedBy=timers.target

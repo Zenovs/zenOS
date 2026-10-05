@@ -1,8 +1,10 @@
 # zenOS: einen geprüften, bereitgestellten Stand installieren (zenos-kanal installieren). Läuft als root mit Netz
 # (install.sh braucht apt) und ohne Sandbox, aber nur auf einem Auftrag, den zenos-kanal-pruefen.service ohne Netz
 # geprüft und nach /var/lib/zenos/kanal/bereit/<commit> gestellt hat; vor der Benutzung prüft es ihn noch einmal.
-# Während install.sh hält es einen Block-Inhibitor für Ausschalten und Ruhezustand. Gestartet nur von «zen update» und
-# «zen rollback» (kein Timer in dieser Fassung). Ein SSH-Abbruch schadet nicht: Der Dienst läuft zu Ende.
+# Während install.sh hält es einen Block-Inhibitor für Ausschalten und Ruhezustand; zenos-energie schaltet nicht aus,
+# solange eine zenos-kanal-Unit läuft. Gestartet von «zen update», «zen rollback», den Einstellungen, der Automatik
+# (nur zum Zeitpunkt des Geräts) und der Bestätigung nach dem Start (zurück auf den guten Stand). Ein SSH-Abbruch
+# schadet nicht: Der Dienst läuft zu Ende.
 #
 # KillMode=mixed: Ein Stopp (etwa beim Ausschalten durch root) schickt SIGTERM nur an zenos-kanal. Das wartet auf das
 # Ende von install.sh, damit dpkg nie mittendrin abbricht; erst nach TimeoutStopSec beendet systemd alles. Ein harter

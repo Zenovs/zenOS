@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# hilfe: kanal [status|pruefen|anker|zeitpunkt] – signierter Update-Kanal: Stand zeigen und prüfen (installieren: zen update)
+# hilfe: kanal [status|pruefen|anker|zeitpunkt|automatik] – signierter Update-Kanal: Stand zeigen und prüfen (installieren: zen update)
 #   zen kanal [status]           Kanal, Zustand, Anker mit Fingerabdrücken, gültige und abgelehnte Tags, letzte
 #                                Installation, guter Stand, gesperrte Stände
 #   sudo zen kanal pruefen       holt Tags und Branches von origin (ohne Rechte), prüft sie ohne Netz, schreibt den
@@ -13,6 +13,11 @@
 #   sudo zen kanal zeitpunkt fenster VON BIS
 #                                setzt ihn (/etc/xdg/zenos/kanal-zeitpunkt; VON und BIS als HH:MM, mindestens eine
 #                                Stunde). Dasselbe in Einstellungen › System › Updates
+#   zen kanal automatik          zeigt, ob die Automatik an ist (alle 6 h holen und prüfen, installiert wird nach dem
+#                                Zeitpunkt; nie auf dev), wann sie zuletzt lief und was wartet
+#   sudo zen kanal automatik an|aus
+#                                Notschalter: Timer ein bzw. aus (/etc/xdg/zenos/kanal-automatik-aus; install.sh
+#                                hält sich daran). zen update geht immer
 # Das Programm ist /usr/local/libexec/zenos/zenos-kanal (kommt mit install.sh). Installiert wird mit «zen update» und
 # «zen rollback <tag>» über dieselben Units.
 # shellcheck shell=bash
@@ -54,8 +59,18 @@ befehl_kanal() {
         $SUDO /usr/bin/python3 -I "$_KANAL_PROGRAMM" zeitpunkt "$@"
       fi
       ;;
+    automatik)
+      if (( $# == 0 )); then
+        /usr/bin/python3 -I "$_KANAL_PROGRAMM" automatik
+      elif (( $# == 1 )) && [[ "$1" == an || "$1" == aus ]]; then
+        $SUDO /usr/bin/python3 -I "$_KANAL_PROGRAMM" automatik "$1"
+      else
+        zen_fehler "zen kanal automatik [an|aus]"
+        return 2
+      fi
+      ;;
     *)
-      zen_fehler "zen kanal kennt «$befehl» nicht (status, pruefen, anker, zeitpunkt)"
+      zen_fehler "zen kanal kennt «$befehl» nicht (status, pruefen, anker, zeitpunkt, automatik)"
       return 2
       ;;
   esac
