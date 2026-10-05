@@ -1224,5 +1224,152 @@ class Dev(Basis):
         self.assertIn("installiert ist der Stand von origin/dev", stand["grund"])
 
 
+class Image(Basis):
+    """zenos-kanal image: der Zustand ab Werk, den image/bauen.sh im chroot nach install.sh --image anlegt."""
+
+    def image(self, name):
+        aus, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(aus), contextlib.redirect_stderr(err):
+            rc = K.cmd_image([name])
+        self.ausgabe = aus.getvalue() + err.getvalue()
+        return rc
+
+    def zustand(self):
+        if not os.path.isdir(K.STATE_DIR):
+            return []
+        return sorted(n for n in os.listdir(K.STATE_DIR) if not n.startswith("."))
+
+    def gut(self):
+        with open(os.path.join(K.STATE_DIR, "gut.json"), encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_ab_werk_vorschau(self):
+        self.commit("zwei")
+        objekt = self.signieren("v0.2.0-rc1")
+        commit = self.geraet_auf("v0.2.0-rc1")
+        self.assertEqual(self.image("v0.2.0-rc1"), 0, self.ausgabe)
+        self.assertIn(K.fingerprint(k("rel")), self.ausgabe)
+        gut = self.gut()
+        self.assertEqual((gut["tag"], gut["objekt"], gut["commit"], gut["version"]),
+                         ("v0.2.0-rc1", objekt, commit, "v0.2.0-rc1"))
+        self.assertEqual((gut["signiert"], gut["hoechste"], gut["art"], gut["kanal"]), (True, True, "image", "vorschau"))
+        self.assertTrue(set(K.ENTRY_KEYS) <= set(gut))
+        self.assertEqual(self.hoechste(), "v0.2.0-rc1")
+        self.assertEqual(self.hauptbuch(), {"v0.2.0-rc1": {"objekt": objekt, "gueltig": True, "erstmals": None,
+                                                           "erstmals_start": None, "commit": commit}})
+        self.assertEqual(K.installation_summary()[0], "gut")
+        # Der erste Lauf auf dem Gerät: der Stand ab Werk ist aktuell
+        rc, stand = self.lauf()
+        self.assertEqual((rc, stand["zustand"]), (0, "aktuell"), stand["grund"])
+        self.assertEqual(stand["installiert"], {"commit": commit, "version": "v0.2.0-rc1"})
+        self.assertEqual(stand["hoechste"], "v0.2.0-rc1")
+        self.assertIsNone(stand["bereit"])
+
+    def test_ab_werk_stabil(self):
+        self.kanal("stabil")
+        self.commit("zwei")
+        self.signieren("v0.2.0")
+        self.geraet_auf("v0.2.0")
+        self.assertEqual(self.image("v0.2.0"), 0, self.ausgabe)
+        self.assertEqual(self.gut()["kanal"], "stabil")
+
+    def test_rc_nicht_auf_stabil(self):
+        self.kanal("stabil")
+        self.commit("zwei")
+        self.signieren("v0.2.0-rc1")
+        self.geraet_auf("v0.2.0-rc1")
+        self.assertEqual(self.image("v0.2.0-rc1"), 3)
+        self.assertIn("gehört nicht zum Kanal stabil", self.ausgabe)
+        self.assertEqual(self.zustand(), [])
+
+    def test_nie_auf_dev(self):
+        self.kanal("dev")
+        self.commit("zwei")
+        self.signieren("v0.2.0")
+        self.geraet_auf("v0.2.0")
+        self.assertEqual(self.image("v0.2.0"), 3)
+        self.assertEqual(self.zustand(), [])
+
+    def test_ungueltig(self):
+        self.commit("zwei")
+        self.unsigniert("v0.2.0")
+        self.signieren("v0.2.1", "fremd")
+        self.signieren("v0.2.2", "wur")
+        for name, grund in (("v0.2.0", "unsigniert"), ("v0.2.1", "fremder Schlüssel"), ("v0.2.2", "falschen")):
+            self.geraet_auf(name)
+            self.assertEqual(self.image(name), 3, name)
+            self.assertIn(grund, self.ausgabe)
+        self.assertEqual(self.zustand(), [])
+
+    def test_nicht_auf_dem_tag(self):
+        self.commit("zwei")
+        self.signieren("v0.2.0")
+        self.geraet_auf("HEAD~1")
+        self.assertEqual(self.image("v0.2.0"), 3)
+        self.assertIn("nicht auf v0.2.0", self.ausgabe)
+        self.assertEqual(self.zustand(), [])
+
+    def test_nicht_sauber(self):
+        self.commit("zwei")
+        self.signieren("v0.2.0")
+        self.geraet_auf("v0.2.0")
+        with open(os.path.join(K.CODE_DIR, "datei"), "a", encoding="utf-8") as f:
+            f.write("von Hand\n")
+        self.assertEqual(self.image("v0.2.0"), 3)
+        self.assertIn("nicht sauber", self.ausgabe)
+
+    def test_ohne_anker(self):
+        self.commit("zwei")
+        self.signieren("v0.2.0")
+        self.geraet_auf("v0.2.0")
+        self.anker_dateien({n: "# leer\n" for n in K.ANCHOR_FILES})
+        self.assertEqual(self.image("v0.2.0"), 3)
+        self.assertIn("Anker", self.ausgabe)
+        self.assertEqual(self.zustand(), [])
+
+    def test_nur_neuer_zustand(self):
+        """Auf einem Gerät mit Zustand ändert es nichts (kein Weg, gut.json oder hoechste umzuschreiben)."""
+        self.commit("zwei")
+        self.signieren("v0.2.0")
+        self.geraet_auf("v0.2.0")
+        os.makedirs(K.STATE_DIR)
+        with open(os.path.join(K.STATE_DIR, "hoechste"), "w", encoding="utf-8") as f:
+            f.write("v0.3.0\n")
+        self.assertEqual(self.image("v0.2.0"), 3)
+        self.assertIn("nur für ein neues Image", self.ausgabe)
+        self.assertEqual(self.hoechste(), "v0.3.0")
+        self.assertEqual(self.zustand(), ["hoechste"])
+
+    def test_spaeter_verschoben_ist_alarm(self):
+        """Wert des Hauptbuchs ab Werk: Zeigt der Tag des Images auf origin gültig signiert auf einen anderen Commit
+        (Release-Schlüssel gestohlen), ist das schon beim ersten Kontakt ALARM."""
+        self.commit("zwei")
+        self.signieren("v0.2.0-rc1")
+        self.geraet_auf("v0.2.0-rc1")
+        self.assertEqual(self.image("v0.2.0-rc1"), 0, self.ausgabe)
+        self.commit("untergeschoben")
+        self.git("tag", "-d", "v0.2.0-rc1")
+        self.signieren("v0.2.0-rc1")
+        rc, stand = self.lauf()
+        self.assertEqual((rc, stand["zustand"]), (3, "blockiert"))
+        self.assertIn("ALARM: v0.2.0-rc1", stand["grund"])
+
+    def test_kein_downgrade_ab_werk(self):
+        self.commit("zwei")
+        self.signieren("v0.2.0-rc1")
+        self.geraet_auf("v0.2.0-rc1")
+        self.assertEqual(self.image("v0.2.0-rc1"), 0, self.ausgabe)
+        self.git("checkout", "-q", "--detach", self.eins)
+        self.signieren("v0.1.0-rc9")
+        _, stand = self.lauf()
+        self.assertEqual(stand["zustand"], "aktuell")
+        self.assertIsNone(stand["bereit"])
+
+    def test_aufruf(self):
+        for argv in ([], ["v0.2"], ["vertrauen/0002"], ["v0.2.0", "v0.2.1"]):
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(K.cmd_image(argv), 2, argv)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

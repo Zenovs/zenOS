@@ -46,6 +46,9 @@ Aufruf:
                                        automatischen Update der Login (greetd mit Greeter oder Sitzung)? Erst dann gilt
                                        der Stand als gut; fehlt er bei zwei Starts, geht es auf den guten Stand zurück
   zenos-kanal holen-intern             nur für zenos-kanal-holen.service: holt ohne Rechte von origin
+  zenos-kanal image vX.Y.Z[-rcN]       nur für image/bauen.sh (im chroot, nach install.sh --image): prüft den Tag wie
+                                       das Gerät und legt den Zustand ab Werk an (gut.json, hoechste, gesehen.json);
+                                       nur in einem neuen Zustand
 
 Holen (zenos-kanal-holen.service, DynamicUser, nur mit Netz und in einer Sandbox): «git fetch» von der https-Adresse
 von origin (aus /opt/zenos/.git/config) in einen eigenen Spiegel, nur die Tags v* (Versionen und vertrauen/NNNN) und
@@ -4429,6 +4432,89 @@ def anchor_set(folder):
     return EXIT_OK
 
 
+# --- Image -----------------------------------------------------------------------------------------------------
+
+IMAGE_FRESH = ("gut.json", "hoechste", "gesehen.json", "laeuft.json", "letzte.json", "auftrag.json", "stand.json",
+               "angehalten", UNCONFIRMED)
+
+
+def cmd_image(argv):
+    """Zustand ab Werk für ein Image (image/bauen.sh im chroot, nach install.sh --image): Der ausgelieferte Stand ist
+    der signierte Tag NAME. Geprüft wie auf dem Gerät (Anker /etc/zenos/vertrauen, Prinzipal zenos-release, /opt/zenos
+    sauber auf genau seinem Commit, Kanal stabil oder vorschau und der Tag darin). Dann gesehen.json (der Tag als
+    gültig gesehen: Zeigt er auf origin später gültig signiert auf einen anderen Commit, ist das schon beim ersten
+    Kontakt ALARM), hoechste (seine Version, darunter geht es nie) und zuletzt gut.json (der Tag als guter Stand, auch
+    für den Rückweg). Nur in einem neuen Zustand: Liegt dort schon etwas, ändert es nichts."""
+    if len(argv) != 1 or not VERSION_RE.fullmatch(argv[0]):
+        print(f"{NAME} image vX.Y.Z[-rcN]", file=sys.stderr)
+        return EXIT_USAGE
+    name = argv[0]
+    if os.geteuid() not in TRUSTED_UIDS:
+        print(f"{NAME} image: nur als root (image/bauen.sh im chroot)", file=sys.stderr)
+        return EXIT_USAGE
+    there = [n for n in IMAGE_FRESH if os.path.lexists(state_path(n))]
+    if there:
+        print(f"{NAME} image: nur für ein neues Image, in {STATE_DIR} gibt es schon {', '.join(there)}",
+              file=sys.stderr)
+        return EXIT_BLOCKED
+    try:
+        anchor = load_device_anchor()
+    except AnchorError as e:
+        print(f"{NAME} image: Anker {ANCHOR_DIR}: {e.reason}", file=sys.stderr)
+        return EXIT_BLOCKED
+    try:
+        channel, _ = read_channel()
+    except Failure as e:
+        print(f"{NAME} image: {e}", file=sys.stderr)
+        return EXIT_BLOCKED
+    if channel not in ("stabil", "vorschau") or not in_channel(name, channel):
+        print(f"{NAME} image: {name} gehört nicht zum Kanal {channel} (Image: vX.Y.Z → stabil, vX.Y.Z-rcN → "
+              "vorschau)", file=sys.stderr)
+        return EXIT_BLOCKED
+    installed = installed_commit()
+    r = git(CODE_DIR, "for-each-ref", "--format=%(objectname) %(objecttype)", f"refs/tags/{name}")
+    parts = r.stdout.split()
+    if r.returncode != 0 or len(parts) != 2 or not OID_RE.fullmatch(parts[0]):
+        print(f"{NAME} image: den Tag {name} gibt es in {CODE_DIR} nicht", file=sys.stderr)
+        return EXIT_BLOCKED
+    oid, kind = parts
+    with tempfile.TemporaryDirectory(prefix="zenos-kanal.") as work:
+        files = signer_files(anchor, os.path.join(work, "anker"))
+        result = check_tag(CODE_DIR, name, oid, kind, anchor, files, RELEASE_PRINCIPAL)
+    if not result.ok:
+        print(f"{NAME} image: {name} gilt nicht: {result.reason}", file=sys.stderr)
+        return EXIT_BLOCKED
+    if result.commit != installed:
+        print(f"{NAME} image: {CODE_DIR} steht auf {str(installed)[:12]}, nicht auf {name} ({result.commit[:12]})",
+              file=sys.stderr)
+        return EXIT_BLOCKED
+    r = git(CODE_DIR, "status", "--porcelain")
+    if r.returncode != 0 or r.stdout.strip():
+        print(f"{NAME} image: {CODE_DIR} ist nicht sauber", file=sys.stderr)
+        return EXIT_BLOCKED
+    lock = lock_or_exit()
+    if not isinstance(lock, Locked):
+        return lock
+    try:
+        os.makedirs(STATE_DIR, mode=0o755, exist_ok=True)
+        problem = path_problem(STATE_DIR)
+        if problem:
+            print(f"{NAME} image: Zustand unsicher: {problem}", file=sys.stderr)
+            return EXIT_BLOCKED
+        write_json(state_path("gesehen.json"), {"version": 1, "tags": {name: {
+            "objekt": oid, "gueltig": True, "erstmals": None, "erstmals_start": None, "commit": result.commit}}})
+        write_atomic(state_path("hoechste"), name + "\n")
+        write_json(state_path("gut.json"), {
+            "commit": result.commit, "zweig": None, "tag": name, "objekt": oid, "version": name, "signiert": True,
+            "bereich_von": None, "freigabe": None, "hoechste": True, "pfad": state_path("bereit", result.commit),
+            "art": "image", "kanal": channel, "von_hand": False, "quelle": None, "zeit": iso(now())})
+    finally:
+        lock.release()
+    print(f"Ab Werk: {name} ({result.commit[:12]}) gültig signiert mit {fingerprint(result.key)}, Kanal {channel}; "
+          "gut.json, hoechste und gesehen.json angelegt")
+    return EXIT_OK
+
+
 # --- Start -----------------------------------------------------------------------------------------------------
 
 
@@ -4440,7 +4526,8 @@ def main(argv):
     commands = {"status": cmd_status, "pruefen": cmd_check, "anker": cmd_anchor, "holen-intern": cmd_fetch_internal,
                 "update": cmd_update, "rollback": cmd_rollback, "jetzt": cmd_now, "zustimmen": cmd_consent,
                 "zeitpunkt": cmd_schedule, "installieren": cmd_install, "nachstart": cmd_after_boot,
-                "selbsttest": cmd_selftest, "automatik": cmd_automatic, "bestaetigen": cmd_confirm}
+                "selbsttest": cmd_selftest, "automatik": cmd_automatic, "bestaetigen": cmd_confirm,
+                "image": cmd_image}
     command = commands.get(argv[0])
     if not command:
         print(f"{NAME}: unbekannter Befehl «{short(argv[0], 30)}» (--hilfe)", file=sys.stderr)

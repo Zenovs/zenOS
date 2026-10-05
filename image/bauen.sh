@@ -1,16 +1,24 @@
 #!/usr/bin/env bash
 # bauen.sh – baut das zenOS-Image für den Raspberry Pi 5 aus dem offiziellen Ubuntu-Server-Image.
 #
-#   sudo image/bauen.sh [optionen]               (alle Optionen: image/bauen.sh --hilfe)
+#   sudo image/bauen.sh --ref vX.Y.Z[-rcN] [optionen]   (alle Optionen: image/bauen.sh --hilfe)
+#
+# Gebaut wird nur ein gültig signierter Release-Tag: image/tag-pruefen.sh prüft ihn vor allem anderen gegen den Anker
+# system/vertrauen in seinem Commit (git verify-tag gehärtet und ssh-keygen -Y verify), sonst bricht der Bau ab. Der
+# Kanal folgt dem Tag: vX.Y.Z → stabil, vX.Y.Z-rcN → vorschau. Nur ein Testbau (--testbau-ohne-signatur, nie in
+# GitHub Actions) nimmt auch einen unsignierten Stand; seine Version endet auf «-testbau».
 #
 # Ablauf: Ubuntu 26.04 Server (preinstalled, arm64+raspi) laden, die GPG-Signatur von SHA256SUMS und die
 # Prüfsumme kontrollieren, entpacken, vergrössern, Boot- und Root-Partition über Loop-Geräte einhängen,
-# /opt/zenos als Git-Checkout des gewünschten Stands anlegen, im chroot
-# «ZENOS_KANAL=dev /opt/zenos/scripts/install.sh --image» ausführen, die Kennung zenOS und die Ubuntu-Sicherheitsquelle
-# prüfen (sonst Abbruch), den ersten Start einrichten (Benutzer «user», Rechner «zenos», image/erststart/), die
-# Paketliste schreiben, aufräumen, verkleinern, mit xz packen und SHA256SUMS schreiben. Ergebnis in <ausgabe>:
+# /opt/zenos als Git-Checkout des Tags anlegen, im chroot «ZENOS_KANAL=<kanal> /opt/zenos/scripts/install.sh --image»
+# ausführen, die Kennung zenOS und die Ubuntu-Sicherheitsquelle prüfen (sonst Abbruch), Anker und Kanal prüfen und
+# den Zustand ab Werk anlegen (12-vertrauen füllt /etc/zenos/vertrauen nur im Image aus system/vertrauen;
+# «zenos-kanal image <tag>» prüft den Tag im chroot wie ein Gerät und schreibt gut.json, hoechste und gesehen.json),
+# den ersten Start einrichten (Benutzer «user», Rechner «zenos», image/erststart/), die Paketliste schreiben,
+# aufräumen, verkleinern, mit xz packen und SHA256SUMS schreiben. Ergebnis in <ausgabe>:
 # zenos-<version>-pi5-arm64.img.xz, zenos-<version>-pi5-arm64.pakete.txt und SHA256SUMS.
 # Läuft als root auf arm64-Linux (GitHub-Runner ubuntu-24.04-arm oder lokal). Mehr in image/README.md.
+# «--nur-pruefen» prüft nur Tag, Signatur, Kanal und Version, ohne root und ohne zu bauen.
 
 set -Eeuo pipefail
 umask 022
@@ -25,16 +33,20 @@ readonly CDIMAGE_BASE=https://cdimage.ubuntu.com/releases
 readonly CDIMAGE_FINGERPRINT=843938DF228D22F7B3742BC0D94AA3F0EFE21092
 # GitHub nimmt Release-Dateien nur unter 2 GiB an
 readonly RELEASE_LIMIT=2147483648
+# Release-Tags wie in zenos-kanal (VERSION_RE) und image/tag-pruefen.sh
+readonly VERSION_ERE='^v(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})(-rc[1-9][0-9]{0,8})?$'
 
 usage() {
   cat <<'EOF'
-Aufruf: sudo image/bauen.sh [optionen]
+Aufruf: sudo image/bauen.sh --ref vX.Y.Z[-rcN] [optionen]
 
-  --ref REF          Git-Stand für /opt/zenos: Tag, Zweig oder Commit (Standard: HEAD)
-  --version V        Version im Dateinamen (Standard: git describe des Stands, ohne führendes «v»)
+  --ref REF          Git-Stand für /opt/zenos: ein Release-Tag vX.Y.Z oder vX.Y.Z-rcN, gültig signiert
+                     (Standard: HEAD, das geht nur im Testbau)
+  --version V        Version im Dateinamen (Standard: der Tag ohne «v»; im Testbau ohne Tag git describe)
   --quelle ORDNER    Git-Repo mit zenOS (Standard: das Repo dieses Skripts)
   --origin URL       origin von /opt/zenos für «zen update», nur https (Standard: origin der Quelle)
-  --kanal K          Kanal für «zen update» (Standard: dev)
+  --kanal K          Kanal für «zen update»: stabil, vorschau oder dev (Standard: aus dem Tag, vX.Y.Z → stabil,
+                     vX.Y.Z-rcN → vorschau; ohne Tag dev). Ein anderer als der des Tags nur im Testbau
   --ubuntu V         Ubuntu-Version auf cdimage.ubuntu.com (Standard: 26.04, neueste Punktversion)
   --arbeit ORDNER    Arbeitsordner (Standard: /var/tmp/zenos-image)
   --ausgabe ORDNER   Ziel für .img.xz, Paketliste und SHA256SUMS (Standard: <arbeit>/ausgabe)
@@ -42,27 +54,25 @@ Aufruf: sudo image/bauen.sh [optionen]
   --zusatz-mib N     Root-Partition vor dem chroot um N MiB vergrössern (Standard: 6144)
   --reserve-mib N    nach dem Verkleinern frei lassen (Standard: 256)
   --xz-stufe N       Kompression 0–9 (Standard: 9)
-  --nur-mechanik     Test: im chroot nur Prüfbefehle statt install.sh (Image nicht für Releases)
+  --testbau-ohne-signatur
+                     nur für lokale Testbauten: Stand ohne gültig signierten Tag (Zweig, Commit, unsignierter Tag)
+                     und ein anderer Kanal sind erlaubt; die Version endet auf «-testbau». Ohne gültige Signatur
+                     gibt es keinen Zustand ab Werk. In GitHub Actions verweigert, nie für Releases
+  --nur-mechanik     Test: im chroot nur Prüfbefehle statt install.sh (Image nicht für Releases, Version
+                     «-mechanik», ohne Pflicht zur Signatur)
+  --nur-pruefen      nur Stand, Tag, Signatur, Kanal und Version prüfen und zeigen, dann Ende (ohne root, baut nichts)
   -h, --hilfe        diese Hilfe
 EOF
 }
 
-# Eigener, privater Mount-Namensraum: Die Einhängepunkte des Images bleiben für den Host und seine Dienste
-# unsichtbar und verschwinden spätestens mit dem Ende des Skripts. Sonst übernehmen Dienste mit eigenem
-# Namensraum (auf dem GitHub-Runner z. B. systemd-resolved, systemd-logind, ModemManager) eine Kopie und
-# halten das Loop-Gerät fest; e2fsck meldet es beim Verkleinern dann als belegt.
-if (( EUID == 0 )) && [[ "${ZENOS_BAU_NAMENSRAUM:-}" != 1 ]] && command -v unshare >/dev/null; then
-  export ZENOS_BAU_NAMENSRAUM=1
-  exec unshare --mount --propagation private -- bash "${BASH_SOURCE[0]}" "$@"
-fi
-
 # --- Optionen --------------------------------------------------------------
 
+ORIG_ARGS=("$@")
 opt_ref=HEAD
 opt_version=""
 opt_source=$REPO_DIR
 opt_origin=""
-opt_channel=dev
+opt_channel=""
 opt_ubuntu=26.04
 opt_work=/var/tmp/zenos-image
 opt_output=""
@@ -71,11 +81,15 @@ opt_extra_mib=6144
 opt_reserve_mib=256
 opt_xz_level=9
 opt_mechanics=0
+opt_unsigned_test=0
+opt_check_only=0
 
 while (( $# > 0 )); do
   case "$1" in
     -h | --hilfe | --help) usage; exit 0 ;;
     --nur-mechanik) opt_mechanics=1; shift; continue ;;
+    --testbau-ohne-signatur) opt_unsigned_test=1; shift; continue ;;
+    --nur-pruefen) opt_check_only=1; shift; continue ;;
     --ref | --version | --quelle | --origin | --kanal | --ubuntu | --arbeit | --ausgabe | --cache | \
       --zusatz-mib | --reserve-mib | --xz-stufe)
       if (( $# < 2 )); then
@@ -101,6 +115,16 @@ while (( $# > 0 )); do
   esac
   shift 2
 done
+
+# Eigener, privater Mount-Namensraum: Die Einhängepunkte des Images bleiben für den Host und seine Dienste
+# unsichtbar und verschwinden spätestens mit dem Ende des Skripts. Sonst übernehmen Dienste mit eigenem
+# Namensraum (auf dem GitHub-Runner z. B. systemd-resolved, systemd-logind, ModemManager) eine Kopie und
+# halten das Loop-Gerät fest; e2fsck meldet es beim Verkleinern dann als belegt. --nur-pruefen hängt nichts ein
+# (und läuft so auch in Containern ohne CAP_SYS_ADMIN).
+if (( EUID == 0 && ! opt_check_only )) && [[ "${ZENOS_BAU_NAMENSRAUM:-}" != 1 ]] && command -v unshare >/dev/null; then
+  export ZENOS_BAU_NAMENSRAUM=1
+  exec unshare --mount --propagation private -- bash "${BASH_SOURCE[0]}" "${ORIG_ARGS[@]}"
+fi
 
 # --- Ausgabe und Fehler ----------------------------------------------------
 
@@ -146,6 +170,15 @@ DONE=0
 # Entpacktes Image (compress_image), für das Manifest des Raspberry Pi Imagers
 IMAGE_SIZE=""
 IMAGE_SHA=""
+# Tag und Signatur (resolve_source): TAG leer ohne Release-Tag; SIGNED 1 nach gültiger Prüfung; SEED 1, wenn das Image
+# den Zustand ab Werk bekommt (signiert und Kanal des Tags); TEST_BUILD 1 im Testbau und mit --nur-mechanik
+TAG=""
+SIGNED=0
+SEED=0
+TEST_BUILD=0
+SIG_KEY=""
+SIG_SERIES=""
+SIG_ROOT=""
 
 cleanup() {
   local rc=$?
@@ -153,7 +186,9 @@ cleanup() {
   trap - ERR
   # Kam der Abbruch während einer umgeleiteten Ausgabe (quiet), gehören die Meldungen wieder aufs Terminal
   exec 1>&7 2>&8
-  if (( ! DONE )); then
+  if (( ! DONE && opt_check_only )); then
+    printf '\nVorprüfung gescheitert (Exit %s). Kein Image.\n' "$rc" >&2
+  elif (( ! DONE )); then
     if [[ -n "$ROOT_MNT" ]]; then
       printf '\nImage-Bau abgebrochen (Exit %s). Räume Einhängepunkte und Loop-Geräte auf.\n' "$rc" >&2
     else
@@ -702,6 +737,41 @@ check_identity() {
   fi
 }
 
+# Nach install.sh: Kanal und Vertrauensanker des Images, dann der Zustand ab Werk. 12-vertrauen füllt
+# /etc/zenos/vertrauen nur im Image aus system/vertrauen des Stands; hier muss er genau diesen Inhalt haben und
+# vollständig sein. «zenos-kanal image <tag>» prüft den Tag danach im chroot noch einmal wie ein Gerät (mit git und
+# ssh-keygen des Images, gegen den Anker des Images) und schreibt gut.json, hoechste und gesehen.json: Das Gerät
+# kennt so ab dem ersten Start seinen guten Stand und seine Mindestversion, und ein später verschobener Tag gilt
+# schon beim ersten Kontakt als ALARM.
+prepare_channel() {
+  local r=$ROOT_MNT name channel output rc=0
+  local program=/usr/local/libexec/zenos/zenos-kanal
+  [[ -x "$r$program" ]] || die "$program fehlt im Image (Modul 14-kanal, Install-Log)"
+  channel=$(head -n 1 -- "$r/etc/xdg/zenos/kanal" 2>/dev/null | tr -d '[:space:]') || channel=""
+  [[ "$channel" == "$opt_channel" ]] || die "Kanal im Image ist «$channel» statt «$opt_channel» (/etc/xdg/zenos/kanal)"
+  info "Kanal für zen update: $channel"
+  output=$(in_chroot "$program" anker --pruefen /etc/zenos/vertrauen 2>&1) || rc=$?
+  if (( ! SIGNED )); then
+    info "Anker: ${output:-?}"
+    info "Testbau ohne gültige Signatur: kein Zustand ab Werk"
+    return 0
+  fi
+  (( rc == 0 )) || die "Anker /etc/zenos/vertrauen im Image: ${output:-nicht prüfbar} (Exit $rc)"
+  for name in release wurzel widerrufen serie; do
+    cmp -s -- "$r/opt/zenos/system/vertrauen/$name" "$r/etc/zenos/vertrauen/$name" ||
+      die "/etc/zenos/vertrauen/$name im Image ist nicht system/vertrauen/$name des Stands"
+  done
+  info "Anker: $output"
+  if (( ! SEED )); then
+    info "Testbau mit Kanal $opt_channel: kein Zustand ab Werk"
+    return 0
+  fi
+  rc=0
+  output=$(in_chroot "$program" image "$TAG" 2>&1) || rc=$?
+  (( rc == 0 )) || die "zenos-kanal image $TAG (Exit $rc): ${output//$'\n'/; }"
+  info "$output"
+}
+
 # Erster Start ohne Einstellungen aus dem Imager: Standardbenutzer «user» (sudo nur mit Passwort), Rechnername
 # «zenos», README von zenOS auf der Startpartition, USB-2 im Host-Modus für das Compute Module 5. Die Dateien
 # kommen aus image/erststart/ des gebauten Stands. user-data und 90-zenos-benutzer.cfg gehören zusammen: chpasswd
@@ -895,16 +965,125 @@ compress_image() {
 
 # --- Vorbereitung ----------------------------------------------------------
 
+# Release-Tag zu REF («vX.Y.Z[-rcN]» oder «refs/tags/vX.Y.Z[-rcN]», wenn es den Tag in der Quelle gibt), sonst leer
+release_tag() {
+  local name=${1#refs/tags/}
+  if [[ "$name" =~ $VERSION_ERE ]] && git_source rev-parse --verify --quiet "refs/tags/$name" >/dev/null 2>&1; then
+    printf '%s' "$name"
+  fi
+}
+
+# Ist TAG gültig signiert? image/tag-pruefen.sh (aus dem Repo dieses Skripts) gegen den Anker im Commit des Tags,
+# gebunden an COMMIT. Ohne gültige Signatur Abbruch, im Testbau nur eine Warnung. Setzt SIGNED und SIG_*.
+check_signature() {
+  local output key value rc=0
+  SIGNED=0
+  if [[ -z "$TAG" ]]; then
+    (( TEST_BUILD )) || die "«$opt_ref» ist kein Release-Tag vX.Y.Z oder vX.Y.Z-rcN in $opt_source. Gebaut wird nur ein gültig signierter Tag (lokaler Testbau: --testbau-ohne-signatur)"
+    warn "Testbau: «$opt_ref» ist kein Release-Tag, die Signatur wird nicht geprüft"
+    return 0
+  fi
+  output=$("$REPO_DIR/image/tag-pruefen.sh" --quelle "$opt_source" --commit "$COMMIT" "$TAG") || rc=$?
+  if (( rc != 0 )); then
+    (( TEST_BUILD )) || die "Der Tag $TAG ist nicht gültig signiert (image/tag-pruefen.sh, Exit $rc, Grund oben). Kein Image."
+    warn "Testbau: Der Tag $TAG ist nicht gültig signiert (Exit $rc, Grund oben)"
+    return 0
+  fi
+  while IFS='=' read -r key value; do
+    case "$key" in
+      schluessel) SIG_KEY=$value ;;
+      serie) SIG_SERIES=$value ;;
+      wurzel) SIG_ROOT=$value ;;
+    esac
+  done <<< "$output"
+  [[ "$SIG_KEY" == SHA256:* && "$SIG_SERIES" =~ ^[1-9][0-9]{0,3}$ ]] || die "image/tag-pruefen.sh: unerwartete Ausgabe"
+  SIGNED=1
+}
+
+# Quelle, Stand, Tag und Signatur, Kanal, Version und origin. Ohne root, ohne Einhängen: läuft vor allem anderen und
+# allein mit --nur-pruefen.
+resolve_source() {
+  local derived
+  if (( opt_unsigned_test || opt_mechanics )); then TEST_BUILD=1; fi
+  if (( opt_unsigned_test )) && [[ "${GITHUB_ACTIONS:-}" == true ]]; then
+    die "--testbau-ohne-signatur gibt es in GitHub Actions nicht: Ein Image von dort kommt nur aus einem gültig signierten Tag"
+  fi
+  command -v git >/dev/null || die "git fehlt"
+  opt_source=$(realpath -e -- "$opt_source") || die "Quelle «$opt_source» gibt es nicht"
+  # Eigene Git-Konfiguration für den Lauf: nichts aus der von root, und die Quelle gilt als sicher, auch wenn
+  # sie einem anderen Benutzer gehört (Runner: sudo auf den Checkout von «runner»). «git -c safe.directory»
+  # reicht nicht: beim lokalen Klonen erreicht es upload-pack nicht. (image/tag-pruefen.sh hat eine eigene.)
+  GIT_CONFIG_FILE=$(mktemp)
+  git config --file "$GIT_CONFIG_FILE" --add safe.directory "$opt_source"
+  git config --file "$GIT_CONFIG_FILE" --add safe.directory "$opt_source/.git"
+  git config --file "$GIT_CONFIG_FILE" uploadpack.allowAnySHA1InWant true
+  export GIT_CONFIG_GLOBAL=$GIT_CONFIG_FILE GIT_CONFIG_NOSYSTEM=1
+  git_source rev-parse --git-dir >/dev/null 2>&1 || die "$opt_source ist kein Git-Repo"
+  COMMIT=$(git_source rev-parse --verify --quiet "$opt_ref^{commit}") || die "Stand «$opt_ref» gibt es in $opt_source nicht"
+
+  TAG=$(release_tag "$opt_ref")
+  check_signature
+
+  # Kanal: folgt dem Tag (Entscheid Zeno: das Image folgt stabil, rc-Images folgen vorschau; dev nie automatisch)
+  derived=dev
+  if [[ -n "$TAG" ]]; then
+    derived=stabil
+    if [[ "$TAG" == *-rc* ]]; then derived=vorschau; fi
+  fi
+  if [[ -z "$opt_channel" ]]; then
+    opt_channel=$derived
+  elif [[ "$opt_channel" != "$derived" ]] && (( ! TEST_BUILD )); then
+    die "Kanal «$opt_channel» passt nicht zu $TAG: Das Image folgt dem Kanal des Tags ($derived)"
+  fi
+  case "$opt_channel" in
+    stabil | vorschau | dev) ;;
+    *) die "Ungültiger Kanal «$opt_channel» (erlaubt: stabil, vorschau, dev)" ;;
+  esac
+  if (( SIGNED )) && [[ "$opt_channel" == "$derived" ]]; then SEED=1; fi
+
+  # Version: die des Tags
+  if [[ -n "$TAG" ]]; then
+    if [[ -n "$opt_version" && "$opt_version" != "${TAG#v}" ]] && (( ! TEST_BUILD )); then
+      die "--version $opt_version passt nicht zum Tag $TAG"
+    fi
+    opt_version=${opt_version:-${TAG#v}}
+  elif [[ -z "$opt_version" ]]; then
+    opt_version=$(git_source describe --tags --always "$COMMIT")
+    opt_version=${opt_version#v}
+  fi
+  VERSION=$opt_version
+  if (( opt_unsigned_test )); then VERSION+=-testbau; fi
+  if (( opt_mechanics )); then VERSION+=-mechanik; fi
+  [[ "$VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z.+_-]*$ ]] || die "Ungültige Version «$VERSION»"
+
+  if [[ -n "$opt_origin" ]]; then
+    ORIGIN_URL=$opt_origin
+  else
+    ORIGIN_URL=$(clean_url "$(git_source remote get-url origin 2>/dev/null || true)")
+  fi
+  if [[ -n "$ORIGIN_URL" && ! "$ORIGIN_URL" =~ ^https://[A-Za-z0-9.-]+/[A-Za-z0-9._/-]+$ ]]; then
+    die "origin «$ORIGIN_URL» ist keine https-Adresse ohne Zugangsdaten (--origin)"
+  fi
+
+  info "zenOS $VERSION · Stand ${COMMIT:0:12} aus $opt_source · Kanal $opt_channel"
+  if (( SIGNED )); then
+    info "Tag $TAG gültig signiert: Release-Schlüssel $SIG_KEY, Anker Serie $SIG_SERIES, Wurzel $SIG_ROOT"
+  else
+    info "Testbau ohne gültige Signatur: nicht für Releases, ohne Zustand ab Werk"
+  fi
+  if (( TEST_BUILD && SIGNED && ! SEED )); then info "Testbau mit anderem Kanal als dem des Tags: ohne Zustand ab Werk"; fi
+}
+
 preflight() {
   local tool missing="" arch avail_mib need_mib
   (( EUID == 0 )) || die "bauen.sh braucht root (sudo image/bauen.sh …)"
 
   for tool in curl gpgv sha256sum base64 xz losetup sfdisk partx e2fsck resize2fs dumpe2fs mount umount \
-    mountpoint findmnt fstrim chroot git truncate flock mknod awk stat df; do
+    mountpoint findmnt fstrim chroot git ssh-keygen truncate flock mknod awk stat df cmp; do
     command -v "$tool" >/dev/null || missing+=" $tool"
   done
   if [[ -n "$missing" ]]; then
-    die "Es fehlen:$missing (Ubuntu: apt-get install curl gpgv xz-utils e2fsprogs fdisk util-linux mount git)"
+    die "Es fehlen:$missing (Ubuntu: apt-get install curl gpgv xz-utils e2fsprogs fdisk util-linux mount git openssh-client)"
   fi
 
   arch=$(uname -m)
@@ -921,7 +1100,6 @@ preflight() {
   fi
   [[ "$opt_reserve_mib" =~ ^(0|[1-9][0-9]*)$ ]] || die "--reserve-mib braucht eine Zahl"
   [[ "$opt_xz_level" =~ ^[0-9]$ ]] || die "--xz-stufe braucht eine Zahl von 0 bis 9"
-  [[ "$opt_channel" =~ ^[A-Za-z0-9._/-]+$ ]] || die "Ungültiger Kanal «$opt_channel»"
   [[ "$opt_ubuntu" =~ ^[0-9]{2}\.[0-9]{2}(\.[0-9]+)?$ ]] || die "Ungültige Ubuntu-Version «$opt_ubuntu»"
 
   WORK=$(realpath -m -- "$opt_work")
@@ -933,34 +1111,6 @@ preflight() {
     [[ "$p" =~ ^/[A-Za-z0-9._/+-]+$ && "$p" != / ]] || die "Ungültiger Ordner «$p» (nur A–Z, a–z, 0–9 und ._/+-)"
   done
 
-  # Quelle, Stand, Version, origin
-  opt_source=$(realpath -e -- "$opt_source") || die "Quelle «$opt_source» gibt es nicht"
-  # Eigene Git-Konfiguration für den Lauf: nichts aus der von root, und die Quelle gilt als sicher, auch wenn
-  # sie einem anderen Benutzer gehört (Runner: sudo auf den Checkout von «runner»). «git -c safe.directory»
-  # reicht nicht: beim lokalen Klonen erreicht es upload-pack nicht.
-  GIT_CONFIG_FILE=$(mktemp)
-  git config --file "$GIT_CONFIG_FILE" --add safe.directory "$opt_source"
-  git config --file "$GIT_CONFIG_FILE" --add safe.directory "$opt_source/.git"
-  git config --file "$GIT_CONFIG_FILE" uploadpack.allowAnySHA1InWant true
-  export GIT_CONFIG_GLOBAL=$GIT_CONFIG_FILE GIT_CONFIG_NOSYSTEM=1
-  git_source rev-parse --git-dir >/dev/null 2>&1 || die "$opt_source ist kein Git-Repo"
-  COMMIT=$(git_source rev-parse --verify --quiet "$opt_ref^{commit}") || die "Stand «$opt_ref» gibt es in $opt_source nicht"
-  if [[ -z "$opt_version" ]]; then
-    opt_version=$(git_source describe --tags --always "$COMMIT")
-    opt_version=${opt_version#v}
-  fi
-  VERSION=$opt_version
-  if (( opt_mechanics )); then VERSION+=-mechanik; fi
-  [[ "$VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z.+_-]*$ ]] || die "Ungültige Version «$VERSION»"
-  if [[ -n "$opt_origin" ]]; then
-    ORIGIN_URL=$opt_origin
-  else
-    ORIGIN_URL=$(clean_url "$(git_source remote get-url origin 2>/dev/null || true)")
-  fi
-  if [[ -n "$ORIGIN_URL" && ! "$ORIGIN_URL" =~ ^https://[A-Za-z0-9.-]+/[A-Za-z0-9._/-]+$ ]]; then
-    die "origin «$ORIGIN_URL» ist keine https-Adresse ohne Zugangsdaten (--origin)"
-  fi
-
   mkdir -p -- "$WORK"
   exec 9>"$WORK/.sperre"
   flock -n 9 || die "In $WORK läuft schon ein Image-Bau (oder ein Prozess eines abgebrochenen Laufs arbeitet noch im chroot)"
@@ -971,7 +1121,6 @@ preflight() {
     warn "In $WORK sind nur $avail_mib MiB frei, gebraucht werden etwa $need_mib MiB"
   fi
 
-  info "zenOS $VERSION · Stand ${COMMIT:0:12} aus $opt_source · Kanal $opt_channel"
   info "Arbeitsordner $WORK ($avail_mib MiB frei) · Ausgabe $OUTPUT"
   if (( opt_mechanics )); then info "Nur Mechanik: install.sh läuft nicht, das Image ist nicht für Releases"; fi
 }
@@ -999,6 +1148,14 @@ trap 'on_error "$LINENO" "$BASH_COMMAND"' ERR
 trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
+
+step "Vorbereitung: Tag und Signatur"
+resolve_source
+if (( opt_check_only )); then
+  DONE=1
+  info "Nur geprüft (--nur-pruefen), nichts gebaut."
+  exit 0
+fi
 
 step "Vorbereitung"
 preflight
@@ -1040,6 +1197,8 @@ else
   run_install
   step "Kennung und Sicherheitsquelle prüfen"
   check_identity
+  step "Kanal, Vertrauensanker und Zustand ab Werk"
+  prepare_channel
   step "Erster Start und Paketliste"
   prepare_first_boot
   write_package_list
@@ -1062,6 +1221,9 @@ compress_image
   printf 'zenos_version=%s\n' "$VERSION"
   printf 'zenos_commit=%s\n' "$COMMIT"
   printf 'kanal=%s\n' "$opt_channel"
+  printf 'tag=%s\n' "$TAG"
+  if (( SIGNED )); then printf 'signatur=%s\n' "$SIG_KEY"; else printf 'signatur=keine (Testbau)\n'; fi
+  printf 'anker_serie=%s\n' "$SIG_SERIES"
   printf 'image_groesse=%s\n' "$IMAGE_SIZE"
   printf 'image_sha256=%s\n' "$IMAGE_SHA"
 } > "$WORK/basis.txt"

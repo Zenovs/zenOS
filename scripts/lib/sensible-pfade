@@ -62,5 +62,6 @@ vertrauen scripts/module/*-kanal.sh
 vertrauen scripts/bin/zenos-kanal*
 vertrauen system/systemd/system/zenos-kanal*
 vertrauen image/bauen.sh
+vertrauen image/tag-pruefen.sh
 vertrauen .github/workflows/
 vertrauen .githooks/
