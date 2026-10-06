@@ -688,7 +688,8 @@ journalctl -fu zenos-kanal-installieren.service
 sudo rm -f /opt/zenos/.git/index.lock
 ```
 
-Danach geht es zurück auf einen guten Stand, etwa `zen rollback v0.1.0-rc3`.
+Danach geht es zurück auf einen guten Stand: die letzte gültig signierte Version aus `zen kanal status` («Gültig»),
+ab dem ersten signierten Release-Kandidaten etwa `zen rollback v0.1.0-rc4`.
 
 **Fehler im Kanal selbst.** `zen update` bricht mit einem Python-Fehler («Traceback») ab: Das neue Kanal-Programm hat
 einen Fehler, den sein Selbsttest nicht fand. Die vorige Fassung liegt daneben; zurückholen:
@@ -788,11 +789,15 @@ starten (geht ohne Netz):
 zen netzwerk zurueck
 ```
 
-Nach einem Update geht etwas nicht mehr: zurück zum letzten guten Stand, zum Beispiel `v0.1.0-rc3`. Ein Tag, den
-es nicht gibt, zeigt die vorhandenen. Ein unsignierter Tag wie dieser geht nur nach «ja» für genau dieses Tag-Objekt.
+Nach einem Update geht etwas nicht mehr: zurück zum letzten guten Stand, der letzten gültig signierten Version aus
+`zen kanal status` («Gültig»), zum Beispiel `v0.1.0-rc4`. Ein Tag, den es nicht gibt, zeigt die vorhandenen. Ein
+unsignierter Tag geht nur nach «ja» für genau dieses Tag-Objekt. Auf `vorschau` und `stabil` nie auf einen Stand ohne
+Kanal (bis `v0.1.0-rc3`): Dessen altes `zen update` kennt diese Kanäle nicht («Den Kanal … gibt es auf origin nicht»),
+und `zen kanal` fehlt. Kam es doch so, holt `sudo /usr/bin/python3 -I /usr/local/libexec/zenos/zenos-kanal update`
+den neusten gültigen Stand zurück.
 
 ```
-zen rollback v0.1.0-rc3
+zen rollback v0.1.0-rc4
 ```
 
 Die Textkonsole erreichst du immer mit `Ctrl + Alt + F2`, zurück zum zenOS-Login mit `Ctrl + Alt + F7`. Solange SSH

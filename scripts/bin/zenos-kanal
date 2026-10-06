@@ -4538,7 +4538,7 @@ def cmd_update(argv):
 
 def cmd_rollback(argv):
     if len(argv) != 1 or not TAG_NAME_RE.fullmatch(argv[0]):
-        print(f"{NAME} rollback TAG (etwa v0.1.0-rc3)", file=sys.stderr)
+        print(f"{NAME} rollback TAG (etwa v0.1.0-rc4; gültige Versionen zeigt zen kanal status)", file=sys.stderr)
         return EXIT_USAGE
     return Operator().run({"art": "rollback", "tag": argv[0]})
 

@@ -473,8 +473,13 @@ Am Gerät nach dem Einrichten (je ein Befehl): `zen kanal status` (Fingerabdrüc
 Übergang: Das erste `zen update` mit diesem Stand läuft noch über den alten Weg (`git checkout` in `/opt/zenos`,
 `install.sh`) und bringt den Kanal; erst das nächste geht darüber. Hat das Gerät `v0.1.0-rc1` vor seiner Verschiebung
 auf GitHub geholt, bricht dieser alte Weg mit «git fetch ist fehlgeschlagen» ab; dann einmal der Notweg aus
-ANLEITUNG F (holt ohne Tags). Ein `zen rollback` auf einen älteren Stand (etwa
-`v0.1.0-rc3`) bringt dessen alten `zen update` zurück, der Kanal-Code bleibt liegen und stört nicht.
+ANLEITUNG F (holt ohne Tags). Ein `zen rollback` auf einen Stand ohne Kanal (bis `v0.1.0-rc3`) bringt dessen alten
+`zen update` zurück; der Kanal-Code und sein Timer bleiben liegen. Auf `dev` stört das nicht. Auf `stabil` und
+`vorschau` (jedes Image ab `v0.1.0-rc4`) ist es eine Sackgasse: Der alte `zen update` kennt nur Branches und bricht
+mit «Den Kanal «vorschau» gibt es auf origin nicht» ab, und `zen kanal` fehlt. Zurück geht es dann ohne `zen` mit
+`sudo /usr/bin/python3 -I /usr/local/libexec/zenos/zenos-kanal update` (oder `… rollback <tag>`), sonst mit der
+nächsten Version über die Automatik. Ziel eines Rollbacks ist deshalb die letzte gültig signierte Version aus
+`zen kanal status` («Gültig»), ab `v0.1.0-rc4` also mindestens diese.
 
 Rückweg für diesen Schritt: `zen rollback` auf einen Stand davor; hat das neue Kanal-Programm selbst einen Fehler, die
 vorige Fassung zurück (`zenos-kanal.vorher`, ANLEITUNG F); zuletzt der git-Notweg in `ANLEITUNG.md`, Abschnitt F
