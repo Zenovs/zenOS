@@ -114,7 +114,10 @@
     @@REGIONEN@@
   </regions>
 
-  <!-- Tastenkürzel (Liste in docs/module/m9.md). Super+Oben/Unten, Super+T, Super+D, Super+C und Super+V bleiben für kitty frei. -->
+  <!--
+    Tastenkürzel (Liste in docs/module/m9.md). Super+Oben/Unten, Super+T, Super+W, Super+D, Super+C und Super+V bleiben
+    für kitty frei. Ohne allowWhenLocked wirkt keines während der Sperre (ausser den markierten).
+  -->
   <keyboard>
     <keybind key="W-space">
       <action name="Execute" command="@@BIN@@/zenos-ipc befehlsfeld umschalten" />
@@ -131,6 +134,14 @@
     </keybind>
     <keybind key="W-z">
       <action name="Execute" command="@@BIN@@/zenos-ipc zustand waehlen" />
+    </keybind>
+    <!-- Fensterübersicht auf und zu: bleibt offen, ohne dass eine Taste gehalten wird (anders als Alt+Tab) -->
+    <keybind key="W-Tab">
+      <action name="Execute" command="@@BIN@@/zenos-ipc uebersicht umschalten" />
+    </keybind>
+    <!-- Schreibtisch zeigen: alle Fenster minimieren, noch einmal holt genau diese zurück -->
+    <keybind key="W-h">
+      <action name="Execute" command="@@BIN@@/zenos-ipc schreibtisch umschalten" />
     </keybind>
 
     <!-- Super+1 … Super+4: Bereiche des aktiven Rasters (nur so viele, wie es hat) -->

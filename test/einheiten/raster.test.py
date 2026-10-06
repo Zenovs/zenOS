@@ -27,9 +27,9 @@ QML_EINSTELLUNGEN = os.path.join(WURZEL, "shell", "dienste", "Einstellungen.qml"
 QML_SEITE_ALLGEMEIN = os.path.join(WURZEL, "shell", "einstellungen", "SeiteAllgemein.qml")
 SHELLS = {"sh", "bash", "dash", "zsh", "fish", "ksh", "mksh", "busybox"}
 
-# Bauplan 8 (Super+1 … Super+4 kommen aus dem Raster)
+# Bauplan 8 (Super+1 … Super+4 kommen aus dem Raster), dazu Fensterübersicht (W-Tab) und Schreibtisch (W-h)
 TASTEN = {
-    "W-space", "W-l", "W-S-l", "W-m", "W-z", "W-Left", "W-Right", "W-Return", "W-S-Left", "W-S-Right", "W-q",
+    "W-space", "W-l", "W-S-l", "W-m", "W-z", "W-Tab", "W-h", "W-Left", "W-Right", "W-Return", "W-S-Left", "W-S-Right", "W-q",
     "A-Tab", "A-S-Tab", "C-A-t", "W-S-s", "Print", "W-S-c", "W-comma",
     "XF86AudioRaiseVolume", "XF86AudioLowerVolume", "XF86AudioMute", "XF86AudioMicMute", "XF86PowerOff",
 }
@@ -166,6 +166,28 @@ class RasterTest(unittest.TestCase):
         self.assertEqual(len(tasten), len(set(tasten)), "doppelte Tastenkürzel")
         self.assertEqual(set(tasten), TASTEN | {"W-1", "W-2", "W-3", "W-4"})
         self.assertFalse(set(tasten) & FREI, "Kürzel, die für kitty frei bleiben")
+
+    def test_uebersicht_und_schreibtisch(self):
+        """Super+Tab und Super+H rufen die Oberfläche über zenos-ipc auf und wirken nie während der Sperre."""
+        erwartet = {"W-Tab": ["uebersicht", "umschalten"], "W-h": ["schreibtisch", "umschalten"]}
+        for raster in ("4er-grid", "voll"):
+            tasten = {k.get("key"): k for k in self.ausgeben(raster).iter("keybind")}
+            for taste, argumente in erwartet.items():
+                with self.subTest(raster=raster, taste=taste):
+                    self.assertIn(taste, tasten)
+                    self.assertIsNone(tasten[taste].get("allowWhenLocked"))
+                    aktionen = tasten[taste].findall("action")
+                    self.assertEqual([a.get("name") for a in aktionen], ["Execute"])
+                    argv = shlex.split(aktionen[0].get("command", ""))
+                    self.assertEqual(os.path.basename(argv[0]), "zenos-ipc")
+                    self.assertEqual(argv[1:], argumente)
+
+    def test_kein_ziehen_mit_drei_fingern(self):
+        """threeFingerDrag würde die Drei-Finger-Wischer schlucken (Fensterübersicht per Geste): nie an."""
+        for raster in ("4er-grid", "voll"):
+            with self.subTest(raster=raster):
+                for element in self.ausgeben(raster).iter("threeFingerDrag"):
+                    self.assertNotIn((element.text or "").strip().lower(), {"yes", "true", "on", "3", "4"})
 
     def test_befehle_ohne_shell_und_vorhanden(self):
         ziele = ipc_ziele()
