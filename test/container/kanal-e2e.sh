@@ -15,7 +15,8 @@
 #   migration    Arbeitsstand von /repo als neuer Commit auf dev; das alte «zen update» bringt den neuen Kanal
 #   dev          Anker ohne Schlüssel: unsignierter Commit, «nein» ändert nichts, «ja» installiert; install.sh
 #                zweimal als root aus der Bereitstellung (zweiter Lauf 0 Änderungen)
-#   signiert     Anker aus Wegwerf-Schlüsseln, Kanal vorschau, signierter Tag ohne Frage installiert
+#   signiert     Anker aus Wegwerf-Schlüsseln, Kanal vorschau, signierter Tag ohne Frage installiert, auch während ein
+#                Benutzerprozess install.log laufend kürzt (Gesundheit aus dem root-eigenen install-ergebnis)
 #   kaputt       signierter Stand mit Modul, das abbricht: Rückweg, gesperrt
 #   gesundheit   signierter Stand mit leerem scripts/zen: Rückweg
 #   platz        kleines tmpfs auf bereit/: wartet (Exit 10), nichts geändert
@@ -287,8 +288,22 @@ s_signiert() {
   kanal vorschau
   neu=$(neuer_commit "e2e: signiert" e2e/signiert "1")
   signieren v0.1.1-rc1
+  # Befund sich-01: install.log gehört nach einem Lauf von Hand dem Benutzer. Ein Prozess als Benutzer kürzt es während
+  # der ganzen Installation; die Gesundheitsprüfung liest nur das root-eigene Ergebnis und bleibt davon unberührt.
+  chown "$TESTER" /var/log/zenos/install.log
+  rm -f "$E2E/kuerzen.stopp"
+  printf '%s\n' '#!/bin/bash' "until [[ -e $E2E/kuerzen.stopp ]]; do : > /var/log/zenos/install.log; sleep 0.2; done" \
+    > "$E2E/kuerzen.sh"
+  chmod 0755 "$E2E/kuerzen.sh"
+  runuser -u "$TESTER" -- "$E2E/kuerzen.sh" &
+  local kuerzer=$!
   zen_als_tester "" zen update || rc=$?
-  erwarte_rc "$rc" 0 "zen update"
+  : > "$E2E/kuerzen.stopp"
+  wait "$kuerzer" || true
+  erwarte_rc "$rc" 0 "zen update, während ein Benutzerprozess install.log laufend kürzt"
+  [[ "$(stat -c '%U %a' "$STAND/install-ergebnis")" == "root 644" ]] || fehler "install-ergebnis nicht root 0644"
+  grep -q '^== Ende .* · normal · ok · ' "$STAND/install-ergebnis" || fehler "install-ergebnis ohne «== Ende … ok»"
+  ok "Gesundheit aus dem root-eigenen Ergebnis"
   if grep -q "Tippe «ja»" "$E2E/zen.txt"; then fehler "fragte trotz Signatur"; fi
   erwarte_kopf "$neu" "v0.1.1-rc1 installiert"
   [[ "$(cat "$STAND/hoechste")" == v0.1.1-rc1 ]] || fehler "hoechste"
