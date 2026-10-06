@@ -13,8 +13,10 @@ Quickshell
 Pakete aus Ubuntu
   Zu jedem Image von zenOS gibt es den Quellcode aller enthaltenen Pakete in
   genau den ausgelieferten Versionen auf derselben Release-Seite wie das Image
-  (zenos-<version>-quellen-teil*.tar, Übersicht in QUELLEN.txt), so lange, wie
-  das Image dort angeboten wird. Welche Pakete in welcher Version im Image
+  (zenos-<version>-quellen-teil*.tar, Übersicht in zenos-<version>-QUELLEN.txt),
+  so lange, wie das Image dort angeboten wird. Ein Release-Kandidat (Version
+  mit «-rc») hat keine Release-Seite: Sein Image und die Quellen gibt es nur
+  zusammen als Workflow-Artefakte des Laufs «Image» auf GitHub (14 Tage). Welche Pakete in welcher Version im Image
   enthalten sind, steht in pakete.txt in diesem Ordner (nur bei einem Image).
   Auf einem laufenden System holt «apt source <paket>» die Quelle der
   installierten Version, solange Ubuntu sie anbietet; ältere Versionen gibt es

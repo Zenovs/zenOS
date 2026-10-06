@@ -78,7 +78,8 @@ Lizenz:   GNU Lesser General Public License, Version 3 (LICENSE), die auf der
           Copyright: die Autorinnen und Autoren von Quickshell (siehe Quelle).
 
 Den Quellcode zu genau diesem Commit gibt es unter der Quelle oben und auf der
-Release-Seite jedes Images von zenOS (siehe /usr/local/share/doc/zenos/QUELLEN).
+Release-Seite jedes Images von zenOS, bei einem Release-Kandidaten in den
+Workflow-Artefakten (siehe /usr/local/share/doc/zenos/QUELLEN).
 TEXT
 }
 

@@ -11,6 +11,8 @@ Lizenzen
 - zenOS selbst (Oberfläche, Skripte, Konfiguration): MIT-Lizenz, siehe copyright
   in diesem Ordner.
 - Quickshell: GNU LGPL 3, siehe /usr/local/share/doc/quickshell/copyright.
+- Schriften Geist, Geist Mono und Instrument Serif: SIL Open Font License 1.1,
+  Lizenztexte unter /usr/local/share/fonts/zenos (OFL-*.txt).
 - Pakete aus Ubuntu: unter ihren eigenen Lizenzen, siehe
   /usr/share/doc/<paket>/copyright.
 - Firmware von Raspberry Pi, Broadcom und Cypress: unfrei, aber frei
