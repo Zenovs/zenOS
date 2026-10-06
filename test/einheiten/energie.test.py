@@ -130,10 +130,9 @@ class EnergieTest(unittest.TestCase):
         # Laufzeit seit dem Start eingefroren (zenos-energie liest sie im Testmodus von hier): Eine Sekunde, die
         # während des Tests verstreicht, darf die Grenze bei 60 s nicht verschieben
         os.makedirs(os.path.join(self.testwurzel, "proc"), exist_ok=True)
+        # Fest statt der echten Laufzeit: Ein eben gestarteter Rechner (CI-Runner) läuft keine 5 Min., der Marker
+        # «vor 295 s» läge dann vor dem Start
         laufzeit = "100000.00"
-        if os.path.exists("/proc/uptime"):
-            with open("/proc/uptime", encoding="utf-8") as f:
-                laufzeit = f.read().split()[0]
         with open(os.path.join(self.testwurzel, "proc", "uptime"), "w", encoding="utf-8") as f:
             f.write(f"{laufzeit} 1.00\n")
         self.programm = os.path.join(self.bin, "zenos-energie")
