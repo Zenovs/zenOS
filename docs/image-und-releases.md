@@ -78,9 +78,12 @@ Bau im Einzelnen läuft (Optionen, lokal im Container, Aufräumen), steht in `im
 
 ## Prüfen
 
-- Prüfsummen: `sha256sum -c SHA256SUMS` (und `sha256sum -c SHA256SUMS-quellen` für die Quellen).
+- Prüfsummen: `sha256sum -c --ignore-missing SHA256SUMS` (ohne `--ignore-missing` nur, wenn alle drei Dateien da
+  sind; dazu `sha256sum -c SHA256SUMS-quellen` für die Quellen). Über das Manifest lädt der Imager das Image selbst
+  und prüft es gegen `image_download_sha256` und `extract_sha256` darin; deshalb steht das Manifest mit in
+  `SHA256SUMS` und in der Herkunftsbestätigung.
 - Herkunft: `gh attestation verify zenos-<v>-pi5-arm64.img.xz --repo <besitzer>/zenOS` bestätigt, dass die Datei aus
-  dem Workflow dieses Repos zum Tag stammt (dasselbe für die Paketliste). Die Bestätigung erzeugt GitHub ohne eigenen
+  dem Workflow dieses Repos zum Tag stammt (dasselbe für Paketliste und Manifest). Die Bestätigung erzeugt GitHub ohne eigenen
   Schlüssel über Sigstore; dabei landen Metadaten aus der CI (Repo, Workflow, Commit, Prüfsummen) im öffentlichen
   Transparenz-Log von Sigstore. Vom Rechner, auf dem zenOS läuft, geht dabei nichts weg.
 - Signatur des Tags: im Repo `image/tag-pruefen.sh vX.Y.Z` (dieselbe Prüfung wie vor dem Bau). Von Hand geht
@@ -790,7 +793,7 @@ Chrome, VS Code, 1Password und coremail sind nicht im Image; Chrome, VS Code und
   (Release-Notes von Ubuntu 26.04). Prüfen mit `sudo rpi-eeprom-update`, aktualisieren mit
   `sudo rpi-eeprom-update -a` oder mit dem Raspberry Pi Imager (Bootloader-Image). zenOS selbst fasst die Firmware
   nie an.
-- Am besten mit dem Raspberry Pi Imager 2.x **über die Manifest-Datei** `zenos-<v>.rpi-imager-manifest`: per
+- Am besten mit dem Raspberry Pi Imager ab 2.0.11 **über die Manifest-Datei** `zenos-<v>.rpi-imager-manifest`: per
   Doppelklick öffnen oder im Imager «App Options › Content Repository › Edit › Use custom file › Apply & Restart»,
   dann zenOS auswählen. Unter
   «Einstellungen» Benutzer, Passwort und optional einen SSH-Schlüssel setzen, dazu Zeitzone und Tastaturbelegung.
@@ -814,8 +817,10 @@ Chrome, VS Code, 1Password und coremail sind nicht im Image; Chrome, VS Code und
    cloud-init den Benutzer `user` («Default User») mit dem Passwort `user` an, das abgelaufen ist. greetd 0.10 kann
    Passwörter nicht ändern (kein `pam_chauthtok`), der Login zeigt deshalb einen Hinweis. Zuerst an der Textkonsole
    (`Ctrl + Alt + F2`) anmelden, ein neues Passwort setzen, mit `exit` abmelden und mit `Ctrl + Alt + F7` zurück zum
-   zenOS-Login. Per SSH geht das nur mit einem Schlüssel, Passwörter nimmt SSH nicht an. sudo fragt immer nach dem
-   Passwort.
+   zenOS-Login. Per SSH geht das nur mit einem Schlüssel, Passwörter nimmt SSH nicht an. Für `user` fragt sudo immer
+   nach dem Passwort. Für einen Benutzer aus den Imager-Einstellungen gilt das nur mit einem Imager ab 2.0.11 und ohne
+   «sudo ohne Passwort» (`passwordlessSudo`); sonst schreibt cloud-init `/etc/sudoers.d/90-cloud-init-users` mit
+   `NOPASSWD`. zenOS ändert diese Regel nicht, `zen doctor` warnt («sudo geht ohne Passwort»).
    Zeitzone und Tastatur lassen sich dort nachholen: `sudo timedatectl set-timezone <Zone>` und
    `sudo dpkg-reconfigure keyboard-configuration`, danach neu starten.
 3. Beim ersten Login kommen die Benutzerteile von zenOS (`zenos-sitzung` ruft `install.sh --nur-benutzer`).
