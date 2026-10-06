@@ -316,7 +316,8 @@ class BildschirmTest(unittest.TestCase):
             (status_json("off"), (0, "aus\n")),
             (status_json("on", "off"), (0, "teils\n")),
             (status_json("off", "off"), (0, "aus\n")),
-            ("[]", (1, "")),
+            # Kein Ausgang aktiv (Deckel zu, alle Ausgänge abgeschaltet): kein Fehler, sondern «keiner»
+            ("[]", (0, "keiner\n")),
             ("kein json", (1, "")),
             ('[{"output": "X", "power-mode": "standby"}]', (1, "")),
             ("{}", (1, "")),

@@ -343,6 +343,11 @@ class EnergieModulTest(unittest.TestCase):
         self.assertEqual(self.doctor("_energie_sitzung")[1],
                          "hinweis: zenos-idle läuft mit einem älteren Stand und übernimmt den neuen bei der nächsten "
                          "Sperre (ein Stand von vor der Bildschirm-Abschaltung erst nach dem nächsten Anmelden)")
+        # Kein Bildschirm aktiv (Deckel zu, alle Ausgänge aus): ein Hinweis, keine Warnung
+        self.verhalten("bildschirm", "aus", "keiner\n")
+        self.assertEqual(self.doctor("_energie_sitzung")[0],
+                         "hinweis: Kein Bildschirm aktiv (Deckel zu, kein Monitor oder alle Ausgänge aus), "
+                         "Bildschirm-Steuerung jetzt nicht prüfbar")
         # wlopm erreicht nichts
         self.verhalten("bildschirm", "exit", "1")
         self.assertTrue(self.doctor("_energie_sitzung")[0].startswith("warnung: wlopm erreicht die Bildschirme"))

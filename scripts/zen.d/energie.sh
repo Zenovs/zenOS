@@ -139,6 +139,7 @@ _energie_bildschirm_jetzt() {
     0:an) printf 'an' ;;
     0:aus) printf 'aus' ;;
     0:teils) printf 'teils aus' ;;
+    0:keiner) printf 'kein Bildschirm aktiv (Deckel zu oder alle Ausgänge aus)' ;;
     3:*) printf 'keine laufende Sitzung' ;;
     *) printf 'unbekannt (zenos-bildschirm status, Exit %s)' "$rc" ;;
   esac

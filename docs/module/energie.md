@@ -89,8 +89,9 @@ nicht warten:
   Bildschirm in der laufenden Sitzung und ob der Kernel Bereitschaft anbietet. `aus` sperrt und schaltet ab, auch
   per SSH.
 - **`zen doctor`**, Abschnitt «Energie» (`scripts/doctor.d/66-energie.sh`, nur lesend): wlopm und
-  `zenos-bildschirm`, wirksame Zeiten, Bildschirm in der Sitzung erreichbar, Stand von zenos-idle, Ausschalten
-  (Einstellung und was im Weg ist), Hemmer und Tastenkürzel der Ein/Aus-Taste, Bereitschaft (nur Hinweis).
+  `zenos-bildschirm`, wirksame Zeiten, Bildschirm in der Sitzung erreichbar (ohne aktiven Bildschirm, etwa bei
+  geschlossenem Deckel, nur ein Hinweis: `zenos-bildschirm status` meldet dann «keiner»), Stand von zenos-idle,
+  Ausschalten (Einstellung und was im Weg ist), Hemmer und Tastenkürzel der Ein/Aus-Taste, Bereitschaft (nur Hinweis).
 - **Installation:** wlopm steht in `scripts/pakete/sperre.txt`. `65-oberflaeche` startet zenos-idle nach einem
   Update nur neu, wenn die Sitzung gesperrt und der Bildschirm an ist: Ein Neustart beginnt die Leerlaufzeit von vorn
   und schöbe die Sperre sonst hinaus, und gesperrt und dunkel machte das `resume` von swayidle die Sperre bis S + B

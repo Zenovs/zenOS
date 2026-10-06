@@ -4,7 +4,8 @@
 #   zenos-bildschirm aus      sperrt zuerst (zen lock) und schaltet erst dann aus, wenn die Sperre bestätigt
 #                             ist. Schlägt die Sperre fehl, bleibt der Bildschirm an.
 #   zenos-bildschirm an       schaltet alle Bildschirme ein (die Sperre bleibt, wie sie ist)
-#   zenos-bildschirm status   «an», «aus» oder «teils» (nur einige aus)
+#   zenos-bildschirm status   «an», «aus», «teils» (nur einige aus) oder «keiner» (kein Bildschirm aktiv: Deckel
+#                             zu, kein Monitor oder alle Ausgänge abgeschaltet; wlopm meldet dann keinen Ausgang)
 #
 # Leitplanke (Code): Dunkel heisst gesperrt. Es gibt keinen Weg, den Bildschirm ohne Sperre auszuschalten.
 # Aufgerufen von zenos-idle (swayidle: timeout … resume), von der Oberfläche und von «zen energie aus», immer mit
@@ -91,7 +92,8 @@ sys.exit(0 if isinstance(daten, dict) and daten.get("errors") == [] else 1)
   fi
 }
 
-# «an», «aus» oder «teils» aus «wlopm --json»
+# «an», «aus», «teils» oder «keiner» aus «wlopm --json». Ein abgeschalteter oder weggefallener Ausgang (Deckel zu,
+# Monitor abgesteckt, kanshi-Profil mit disable) fehlt in der Liste ganz: Eine leere Liste ist «keiner», kein Fehler.
 status() {
   local ausgabe
   ausgabe=$(timeout 5 wlopm --json 2>/dev/null) || return 1
@@ -101,8 +103,11 @@ try:
     daten = json.loads(sys.argv[1])
 except ValueError:
     sys.exit(1)
-if not isinstance(daten, list) or not daten:
+if not isinstance(daten, list):
     sys.exit(1)
+if not daten:
+    print("keiner")
+    sys.exit(0)
 modi = {e.get("power-mode") for e in daten if isinstance(e, dict)}
 if not modi or not modi <= {"on", "off"}:
     sys.exit(1)

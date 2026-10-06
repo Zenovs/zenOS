@@ -87,7 +87,12 @@ _energie_sitzung() {
   fi
   if command -v wlopm >/dev/null 2>&1 && [[ -x "$_energie_bin/zenos-bildschirm" ]]; then
     if status=$(XDG_RUNTIME_DIR=$laufzeit timeout 10 "$_energie_bin/zenos-bildschirm" status 2>/dev/null); then
-      ok "Bildschirm-Steuerung in der Sitzung erreichbar (Bildschirm ${status})"
+      if [[ "$status" == keiner ]]; then
+        # Ein abgeschalteter Ausgang fehlt in der Liste von wlopm ganz: nichts kaputt, nur jetzt nicht prüfbar
+        hinweis "Kein Bildschirm aktiv (Deckel zu, kein Monitor oder alle Ausgänge aus), Bildschirm-Steuerung jetzt nicht prüfbar"
+      else
+        ok "Bildschirm-Steuerung in der Sitzung erreichbar (Bildschirm ${status})"
+      fi
     else
       warnung "wlopm erreicht die Bildschirme der Sitzung nicht – der Bildschirm bliebe an (zenos-bildschirm status)"
     fi
