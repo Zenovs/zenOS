@@ -165,7 +165,7 @@
       "additionalProperties": false,
       "required": [
         "grund", "flaeche", "flaeche2", "fenster", "linie", "text", "text2", "gedaempft", "abdunkeln",
-        "linie2", "trennlinie", "eingabeRand", "tasteRand", "abgesetzt", "schatten"
+        "zudecken", "linie2", "trennlinie", "eingabeRand", "tasteRand", "abgesetzt", "schatten"
       ],
       "properties": {
         "grund": { "$ref": "#/$defs/farbe" },
@@ -177,6 +177,10 @@
         "text2": { "$ref": "#/$defs/farbe" },
         "gedaempft": { "$ref": "#/$defs/farbe" },
         "abdunkeln": { "$ref": "#/$defs/farbe" },
+        "zudecken": {
+          "description": "Hintergrund der Fensterübersicht: grund fast deckend, ohne Weichzeichnen",
+          "$ref": "#/$defs/farbe"
+        },
         "linie2": { "$ref": "#/$defs/farbe" },
         "trennlinie": { "$ref": "#/$defs/farbe" },
         "eingabeRand": { "$ref": "#/$defs/farbe" },

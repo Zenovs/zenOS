@@ -31,6 +31,8 @@ Singleton {
     readonly property color text2: _paletteColor("text2")
     readonly property color gedaempft: _paletteColor("gedaempft")
     readonly property color abdunkeln: _paletteColor("abdunkeln")
+    // Fast deckend (grund mit 92 %): Hintergrund der Fensterübersicht, damit die Fenster dahinter nicht ablenken
+    readonly property color zudecken: _paletteColor("zudecken")
     readonly property color akzent: akzentFarbe(akzentName)
     // Text und Symbole auf Akzentflächen
     readonly property color aufAkzent: dunkel ? grund : flaeche

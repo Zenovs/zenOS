@@ -21,9 +21,12 @@ Ruhig, warm, reduziert. Ein Akzent pro Modus, sonst neutrale Töne. Grosse Zahle
 | `text2` | `#D9D6CF` | `#3A3935` |
 | `gedaempft` | `#A29E95` | `#625F58` |
 | `abdunkeln` | `rgba(10, 10, 9, 0.68)` | `rgba(27, 27, 25, 0.35)` |
+| `zudecken` | `rgba(19, 19, 18, 0.92)` | `rgba(241, 239, 234, 0.92)` |
 
 `abdunkeln` liegt hinter Überlagerungen (Befehlsfeld, Auswahl beim Bildschirmfoto). Die Umgebung wird nur
-abgedunkelt, nie weichgezeichnet.
+abgedunkelt, nie weichgezeichnet. `zudecken` ist `grund` mit 92 % Deckkraft und liegt hinter der
+Fensterübersicht: Dort sollen die Fenster dahinter nicht ablenken, mit `abdunkeln` schienen sie im Hellen stark
+durch.
 
 **Zwischentöne** aus Entwurf 2, für Rahmen und Flächen, die zwischen den Grundtönen liegen:
 

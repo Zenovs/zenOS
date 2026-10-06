@@ -25,6 +25,7 @@ import qs.einstellungen as EinstellungenModul
 import qs.einrichtung as EinrichtungModul
 import qs.polkit as PolkitModul
 import qs.appleiste as AppleisteModul
+import qs.uebersicht as UebersichtModul
 // qmllint enable unused-imports
 
 // Einstieg der zenOS-Sitzung.
@@ -59,6 +60,13 @@ ShellRoot {
 
     LazyLoader {
         source: "appleiste/AppLeiste.qml"
+        loading: true
+    }
+
+    // Fensterübersicht (Super+Tab); im Hintergrund schon beim Start, damit Reihenfolge und Verlauf der Fenster ab
+    // Sitzungsbeginn gelten wie in der App-Leiste
+    LazyLoader {
+        source: "uebersicht/Uebersicht.qml"
         loading: true
     }
 
