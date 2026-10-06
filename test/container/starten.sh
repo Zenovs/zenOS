@@ -34,7 +34,7 @@ else
   gemeinsam=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
   if [[ -n "$gemeinsam" && "$gemeinsam" != "$repo/.git" ]]; then zusatz=(-v "$gemeinsam:$gemeinsam:ro"); fi
   docker run -d --name "$name" --hostname zenos-test --privileged --cgroupns=host \
-    -v /sys/fs/cgroup:/sys/fs/cgroup:rw -v "$repo:/repo:ro" "${zusatz[@]}" "$bild" >/dev/null
+    -v /sys/fs/cgroup:/sys/fs/cgroup:rw -v "$repo:/repo:ro" ${zusatz[@]+"${zusatz[@]}"} "$bild" >/dev/null
   echo "Container $name gestartet ($bild)."
 fi
 
