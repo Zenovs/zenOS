@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Einheitentests für die Prüfung vor dem Image-Bau: image/tag-pruefen.sh (gültig signierter Release-Tag gegen den
 Anker im Stand), «image/bauen.sh --nur-pruefen» (Tag, Signatur, Kanal und Version, ohne root und ohne Bau) und die
-Prüfschritte in .github/workflows/image.yml und pruefen.yml (Aufbau der Jobs; der Schritt «Signatur prüfen» läuft so,
-wie GitHub ihn ausführt, gegen ein Wegwerf-Repo; ohne PyYAML übersprungen).
+Prüfschritte in .github/workflows/image.yml und pruefen.yml (Aufbau der Jobs; die Schritte «Signatur prüfen»,
+«Versionshinweise», «Manifest» und «Release erstellen» laufen so, wie GitHub sie ausführt, gegen ein Wegwerf-Repo bzw.
+mit einem nachgebauten gh, das nur mitschreibt; ohne PyYAML übersprungen).
 
 Alles mit Wegwerf-Repos und Wegwerf-Schlüsseln im Temp-Ordner, erzeugt zur Laufzeit; signiert wird mit ssh-keygen und
 einer Schlüsseldatei, nie mit 1Password. tag-pruefen.sh hat den ersten Anker von zenOS (Serie 1) fest im Code: Die Tests
@@ -14,9 +15,11 @@ tag-pruefen.sh läuft auch auf dem Mac (bash 3.2); die Tests für bauen.sh nur u
   python3 test/einheiten/image-signatur.test.py
 """
 
+import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -172,7 +175,8 @@ class TagPruefen(Basis):
         objekt = self.signieren("v0.1.0-rc4")
         werte = self.gueltig("v0.1.0-rc4", commit=commit)
         self.assertEqual(werte["kanal"], "vorschau")
-        self.assertEqual(werte["release"], "false")
+        self.assertEqual(werte["release"], "true", "auch ein -rc bekommt eine Release-Seite")
+        self.assertEqual(werte["vorab"], "true", "als Vorabversion, nie «Latest»")
         self.assertEqual(werte["version"], "0.1.0-rc4")
         self.assertEqual(werte["commit"], commit)
         self.assertEqual(werte["objekt"], objekt)
@@ -186,6 +190,22 @@ class TagPruefen(Basis):
         werte = self.gueltig("v0.2.0")
         self.assertEqual(werte["kanal"], "stabil")
         self.assertEqual(werte["release"], "true")
+        self.assertEqual(werte["vorab"], "false")
+        self.assertEqual(set(werte), {"tag", "version", "kanal", "release", "vorab", "commit", "objekt", "schluessel",
+                                      "serie", "wurzel"})
+
+    def test_vorab_nur_aus_dem_namen(self):
+        """Ob Vorabversion, sagt allein der geprüfte Name: Eine Tag-Nachricht mit «-rc» macht vX.Y.Z nicht zum
+        Release-Kandidaten, und ohne Nachricht dazu bleibt -rcN eine Vorabversion."""
+        self.commit("eins")
+        self.git("-c", "gpg.format=ssh", "-c", f"user.signingkey={privat('rel')}", "tag", "-s", "-m",
+                 "zenOS v0.2.0-rc9\n\nvorab=true", "v0.2.0")
+        werte = self.gueltig("v0.2.0")
+        self.assertEqual((werte["kanal"], werte["vorab"]), ("stabil", "false"))
+        self.git("-c", "gpg.format=ssh", "-c", f"user.signingkey={privat('rel')}", "tag", "-s", "-m",
+                 "zenOS v0.2.1\n\nvorab=false", "v0.2.1-rc10")
+        werte = self.gueltig("v0.2.1-rc10")
+        self.assertEqual((werte["kanal"], werte["vorab"], werte["version"]), ("vorschau", "true", "0.2.1-rc10"))
 
     def test_anderer_commit(self):
         eins = self.commit("eins")
@@ -239,8 +259,10 @@ class TagPruefen(Basis):
         self.abgelehnt("v0.2.0", "mehr als eine")
 
     def test_keine_release_version(self):
+        """Gültig signiert, aber kein Name eines Kanals: keine Ausgabe, also kein Release und keine Vorabversion."""
         self.commit("eins")
-        for name in ("v0.2.0-beta1", "v01.2.0", "0.2.0", "v0.2", "vertrauen/0001"):
+        for name in ("v0.2.0-beta1", "v01.2.0", "0.2.0", "v0.2", "vertrauen/0001", "v0.2.0-rc0", "v0.2.0-rc01",
+                     "v0.2.0-RC1", "v0.2.0-rc", "v0.2.0-rc1-fix", "v0.2.0rc1", "v0.2.0-rc1.1", "v0.2.0+rc1"):
             self.signieren(name)
             self.abgelehnt(name, "kein Release-Tag")
 
@@ -572,14 +594,38 @@ def schritt(job, name):
 
 
 @unittest.skipUnless(yaml, "PyYAML fehlt")
-class Workflow(Basis):
-    """image.yml und pruefen.yml: Aufbau und der Schritt «Signatur prüfen», ausgeführt wie in GitHub Actions
-    (bash --noprofile --norc -eo pipefail) mit GITHUB_OUTPUT und GITHUB_STEP_SUMMARY als Dateien."""
+class WorkflowBasis(Basis):
+    """image.yml und pruefen.yml geladen, Schritte ausführbar wie in GitHub Actions (bash --noprofile --norc -eo
+    pipefail) mit GITHUB_OUTPUT und GITHUB_STEP_SUMMARY als Dateien."""
 
     def setUp(self):
         super().setUp()
         self.image = workflow("image.yml")
         self.pruefen_yml = workflow("pruefen.yml")
+
+    def ausfuehren(self, job, name, werte, ort, pfad=SYSTEM_PFAD):
+        """Führt einen run:-Schritt aus wie GitHub (bash --noprofile --norc -eo pipefail) mit WERTE als env. Jeder Wert
+        muss im env des Schritts stehen: So prüft der Test auch, dass der Schritt ihn von dort bekommt."""
+        s = schritt(self.image["jobs"][job], name)
+        for schluessel in werte:
+            self.assertIn(schluessel, s.get("env", {}), f"{name}: {schluessel} fehlt im env")
+        lauf = os.path.join(self.ordner, "lauf")
+        os.makedirs(lauf, exist_ok=True)
+        skript = os.path.join(lauf, "schritt.sh")
+        with open(skript, "w", encoding="utf-8") as f:
+            f.write(s["run"])
+        env = {"PATH": pfad, "HOME": self.home, "LC_ALL": "C.UTF-8", "RUNNER_TEMP": lauf, "GITHUB_ACTIONS": "true",
+               **werte}
+        for datei in ("output", "summary"):
+            open(os.path.join(lauf, datei), "w", encoding="utf-8").close()
+        env["GITHUB_OUTPUT"], env["GITHUB_STEP_SUMMARY"] = os.path.join(lauf, "output"), os.path.join(lauf, "summary")
+        r = subprocess.run([BASH, "--noprofile", "--norc", "-eo", "pipefail", skript], cwd=ort, env=env,
+                           capture_output=True, text=True, check=False)
+        return r.returncode, r.stdout + r.stderr, lauf
+
+
+class Workflow(WorkflowBasis):
+    """Aufbau von image.yml und pruefen.yml, dazu die Schritte «Signatur prüfen», «Versionshinweise» und «Manifest»."""
 
     def test_aufbau_image(self):
         jobs = self.image["jobs"]
@@ -598,9 +644,48 @@ class Workflow(Basis):
         self.assertEqual(jobs["pruefen"]["uses"], "./.github/workflows/pruefen.yml")
         self.assertEqual(set(jobs["veroeffentlichen"]["needs"]), {"tag", "pruefen", "bauen", "quellen"})
         self.assertEqual(jobs["veroeffentlichen"]["if"], "needs.tag.outputs.release == 'true'")
+        self.assertEqual(jobs["veroeffentlichen"]["permissions"], {"contents": "write"})
+        self.assertGreaterEqual(jobs["veroeffentlichen"]["timeout-minutes"], 60, "rund 4,5 GB holen und hochladen")
         for name, job in jobs.items():
             if name != "veroeffentlichen" and "permissions" in job:
                 self.assertNotEqual(job["permissions"].get("contents"), "write", name)
+            if "steps" in job:
+                self.assertIn("timeout-minutes", job, name)
+
+    def test_vorab_durchgereicht(self):
+        """tag gibt release und vorab weiter; Manifest, Versionshinweise und Release lesen vorab nur über env."""
+        jobs = self.image["jobs"]
+        self.assertEqual(jobs["tag"]["outputs"]["vorab"], "${{ steps.pruefen.outputs.vorab }}")
+        self.assertEqual(jobs["tag"]["outputs"]["release"], "${{ steps.pruefen.outputs.release }}")
+        for job, name in (("bauen", "Manifest für den Raspberry Pi Imager"), ("bauen", "Versionshinweise"),
+                          ("veroeffentlichen", "Release erstellen")):
+            s = schritt(jobs[job], name)
+            self.assertEqual(s["env"]["VORAB"], "${{ needs.tag.outputs.vorab }}", name)
+            self.assertIn('case "$VORAB" in', s["run"], name)
+        release = schritt(jobs["veroeffentlichen"], "Release erstellen")["run"]
+        self.assertNotIn("--clobber", release, "ein veröffentlichtes Release bleibt, wie es ist")
+        self.assertNotIn("*-*", release, "Vorabversion nie aus einem Muster über den Namen, nur aus vorab")
+
+    def test_ausdruecke_nur_ueber_env(self):
+        """Kein ${{ … }} in einem run: (Einschleusen über Werte); alles kommt über env."""
+        for datei, daten in (("image.yml", self.image), ("pruefen.yml", self.pruefen_yml)):
+            for name, job in daten["jobs"].items():
+                for s in job.get("steps", []):
+                    if "run" in s:
+                        self.assertNotIn("${{", s["run"], f"{datei}: {name} › {s.get('name')}")
+
+    def test_artefakte_kurz(self):
+        """Image, Paketliste und Quellen als Artefakt nur 3 Tage, bei -rc wie bei vX.Y.Z (danach: Release-Seite)."""
+        jobs = self.image["jobs"]
+        for job, name in (("bauen", "Paketliste für den Quellcode ablegen"), ("bauen", "Image als Artefakt ablegen"),
+                          ("quellen", "Quellen als Artefakt ablegen")):
+            self.assertEqual(schritt(jobs[job], name)["with"]["retention-days"], 3, name)
+
+    def test_manifest_url_auf_release_seite(self):
+        """Die url im Manifest zeigt immer auf die Datei der Release-Seite, auch bei -rc."""
+        s = schritt(self.image["jobs"]["bauen"], "Manifest für den Raspberry Pi Imager")
+        self.assertEqual(s["env"]["DOWNLOAD"], "${{ github.server_url }}/${{ github.repository }}/releases/download")
+        self.assertIn('--arg url "$DOWNLOAD/$TAG/$datei"', s["run"])
 
     def test_aufbau_pruefen(self):
         on = self.pruefen_yml["on"]
@@ -614,33 +699,33 @@ class Workflow(Basis):
         ziel = os.path.join(self.repo, "image")
         os.makedirs(ziel, exist_ok=True)
         shutil.copy(_modul["tag_pruefen"], os.path.join(ziel, "tag-pruefen.sh"))
-        lauf = os.path.join(self.ordner, "lauf")
-        os.makedirs(lauf)
-        ausgabe, zusammenfassung = os.path.join(lauf, "output"), os.path.join(lauf, "summary")
-        for datei in (ausgabe, zusammenfassung):
-            open(datei, "w", encoding="utf-8").close()
-        skript = os.path.join(lauf, "schritt.sh")
-        with open(skript, "w", encoding="utf-8") as f:
-            f.write(schritt(self.image["jobs"]["tag"], "Signatur prüfen (verify-tag gegen system/vertrauen)")["run"])
-        env = {"PATH": SYSTEM_PFAD, "HOME": self.home, "LC_ALL": "C.UTF-8", "TAG": tag, "COMMIT": commit,
-               "RUNNER_TEMP": lauf, "GITHUB_OUTPUT": ausgabe, "GITHUB_STEP_SUMMARY": zusammenfassung,
-               "GITHUB_ACTIONS": "true"}
-        r = subprocess.run([BASH, "--noprofile", "--norc", "-eo", "pipefail", skript], cwd=self.repo, env=env,
-                           capture_output=True, text=True, check=False)
-        with open(ausgabe, encoding="utf-8") as f:
+        rc, aus, lauf = self.ausfuehren("tag", "Signatur prüfen (verify-tag gegen system/vertrauen)",
+                                        {"TAG": tag, "COMMIT": commit}, self.repo)
+        with open(os.path.join(lauf, "output"), encoding="utf-8") as f:
             werte = dict(z.split("=", 1) for z in f.read().splitlines() if "=" in z)
-        with open(zusammenfassung, encoding="utf-8") as f:
-            return r.returncode, werte, f.read(), r.stdout + r.stderr
+        with open(os.path.join(lauf, "summary"), encoding="utf-8") as f:
+            return rc, werte, f.read(), aus
 
     def test_signatur_schritt_gueltig(self):
         commit = self.commit("eins")
         self.signieren("v0.1.0-rc4")
         rc, werte, zusammenfassung, aus = self.signatur_schritt("v0.1.0-rc4", commit)
         self.assertEqual(rc, 0, aus)
-        self.assertEqual((werte["kanal"], werte["release"], werte["version"]), ("vorschau", "false", "0.1.0-rc4"))
+        self.assertEqual((werte["kanal"], werte["release"], werte["vorab"], werte["version"]),
+                         ("vorschau", "true", "true", "0.1.0-rc4"))
         self.assertIn("- Kanal: vorschau", zusammenfassung)
+        self.assertIn("- Release: Vorabversion (Pre-release, nie «Latest»)", zusammenfassung)
         self.assertIn(f"- Signiert mit dem Release-Schlüssel {fingerabdruck('rel')}", zusammenfassung)
         self.assertIn("- Anker system/vertrauen, Serie 1", zusammenfassung)
+
+    def test_signatur_schritt_final(self):
+        commit = self.commit("eins")
+        self.signieren("v0.2.0")
+        rc, werte, zusammenfassung, aus = self.signatur_schritt("v0.2.0", commit)
+        self.assertEqual(rc, 0, aus)
+        self.assertEqual((werte["kanal"], werte["release"], werte["vorab"]), ("stabil", "true", "false"))
+        self.assertIn("- Release: «Latest»", zusammenfassung)
+        self.assertNotIn("Vorabversion", zusammenfassung)
 
     def test_signatur_schritt_unsigniert(self):
         commit = self.commit("eins")
@@ -667,6 +752,250 @@ class Workflow(Basis):
         rc, werte, _, aus = self.signatur_schritt("v0.2.0", commit)
         self.assertNotEqual(rc, 0)
         self.assertIn("kein annotierter Tag", aus)
+
+    # -- Versionshinweise und Manifest --
+
+    def hinweise(self, version, vorab):
+        ort = os.path.join(self.ordner, "lauf", "image")
+        os.makedirs(ort, exist_ok=True)
+        with open(os.path.join(ort, "basis.txt"), "w", encoding="utf-8") as f:
+            f.write("ubuntu_datei=ubuntu-test.img.xz\nubuntu_sha256=" + "a" * 64 + "\n")
+        kanal = "vorschau" if "-rc" in version else "stabil"
+        rc, aus, lauf = self.ausfuehren("bauen", "Versionshinweise", {
+            "VERSION": version, "KANAL": kanal, "VORAB": vorab, "SCHLUESSEL": "SHA256:test", "TAG": "v" + version,
+            "REPO": "besitzer/zenOS"}, self.ordner)
+        datei = os.path.join(lauf, "hinweise", "versionshinweise.md")
+        text = None
+        if os.path.exists(datei):
+            with open(datei, encoding="utf-8") as f:
+                text = f.read()
+        return rc, aus, text
+
+    def test_hinweise_rc(self):
+        rc, aus, text = self.hinweise("0.1.0-rc4", "true")
+        self.assertEqual(rc, 0, aus)
+        self.assertTrue(text.startswith("> **Release-Kandidat zum Testen, nicht für den Alltag.** `v0.1.0-rc4` ist "
+                                        "eine Vorabversion im Kanal `vorschau`"), text[:200])
+        deutsch, englisch = text.split("\n---\n")
+        self.assertIn("**zenOS 0.1.0-rc4 für den Raspberry Pi 5", deutsch)
+        self.assertTrue(englisch.lstrip().startswith("> **Release candidate for testing, not for everyday use.** "
+                                                     "`v0.1.0-rc4` is a pre-release on the `vorschau` channel"))
+        self.assertIn("**zenOS 0.1.0-rc4 for Raspberry Pi 5", englisch)
+        self.assertIn("ubuntu-test.img.xz", deutsch)
+        self.assertIn("Canonical Ltd.", englisch)
+
+    def test_hinweise_final(self):
+        rc, aus, text = self.hinweise("0.2.0", "false")
+        self.assertEqual(rc, 0, aus)
+        self.assertTrue(text.startswith("**zenOS 0.2.0 für den Raspberry Pi 5"), text[:200])
+        self.assertNotIn("Release-Kandidat", text)
+        self.assertNotIn("Release candidate", text)
+        self.assertIn("\n---\n\n**zenOS 0.2.0 for Raspberry Pi 5", text)
+        self.assertIn("Kanal `stabil`", text)
+
+    def test_hinweise_ohne_vorab(self):
+        for wert in ("", "ja", "True"):
+            rc, aus, text = self.hinweise("0.2.0", wert)
+            self.assertNotEqual(rc, 0, wert)
+            self.assertIn("::error::", aus)
+            self.assertIsNone(text)
+
+    @unittest.skipUnless(LINUX and shutil.which("jq", path=SYSTEM_PFAD), "jq, GNU stat und sha256sum nur unter Linux")
+    def test_manifest_rc(self):
+        """Manifest bei -rc: url auf die Datei der Release-Seite (kein Umschreiben von Hand mehr), Beschreibung nennt
+        den Release-Kandidaten; das Manifest kommt in SHA256SUMS."""
+        lauf = os.path.join(self.ordner, "lauf")
+        for ordner in ("image", "ausgabe"):
+            os.makedirs(os.path.join(lauf, ordner), exist_ok=True)
+        with open(os.path.join(lauf, "image", "basis.txt"), "w", encoding="utf-8") as f:
+            f.write("image_groesse=4096\nimage_sha256=" + "b" * 64 + "\n")
+        with open(os.path.join(lauf, "ausgabe", "zenos-0.1.0-rc4-pi5-arm64.img.xz"), "wb") as f:
+            f.write(b"image")
+        open(os.path.join(lauf, "ausgabe", "SHA256SUMS"), "w", encoding="utf-8").close()
+        for vorab, version, beschreibung in (
+                ("true", "0.1.0-rc4", "zenOS 0.1.0-rc4 (Release-Kandidat zum Testen), basiert auf Ubuntu 26.04 LTS"),
+                ("false", "0.1.0", "zenOS 0.1.0, basiert auf Ubuntu 26.04 LTS")):
+            datei = f"zenos-{version}-pi5-arm64.img.xz"
+            if not os.path.exists(os.path.join(lauf, "ausgabe", datei)):
+                shutil.copy(os.path.join(lauf, "ausgabe", "zenos-0.1.0-rc4-pi5-arm64.img.xz"),
+                            os.path.join(lauf, "ausgabe", datei))
+            rc, aus, _ = self.ausfuehren("bauen", "Manifest für den Raspberry Pi Imager", {
+                "VERSION": version, "VORAB": vorab, "TAG": "v" + version,
+                "DOWNLOAD": "https://github.com/besitzer/zenOS/releases/download"}, self.ordner)
+            self.assertEqual(rc, 0, aus)
+            with open(os.path.join(lauf, "hinweise", f"zenos-{version}.rpi-imager-manifest"), encoding="utf-8") as f:
+                eintrag = json.load(f)["os_list"][0]
+            self.assertEqual(eintrag["url"], f"https://github.com/besitzer/zenOS/releases/download/v{version}/{datei}")
+            self.assertEqual(eintrag["description"], beschreibung)
+            self.assertEqual(eintrag["init_format"], "cloudinit")
+            with open(os.path.join(lauf, "ausgabe", "SHA256SUMS"), encoding="utf-8") as f:
+                self.assertIn(f"  zenos-{version}.rpi-imager-manifest\n", f.read())
+        rc, aus, _ = self.ausfuehren("bauen", "Manifest für den Raspberry Pi Imager", {
+            "VERSION": "0.1.0", "VORAB": "", "TAG": "v0.1.0", "DOWNLOAD": "https://example.invalid"}, self.ordner)
+        self.assertNotEqual(rc, 0)
+        self.assertIn("::error::", aus)
+
+
+# Nachgebautes gh für «Release erstellen»: schreibt jeden Aufruf als JSON-Zeile mit (gh-protokoll) und spielt ein
+# Release aus einer Zustandsdatei (gh-zustand.json: kein Release, Entwurf oder veröffentlicht, mit Dateinamen), beide im
+# Ordner über seinem bin/. Kein Netz.
+GH_NACHBAU = r'''
+import json, os, sys
+ordner = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+zustand_datei, protokoll = os.path.join(ordner, "gh-zustand.json"), os.path.join(ordner, "gh-protokoll")
+argv = sys.argv[1:]
+with open(protokoll, "a", encoding="utf-8") as f:
+    f.write(json.dumps(argv) + "\n")
+with open(zustand_datei, encoding="utf-8") as f:
+    zustand = json.load(f)
+release = zustand.get("release")
+if argv[:2] == ["release", "view"]:
+    if release is None:
+        sys.stderr.write("release not found\n")
+        sys.exit(1)
+    jq = argv[argv.index("--jq") + 1]
+    if ".assets[].name" in jq:
+        print("\n".join(release["assets"]))
+    else:
+        print(f"{str(release['isDraft']).lower()} {str(release['isPrerelease']).lower()}")
+elif argv[:2] == ["release", "delete"]:
+    zustand["release"] = None
+elif argv[:2] == ["release", "create"]:
+    if release is not None:
+        sys.stderr.write("a release with the same tag name already exists\n")
+        sys.exit(1)
+    zustand["release"] = {"isDraft": False, "isPrerelease": "--prerelease" in argv, "assets": []}
+else:
+    sys.stderr.write("unerwartet: " + " ".join(argv) + "\n")
+    sys.exit(2)
+with open(zustand_datei, "w", encoding="utf-8") as f:
+    json.dump(zustand, f)
+'''
+
+
+@unittest.skipUnless(yaml, "PyYAML fehlt")
+class ReleaseSchritt(WorkflowBasis):
+    """«Release erstellen» aus image.yml mit nachgebautem gh: -rc als Vorabversion (nie «Latest»), vX.Y.Z als «Latest»,
+    Neustart über einen Entwurf oder ein schon veröffentlichtes Release, falsche Werte für vorab."""
+
+    def setUp(self):
+        super().setUp()
+        self.bin = os.path.join(self.ordner, "bin")
+        os.makedirs(self.bin)
+        gh = os.path.join(self.bin, "gh")
+        with open(gh, "w", encoding="utf-8") as f:
+            f.write(f"#!{sys.executable}\n" + GH_NACHBAU)
+        os.chmod(gh, 0o755)
+        self.zustand = os.path.join(self.ordner, "gh-zustand.json")
+        self.protokoll = os.path.join(self.ordner, "gh-protokoll")
+        self.arbeit = os.path.join(self.ordner, "arbeit")
+
+    def dateien(self, version):
+        namen = [f"artefakt/ausgabe/zenos-{version}-pi5-arm64.img.xz", "artefakt/ausgabe/SHA256SUMS",
+                 f"artefakt/ausgabe/zenos-{version}-pi5-arm64.pakete.txt",
+                 f"artefakt/hinweise/zenos-{version}.rpi-imager-manifest",
+                 f"quellen/zenos-{version}-quellen-teil01.tar", f"quellen/zenos-{version}-quellen-teil02.tar",
+                 f"quellen/zenos-{version}-quickshell-0.2.1.tar", f"quellen/zenos-{version}-QUELLEN.txt",
+                 "quellen/SHA256SUMS-quellen", "artefakt/hinweise/versionshinweise.md"]
+        for name in namen:
+            ziel = os.path.join(self.arbeit, name)
+            os.makedirs(os.path.dirname(ziel), exist_ok=True)
+            with open(ziel, "w", encoding="utf-8") as f:
+                f.write(name + "\n")
+        return [n for n in namen if not n.endswith("versionshinweise.md")]
+
+    def release(self, tag, vorab, vorher=None):
+        """Führt den Schritt aus; gibt Exit, Ausgabe, die gh-Aufrufe und das Release danach zurück."""
+        version = tag[1:]
+        self.dateien(version)
+        with open(self.zustand, "w", encoding="utf-8") as f:
+            json.dump({"release": vorher}, f)
+        open(self.protokoll, "w", encoding="utf-8").close()
+        rc, aus, _ = self.ausfuehren("veroeffentlichen", "Release erstellen", {
+            "GH_TOKEN": "kein-echtes-token", "GH_REPO": "besitzer/zenOS", "TAG": tag, "VERSION": version,
+            "VORAB": vorab}, self.arbeit, pfad=f"{self.bin}:{SYSTEM_PFAD}")
+        with open(self.protokoll, encoding="utf-8") as f:
+            aufrufe = [json.loads(z) for z in f if z.strip()]
+        with open(self.zustand, encoding="utf-8") as f:
+            nachher = json.load(f)["release"]
+        return rc, aus, aufrufe, nachher
+
+    def erstellt(self, aufrufe):
+        return [a for a in aufrufe if a[:2] == ["release", "create"]]
+
+    def test_rc_als_vorabversion(self):
+        rc, aus, aufrufe, nachher = self.release("v0.1.0-rc4", "true")
+        self.assertEqual(rc, 0, aus)
+        (create,) = self.erstellt(aufrufe)
+        dateien = self.dateien("0.1.0-rc4")
+        self.assertEqual(create[2], "v0.1.0-rc4")
+        self.assertEqual(create[3:3 + len(dateien)], dateien)
+        self.assertEqual(create[3 + len(dateien):], ["--verify-tag", "--title", "zenOS 0.1.0-rc4", "--notes-file",
+                                                     "artefakt/hinweise/versionshinweise.md", "--prerelease",
+                                                     "--latest=false"])
+        self.assertTrue(nachher["isPrerelease"])
+
+    def test_final_als_latest(self):
+        rc, aus, aufrufe, nachher = self.release("v0.1.0", "false")
+        self.assertEqual(rc, 0, aus)
+        (create,) = self.erstellt(aufrufe)
+        self.assertEqual(create[-1], "--latest")
+        self.assertNotIn("--prerelease", create)
+        self.assertNotIn("--latest=false", create)
+        self.assertIn("quellen/zenos-0.1.0-quellen-teil02.tar", create)
+        self.assertFalse(nachher["isPrerelease"])
+
+    def test_vorab_falsch_oder_unpassend(self):
+        """Kein Release ohne gültiges vorab, und vorab muss zum Tag passen (rc ↔ true, vX.Y.Z ↔ false)."""
+        for tag, vorab in (("v0.1.0-rc4", ""), ("v0.1.0-rc4", "ja"), ("v0.1.0-rc4", "false"), ("v0.1.0", "true"),
+                           ("v0.1.0-beta1", "true"), ("v0.1.0-beta1", "false"), ("v0.1.0", "TRUE")):
+            rc, aus, aufrufe, nachher = self.release(tag, vorab)
+            self.assertNotEqual(rc, 0, f"{tag} {vorab!r}: {aus}")
+            self.assertIn("::error::", aus)
+            self.assertEqual(aufrufe, [], f"{tag} {vorab!r}: gh darf gar nicht laufen")
+            self.assertIsNone(nachher)
+
+    def test_entwurf_wird_neu_angelegt(self):
+        """Ein Entwurf von einem abgebrochenen Lauf: löschen (ohne den Tag) und neu anlegen."""
+        entwurf = {"isDraft": True, "isPrerelease": True, "assets": ["zenos-0.1.0-rc4-pi5-arm64.img.xz"]}
+        rc, aus, aufrufe, nachher = self.release("v0.1.0-rc4", "true", vorher=entwurf)
+        self.assertEqual(rc, 0, aus)
+        self.assertIn(["release", "delete", "v0.1.0-rc4", "--yes"], aufrufe)
+        self.assertFalse(any("--cleanup-tag" in a for a in aufrufe), "der Tag bleibt")
+        self.assertEqual(len(self.erstellt(aufrufe)), 1)
+        self.assertIn("::warning::", aus)
+        self.assertFalse(nachher["isDraft"])
+
+    def test_veroeffentlicht_bleibt(self):
+        """Schon veröffentlicht und vollständig: nichts hochladen, nichts löschen, Exit 0."""
+        namen = [os.path.basename(d) for d in self.dateien("0.1.0-rc4")]
+        fertig = {"isDraft": False, "isPrerelease": True, "assets": namen}
+        rc, aus, aufrufe, nachher = self.release("v0.1.0-rc4", "true", vorher=fertig)
+        self.assertEqual(rc, 0, aus)
+        self.assertEqual({tuple(a[:2]) for a in aufrufe}, {("release", "view")})
+        self.assertIn("::notice::", aus)
+        self.assertEqual(nachher, fertig)
+
+    def test_veroeffentlicht_unvollstaendig(self):
+        namen = [os.path.basename(d) for d in self.dateien("0.1.0")]
+        teilweise = {"isDraft": False, "isPrerelease": False, "assets": namen[:3]}
+        rc, aus, aufrufe, nachher = self.release("v0.1.0", "false", vorher=teilweise)
+        self.assertNotEqual(rc, 0)
+        self.assertIn("::error::", aus)
+        self.assertIn("zenos-0.1.0-quellen-teil01.tar", aus)
+        self.assertEqual({tuple(a[:2]) for a in aufrufe}, {("release", "view")})
+        self.assertEqual(nachher, teilweise)
+
+    def test_veroeffentlicht_falsch_markiert(self):
+        """Ein -rc liegt schon als normales Release vor (oder umgekehrt): Fehler, nichts ändern."""
+        for tag, vorab, prerelease in (("v0.1.0-rc4", "true", False), ("v0.1.0", "false", True)):
+            namen = [os.path.basename(d) for d in self.dateien(tag[1:])]
+            vorher = {"isDraft": False, "isPrerelease": prerelease, "assets": namen}
+            rc, aus, aufrufe, nachher = self.release(tag, vorab, vorher=vorher)
+            self.assertNotEqual(rc, 0, tag)
+            self.assertIn("::error::", aus)
+            self.assertEqual(self.erstellt(aufrufe), [])
+            self.assertEqual(nachher, vorher)
 
 
 if __name__ == "__main__":

@@ -28,8 +28,10 @@
 # (docs/image-und-releases.md, «GitHub absichern»).
 #
 # Ausgabe nur bei Exit 0, auf stdout, eine Zeile «schluessel=wert» je Wert (für $GITHUB_OUTPUT und bauen.sh):
-#   tag, version (ohne «v»), kanal (stabil oder vorschau), release (true ohne -rc, sonst false), commit, objekt
+#   tag, version (ohne «v»), kanal (stabil oder vorschau), release (immer true: jeder gültige Tag bekommt eine
+#   Release-Seite), vorab (true bei vX.Y.Z-rcN: Vorabversion, nie «Latest»; false bei vX.Y.Z), commit, objekt
 #   (Tag-Objekt), schluessel (Fingerabdruck des Release-Schlüssels), serie, wurzel (Fingerabdruck)
+# Kanal und vorab kommen allein aus dem geprüften Namen (Teil «-rcN» von VERSION_ERE), nie aus der Tag-Nachricht.
 # Meldungen auf stderr, in GitHub Actions ein Fehler zusätzlich als ::error::.
 # Exit 0 gültig · 1 ungültig oder nicht prüfbar (Grund auf stderr) · 2 falscher Aufruf.
 #
@@ -314,6 +316,8 @@ done
 if [[ ! "$NAME" =~ $VERSION_ERE ]]; then
   ungueltig "«$NAME» ist kein Release-Tag vX.Y.Z oder vX.Y.Z-rcN (ohne führende Nullen)"
 fi
+# Teil «-rcN» aus dem geprüften Namen (Gruppe 4 von VERSION_ERE), leer bei vX.Y.Z
+RC_TEIL=${BASH_REMATCH[4]}
 REPO=$(cd -- "$QUELLE" 2>/dev/null && pwd -P) || ungueltig "Quelle «$QUELLE» gibt es nicht"
 pg rev-parse --git-dir > /dev/null 2>&1 || ungueltig "$REPO ist kein Git-Repo"
 
@@ -373,11 +377,19 @@ tag_pruefen "$NAME" zenos-release "$TMP/anker/release.signers" "$TMP/anker/wider
 OBJEKT=$TAG_OBJEKT
 SCHLUESSEL=$TAG_SCHLUESSEL
 
-KANAL=stabil
+# Release-Seite für jeden gültigen Tag (Entscheid Zeno, 06.10.2026): vX.Y.Z als «Latest» im Kanal stabil, vX.Y.Z-rcN
+# als Vorabversion (Pre-release, nie «Latest») im Kanal vorschau
 RELEASE=true
-case "$NAME" in *-rc*) KANAL=vorschau; RELEASE=false ;; esac
+if [[ -n "$RC_TEIL" ]]; then
+  KANAL=vorschau
+  VORAB=true
+else
+  KANAL=stabil
+  VORAB=false
+fi
 
 meldung "$NAME (${COMMIT:0:12}) ist gültig signiert: $SCHLUESSEL, Anker Serie $SERIE, Kanal $KANAL"
-printf 'tag=%s\nversion=%s\nkanal=%s\nrelease=%s\ncommit=%s\nobjekt=%s\nschluessel=%s\nserie=%s\nwurzel=%s\n' \
-  "$NAME" "${NAME#v}" "$KANAL" "$RELEASE" "$COMMIT" "$OBJEKT" "$SCHLUESSEL" "$SERIE" "$WURZEL_FP"
+printf 'tag=%s\nversion=%s\nkanal=%s\nrelease=%s\nvorab=%s\n' "$NAME" "${NAME#v}" "$KANAL" "$RELEASE" "$VORAB"
+printf 'commit=%s\nobjekt=%s\nschluessel=%s\nserie=%s\nwurzel=%s\n' "$COMMIT" "$OBJEKT" "$SCHLUESSEL" "$SERIE" \
+  "$WURZEL_FP"
 exit 0

@@ -5,10 +5,11 @@
 # chroot zenos-kanal ein drittes Mal, wie ein Gerät.
 # Kanal je nach Tag: vX.Y.Z → stabil, vX.Y.Z-rcN → vorschau. Das Image bekommt den Anker aus system/vertrauen und den
 # Zustand ab Werk (gut.json, hoechste, gesehen.json aus dem Tag).
-# Tags mit «-rc» (z. B. v0.1.0-rc4): Image und Quellcode bauen und als Workflow-Artefakte ablegen, kein Release.
-# vX.Y.Z: dazu ein GitHub-Release mit Image, Paketliste, SHA256SUMS, Manifest für den Raspberry Pi Imager und dem
-# Quellcode aller enthaltenen Pakete (image/quellen.sh). Ohne vollständige Quellen kein Release (GPL), und ohne grüne
-# Prüfung (Job «Prüfung», scripts/pruefen.sh über pruefen.yml für genau diesen Stand) auch nicht.
+# Jeder gültige Tag bekommt ein GitHub-Release mit Image, Paketliste, SHA256SUMS, Manifest für den Raspberry Pi Imager
+# und dem Quellcode aller enthaltenen Pakete (image/quellen.sh): vX.Y.Z als «Latest», vX.Y.Z-rcN als Vorabversion
+# (Pre-release, nie «Latest»; Entscheid Zeno, 06.10.2026). Was gilt, sagt die Ausgabe «vorab» von tag-pruefen.sh, allein
+# aus dem geprüften Tag-Namen. Ohne vollständige Quellen kein Release (GPL), und ohne grüne Prüfung (Job «Prüfung»,
+# scripts/pruefen.sh über pruefen.yml für genau diesen Stand) auch nicht.
 # Image, Paketliste und Manifest (alle in SHA256SUMS) bekommen eine Herkunftsbestätigung von GitHub (Artifact
 # Attestation, Sigstore).
 # Ablauf und Grenzen: image/README.md und docs/image-und-releases.md.
@@ -40,6 +41,7 @@ jobs:
       version: ${{ steps.pruefen.outputs.version }}
       kanal: ${{ steps.pruefen.outputs.kanal }}
       release: ${{ steps.pruefen.outputs.release }}
+      vorab: ${{ steps.pruefen.outputs.vorab }}
       schluessel: ${{ steps.pruefen.outputs.schluessel }}
       serie: ${{ steps.pruefen.outputs.serie }}
     steps:
@@ -63,7 +65,9 @@ jobs:
           {
             echo "### Tag $TAG"
             echo
-            sed -n -e 's/^kanal=/- Kanal: /p' -e 's/^schluessel=/- Signiert mit dem Release-Schlüssel /p' \
+            sed -n -e 's/^kanal=/- Kanal: /p' -e 's/^vorab=false$/- Release: «Latest»/p' \
+              -e 's/^vorab=true$/- Release: Vorabversion (Pre-release, nie «Latest»)/p' \
+              -e 's/^schluessel=/- Signiert mit dem Release-Schlüssel /p' \
               -e 's/^serie=/- Anker system\/vertrauen, Serie /p' "$RUNNER_TEMP/tag.txt"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -136,18 +140,25 @@ jobs:
       - name: Manifest für den Raspberry Pi Imager
         env:
           VERSION: ${{ needs.tag.outputs.version }}
+          VORAB: ${{ needs.tag.outputs.vorab }}
           TAG: ${{ github.ref_name }}
           DOWNLOAD: ${{ github.server_url }}/${{ github.repository }}/releases/download
         run: |
           # Der Imager 2.x wendet Benutzer, SSH und WLAN bei eigenen Images nur über ein Manifest mit
-          # init_format «cloudinit» an (docs/image-und-releases.md).
+          # init_format «cloudinit» an (docs/image-und-releases.md). Die url zeigt auf die Datei der Release-Seite,
+          # auch bei einem -rc (Vorabversion).
+          case "$VORAB" in
+            true) beschreibung="zenOS $VERSION (Release-Kandidat zum Testen), basiert auf Ubuntu 26.04 LTS" ;;
+            false) beschreibung="zenOS $VERSION, basiert auf Ubuntu 26.04 LTS" ;;
+            *) echo "::error::Ausgabe vorab ist «$VORAB», erwartet true oder false"; exit 1 ;;
+          esac
           basis="$RUNNER_TEMP/image/basis.txt"
           datei="zenos-$VERSION-pi5-arm64.img.xz"
           groesse=$(sed -n 's/^image_groesse=//p' "$basis")
           sha=$(sed -n 's/^image_sha256=//p' "$basis")
           [[ "$groesse" =~ ^[0-9]+$ && "$sha" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::basis.txt ohne Image-Werte"; exit 1; }
           mkdir -p "$RUNNER_TEMP/hinweise"
-          jq -n --arg name "zenOS $VERSION" --arg beschreibung "zenOS $VERSION, basiert auf Ubuntu 26.04 LTS" \
+          jq -n --arg name "zenOS $VERSION" --arg beschreibung "$beschreibung" \
             --arg url "$DOWNLOAD/$TAG/$datei" --argjson groesse "$groesse" --arg sha "$sha" \
             --argjson xz_groesse "$(stat -c %s "$RUNNER_TEMP/ausgabe/$datei")" \
             --arg xz_sha "$(sha256sum "$RUNNER_TEMP/ausgabe/$datei" | cut -d ' ' -f 1)" \
@@ -177,14 +188,26 @@ jobs:
         env:
           VERSION: ${{ needs.tag.outputs.version }}
           KANAL: ${{ needs.tag.outputs.kanal }}
+          VORAB: ${{ needs.tag.outputs.vorab }}
           SCHLUESSEL: ${{ needs.tag.outputs.schluessel }}
           TAG: ${{ github.ref_name }}
           REPO: ${{ github.repository }}
         run: |
           ubuntu_datei=$(sed -n 's/^ubuntu_datei=//p' "$RUNNER_TEMP/image/basis.txt")
           ubuntu_sha=$(sed -n 's/^ubuntu_sha256=//p' "$RUNNER_TEMP/image/basis.txt")
+          # Ein Release-Kandidat sagt es ganz oben, in beiden Sprachen
+          case "$VORAB" in
+            true)
+              vorab_de="> **Release-Kandidat zum Testen, nicht für den Alltag.** \`$TAG\` ist eine Vorabversion im Kanal \`$KANAL\`: Ein Gerät aus diesem Image bekommt weitere Release-Kandidaten ohne Wartezeit und danach die Endversion. Für den Alltag eine Version ohne «-rc» nehmen."
+              vorab_en="> **Release candidate for testing, not for everyday use.** \`$TAG\` is a pre-release on the \`$KANAL\` channel: devices from this image get further release candidates without delay, then the final version. For everyday use, pick a version without \`-rc\`."
+              ;;
+            false) vorab_de=""; vorab_en="" ;;
+            *) echo "::error::Ausgabe vorab ist «$VORAB», erwartet true oder false"; exit 1 ;;
+          esac
           mkdir -p "$RUNNER_TEMP/hinweise"
-          cat > "$RUNNER_TEMP/hinweise/versionshinweise.md" <<EOF
+          {
+            if [[ -n "$vorab_de" ]]; then printf '%s\n\n' "$vorab_de"; fi
+            cat <<EOF
           **zenOS $VERSION für den Raspberry Pi 5 (arm64) · basiert auf Ubuntu 26.04 LTS**
 
           - **Prüfen:** \`sha256sum -c --ignore-missing SHA256SUMS\` (die Liste nennt Image, Paketliste und Manifest) und die Herkunft mit \`gh attestation verify zenos-$VERSION-pi5-arm64.img.xz --repo $REPO\`, ebenso für \`zenos-$VERSION.rpi-imager-manifest\`. Über das Manifest lädt der Imager das Image selbst und prüft es gegen die Prüfsummen darin.
@@ -200,6 +223,9 @@ jobs:
 
           ---
 
+          EOF
+            if [[ -n "$vorab_en" ]]; then printf '%s\n\n' "$vorab_en"; fi
+            cat <<EOF
           **zenOS $VERSION for Raspberry Pi 5 (arm64) · based on Ubuntu 26.04 LTS**
 
           - **Verify:** \`sha256sum -c --ignore-missing SHA256SUMS\` (it lists image, package list and manifest) and the provenance with \`gh attestation verify zenos-$VERSION-pi5-arm64.img.xz --repo $REPO\`, likewise for \`zenos-$VERSION.rpi-imager-manifest\`. Through the manifest, the Imager downloads the image itself and checks it against the checksums inside.
@@ -212,14 +238,17 @@ jobs:
 
           Ubuntu and Canonical are registered trademarks of Canonical Ltd. Linux® is the registered trademark of Linus Torvalds in the U.S. and other countries. Raspberry Pi is a trademark of Raspberry Pi Ltd. zenOS is not affiliated with or endorsed by Canonical or Raspberry Pi Ltd.
           EOF
+          } > "$RUNNER_TEMP/hinweise/versionshinweise.md"
 
+      # Artefakte nur für die folgenden Jobs (Quellcode, Release) und einen Neustart: 3 Tage. Danach liegt alles auf der
+      # Release-Seite, bei vX.Y.Z wie bei -rc.
       - name: Paketliste für den Quellcode ablegen
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: zenos-${{ needs.tag.outputs.version }}-pakete
           path: ${{ runner.temp }}/ausgabe/zenos-${{ needs.tag.outputs.version }}-pi5-arm64.pakete.txt
           if-no-files-found: error
-          retention-days: ${{ needs.tag.outputs.release == 'true' && 3 || 14 }}
+          retention-days: 3
 
       - name: Image als Artefakt ablegen
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -230,7 +259,7 @@ jobs:
             ${{ runner.temp }}/hinweise/
           if-no-files-found: error
           compression-level: 0
-          retention-days: ${{ needs.tag.outputs.release == 'true' && 3 || 14 }}
+          retention-days: 3
 
       - name: Install-Log ablegen
         if: always()
@@ -288,16 +317,17 @@ jobs:
           path: ${{ runner.temp }}/quellen/
           if-no-files-found: error
           compression-level: 0
-          retention-days: ${{ needs.tag.outputs.release == 'true' && 3 || 14 }}
+          retention-days: 3
 
-  # Nur vX.Y.Z, und nur wenn alles davor grün ist: Signatur, Prüfung (pruefen.yml für diesen Stand), Bau und Quellen.
-  # Ohne Statusfunktion im if gilt success() für alle needs.
+  # vX.Y.Z und vX.Y.Z-rcN, nur wenn alles davor grün ist: Signatur, Prüfung (pruefen.yml für diesen Stand), Bau samt
+  # Herkunftsbestätigung und Quellen. Ohne Statusfunktion im if gilt success() für alle needs.
+  # Zeitlimit 60 min: zwei Artefakte holen und rund 4,5 GB hochladen (Image etwa 1,5 GB, Quellen etwa 3 GB).
   veroeffentlichen:
     name: Release
     needs: [tag, pruefen, bauen, quellen]
     if: needs.tag.outputs.release == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     permissions:
       contents: write
     steps:
@@ -338,15 +368,51 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
           VERSION: ${{ needs.tag.outputs.version }}
+          VORAB: ${{ needs.tag.outputs.vorab }}
         run: |
+          # Vorabversion oder «Latest» kommt aus tag-pruefen.sh (geprüfter Name) und muss zum Tag passen
+          case "$VORAB" in
+            true)
+              [[ "$TAG" == "v$VERSION" && "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc[0-9]+$ ]] ||
+                { echo "::error::vorab=true passt nicht zum Tag $TAG"; exit 1; }
+              markierung=(--prerelease --latest=false)
+              ;;
+            false)
+              [[ "$TAG" == "v$VERSION" && "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+                { echo "::error::vorab=false passt nicht zum Tag $TAG"; exit 1; }
+              markierung=(--latest)
+              ;;
+            *) echo "::error::Ausgabe vorab ist «$VORAB», erwartet true oder false"; exit 1 ;;
+          esac
           dateien=("artefakt/ausgabe/zenos-$VERSION-pi5-arm64.img.xz" artefakt/ausgabe/SHA256SUMS
             "artefakt/ausgabe/zenos-$VERSION-pi5-arm64.pakete.txt" "artefakt/hinweise/zenos-$VERSION.rpi-imager-manifest"
             quellen/*.tar "quellen/zenos-$VERSION-QUELLEN.txt" quellen/SHA256SUMS-quellen)
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG gibt es schon, Dateien werden ersetzt."
-            gh release upload "$TAG" "${dateien[@]}" --clobber
-            exit 0
+          # Neustart des Laufs: Ein Entwurf stammt von einem abgebrochenen Lauf (gh legt das Release zuerst als
+          # Entwurf an, lädt hoch und veröffentlicht dann). Er wird gelöscht und neu angelegt, der Tag bleibt. Ein
+          # veröffentlichtes Release bleibt, wie es ist (mit Immutable Releases, ANLEITUNG G, ginge es auch nicht
+          # anders): Der Job prüft nur, ob alle Dateien da sind und die Markierung stimmt.
+          abfrage='"\(.isDraft) \(.isPrerelease)"'
+          if stand=$(gh release view "$TAG" --json isDraft,isPrerelease --jq "$abfrage" 2>/dev/null); then
+            case "$stand" in
+              "true "*)
+                echo "::warning::Release $TAG ist noch ein Entwurf (früherer Lauf abgebrochen), er wird neu angelegt."
+                gh release delete "$TAG" --yes
+                ;;
+              "false $VORAB")
+                fehlt=$(comm -23 <(for d in "${dateien[@]}"; do basename -- "$d"; done | sort -u) \
+                  <(gh release view "$TAG" --json assets --jq '.assets[].name' | sort -u))
+                if [[ -n "$fehlt" ]]; then
+                  echo "::error::Release $TAG ist schon veröffentlicht, aber ohne: ${fehlt//$'\n'/ }"
+                  exit 1
+                fi
+                echo "::notice::Release $TAG ist schon veröffentlicht und vollständig, es bleibt, wie es ist."
+                exit 0
+                ;;
+              *)
+                echo "::error::Release $TAG ist schon veröffentlicht, aber Vorabversion «${stand#* }» statt «$VORAB»."
+                exit 1
+                ;;
+            esac
           fi
-          optionen=(--verify-tag --title "zenOS $VERSION" --notes-file artefakt/hinweise/versionshinweise.md)
-          if [[ "$TAG" == *-* ]]; then optionen+=(--prerelease); fi
-          gh release create "$TAG" "${dateien[@]}" "${optionen[@]}"
+          gh release create "$TAG" "${dateien[@]}" --verify-tag --title "zenOS $VERSION" \
+            --notes-file artefakt/hinweise/versionshinweise.md "${markierung[@]}"
