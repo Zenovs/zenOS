@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 00-basis: System, Zeitzone, Tastatur, Code-Checkout, Kanal, zen, Log, Speicher, Oberflächen-Link, sudo-Regel
+# 00-basis: System, Zeitzone, Tastatur, Code-Checkout, Kanal, zen, Log, Speicher, Oberflächen-Link, sudo-Regel,
+# sudo ohne Passwort
 # shellcheck shell=bash
 
 pruefe_basis() {
@@ -65,6 +66,20 @@ _basis_sudo_regel() {
     warnung "Temporäre sudo-Regel aus dem Bau noch aktiv. Nach der Testphase löschen: sudo rm $regel"
   else
     ok "Keine temporäre sudo-Regel aus dem Bau"
+    _basis_sudo_passwort
+  fi
+}
+
+# sudo ohne Passwort aus einer anderen Regel: cloud-init schreibt eine (90-cloud-init-users), wenn der Raspberry Pi
+# Imager bis 2.0.10 oder mit «passwordlessSudo» Benutzer anlegt. Dann wirkt keine Passwortabfrage über sudo, etwa bei
+# «sudo zen firewall deaktivieren». Nur erkennen, nichts ändern (-k: eine zwischengespeicherte Anmeldung zählt nicht,
+# wie in install.sh). Als root ohne Aussage.
+_basis_sudo_passwort() {
+  (( EUID != 0 )) && command -v sudo >/dev/null 2>&1 || return 0
+  if sudo -n -k true 2>/dev/null; then
+    warnung "sudo geht ohne Passwort (etwa eine Regel des Raspberry Pi Imagers in /etc/sudoers.d/90-cloud-init-users): Passwortabfragen über sudo schützen nicht"
+  else
+    ok "sudo nur mit Passwort"
   fi
 }
 
