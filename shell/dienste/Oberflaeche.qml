@@ -49,6 +49,9 @@ Singleton {
     // Sperren anfordern (sperren()); die Sperre (sperre/Sperre.qml) reagiert darauf. Sie sendet es auch selbst
     // bei jedem Sperren (IPC, zen lock, Marker), Overlays und Menüs schliessen darauf.
     signal sperrenAngefordert
+    // Die Einstellungen sind schon offen und sollen nach vorn (einstellungenOeffnen()); das Fenster (Einstellungen.qml)
+    // reagiert darauf
+    signal einstellungenVorholen
 
     // symbol ist optional: hinweis("Farbe kopiert"), hinweis("Raster lässt sich nicht setzen", "warnung")
     function hinweis(text: var, symbol: var): void {
@@ -77,9 +80,16 @@ Singleton {
         befehlsfeldOffen = true;
     }
 
+    // Einstellungen öffnen (Super+Komma, Befehlsfeld, Leiste, Umschalter, IPC). Die Übersicht geht dabei immer zu,
+    // auch wenn die Einstellungen schon offen sind (dann meldet einstellungenOffen keine Änderung); ein schon offenes
+    // Fenster kommt nach vorn.
     function einstellungenOeffnen(seite: var): void {
         einstellungenSeite = typeof seite === "string" ? seite : "";
-        einstellungenOffen = true;
+        uebersichtSchliessen();
+        if (einstellungenOffen)
+            einstellungenVorholen();
+        else
+            einstellungenOffen = true;
     }
 
     // Fensterübersicht öffnen (Super+Tab, Drei-Finger-Wischen, Befehlsfeld, IPC). Während der Sperre und der

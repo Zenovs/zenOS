@@ -18,6 +18,9 @@ import "../uebersicht/schreibtisch.mjs" as Logik
 // minimiert wieder alles Sichtbare (wie ToggleShowDesktop ab labwc 0.20, das es unter 0.9.3 noch nicht gibt).
 // Den Stapel gibt labwc nicht heraus; die Reihenfolge nähert ihn über den Verlauf der aktiven Fenster an.
 // Kein Hinweis, keine Animation (labwc minimiert ohne Übergang). Nie während Sperre und Einrichtung.
+// Ein Neuladen der Oberfläche (nach dem Entsperren, wenn während der Sperre ein Update kam) übersteht der Merker
+// (gerettet, unten). Ein Neustart nicht (am Ende von zen update oder eines Updates ohne Sperre, wenn sich die
+// Oberfläche geändert hat): Dann kommen die Fenster einzeln zurück (App-Leiste, Alt+Tab, Übersicht).
 // IPC «schreibtisch»: umschalten, status (frei/normal)
 Singleton {
     id: root
@@ -39,7 +42,12 @@ Singleton {
     property var _verlauf: []
 
     onAktivesFensterChanged: _verlauf = Fenster.verlaufNachfuehren(_verlauf, aktivesFenster, fensterListe)
-    onFensterListeChanged: _verlauf = Fenster.verlaufNachfuehren(_verlauf, aktivesFenster, fensterListe)
+    onFensterListeChanged: {
+        _verlauf = Fenster.verlaufNachfuehren(_verlauf, aktivesFenster, fensterListe);
+        _retten();
+    }
+    onMerkerChanged: _retten()
+    onVorherAktivChanged: _retten()
     // Vorbei (ein Fenster ist wieder sichtbar, oder alle gemerkten sind zu): Der Merker verfällt. Erst nach dem
     // laufenden Ereignis, denn frei hängt am Merker (sonst eine Bindungsschleife). Ein inzwischen neuer Merker bleibt.
     onFreiChanged: {
@@ -53,6 +61,23 @@ Singleton {
         if (merker.length > 0)
             merker = [];
         vorherAktiv = null;
+    }
+
+    // Stand für ein Neuladen nachführen: Plätze in der Fensterliste, die sich verschieben, wenn Fenster kommen oder
+    // gehen (schreibtisch.mjs, retten)
+    function _retten(): void {
+        const stand = Logik.retten(merker, vorherAktiv, fensterListe);
+        if (gerettet.stand !== stand)
+            gerettet.stand = stand;
+    }
+
+    // Nur ein Merker, der noch gilt (der Schreibtisch ist frei); sonst wäre er schon verfallen
+    function _wiederherstellen(stand: string): void {
+        const zurueck = Logik.wiederherstellen(stand, fensterListe);
+        if (!Logik.frei(fensterListe, zurueck.merker))
+            return;
+        vorherAktiv = zurueck.vorherAktiv;
+        merker = zurueck.merker;
     }
 
     function umschalten(): void {
@@ -84,6 +109,18 @@ Singleton {
             t.minimized = false;
         if (ziel && Fenster.alsListe(liste).indexOf(ziel) >= 0)
             ziel.activate();
+    }
+
+    // Neuladen der Oberfläche: Die Toplevel-Objekte gehören Quickshell und bleiben dieselben, die JS-Werte dieses
+    // Dienstes nicht. Ohne Rettung wäre der Merker leer, und Super+H holte die Fenster nicht mehr zurück.
+    PersistentProperties {
+        id: gerettet
+
+        reloadableId: "schreibtischMerker"
+
+        property string stand: ""
+
+        onReloaded: root._wiederherstellen(stand)
     }
 
     IpcHandler {

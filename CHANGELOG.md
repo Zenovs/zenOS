@@ -11,13 +11,16 @@ an; eine Version entspricht einem Tag `v…` im Repo.
   Fenster als Karten mit App-Symbol, App-Name und Titel, ohne Vorschaubilder (labwc 0.9.3 gibt einzelne Fenster nicht
   heraus). Sie bleibt offen, ohne dass eine Taste gehalten wird, und das vorige Fenster ist vorgewählt (`Super + Tab`,
   dann `Enter` führt zurück wie Alt+Tab). Tippen filtert wie im Befehlsfeld, Pfeile, Tab, Pos1 und Ende wählen, ein
-  Klick wechselt, auch zu einem minimierten Fenster und über ein Vollbild-Fenster; Klick daneben oder `Esc` schliesst.
-  Hintergrund ist der neue Token `zudecken` (`grund` zu 92 %, hell und dunkel, ohne Weichzeichnen). Bei mehreren
-  Bildschirmen stehen die Karten auf dem des aktiven Fensters, die anderen sind nur zugedeckt. `Super + H` minimiert
-  alle sichtbaren App-Fenster, ein zweites `Super + H` holt genau diese zurück (vorher von Hand minimierte bleiben
-  unten); solange zeigt «Heute» die Tastenkappe «Super H · Fenster zurück». Beides steht auch im Befehlsfeld
-  («Fensterübersicht», «Schreibtisch zeigen» bzw. «Fenster zurück»). Drei Finger nach oben auf dem Touchpad öffnen
-  die Übersicht, nach unten schliessen sie: Der neue Systemdienst `zenos-gesten` (Modul `82-gesten`) liest dafür als
+  Klick wechselt, auch zu einem minimierten Fenster und über ein Vollbild-Fenster; Klick daneben oder `Esc` schliesst
+  (ein Klick in die Filterzeile nicht). Hintergrund ist der neue Token `zudecken` (`grund` zu 92 %, hell und dunkel,
+  ohne Weichzeichnen). Bei mehreren Bildschirmen stehen die Karten auf dem des aktiven Fensters, die anderen sind nur
+  zugedeckt; wird ein Bildschirm ab- oder angesteckt, geht die Übersicht zu (ohne ihren Bildschirm bliebe sie sonst
+  ohne Tastatur offen). `Super + Komma` schliesst sie und holt die Einstellungen nach vorn, auch wenn sie schon offen
+  sind. `Super + H` minimiert alle sichtbaren App-Fenster, ein zweites `Super + H` holt genau diese zurück, auch nach
+  einem Neuladen der Oberfläche beim Entsperren (vorher von Hand minimierte bleiben unten); solange zeigt «Heute» die
+  Tastenkappe «Super H · Fenster zurück». Beides steht auch im Befehlsfeld («Fensterübersicht», «Schreibtisch zeigen»
+  bzw. «Fenster zurück»). Drei Finger nach oben auf dem Touchpad öffnen die Übersicht, nach unten schliessen sie: Der
+  neue Systemdienst `zenos-gesten` (Modul `82-gesten`) liest dafür als
   eigener Benutzer nur reine Touchpads und nur lesend (udev-Regel `72-zenos-gesten.rules`, gehärtete Einheit, ohne
   Touchpad läuft er nie). Er prüft jeden Knoten zusätzlich selbst beim Kernel (keine Tasten) und gibt die Gesten nur
   dem Benutzer an seat0. Die Sitzung bekommt keine Rechte an `/dev/input`, niemand kommt in die Gruppe `input`, kein

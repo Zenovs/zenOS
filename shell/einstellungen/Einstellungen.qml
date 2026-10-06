@@ -3,10 +3,12 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Quickshell.Wayland
 import qs.theme
 import qs.komponenten
 import qs.einstellungen.teile
 import qs.dienste as Dienste
+import "../appleiste/fenster.mjs" as Fenster
 
 // Einstellungen-Fenster (FloatingWindow mit labwc-Titelzeile) nach Entwurf 2 «Modi & Zustände»:
 // Navigation (260 px) mit Modi, Zuständen, Rastern, Bildschirmen (scrollt), darunter fest Web-Apps, Apps,
@@ -60,6 +62,9 @@ Scope {
         return profile.length > 0 ? profile[0].name : "";
     }
 
+    // Titel des Fensters; daran erkennt vorholen() es unter den Fenstern der Oberfläche
+    readonly property string titel: "Einstellungen"
+
     // ID, die gerade über «Neuer Modus» bzw. «Neuer Zustand» entstanden ist (Namensfeld bekommt den Fokus)
     property string neuAngelegt: ""
 
@@ -110,6 +115,14 @@ Scope {
         }
     }
 
+    // Schon offenes Fenster nach vorn holen (Super+Komma, während es hinter anderen liegt): über wlr-foreign-toplevel
+    // wie beim Schreibtisch, labwc hebt und aktiviert es. Erst nach dem laufenden Ereignis, damit eine eben
+    // geschlossene Übersicht die Tastatur schon abgegeben hat.
+    function vorholen(): void {
+        const t = Fenster.alsListe(ToplevelManager.toplevels.values).find(f => Fenster.istOberflaeche(f?.appId) && f?.title === root.titel);
+        t?.activate();
+    }
+
     onAngefragtChanged: Qt.callLater(_neuAnlegen)
 
     Connections {
@@ -117,6 +130,10 @@ Scope {
 
         function onEinstellungenOffenChanged(): void {
             Qt.callLater(root._neuAnlegen);
+        }
+
+        function onEinstellungenVorholen(): void {
+            Qt.callLater(root.vorholen);
         }
     }
 
@@ -144,7 +161,7 @@ Scope {
 
             readonly property var _bildschirm: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
 
-            title: "Einstellungen"
+            title: root.titel
             color: Theme.flaeche
             implicitWidth: Math.min(1240, (_bildschirm?.width ?? 1440) - 2 * Theme.a6)
             implicitHeight: Math.min(820, (_bildschirm?.height ?? 900) - Theme.leisteHoehe - Theme.titelzeile - 2 * Theme.a5)

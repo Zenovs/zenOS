@@ -70,3 +70,49 @@ export function merken(fenster, verlauf) {
 export function zurueckReihenfolge(merker, offen) {
     return nochOffen(merker, offen);
 }
+
+// Merker und vorher aktives Fenster als Text, der ein Neuladen der Oberfläche übersteht (PersistentProperties nehmen
+// nur einfache Werte mit). Die Fenster selbst und ihre Reihenfolge in der Liste überleben das Neuladen (die Liste
+// gehört Quickshell, nicht der neu geladenen Oberfläche): gerettet wird je Fenster der Platz in der Liste aller
+// offenen Fenster samt appId zur Kontrolle. Leer, solange es keinen Merker gibt.
+export function retten(merker, vorherAktiv, offen) {
+    const offene = Fenster.alsListe(offen);
+    const platz = t => [offene.indexOf(t), String(t?.appId ?? "")];
+    const gemerkt = nochOffen(merker, offene);
+    if (gemerkt.length === 0)
+        return "";
+    return JSON.stringify({
+        merker: gemerkt.map(platz),
+        vorherAktiv: vorherAktiv && offene.indexOf(vorherAktiv) >= 0 ? platz(vorherAktiv) : null
+    });
+}
+
+// Gegenstück zu retten() nach dem Neuladen: { merker, vorherAktiv } aus dem Text und der Liste aller offenen
+// Fenster. Passt ein Platz nicht mehr (anderes Fenster, andere appId, Liste kürzer) oder ist der Text unbrauchbar,
+// gibt es keinen Merker: lieber nichts zurückholen als ein falsches Fenster.
+export function wiederherstellen(text, offen) {
+    const offene = Fenster.alsListe(offen);
+    const leer = { merker: [], vorherAktiv: null };
+    const fensterAn = p => {
+        if (!Array.isArray(p) || p.length !== 2 || !Number.isInteger(p[0]) || p[0] < 0 || p[0] >= offene.length)
+            return null;
+        const t = offene[p[0]];
+        return t && String(t.appId ?? "") === p[1] ? t : null;
+    };
+    let daten = null;
+    try {
+        daten = JSON.parse(String(text ?? ""));
+    } catch (e) {
+        return leer;
+    }
+    if (!daten || typeof daten !== "object" || !Array.isArray(daten.merker))
+        return leer;
+    const merker = [];
+    for (const p of daten.merker) {
+        const t = fensterAn(p);
+        if (!t || merker.indexOf(t) >= 0)
+            return leer;
+        merker.push(t);
+    }
+    return { merker: merker, vorherAktiv: daten.vorherAktiv === null ? null : fensterAn(daten.vorherAktiv) };
+}

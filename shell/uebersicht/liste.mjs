@@ -1,4 +1,4 @@
-// Fensterübersicht ohne QML: Einträge bilden, filtern, Startauswahl, Spalten und Bewegen im Raster.
+// Fensterübersicht ohne QML: Einträge bilden, filtern, Startauswahl, Bildschirm, Spalten und Bewegen im Raster.
 // Nutzt die Gruppierung der App-Leiste (appleiste/fenster.mjs) und die Bewertung des Befehlsfelds
 // (befehlsfeld/suche.mjs). Getestet mit node (test/einheiten/uebersicht.test.mjs).
 // Fenster sind Toplevel-Objekte aus Quickshell (in den Tests {appId, title}); verglichen wird nur ihre Identität.
@@ -46,6 +46,26 @@ export function startIndex(liste, aktiv, verlauf) {
             return i;
     }
     return alle.length > 0 ? 0 : -1;
+}
+
+// Bildschirm mit Tastatur, Filter und Kacheln beim Öffnen: der des aktiven Fensters, wenn es ihn gibt, sonst der
+// erste. Leer ohne Bildschirm. namen: Namen der Bildschirme in ihrer Reihenfolge (Quickshell.screens).
+export function hauptBildschirm(gewuenscht, namen) {
+    const liste = Fenster.alsListe(namen).map(n => String(n ?? "")).filter(n => n !== "");
+    const name = String(gewuenscht ?? "");
+    if (name !== "" && liste.indexOf(name) >= 0)
+        return name;
+    return liste.length > 0 ? liste[0] : "";
+}
+
+// Haben sich die Bildschirme geändert, seit die Übersicht aufging (abgesteckt, angesteckt, Ausgang aus oder an)? Dann
+// geht sie zu. Fiel ihr Bildschirm weg, blieb sie auf den anderen ohne Tastatur offen, und Getipptes ging ungesehen an
+// das Fenster dahinter. Kommt einer dazu, bekäme er nur die zugedeckte Fläche; neu geöffnet richtet sie sich nach der
+// neuen Lage (kanshi stellt dabei oft mehrere Ausgänge zugleich um). Es zählt nur, welche Bildschirme es gibt, nicht
+// ihre Reihenfolge, Lage oder Grösse.
+export function bildschirmeGeaendert(vorher, jetzt) {
+    const menge = namen => Fenster.alsListe(namen).map(n => String(n ?? "")).filter(n => n !== "").sort().join("\n");
+    return menge(vorher) !== menge(jetzt);
 }
 
 // Höchstens so viele Spalten passen in die Breite: Kacheln mit Lücke dazwischen, links und rechts je ein Rand.

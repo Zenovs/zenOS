@@ -399,7 +399,8 @@ am ehesten ruckeln). Kommen oder gehen Fenster, ordnen sich die Kacheln ohne Ani
 - **Tippen** filtert sofort nach App-Name, Titel und App-Kennung, bewertet wie im Befehlsfeld; der erste Treffer ist
   gewählt.
 - **Maus:** Zeigen wählt (nur bei echter Bewegung), ein Klick auf eine Kachel wechselt. Ein Klick daneben oder in
-  eine Lücke schliesst, ebenso Rechts- und Mittelklick. Das Rad scrollt ein übervolles Raster.
+  eine Lücke schliesst, ebenso Rechts- und Mittelklick. Ein Klick in die Filterzeile (auch auf Lupe und Rand) setzt
+  den Cursor ins Feld und schliesst nicht. Das Rad scrollt ein übervolles Raster.
 - **Touchpad:** Drei Finger nach unten schliessen, drei Finger nach oben öffnen (bei offener Übersicht tun sie
   nichts, damit beim Nachwischen nichts flackert).
 
@@ -410,8 +411,17 @@ am ehesten ruckeln). Kommen oder gehen Fenster, ordnen sich die Kacheln ohne Ani
 - **Mehrere Bildschirme:** Filter, Kacheln und Tastatur liegen nur auf dem Bildschirm des aktiven Fensters (ohne
   aktives Fenster auf dem ersten), dort stehen alle Fenster. Die anderen Bildschirme sind nur zugedeckt; ein Klick
   dort schliesst. Je Bildschirm die eigenen Fenster wie bei Mission Control kommt «Danach».
-- Fenster der Oberfläche (Einstellungen) fehlen wie in der App-Leiste; für sie gibt es Super+Komma.
-- Wechselt das aktive Fenster von aussen (Alt+Tab, ein neues Fenster), schliesst die Übersicht.
+- **Bildschirme ändern sich:** Wird ein Bildschirm abgesteckt oder angesteckt (auch ein Ausgang aus oder an, etwa
+  über kanshi oder den Deckel), während die Übersicht offen ist, geht sie zu. Fiele ihr Bildschirm weg, bliebe sie
+  sonst ohne Tastatur offen, und Getipptes ginge ungesehen an das Fenster dahinter; ein neuer bekäme nur die
+  zugedeckte Fläche. Lage, Auflösung und Skalierung allein ändern nichts.
+- Fenster der Oberfläche (Einstellungen) fehlen wie in der App-Leiste; für sie gibt es Super+Komma. Es schliesst die
+  Übersicht und holt die Einstellungen nach vorn, auch wenn sie schon offen sind (sie springen dann auf die
+  Startseite).
+- **Fenster von aussen:** Solange die Übersicht die Tastatur hat, aktiviert labwc 0.9.3 kein anderes Fenster. Ein
+  neues Fenster erscheint als weitere Kachel, die Übersicht bleibt offen. Alt+Tab wählt dahinter ein Fenster und hebt
+  es, aktiv wird es aber erst, wenn die Übersicht zugeht; sie selbst bleibt offen (beides im Container geprüft). Wird
+  doch einmal ein anderes Fenster aktiv, geht sie zu.
 - **Eine Fläche zur Zeit:** Öffnet die Übersicht, schliessen Befehlsfeld, Modus- und Zustand-Wahl, Zentrale und
   ein offenes Menü der Leiste. Öffnet eine von ihnen, ein Menü der Leiste oder die Einstellungen, schliesst die
   Übersicht (Super+Leertaste bei offener Übersicht führt also direkt ins Befehlsfeld). Die App-Leiste erscheint
@@ -432,6 +442,10 @@ zuletzt aktive oben und wieder aktiv. Was vorher schon von Hand minimiert war, b
 - **Vorbei:** Holst du ein Fenster anders zurück (App-Leiste, Alt+Tab, Übersicht) oder erscheint ein neues, ist der
   Schreibtisch nicht mehr frei. Das nächste Super+H minimiert dann wieder alles Sichtbare. Ohne App-Fenster
   bewirkt Super+H nichts.
+- **Neuladen:** Lädt die Oberfläche neu (nach dem Entsperren, wenn während der Sperre ein Update kam), bleibt der
+  Schreibtisch frei, und Super+H holt dieselben Fenster zurück. Startet sie ganz neu (am Ende von `zen update` oder
+  eines Updates ohne Sperre, wenn sich die Oberfläche geändert hat), ist der Merker weg; die Fenster kommen dann
+  einzeln zurück (App-Leiste, Alt+Tab, Übersicht).
 - **Ruhig:** kein Hinweis, kein Symbol in der Leiste, keine Animation (labwc minimiert ohne Übergang, ein
   nachgebauter Übergang würde ruckeln). Während Sperre und Einrichtung wirkt es nicht.
 

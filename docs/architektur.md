@@ -99,7 +99,7 @@ erscheint erst nach dem Neustart, und eine SSH-Verbindung bleibt während der In
 | `Einstellungen` | `einstellungen.json` lesen und schreiben (behält fremde Schlüssel, sichert eine ungültige Datei) |
 | `Erscheinung` | hell, dunkel oder nach Tageszeit, Akzent; überträgt beides mit `zenos-thema` nach aussen |
 | `Oberflaeche` | Zustand der Oberfläche (was offen ist, `gesperrt`, `uebersichtOffen`: eine Fläche zur Zeit, nie während Sperre und Einrichtung), Hinweise, Sperr-Anforderung |
-| `Schreibtisch` | Super+H: sichtbare App-Fenster über `ToplevelManager` minimieren, sich merken und genau diese zurückholen; `frei` nur aus der Lage der Fenster (Logik in `uebersicht/schreibtisch.mjs`) |
+| `Schreibtisch` | Super+H: sichtbare App-Fenster über `ToplevelManager` minimieren, sich merken und genau diese zurückholen; `frei` nur aus der Lage der Fenster, der Merker übersteht ein Neuladen (`PersistentProperties`; Logik in `uebersicht/schreibtisch.mjs`) |
 | `Gesten` | liest «oben» und «unten» vom Socket des Systemdienstes `zenos-gesten` (verbindet erst, wenn `/run/zenos-gesten/bereit` da ist, danach mit wachsender Pause neu), öffnet bzw. schliesst die Fensterübersicht; keine Rechte am Touchpad |
 | `Aktionen` | Prozessstarts mit Argumentlisten: Apps, Terminal, Dateien, Ablage, Werkzeuge, Abmelden, Neustart, Ausschalten |
 | `System` | Temperatur, Netz, Ton (PipeWire), 1Password |

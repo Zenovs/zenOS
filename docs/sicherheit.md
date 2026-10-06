@@ -222,7 +222,9 @@ zeigt den Passwortdialog, wenn ein Programm Rechte verlangt, die polkit nur nach
   die Fenstertitel verborgen und werden nicht durchsucht, auch in `zenos-ipc uebersicht fenster`; das ist Vorsicht
   wie «Netzname verborgen», keine neue Leitplanke. Öffnet die Übersicht, schliesst ein Menü der Leiste (samt
   WLAN-Passwortfeld), und solange polkit nach dem Passwort fragt, öffnet sie nicht. Nach dem Ausblenden ist der
-  Filter leer; Getipptes bleibt nicht bis zum nächsten Öffnen stehen.
+  Filter leer; Getipptes bleibt nicht bis zum nächsten Öffnen stehen. Wird ein Bildschirm ab- oder angesteckt,
+  schliesst sie: Ohne ihren Bildschirm bliebe sie ohne Tastatur offen, und Getipptes ginge ungesehen an das Fenster
+  dahinter (etwa als Befehl in kitty).
 - Die Nutzungsstatistik des Befehlsfelds speichert nur Desktop-IDs, Zähler und die Reihenfolge der zuletzt genutzten
   Apps, keine Zeiten und keine Fenstertitel (`~/.local/share/zenos/`, nur für den Benutzer lesbar).
 - Eine Zwischenablage-Historie, falls sie kommt, ignoriert 1Password und löscht sich selbst.

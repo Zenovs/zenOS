@@ -501,6 +501,11 @@ systemctl --user start zenos-shell.service
   verschwindet, und das nächste `Super + H` räumt wieder alles weg.
 - [ ] Sperre: Übersicht offen, dann `Super + L`. Nach dem Entsperren ist sie zu. Gesperrt bewirken `Super + Tab`,
   `Super + H` und das Wischen nichts.
+- [ ] Einstellungen (`Super + Komma`) öffnen, ein anderes Fenster darüber holen, `Super + Tab`, dann `Super + Komma`:
+  Die Übersicht geht zu, die Einstellungen kommen nach vorn. Ein Klick auf die Lupe der Filterzeile lässt die
+  Übersicht offen.
+- [ ] Mit einem zweiten Bildschirm (HDMI): Übersicht offen, Kabel abziehen oder anstecken. Die Übersicht geht zu, und
+  was du danach tippst, landet sichtbar im aktiven Fenster.
 - [ ] Passwortfragen gehen vor: In den Einstellungen die Firewall ausschalten, der polkit-Dialog fragt nach dem
   Passwort. Jetzt mit drei Fingern nach oben wischen und `Super + Tab` drücken: Die Übersicht öffnet nicht, was du
   tippst, landet als Punkte im Passwortfeld. Dann `Abbrechen`. Ebenso: System-Menü der Leiste mit WLAN-Liste offen,

@@ -18,8 +18,9 @@ import "liste.mjs" as Liste
 // daneben schliesst. Wechselt das aktive Fenster doch einmal von aussen, geht sie zu.
 // Hintergrund «zudecken» (grund fast deckend, kein Weichzeichnen) auf der Ebene Overlay, also auch über Vollbild.
 // Tastatur und Kacheln nur auf dem Bildschirm des aktiven Fensters (sonst dem ersten); die anderen sind nur zugedeckt,
-// ein Klick dort schliesst. Offen oder zu: Oberflaeche.uebersichtOffen (gesperrt während Sperre und Einrichtung, eine
-// Fläche zur Zeit). Während einer Freigabe sind die Titel verborgen und werden nicht durchsucht.
+// ein Klick dort schliesst. Ändern sich die Bildschirme, während sie offen ist (abgesteckt, angesteckt), geht sie zu.
+// Offen oder zu: Oberflaeche.uebersichtOffen (gesperrt während Sperre und Einrichtung, eine Fläche zur Zeit). Während
+// einer Freigabe sind die Titel verborgen und werden nicht durchsucht.
 // Doku: docs/design.md. IPC «uebersicht»: umschalten, oeffnen, schliessen, status (offen/zu), fenster.
 Scope {
     id: root
@@ -61,6 +62,8 @@ Scope {
     property string hauptBildschirm: ""
     readonly property var hauptScreen: Quickshell.screens.find(s => s?.name === hauptBildschirm) ?? Quickshell.screens[0] ?? null
     readonly property bool mehrereBildschirme: Quickshell.screens.length > 1
+    readonly property var bildschirmNamen: Quickshell.screens.map(s => String(s?.name ?? ""))
+    property var _bildschirmeBeimOeffnen: []
 
     // true vom Öffnen bis zum Ende des Ausblendens: so lange gibt es Einträge und Kacheln, danach nichts
     property bool _aufgebaut: false
@@ -99,6 +102,12 @@ Scope {
         if (offen)
             _aufbauen();
     }
+    // Bildschirm abgesteckt oder angesteckt (auch Ausgang aus oder an, etwa über kanshi): zu. Sonst bliebe sie ohne
+    // Tastatur offen, und Getipptes ginge ungesehen an das Fenster dahinter (liste.mjs, bildschirmeGeaendert).
+    onBildschirmNamenChanged: {
+        if (offen && Liste.bildschirmeGeaendert(_bildschirmeBeimOeffnen, bildschirmNamen))
+            schliessen();
+    }
     // Ausgeblendet: Kacheln weg und Filter leer. Was getippt war, bleibt nicht bis zum nächsten Öffnen stehen.
     onSichtbarChanged: {
         if (sichtbar)
@@ -130,7 +139,8 @@ Scope {
 
     function _aufbauen(): void {
         aktivBeimOeffnen = aktivesFenster ?? null;
-        hauptBildschirm = _bildschirmVon(aktivBeimOeffnen);
+        _bildschirmeBeimOeffnen = bildschirmNamen;
+        hauptBildschirm = Liste.hauptBildschirm(_bildschirmVon(aktivBeimOeffnen), bildschirmNamen);
         tastatur = true;
         filterText = "";
         geleert();
@@ -143,21 +153,17 @@ Scope {
         auswahl = Math.max(0, Liste.startIndex(gezeigt, aktivBeimOeffnen, _verlauf));
     }
 
-    // Bildschirm eines Fensters, sonst der erste
+    // Name des Bildschirms eines Fensters, leer ohne
     function _bildschirmVon(t: var): string {
         const s = t?.screens;
-        const name = s && s.length > 0 ? String(s[0]?.name ?? "") : "";
-        if (name !== "" && Quickshell.screens.some(b => b?.name === name))
-            return name;
-        return Quickshell.screens.length > 0 ? String(Quickshell.screens[0].name ?? "") : "";
+        return s && s.length > 0 ? String(s[0]?.name ?? "") : "";
     }
 
     // Name eines anderen Bildschirms für die Karte (nur bei mehreren Bildschirmen), sonst leer
     function bildschirmFuer(t: var): string {
         if (!mehrereBildschirme)
             return "";
-        const s = t?.screens;
-        const name = s && s.length > 0 ? String(s[0]?.name ?? "") : "";
+        const name = _bildschirmVon(t);
         return name !== hauptBildschirm ? name : "";
     }
 
@@ -357,6 +363,15 @@ Scope {
                         color: Theme.flaeche
                         border.width: 1
                         border.color: Theme.linie2
+
+                        // Klicks auf die Pille selbst (Lupe, Rand) schliessen nicht, sie gehen ins Filterfeld (wie
+                        // im Befehlsfeld). Das Feld liegt darüber und nimmt seine Klicks selbst.
+                        MouseArea {
+                            anchors.fill: parent
+                            acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+                            cursorShape: Qt.IBeamCursor
+                            onPressed: filter.forceActiveFocus()
+                        }
 
                         Symbol {
                             id: lupe

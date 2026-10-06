@@ -805,6 +805,12 @@ START_RUNDGANG=(
   "befehlsfeld status → zu"
   "uebersicht umschalten"
   "uebersicht status → zu"
+  # Einstellungen (Super+Komma), während sie schon offen sind: Die Übersicht geht trotzdem zu
+  "einstellungen oeffnen allgemein"
+  "uebersicht oeffnen"
+  "uebersicht status → offen"
+  "einstellungen oeffnen allgemein"
+  "uebersicht status → zu"
   "schreibtisch umschalten"
   "schreibtisch status → normal"
   # Wischen mit drei Fingern: ohne zenos-gesten (CI, Container) «getrennt», auf dem Pi mit Touchpad «verbunden»

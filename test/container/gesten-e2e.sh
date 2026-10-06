@@ -11,7 +11,7 @@
 #
 # Vorbereitung auf dem Mac (Container aus dem installierten Image, ~/zenOS auf dem Stand dieses Codes):
 #   ZENOS_TESTBILD=zenos-test:installiert test/container/starten.sh zenos-gesten-e2e
-#   docker exec zenos-gesten-e2e bash -c 'apt-get update -qq && apt-get install -y -qq python3-libevdev'
+#   docker exec zenos-gesten-e2e bash -c 'apt-get update -qq && apt-get install -y -qq python3-libevdev wtype'
 # Dann: docker exec zenos-gesten-e2e bash /home/tester/zenOS/test/container/gesten-e2e.sh [schritt …]
 # Die Schritte bauen aufeinander auf; ohne Angabe laufen alle (rund 10 Minuten, vor allem install.sh).
 #
@@ -27,10 +27,11 @@
 #                4 Finger, Tippen → nichts; keine Geste im Journal; ein zweites Touchpad kommt und geht
 #   labwc        labwc über logind öffnet das Touchpad trotz 0640, Zeiger und swipe.begin mit 3 Fingern kommen beim
 #                Client an, zugleich meldet der Dienst «oben»
-#   oberflaeche  zenOS-Oberfläche in dieser Sitzung: verbunden, 3 Finger hoch → Übersicht offen, runter → zu, die
-#                anderen Bewegungen → nichts; polkit fragt → Übersicht zu und öffnet weder per Wischen noch per IPC;
-#                Menü der Leiste geht zu, wenn die Übersicht öffnet; nach einem Neustart des Dienstes wieder verbunden;
-#                gesperrt → nichts
+#   oberflaeche  zenOS-Oberfläche in dieser Sitzung (zwei Bildschirme): verbunden, 3 Finger hoch → Übersicht offen,
+#                runter → zu, die anderen Bewegungen → nichts; polkit fragt → Übersicht zu und öffnet weder per Wischen
+#                noch per IPC; Menü der Leiste geht zu, wenn die Übersicht öffnet; ein Bildschirm geht oder kommt → zu,
+#                Lage und Skalierung → bleibt offen; nach einem Neustart des Dienstes wieder verbunden; gesperrt →
+#                nichts
 #   rueckweg     Notschalter /etc/xdg/zenos/gesten-aus: install.sh nimmt alles zurück (Touchpad wieder root:input 0660),
 #                auch wenn der Messmodus gerade läuft; ohne Schalter richtet es alles wieder ein
 #   aufraeumen   Sitzung, Geräte und udev beenden, Knoten weg, /dev/tty0 zurück, logind neu
@@ -391,9 +392,10 @@ seat_ohne_vt() {
   warte_bis 10 test -S "$LAUFZEIT/bus" || fehler "Sitzungsbus von $TESTER fehlt"
 }
 
-# sitzung_starten UNIT STARTBEFEHL – labwc in einer über PAM gestellten Sitzung auf seat0, Protokoll $E2E/UNIT.log
+# sitzung_starten UNIT STARTBEFEHL [AUSGAENGE] – labwc in einer über PAM gestellten Sitzung auf seat0 mit AUSGAENGE
+# Bildschirmen (Standard 1, headless), Protokoll $E2E/UNIT.log
 sitzung_starten() {
-  local unit=$1 start=$2 i
+  local unit=$1 start=$2 ausgaenge=${3:-1} i
   install -d -o "$TESTER" -g "$TESTER" "$E2E/labwc"
   [[ -f "$E2E/labwc/rc.xml" ]] || printf '<?xml version="1.0"?>\n<labwc_config />\n' > "$E2E/labwc/rc.xml"
   systemctl stop "$unit.service" 2> /dev/null || true
@@ -402,6 +404,7 @@ sitzung_starten() {
     -p Environment=XDG_SEAT=seat0 -p Environment=XDG_SESSION_CLASS=user -p Environment=XDG_SESSION_TYPE=wayland \
     -p Environment=WLR_BACKENDS=headless,libinput -p Environment=LIBSEAT_BACKEND=logind \
     -p Environment=WLR_RENDERER=pixman -p Environment=WLR_LIBINPUT_NO_DEVICES=1 \
+    -p Environment=WLR_HEADLESS_OUTPUTS="$ausgaenge" \
     -p Environment=QT_QUICK_BACKEND=software -p Environment=QT_QPA_PLATFORM=wayland \
     -p Environment=XDG_CURRENT_DESKTOP=labwc:wlroots -p Environment=ZENOS_CODE="$REPO" \
     -p Environment=DBUS_SESSION_BUS_ADDRESS=unix:path="$LAUFZEIT/bus" \
@@ -481,7 +484,7 @@ schritt_oberflaeche() {
   rm -f "$log"
   # Wie zenos-sitzung: Wer sich gerade anmeldet, ist nicht gesperrt (ein früherer Lauf endete gesperrt)
   rm -f "$LAUFZEIT/zenos/gesperrt"
-  sitzung_starten e2e-gesten-oberflaeche "$E2E/innen.sh"
+  sitzung_starten e2e-gesten-oberflaeche "$E2E/innen.sh" 2
   warte_bis 90 grep -q 'Configuration Loaded' "$log" || { tail -n 30 "$log" >&2; fehler "Oberfläche lädt nicht"; }
   warte_bis 30 ipc einrichtung status || fehler "Oberfläche antwortet nicht auf zenos-ipc"
   ipc einrichtung schliessen > /dev/null || true
@@ -508,6 +511,7 @@ schritt_oberflaeche() {
   oberflaeche_geste zu swipe3 runter
   polkit_pruefen
   leiste_pruefen
+  bildschirm_pruefen
 
   systemctl restart zenos-gesten.service
   warte_bis 5 gleich getrennt ipc gesten status || true
@@ -567,6 +571,58 @@ leiste_pruefen() {
   [[ "$(ipc leiste status)" == zu ]] || fehler "Menü der Leiste bleibt unter der Übersicht offen"
   ok "Übersicht öffnet → Menü der Leiste zu"
   oberflaeche_geste zu swipe3 runter
+}
+
+# in_sitzung BEFEHL… – als tester im Wayland der laufenden Oberfläche (WAYLAND_DISPLAY aus der Umgebung von quickshell)
+in_sitzung() {
+  local pid wayland
+  pid=$(pgrep -u "$TESTER" -x quickshell | head -n 1) || fehler "quickshell läuft nicht"
+  wayland=$(tr '\0' '\n' < "/proc/$pid/environ" | sed -n 's/^WAYLAND_DISPLAY=//p')
+  [[ -n "$wayland" ]] || fehler "WAYLAND_DISPLAY der Sitzung fehlt"
+  als_tester env WAYLAND_DISPLAY="$wayland" "$@"
+}
+
+# ausgang NAME an|aus – Bildschirm der Sitzung an- oder abschalten (wie Abstecken, Deckel oder kanshi)
+ausgang() {
+  local schalter=--on
+  [[ "$2" == aus ]] && schalter=--off
+  in_sitzung wlr-randr --output "$1" "$schalter" || fehler "wlr-randr --output $1 $schalter gescheitert"
+}
+
+# Befund: Fiel der Bildschirm mit Tastatur und Kacheln weg (abgesteckt, Ausgang aus), blieb die Übersicht auf den
+# anderen offen, ohne Tastatur; Esc wirkte nicht, und Getipptes ging ungesehen an das Fenster dahinter. Jetzt geht sie
+# zu, sobald ein Bildschirm geht oder kommt. Welcher die Kacheln trägt, bestimmt die Reihenfolge von Qt (headless
+# meist HEADLESS-2 zuerst); deshalb fällt jeder einmal weg.
+bildschirm_pruefen() {
+  command -v wtype > /dev/null || fehler "wtype fehlt (apt-get install wtype)"
+  local name i
+  for name in HEADLESS-1 HEADLESS-2; do
+    ipc uebersicht oeffnen > /dev/null
+    warte_bis 3 uebersicht_ist offen || fehler "Übersicht über IPC nicht offen"
+    ausgang "$name" aus
+    warte_bis 3 uebersicht_ist zu || fehler "$name fällt weg, die Übersicht bleibt offen"
+    ipc uebersicht oeffnen > /dev/null
+    warte_bis 3 uebersicht_ist offen || fehler "Übersicht geht mit einem Bildschirm nicht auf"
+    ausgang "$name" an
+    warte_bis 3 uebersicht_ist zu || fehler "$name kommt wieder, die Übersicht bleibt offen"
+    ok "$name fällt weg und kommt wieder → Übersicht jedes Mal zu"
+  done
+  # Lage und Grösse allein ändern nichts; danach hat sie weiter die Tastatur
+  ipc uebersicht oeffnen > /dev/null
+  warte_bis 3 uebersicht_ist offen || fehler "Übersicht über IPC nicht offen"
+  in_sitzung wlr-randr --output HEADLESS-1 --pos 4000,0 --scale 2 || fehler "wlr-randr --pos/--scale gescheitert"
+  sleep 1
+  uebersicht_ist offen || fehler "Lage oder Skalierung eines Bildschirms ändert sich, die Übersicht geht zu"
+  # wtype legt bei jedem Aufruf eine virtuelle Tastatur an. In dieser Sitzung (mit der Test-Tastatur am Sitz) gehen die
+  # ersten Tasten dabei verloren, wie in oberflaeche.sh (tastatur_wecken). Deshalb bis zu fünfmal: Hätte die Übersicht
+  # keine Tastatur, ginge sie auch beim fünften Mal nicht zu.
+  for i in 1 2 3 4 5; do
+    in_sitzung wtype -k Escape
+    warte_bis 1 uebersicht_ist zu && break
+  done
+  uebersicht_ist zu || fehler "Esc schliesst die Übersicht nicht mehr"
+  in_sitzung wlr-randr --output HEADLESS-1 --scale 1 || true
+  ok "Lage und Skalierung ändern sich → Übersicht bleibt offen, Esc schliesst (Versuch $i)"
 }
 
 # --- Rückweg ------------------------------------------------------------------------

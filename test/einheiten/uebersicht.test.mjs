@@ -4,9 +4,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { gruppieren, verlaufNachfuehren } from "../../shell/appleiste/fenster.mjs";
-import { bewegen, eintraege, filtern, spalten, spaltenMax, startIndex } from "../../shell/uebersicht/liste.mjs";
 import {
-    entscheiden, frei, merken, nochOffen, sichtbare, vonUntenNachOben, zurueckReihenfolge
+    bewegen, bildschirmeGeaendert, eintraege, filtern, hauptBildschirm, spalten, spaltenMax, startIndex
+} from "../../shell/uebersicht/liste.mjs";
+import {
+    entscheiden, frei, merken, nochOffen, retten, sichtbare, vonUntenNachOben, wiederherstellen, zurueckReihenfolge
 } from "../../shell/uebersicht/schreibtisch.mjs";
 
 // Fenster wie Toplevel aus Quickshell: appId, title, minimized; verglichen wird die Identität
@@ -199,6 +201,37 @@ test("Bewegen im Raster, auch an den Rändern", () => {
     assert.equal(bewegen(0, 1, 0, 0, 5), -1);
 });
 
+test("Bildschirm: der des aktiven Fensters, sonst der erste", () => {
+    assert.equal(hauptBildschirm("HDMI-A-2", ["HDMI-A-1", "HDMI-A-2"]), "HDMI-A-2");
+    // Fenster ohne Bildschirm oder auf einem, den es nicht mehr gibt: der erste
+    assert.equal(hauptBildschirm("", ["HDMI-A-1", "HDMI-A-2"]), "HDMI-A-1");
+    assert.equal(hauptBildschirm("DP-1", ["HDMI-A-1", "HDMI-A-2"]), "HDMI-A-1");
+    assert.equal(hauptBildschirm(undefined, ["", "HDMI-A-2"]), "HDMI-A-2");
+    // Kein Bildschirm: leer
+    assert.equal(hauptBildschirm("HDMI-A-1", []), "");
+    assert.equal(hauptBildschirm("HDMI-A-1", null), "");
+    // Liste aus QML (array-ähnlich)
+    assert.equal(hauptBildschirm("B", { length: 2, 0: "A", 1: "B" }), "B");
+});
+
+test("Bildschirm: Ändern sich die Bildschirme, geht die Übersicht zu", () => {
+    // Befund: Fiel ihr Bildschirm weg (abgesteckt, Ausgang aus), blieb sie ohne Tastatur offen, und Getipptes ging an
+    // das Fenster dahinter
+    assert.equal(bildschirmeGeaendert(["HEADLESS-1", "HEADLESS-2"], ["HEADLESS-1"]), true);
+    assert.equal(bildschirmeGeaendert(["HEADLESS-1", "HEADLESS-2"], ["HEADLESS-2"]), true);
+    // Einer kommt dazu (angesteckt, Ausgang an)
+    assert.equal(bildschirmeGeaendert(["HEADLESS-1"], ["HEADLESS-1", "HEADLESS-2"]), true);
+    // Ausgetauscht: gleich viele, andere Namen
+    assert.equal(bildschirmeGeaendert(["HDMI-A-1"], ["DP-1"]), true);
+    // Beim Öffnen gab es keinen Bildschirm, jetzt einen; oder alle sind weg
+    assert.equal(bildschirmeGeaendert([], ["HEADLESS-1"]), true);
+    assert.equal(bildschirmeGeaendert(["HEADLESS-1"], null), true);
+    // Dieselben in anderer Reihenfolge (Qt meldet sie nach dem Wiederanschalten anders): bleibt offen
+    assert.equal(bildschirmeGeaendert(["HEADLESS-2", "HEADLESS-1"], ["HEADLESS-1", "HEADLESS-2"]), false);
+    assert.equal(bildschirmeGeaendert(["HEADLESS-1"], { length: 1, 0: "HEADLESS-1" }), false);
+    assert.equal(bildschirmeGeaendert(null, []), false);
+});
+
 // --- Schreibtisch ---------------------------------------------------------------------------------------
 
 // Minimiert in der Reihenfolge der Liste (wie der Dienst) und gibt sie zurück
@@ -320,4 +353,48 @@ test("Schreibtisch: Reihenfolge von unten nach oben über den Verlauf", () => {
     // Ein Vollbild-Fenster wird wie jedes andere gemerkt
     const voll = Object.assign(fenster("mpv", "Film"), { fullscreen: true });
     assert.deepEqual(merken([a, voll], [voll, a]), [a, voll]);
+});
+
+test("Schreibtisch: Der Merker übersteht ein Neuladen der Oberfläche", () => {
+    // Befund: Nach dem Neuladen (zen update, nach dem Entsperren) war der Merker leer, und Super+H holte nichts zurück.
+    // Die Fenster bleiben dieselben Objekte in derselben Reihenfolge; gerettet werden Plätze samt appId.
+    const e = fenster("org.quickshell", "Einstellungen");
+    const a = fenster("kitty");
+    const vonHand = fenster("coremail", "", true);
+    const b = fenster("code");
+    const offen = [e, a, vonHand, b];
+    const merker = minimieren(merken(offen, [b, a]), true);
+    const stand = retten(merker, e, offen);
+    assert.equal(typeof stand, "string");
+    const zurueck = wiederherstellen(stand, offen);
+    assert.deepEqual(zurueck.merker, [a, b]);
+    assert.equal(zurueck.merker[0], a);
+    assert.equal(zurueck.vorherAktiv, e);
+    assert.equal(frei(offen, zurueck.merker), true);
+    assert.equal(entscheiden(offen, zurueck.merker), "zurueck");
+    // Das von Hand minimierte bleibt draussen
+    assert.deepEqual(zurueckReihenfolge(zurueck.merker, offen), [a, b]);
+    // Ohne vorher aktives Fenster (oder eines, das zu ist)
+    assert.equal(wiederherstellen(retten(merker, null, offen), offen).vorherAktiv, null);
+    assert.equal(wiederherstellen(retten(merker, fenster("weg"), offen), offen).vorherAktiv, null);
+});
+
+test("Schreibtisch: Ein geretteter Stand, der nicht mehr passt, gibt keinen Merker", () => {
+    const a = fenster("kitty", "", true);
+    const b = fenster("code", "", true);
+    const stand = retten([a, b], null, [a, b]);
+    // Ohne Merker nichts zu retten
+    assert.equal(retten([], a, [a, b]), "");
+    assert.equal(retten([fenster("weg")], null, [a, b]), "");
+    assert.deepEqual(wiederherstellen("", [a, b]), { merker: [], vorherAktiv: null });
+    // Liste kürzer, andere Fenster an den Plätzen oder Unsinn: lieber nichts als ein falsches Fenster
+    assert.deepEqual(wiederherstellen(stand, [a]).merker, []);
+    assert.deepEqual(wiederherstellen(stand, [b, a]).merker, []);
+    assert.deepEqual(wiederherstellen(stand, [a, fenster("code-oss", "", true)]).merker, []);
+    for (const kaputt of ["{", "null", "[]", '{"merker":[[0]]}', '{"merker":[[-1,"kitty"]]}',
+        '{"merker":[[0.5,"kitty"]]}', '{"merker":[[0,"kitty"],[0,"kitty"]]}', '{"merker":"0"}', undefined]) {
+        assert.deepEqual(wiederherstellen(kaputt, [a, b]), { merker: [], vorherAktiv: null }, String(kaputt));
+    }
+    // Fenster, die seither dazugekommen sind, ändern die Plätze davor nicht
+    assert.deepEqual(wiederherstellen(stand, [a, b, fenster("neu")]).merker, [a, b]);
 });
