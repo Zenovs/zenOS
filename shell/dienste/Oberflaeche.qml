@@ -33,6 +33,11 @@ Singleton {
     property string leisteMenueBildschirm: ""
     // true von Beginn der Sperre bis zum Entsperren; setzt nur sperre/Sperre.qml
     property bool gesperrt: false
+    // Fensterübersicht (Super+Tab). Nur über uebersichtOeffnen(), uebersichtSchliessen() und uebersichtUmschalten()
+    // setzen. Es ist immer nur eine Fläche offen: Öffnet die Übersicht, weichen Befehlsfeld, Modus- und Zustand-Wahl
+    // und Zentrale; öffnet eine von ihnen, ein Menü der Leiste oder die Einstellungen, schliesst die Übersicht. Sperre
+    // und Einrichtung schliessen sie ebenfalls.
+    property bool uebersichtOffen: false
 
     // Kurzer Hinweis (Toast), z. B. «Farbe kopiert». symbol: Name aus qs.komponenten/Symbol
     // (z. B. "warnung", "info"); leer = Standard (Haken).
@@ -72,4 +77,62 @@ Singleton {
         einstellungenSeite = typeof seite === "string" ? seite : "";
         einstellungenOffen = true;
     }
+
+    // Fensterübersicht öffnen (Super+Tab, Drei-Finger-Wischen, Befehlsfeld, IPC). Während der Sperre und der
+    // Einrichtung öffnet sie nicht (wie befehlsfeldApps()).
+    function uebersichtOeffnen(): void {
+        if (gesperrt || einrichtungOffen)
+            return;
+        befehlsfeldOffen = false;
+        modusWahlOffen = false;
+        zustandWahlOffen = false;
+        zentraleOffen = false;
+        uebersichtOffen = true;
+    }
+
+    function uebersichtSchliessen(): void {
+        uebersichtOffen = false;
+    }
+
+    function uebersichtUmschalten(): void {
+        if (uebersichtOffen)
+            uebersichtSchliessen();
+        else
+            uebersichtOeffnen();
+    }
+
+    // Eine Fläche zur Zeit: Andere Flächen, Sperre und Einrichtung schliessen die Übersicht
+    onBefehlsfeldOffenChanged: {
+        if (befehlsfeldOffen)
+            uebersichtSchliessen();
+    }
+    onZentraleOffenChanged: {
+        if (zentraleOffen)
+            uebersichtSchliessen();
+    }
+    onModusWahlOffenChanged: {
+        if (modusWahlOffen)
+            uebersichtSchliessen();
+    }
+    onZustandWahlOffenChanged: {
+        if (zustandWahlOffen)
+            uebersichtSchliessen();
+    }
+    onLeisteMenueBildschirmChanged: {
+        if (leisteMenueBildschirm !== "")
+            uebersichtSchliessen();
+    }
+    onEinstellungenOffenChanged: {
+        if (einstellungenOffen)
+            uebersichtSchliessen();
+    }
+    onEinrichtungOffenChanged: {
+        if (einrichtungOffen)
+            uebersichtSchliessen();
+    }
+    onGesperrtChanged: {
+        if (gesperrt)
+            uebersichtSchliessen();
+    }
+    onSperrenAngefordert: uebersichtSchliessen()
 }
