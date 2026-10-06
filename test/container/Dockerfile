@@ -31,7 +31,8 @@ RUN set -e; \
 # Dazu Testwerkzeuge: expect und tmux (interaktive Abläufe wie zen firewall), wtype (Tastatureingaben in
 # die Sitzung, z. B. Passwort in die Sperre), wlrctl (Zeiger bewegen, z. B. einen dunklen Bildschirm wecken),
 # foot (zweites Terminal), nodejs (Einheitentests, pruefen.sh), rsync (wie auf Ubuntu Server; Beispiel im
-# Test von «?»).
+# Test von «?»), python3-libevdev (virtuelles Touchpad in gesten-e2e.sh), libinput-tools und python3-yaml
+# (libinput debug-events, record und replay, z. B. eine Aufnahme vom Touchpad des Geräts).
 RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
       labwc kitty fish greetd pipewire wireplumber pipewire-pulse \
       xdg-desktop-portal xdg-desktop-portal-wlr xdg-desktop-portal-gtk \
@@ -51,7 +52,7 @@ RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
       eza bat zoxide fzf tealdeer \
       unattended-upgrades ufw i2c-tools python3-smbus python3-libgpiod \
       shellcheck gitleaks qt6-declarative-dev-tools \
-      expect tmux wtype wlrctl foot nodejs rsync \
+      expect tmux wtype wlrctl foot nodejs rsync python3-libevdev python3-yaml libinput-tools \
     && rm -rf /var/lib/apt/lists/*
 
 # Quickshell v0.3.1, vorgebaut (gleicher Stand wie scripts/module/25-quickshell.sh)
