@@ -467,8 +467,8 @@ Apps, Allgemein, Energie, System), Titel in Instrument Serif, Felder zweispaltig
   - «Ohne Eingabe»: die Zeitleiste als ruhiger Satz in `text`, z. B. «Gesperrt nach 5 Min. · Bildschirm aus nach
     6 Min. · Aus nach 65 Min. im Akkubetrieb».
   - «Bildschirm aus»: Stufenwahl 1–10 «Min.», daneben «nach der Sperre» und bei einem Wert von Hand gedämpft «Eigener
-    Wert: … · es gelten N Min.». Darunter 13 px `gedaempft` «Dunkel heisst gesperrt: …» und «Sofort sperren und
-    Bildschirm aus» mit der Tastenkappe «Super Shift L».
+    Wert: … · es gelten N Min.». Darunter 13 px `gedaempft` «Dunkel heisst gesperrt: … Am Login-Bildschirm geht er
+    nach 1 Min. ohne Eingabe aus.» und «Sofort sperren und Bildschirm aus» mit der Tastenkappe «Super Shift L».
   - «Ausschalten, wenn gesperrt»: Segmente «Nie · Im Akkubetrieb · Immer»; ausser bei «Nie» darunter «Nach»,
     Stufenwahl 30–240 in Schritten von 30 «Min.», «gesperrt ohne Eingabe». Hinweise in `gedaempft` (14 px, Zeilenhöhe
     1,45, nur reiner Text): Vorwarnung und Wächter, ohne Akku «Kein Akku erkannt …», mit Akku der feste Hinweis auf
@@ -567,6 +567,9 @@ Passwort (`shell/polkit/Polkit.qml`).
   leerer Akku) steht dort wie auf der Sperre unter dem Datum, auf jedem Bildschirm. Übernimmt ein Update aus dem Kanal
   gerade den Code, steht dort dieselbe Pille mit dem Symbol `info` in `text2`: «zenOS wird aktualisiert. Mit
   der Anmeldung bitte warten, bis das fertig ist.» Sie verschwindet von selbst (Takt 3 s), nichts blinkt.
+- Login nach 1 Minute ohne Eingabe: Der Bildschirm wird wie auf der Sperre ohne Übergang dunkel und beim Wecken ohne
+  Übergang hell, ohne Hinweis und ohne Animation. Die erste Taste, der erste Klick oder die erste Berührung weckt nur:
+  kein Punkt im Passwortfeld, kein gedrückter Knopf, der Fokus bleibt, wo er war. Was im Feld stand, bleibt stehen.
 
 ### Erster Start
 

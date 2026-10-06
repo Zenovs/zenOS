@@ -94,6 +94,11 @@ Abnahme in einer echten VM (lima/Apple Virtualization, Ubuntu 26.04 arm64, virti
   neue Bildmarke und die Behebungen aus der VM-Abnahme.
 - **Neue Bildmarke «Zwei Steine»** nach Zenos Spezifikation (`docs/bildmarke.md`); die Bogen-Wasserzeichen der
   alten Marke sind entfallen. Bootsplash gebaut, aber nicht eingeschaltet (Boot-Kommandozeile = Rückfrage).
+- **Login-Bildschirm dunkel nach 1 Minute** (Zenos Entscheid vom 06.10.2026, war ein offener Punkt): am Netzteil wie
+  am Akku, die erste Taste, der erste Klick oder die erste Berührung weckt nur und wird verworfen. Gebaut in
+  `shell/greeter/Bildschirm.qml` mit wlopm direkt aus dem Login; in der Sitzung bleibt «dunkel heisst gesperrt».
+  Ausfallsicher: Was scheitert, lässt den Bildschirm an. Im Container mit `test/container/login-e2e.sh` geprüft, am
+  Gerät abzunehmen (`docs/module/energie.md`, «Bildschirm aus am Login-Bildschirm»).
 
 ## Offene Punkte für Zeno
 
@@ -138,6 +143,6 @@ Abnahme in einer echten VM (lima/Apple Virtualization, Ubuntu 26.04 arm64, virti
   «passwordlessSudo») oder kam der Benutzer `ubuntu` aus Ubuntus Vorgabe, gibt es eine Regel ohne Passwort
   (`/etc/sudoers.d/90-cloud-init-users`). `zen doctor` warnt dann («sudo geht ohne Passwort»); zenOS ändert sie nicht.
   Entfernen oder lassen.
-- **Login-Bildschirm:** Dort geht der Bildschirm nicht von selbst aus (am Netzteil dauerhaft an; geplant nach 1 Min.
-  ohne Eingabe mit verworfener Wecktaste, `docs/module/energie.md`). Berührt das Passwortfeld des Logins; eigener
-  Schritt nach Zenos Ja.
+- **Ein/Aus-Taste am dunklen Login-Bildschirm:** Dort schaltet ein kurzer Druck wie bisher sofort aus (logind). Wer
+  den dunklen Login damit wecken will, schaltet aus. Abhilfe wäre ein Hemmer «handle-power-key» im Greeter (berührt
+  logind und polkit für `_greetd`, nicht gebaut). Bauen oder lassen.

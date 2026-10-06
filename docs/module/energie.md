@@ -14,6 +14,7 @@ Ersatz.
 | spätestens nach 60 Min., auch wenn ein Programm den Leerlauf hemmt (Video) | gesperrt | `shell/dienste/Energie.qml` |
 | S + B Min. (`bildschirmAusNachSperre`, 1–10, Standard 1) | Bildschirm aus, die Sperre bleibt | Sperre (`Sperre.qml`), dazu `zenos-idle` als Rückfallebene |
 | S + M Min. (`ausschaltenNachMinuten`, 30–240, Standard 60), nur bei `ausschalten` `akku` (Standard, sicher im Akkubetrieb) oder `immer` | 60 s Vorwarnung, dann aus | `Energie.qml` und `zenos-energie` |
+| am Login-Bildschirm nach 1 Min. (fest), am Netzteil wie am Akku | Bildschirm aus, die erste Eingabe weckt nur | `shell/greeter/Bildschirm.qml` |
 | am Login-Bildschirm nach 30 Min. (fest), nur sicher im Akkubetrieb | 60 s Vorwarnung, dann aus | `shell/greeter/Leerlauf.qml` und `zenos-energie` |
 
 Mit den Standardwerten im Akkubetrieb: gesperrt nach 5, dunkel nach 6, aus nach 65 Minuten. Gezählt wird ab der
@@ -72,7 +73,8 @@ nicht warten:
   `taste` (Ein/Aus-Taste) und `meldung` (Mitteilung nach dem nächsten Start).
 - **Login-Bildschirm** (`shell/greeter/Leerlauf.qml`, Benutzer `_greetd`): liest `/run/zenos/geraet.json` selbst
   (`dienste/geraet.js`) und zeigt die Zeile der Vorwarnung wie die Sperre, auch bei leerem Akku. Im Akkubetrieb
-  schaltet es nach 30 Min. ohne Eingabe aus (Abschnitt «Ausschalten am Login-Bildschirm»).
+  schaltet es nach 30 Min. ohne Eingabe aus (Abschnitt «Ausschalten am Login-Bildschirm»). Nach 1 Min. ohne Eingabe
+  geht dort der Bildschirm aus (`shell/greeter/Bildschirm.qml`, Abschnitt «Bildschirm aus am Login-Bildschirm»).
 - **Sofort-Aktion:** System-Menü «Bildschirm aus» unter «Sperren» (ohne Rückfrage), Befehlsfeld «Bildschirm aus»
   und «Energie» (öffnet die Seite), Super+Shift+L (`system/labwc/rc.xml.in`), `zen energie aus`, die Ein/Aus-Taste und
   das Zuklappen. Immer über `zen lock` und `zenos-bildschirm aus`; geweckt wird über die Sperre (jede Eingabe, ohne
@@ -151,6 +153,51 @@ verloren.
 4. `zenos-energie ausschalten-login` prüft alles erneut und schaltet aus wie in der Sitzung (ohne Mitteilung danach,
    es war niemand angemeldet). Im Journal mit «(Login-Bildschirm)».
 
+### Bildschirm aus am Login-Bildschirm
+
+Zenos Entscheid vom 06.10.2026: Am Login-Bildschirm (greetd mit dem zenOS-Greeter) geht der Bildschirm nach 1 Min.
+ohne Eingabe aus, am Netzteil wie am Akku. Die erste Taste, der erste Klick oder die erste Berührung weckt ihn nur und
+wird verworfen: Sie landet nie im Passwortfeld und löst nichts aus. Fest im Code
+(`LEITPLANKEN.loginBildschirmAusMinuten`), ohne Einstellung: Die Einstellungen der Sitzung sind für `_greetd` nicht
+lesbar.
+
+- **Zählen:** `shell/greeter/Bildschirm.qml` misst mit einem IdleMonitor des Compositors (labwc,
+  ext-idle-notify, ohne Rücksicht auf Idle-Hemmer). Jede Eingabe beginnt die Minute neu, auch Tippen im Passwortfeld.
+  Ein Leerlauf-Zähler im Compositor statt eines eigenen Timers: Er sieht jede Eingabe (Tastatur, Maus, Touchpad,
+  Berührung), auch solche, die nie bei der Oberfläche ankommen.
+- **Aus und an:** `timeout 5 wlopm --json --off|--on '*'` als Argumentliste, direkt aus der Oberfläche des Logins
+  (sie läuft als `_greetd` in ihrem eigenen labwc, `WAYLAND_DISPLAY` stimmt). Erfolg ist nur Exit 0 mit leerer
+  Fehlerliste (wlopm endet auch bei Fehlern mit 0). Immer nur ein Aufruf, der letzte Wunsch gilt.
+- **Wecktaste:** Schon bevor wlopm abschaltet, steht die Wecktaste aus. Solange hat ein unsichtbarer «Wecker» im
+  Fenster mit dem Formular den Tastaturfokus, und ein Klickfang liegt über allem (auf jedem Bildschirm). Die erste
+  Taste (auch Return, Escape, Tab, Shift) oder der erste Klick bzw. die erste Berührung geht dorthin, weckt und ist
+  verworfen. Dann geht der Fokus dorthin zurück, wo er war (Passwortfeld, Namensfeld oder ein Knopf). Genau eine
+  Eingabe, nie mehr: Der Wecker gibt den Fokus nach der ersten Taste in jedem Fall zurück, und er prüft dafür
+  `focus`, nicht `activeFocus`. Weckt die Maus oder das Touchpad (Bewegung), gilt die Wecktaste noch 300 ms
+  (`WECKEN_SCHONFRIST_MS`, wie in der Sperre), danach kommt alles an.
+- **Zeichen im Feld:** Was schon im Passwortfeld stand, bleibt unverändert; die Wecktaste kommt nicht dazu. Das
+  Passwort reicht weiterhin nur greetd an PAM weiter (`Ablauf.qml`), der Anmeldeablauf ist unverändert.
+- **Vorwarnung vor dem Ausschalten** (30 Min. im Akkubetrieb, `Leerlauf.qml`): Sie schaltet den Bildschirm an und hält
+  ihn an, ohne Wecktaste (wer tippt, tippt ins Feld und bricht ab). Endet sie ohne Eingabe (Netzteil, Wächter,
+  logind lehnt ab), geht er eine Minute später wieder aus.
+- **Deckel** (Argon ONE UP): Aufklappen schaltet den Bildschirm an (ohne Wecktaste), ohne Eingabe danach ist er eine
+  Minute später wieder aus. Zuklappen ändert am Login-Bildschirm nichts (angemeldet ist niemand, gesperrt werden muss
+  nichts); dunkel wird er nach der Minute.
+- **Leerer Akku** (3 %, `zenos-argon`): unverändert. Die Zeile steht auch auf dem dunklen Login; wie auf der Sperre
+  schaltet sie den Bildschirm nicht an.
+- **Nach der Anmeldung:** Die Anmeldung braucht Eingaben, der Bildschirm ist dann an. Die Sitzung startet ihr eigenes
+  labwc, das alle Bildschirme einschaltet, und `zenos-idle` schaltet beim Start an.
+- **Ausfallsicher** (`shell/greeter/bildschirm.js`): Scheitert das Ausschalten (wlopm fehlt, das Protokoll fehlt,
+  Fehler oder Zeitlimit), schaltet der Login sofort wieder ein und versucht es erst nach einer neuen Eingabe und einer
+  neuen Minute ohne Eingabe erneut, nach drei Fehlschlägen in Folge nicht mehr. Scheitert das Einschalten, versucht
+  er es nach 1 und 2 s erneut. War der Bildschirm sicher dunkel (wlopm hatte das Ausschalten bestätigt) und geht nach
+  drei Versuchen nicht an, beendet sich der Login (Exit 1): greetd startet ihn neu, ein neues labwc schaltet alle
+  Bildschirme an. Ohne bestätigtes Dunkel (wlopm fehlt oder antwortet unbrauchbar) gibt er auf, statt neu zu
+  starten. Stürzt die Oberfläche des Logins ab, endet labwc (`-S`) und greetd startet beides neu, ebenfalls hell. Eine
+  Taste oder ein Klick weckt über Wecker und Klickfang auch dann, wenn der IdleMonitor ausfiele. Jeder Fehlschlag steht
+  im Journal (`journalctl -t zenos-greeter`).
+- **Notfall-Login** (`shell/greeter/notfall/`): unverändert, ohne Ausschalten des Bildschirms (sichere Richtung).
+
 ### Ein/Aus-Taste
 
 `einAusTaste`: `sperren` (Standard), `menue` oder `ausschalten`. Ausser bei `ausschalten` hält zenos-idle den
@@ -205,6 +252,15 @@ hergeleitet und am Gerät zu prüfen («Am Gerät prüfen», Punkt 5).
 - **wlopm statt `wlr-randr --off`:** wlr-randr nimmt den Ausgang aus dem Layout, Fenster wandern, die Oberfläche
   verliert ihn, und beim Einschalten ist labwc im Container abgestürzt. wlopm schaltet nur die Ausgabe ab; Ausgang,
   Fenster und Sperrflächen bleiben.
+- **Dunkel ohne Sperre nur am Login-Bildschirm** (Zenos Entscheid vom 06.10.2026): Dort ist niemand angemeldet, es
+  gibt nichts zu sperren. Der Weg steht nur in der Oberfläche des Logins (`shell/greeter/`, Benutzer `_greetd`),
+  nicht in `zenos-bildschirm`, IPC oder `zen energie`: In der Sitzung bleibt «dunkel heisst gesperrt» ohne Ausnahme.
+- **wlopm direkt aus dem Login statt über `zenos-bildschirm`:** Der Helfer sperrt immer zuerst (`zen lock`) und
+  verlangt die Quittung der Sperre; beides gibt es am Login nicht. Ein eigener Modus im Helfer wäre ein Weg, in der
+  Sitzung ohne Sperre abzuschalten.
+- **Neustart des Logins als letzter Ausweg:** Geht ein sicher dunkler Bildschirm nicht mehr an, ist ein neuer Login
+  besser als ein dunkler; verloren geht nur, was im Feld stand. Ohne Bestätigung, dass es dunkel ist, kein Neustart
+  (sonst liefe ein Login mit einer unbrauchbaren wlopm-Antwort jede Minute neu an).
 - **Zwei Wege für «Bildschirm aus»:** Die Sperre zählt ab der Sperre und ohne Rücksicht auf Hemmer (ein Video hinter
   der Sperre sieht niemand) und kennt die Wecktaste. swayidle in zenos-idle schaltet zusätzlich nach S + B ab, als
   Rückfallebene ohne Oberfläche (dann zählt es ab der letzten Eingabe, wie die Sperre selbst).
@@ -236,9 +292,10 @@ hergeleitet und am Gerät zu prüfen («Am Gerät prüfen», Punkt 5).
   ohne Eingabe auf.
 - Dunkel heisst gesperrt: `zenos-bildschirm aus` sperrt immer zuerst und schaltet nur bei bestätigter Sperre ab. Der
   Bildschirm geht 1–10 Min. nach der Sperre aus, nie davor; ungesperrt bleibt die Sperre hell, auch wenn ein Helfer
-  «aus» meldet.
+  «aus» meldet. Einzige Ausnahme ist der Login-Bildschirm (niemand angemeldet): dort nach 1 Min. ohne Eingabe, fest.
 - Die Wecktaste landet nie im Passwortfeld, und es wird nie mehr als eine Taste verworfen. Entsperrt ist der
-  Bildschirm immer an.
+  Bildschirm immer an. Am Login-Bildschirm gilt dasselbe für die erste Taste, den ersten Klick oder die erste
+  Berührung; was dort scheitert, lässt den Bildschirm an.
 - Ausschalten frühestens 30 Min. nach der Sperre (am Login-Bildschirm nach 30 Min. ohne Eingabe, nur im
   Akkubetrieb), nie ohne 60 s sichtbare Vorwarnung (nach der Laufzeit seit dem Start, nicht nach der Uhr), nur mit
   `systemctl poweroff --check-inhibitors=yes`, nie neu starten, nie `-i` oder `--force`.
@@ -296,6 +353,13 @@ hergeleitet und am Gerät zu prüfen («Am Gerät prüfen», Punkt 5).
     neuerem Code und hellem Bildschirm, ein zweiter Lauf startet nichts neu; `zen doctor`, Abschnitt «Energie» (Zeiten,
     Ausschalten mit und ohne Akku, Login-Bildschirm, Stand von zenos-idle, Hemmer der Ein/Aus-Taste, nur lesend).
   - `test/einheiten/raster.test.py`: Super+Shift+L und `XF86PowerOff` ohne Shell, Programme vorhanden.
+  - `test/einheiten/login-bildschirm.test.mjs` (12 Tests): Bildschirm am Login-Bildschirm (`greeter/bildschirm.js`):
+    Ablauf aus und an, die Wecktaste steht schon vor dem Abschalten aus, genau eine Eingabe wird verworfen,
+    Schonfrist, jede Eingabe beginnt die Minute neu (auch während des Ausschaltens), nach einem Wecken ohne Eingabe
+    beginnt sie neu, Fehlerfall bleibt an (Ausschalten gescheitert: sofort wieder an, nach drei Fehlschlägen nie mehr;
+    wlopm unbrauchbar: aufgeben ohne Neustart; sicher dunkel und geht nicht an: Neustart des Logins), Vorwarnung und
+    Deckel ohne Wecktaste, Antworten von wlopm, Argumentliste ohne Shell, Verdrahtung in `Bildschirm.qml`,
+    `Anmeldefenster.qml` (Wecker, Klickfang) und `greeter.qml`, Notfall-Login ohne Ausschalten.
   - Deckel und leerer Akku: `argon.test.py` und `geraet.test.mjs` (`docs/module/m13.md`).
 - **Start-Test** (`pruefen.sh start`): Rundgang mit `einstellungen oeffnen energie`, `energie status`,
   `sperre bildschirm aus → an` und `sperre bildschirm an → an` (ungesperrt bleibt es hell), `energie vorwarnung →
@@ -306,6 +370,8 @@ hergeleitet und am Gerät zu prüfen («Am Gerät prüfen», Punkt 5).
   - Ausschalten nach langer Sperre bis zum Aufruf von `systemctl` (dort ersetzt, kein echtes Aus).
   - Befunde der Prüfung (Oktober 2026), Abschnitt «Proben im Container» unten.
   - `install.sh` zweimal hintereinander ohne Fehler, der zweite Lauf mit 0 Änderungen.
+  - Login-Bildschirm: `test/container/login-e2e.sh` (als tester, labwc ohne Bildschirm, Attrappe von greetd), Abschnitt
+    «Login-Bildschirm im Container» unten.
 - **Nicht prüfbar im Container:** ein echtes Panel und sein Hintergrundlicht, die echte Ein/Aus-Taste, der Deckel,
   ein echtes Ausschalten und ob das Gerät danach stromlos ist.
 
@@ -333,19 +399,26 @@ hergeleitet und am Gerät zu prüfen («Am Gerät prüfen», Punkt 5).
    nicht aus; der Grund steht in `journalctl -t zenos-energie` und auf der Seite «Energie» («Zurzeit nicht: …»).
 8. **Nach dem Ausschalten im Akkubetrieb:** Ist das Gerät wirklich stromlos (LEDs aus, Akkustand am nächsten Morgen
    fast gleich)? Lesend prüfen: `sudo rpi-eeprom-config | grep POWER_OFF_ON_HALT`.
-9. **Login-Bildschirm im Akkubetrieb:** Abmelden, Netzteil ab, 30 Min. nichts tun. Die Zeile «zenOS schaltet um …
+9. **Bildschirm am Login-Bildschirm:** Abmelden, eine Minute nichts tun: dunkel (auch das Hintergrundlicht). Je einmal
+   mit einer Buchstabentaste, einem Mausklick auf «Anmelden», einem Tipp auf dem Touchpad und (falls vorhanden) einer
+   Berührung des Bildschirms wecken: Er geht an, im Passwortfeld steht kein Punkt, nichts wird ausgelöst. Vorher drei
+   Zeichen tippen, dunkel werden lassen, mit einer Taste wecken, den Rest tippen: Die Anmeldung klappt beim ersten
+   Versuch. Tippen in Abständen unter einer Minute hält ihn an. Am Netzteil und am Akku gleich. Deckel zu, eine
+   Minute warten, aufklappen: hell, das erste Zeichen landet im Feld. `journalctl -b -t zenos-greeter` zeigt «Bildschirm
+   aus» und «Wecktaste verworfen», keine Zeile «gescheitert».
+10. **Login-Bildschirm im Akkubetrieb:** Abmelden, Netzteil ab, 30 Min. nichts tun. Die Zeile «zenOS schaltet um …
    aus» steht da, eine Taste bricht ab; ohne Eingabe schaltet es nach 60 s aus. Mit SSH, tmux oder einer Anmeldung auf
    einer Textkonsole schaltet es nicht aus (`journalctl -t zenos-energie`: «(Login-Bildschirm)»).
-10. **Leerer Akku und SSH:** Bei der Vorwarnung erscheint in einer offenen SSH-Sitzung die Meldung von `wall`
+11. **Leerer Akku und SSH:** Bei der Vorwarnung erscheint in einer offenen SSH-Sitzung die Meldung von `wall`
     («zenOS: Akku fast leer …»), ebenso beim Abbruch. Am Login-Bildschirm steht die Zeile mit der Uhrzeit.
-11. **Kaltstart nach dem automatischen Aus:** Zeit bis zum Login; die Mitteilung «zenOS hat ausgeschaltet» erscheint
+12. **Kaltstart nach dem automatischen Aus:** Zeit bis zum Login; die Mitteilung «zenOS hat ausgeschaltet» erscheint
    bei der nächsten Anmeldung genau einmal.
-12. **Bereitschaft:** Die Seite «Energie» zeigt «nicht verfügbar», `zen doctor` meldet einen Hinweis und keinen
+13. **Bereitschaft:** Die Seite «Energie» zeigt «nicht verfügbar», `zen doctor` meldet einen Hinweis und keinen
     Fehler.
-13. **Deckel und leerer Akku:** wie in `docs/module/m13.md`, «Am Gerät prüfen», Punkte 8–10.
-14. **Hell und dunkel:** Seite «Energie», Eintrag im System-Menü, Vorwarnung auf der Sperre und am Login-Bildschirm,
+14. **Deckel und leerer Akku:** wie in `docs/module/m13.md`, «Am Gerät prüfen», Punkte 8–10.
+15. **Hell und dunkel:** Seite «Energie», Eintrag im System-Menü, Vorwarnung auf der Sperre und am Login-Bildschirm,
     alles flüssig auf dem Pi.
-15. **Update:** `install.sh` zweimal hintereinander ohne Fehler. Nach `zen update` in einer gesperrten Sitzung läuft
+16. **Update:** `install.sh` zweimal hintereinander ohne Fehler. Nach `zen update` in einer gesperrten Sitzung läuft
     die neue Leerlauf-Logik ohne neues Anmelden (`journalctl --user -u zenos-idle`: neu gestartet); ungesperrt erst
     nach der nächsten Sperre.
 
@@ -372,10 +445,33 @@ hergeleitet und am Gerät zu prüfen («Am Gerät prüfen», Punkt 5).
   Akku-Symbol in `warnung`.
 - QML-Timer: 30 Takte zu 1 s dauerten 29,8 s. Deshalb entscheidet über die 60 s die Laufzeit im Helfer (Exit 4).
 
+## Login-Bildschirm im Container
+
+`test/container/login-e2e.sh` in `zenos-test:installiert` mit wlopm, wtype und wlrctl, Oktober 2026: labwc ohne
+Bildschirm mit `system/greeter/labwc`, `shell/greeter.qml`, dazu eine Attrappe von greetd
+(`test/container/login/greetd_attrappe.py`), die jede Anfrage des Formulars protokolliert.
+
+- **minute:** nach 40 s an; ein Zeichen im Passwortfeld nach 40 s, nach 80 s noch an; aus 60 s nach dieser Eingabe
+  (Protokoll «1 Min. ohne Eingabe, Bildschirm aus»). Die Maus weckt.
+- **taste:** «tes» getippt, nach 60 s aus. «q» weckt, greetd hat nichts bekommen. «ter» und Return: greetd bekommt
+  genau «tester», danach `start_session`, der Bildschirm ist an. Protokoll «Wecktaste verworfen (Taste)».
+- **klick:** «tester» getippt, Zeiger auf «Anmelden», nach 60 s aus. Der erste Klick weckt, greetd hat nichts
+  bekommen; der zweite meldet an.
+- **fehler:** wlopm (Attrappe) schaltet ab, meldet aber einen Fehler: gleich wieder an, 20 s später weiter an, kein
+  zweiter Versuch ohne Eingabe, Protokoll «wlopm --off gescheitert … der Bildschirm bleibt an».
+- **neustart:** über `scripts/bin/zenos-greeter` (labwc `-S`), wlopm schaltet nicht mehr an (Attrappe): nach 63 s
+  aus, «q» weckt nicht, nach drei Versuchen beendet sich der Login samt labwc, im Journal «Bildschirm geht nicht mehr
+  an, starte den Login neu», kein Notfall-Login. Unter greetd folgt ein neuer Login mit allen Bildschirmen an.
+- **Gegenprobe:** Ohne Wecker und Klickfang (nur in der Kopie im Container) scheitern «taste» (greetd bekommt
+  «tesqter») und «klick» (der erste Klick meldet an).
+- Nicht prüfbar im Container: Touchpad, Berührung, der Deckel, ein echtes Panel und ein echter greetd mit PAM.
+
 ## Offen
 
-- **Login-Bildschirm:** Dort geht der Bildschirm noch nicht von selbst aus (geplant: nach 1 Min. ohne Eingabe, mit
-  verworfener Wecktaste). Das Ausschalten bei leerem Akku und nach 30 Min. im Akkubetrieb gilt dort schon.
+- **Ein/Aus-Taste am dunklen Login-Bildschirm:** Dort gilt weiter logind, ein kurzer Druck schaltet sofort aus. Wer
+  einen dunklen Login mit der Ein/Aus-Taste wecken will, schaltet aus (verloren geht nichts, angemeldet ist niemand,
+  aber es folgt ein Kaltstart). Ein Hemmer «handle-power-key» im Greeter hielte das auf; das berührt logind und polkit
+  für `_greetd` und ist nicht gebaut (Rückfrage an Zeno).
 - **Rückfrage an Zeno:** die Abweichung beim leeren Akku (Abschnitt «Entscheidungen»).
 - **Ein/Aus-Taste während Updates:** Ohne zenos-idle schaltet ein kurzer Druck sofort aus, auch während `zen update`
   per SSH. Ein Hemmer «shutdown» um `install.sh` (`systemd-inhibit --what=shutdown --mode=block`, braucht sudo) hielte

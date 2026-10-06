@@ -414,6 +414,16 @@ systemctl --user start zenos-shell.service
   «60 Min.» einstellen.
 - [ ] Während der Vorwarnung (`zenos-ipc energie vorwarnung`, gesperrt) direkt das Passwort tippen und Enter: Es
   entsperrt beim ersten Versuch.
+- [ ] Login-Bildschirm, Bildschirm aus: Abmelden und eine Minute nichts tun. Der Bildschirm wird dunkel (auch das
+  Hintergrundlicht). Tippen in Abständen unter einer Minute hält ihn an.
+- [ ] Wecken am Login-Bildschirm, je nach einer dunklen Minute: eine Buchstabentaste, ein Klick auf «Anmelden», ein
+  Tipp auf dem Touchpad, eine Berührung des Bildschirms (falls er das kann). Jedes Mal wird er hell, im Passwortfeld
+  steht kein Punkt, und nichts wird ausgelöst (kein «Anmelden», kein «Jetzt neu starten»).
+- [ ] Am Login-Bildschirm drei Zeichen des Passworts tippen, eine Minute warten (dunkel), mit einer Taste wecken, den
+  Rest tippen und Enter: Die Anmeldung klappt beim ersten Versuch, danach ist der Bildschirm an.
+- [ ] Dasselbe am Netzteil und am Akku (Argon ONE UP). Mit Deckel: zuklappen, eine Minute warten, aufklappen. Der
+  Bildschirm wird von selbst hell, das erste Zeichen landet im Feld.
+- [ ] `journalctl -b -t zenos-greeter` zeigt «Bildschirm aus» und «Wecktaste verworfen», keine Zeile «gescheitert».
 - [ ] Login-Bildschirm im Akkubetrieb (nur Argon ONE UP): Abmelden, Netzteil ab, 30 Minuten nichts tun. Die Zeile
   «zenOS schaltet um HH:MM aus · Eine Taste bricht ab» erscheint, eine Taste bricht ab. Ohne Eingabe schaltet das
   Gerät 60 s später aus.
