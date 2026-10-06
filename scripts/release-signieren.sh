@@ -14,14 +14,16 @@
 # Vor dem Signieren prüft das Skript:
 #   - Arbeitsbaum sauber, HEAD auf origin (nach «git fetch»), der Tag neu (lokal und auf origin)
 #   - Release: Version höher als jede auf origin (vX.Y.Z-rcN < vX.Y.Z), HEAD baut auf dem letzten Release auf,
-#     die Prüfung (pruefen.yml) per gh nicht rot, der Anker vollständig und unverändert oder mit Tag vertrauen/NNNN
+#     die Prüfung (pruefen.yml) per gh grün (läuft sie noch, wartet es höchstens 25 Min.), der Anker vollständig und
+#     unverändert oder mit Tag vertrauen/NNNN
 #   - Vertrauen: Serie genau eins höher als die letzte, Wurzel gleich, Widerrufe nur dazu
 # Es zeigt die Commits seit dem letzten Release und gesondert die Änderungen an sensiblen Pfaden
 # (scripts/lib/sensible-pfade). Signiert wird erst nach «ja», danach prüft «git verify-tag» den Tag gegen den Anker.
 # Gepusht wird nur der Tag und erst nach einem zweiten «ja».
 #
 # Nur für Tests: ZENOS_TEST_SIGNIERPROGRAMM=<programm> signiert mit diesem Programm statt mit op-ssh-sign, etwa
-# ssh-keygen mit einem Wegwerf-Schlüssel im ssh-agent. Das Skript sagt das dann deutlich.
+# ssh-keygen mit einem Wegwerf-Schlüssel im ssh-agent. Das Skript sagt das dann deutlich. ZENOS_TEST_CI_PAUSE=0
+# wartet nicht zwischen den Abfragen der CI.
 #
 # Exit 0: signiert (gepusht oder bewusst nur lokal); 1: Prüfung gescheitert oder abgebrochen, es bleibt kein neuer
 # Tag liegen (nur wenn das Pushen scheitert, bleibt der geprüfte Tag lokal); 2: Aufruf falsch.
@@ -328,25 +330,64 @@ tag_neu_pruefen() {
   fi
 }
 
-ci_pruefen() {
+# Stand von pruefen.yml für HEAD als «status conclusion» (ohne Leerzeichen am Ende); 1, wenn gh nicht antwortet
+ci_stand() {
   local stand
-  if ! command -v gh >/dev/null 2>&1; then
-    warnung "CI nicht geprüft: gh fehlt."
-    return
-  fi
-  if ! stand=$(cd "$WURZEL" && gh run list --commit "$HEAD_OID" --workflow pruefen.yml --limit 1 \
-    --json status,conclusion --jq '.[0] | "\(.status) \(.conclusion)"' 2>/dev/null); then
-    warnung "CI nicht geprüft: gh hat keinen Zugriff (gh auth status)."
-    return
-  fi
+  stand=$(cd "$WURZEL" && gh run list --commit "$HEAD_OID" --workflow pruefen.yml --limit 1 \
+    --json status,conclusion --jq '.[0] | "\(.status) \(.conclusion)"' 2>/dev/null) || return 1
   # Ein laufender Lauf hat noch keine conclusion: «in_progress »
-  stand=$(printf '%s' "$stand" | sed 's/[[:space:]]*$//')
-  case "$stand" in
-    "completed success") meldung "CI: pruefen.yml ist grün für $(kurz "$HEAD_OID")." ;;
-    completed*) abbruch "Die Prüfung pruefen.yml ist für $(kurz "$HEAD_OID") nicht grün (${stand#completed }). Erst beheben." ;;
-    "" | null*) warnung "CI: Für $(kurz "$HEAD_OID") gibt es keinen Lauf von pruefen.yml." ;;
-    *) warnung "CI: pruefen.yml läuft noch für $(kurz "$HEAD_OID") ($stand)." ;;
-  esac
+  printf '%s' "$stand" | sed 's/[[:space:]]*$//'
+}
+
+# Signiert wird nur auf einem Stand, für den pruefen.yml grün ist (ANLEITUNG G6): Ein gepushter Tag lässt sich nicht
+# mehr verschieben, und Geräte auf vorschau nehmen ihn sofort. Läuft die Prüfung noch oder ist sie eben erst gepusht
+# und noch nicht zu sehen, wartet das Skript (höchstens CI_VERSUCHE-mal CI_PAUSE s, 25 Min.; der Lauf hat ein
+# Zeitlimit von 20 Min.). Rot oder nach der Wartezeit nicht fertig: Abbruch. Ist sie nicht prüfbar (gh fehlt, kein
+# Zugriff), geht es nur mit bewusst getipptem «ohne Prüfung» weiter.
+CI_VERSUCHE=75
+CI_PAUSE=20
+# Nur für Tests: ZENOS_TEST_CI_PAUSE=0 wartet nicht zwischen den Abfragen
+if [[ "${ZENOS_TEST_CI_PAUSE:-}" =~ ^[0-9]+$ ]]; then CI_PAUSE=$ZENOS_TEST_CI_PAUSE; fi
+
+ci_ohne_pruefung() { # GRUND
+  warnung "CI nicht geprüft: $1."
+  if ! frage "Ohne grüne Prüfung signieren? Geräte auf vorschau nähmen den Tag sofort. Tippe «ohne Prüfung»:" ||
+    [[ "$ANTWORT" != "ohne Prüfung" ]]; then
+    abbruch "Ohne grüne Prüfung (pruefen.yml) wird nicht signiert."
+  fi
+  warnung "Signiert ohne geprüfte CI (bewusst bestätigt)."
+}
+
+ci_pruefen() {
+  local stand versuch=1
+  if ! command -v gh >/dev/null 2>&1; then
+    ci_ohne_pruefung "gh fehlt"
+    return
+  fi
+  while :; do
+    stand=$(ci_stand) || { ci_ohne_pruefung "gh hat keinen Zugriff (gh auth status)"; return; }
+    case "$stand" in
+      "completed success")
+        meldung "CI: pruefen.yml ist grün für $(kurz "$HEAD_OID")."
+        return
+        ;;
+      completed*) abbruch "Die Prüfung pruefen.yml ist für $(kurz "$HEAD_OID") nicht grün (${stand#completed }). Erst beheben." ;;
+    esac
+    if (( versuch >= CI_VERSUCHE )); then
+      case "$stand" in
+        "" | null*) abbruch "Für $(kurz "$HEAD_OID") gibt es keinen Lauf von pruefen.yml (gepusht?). Erst wenn er grün ist." ;;
+        *) abbruch "pruefen.yml ist für $(kurz "$HEAD_OID") nach $(( CI_VERSUCHE * CI_PAUSE / 60 )) Min. nicht fertig ($stand). Später noch einmal." ;;
+      esac
+    fi
+    if (( versuch == 1 )); then
+      case "$stand" in
+        "" | null*) meldung "CI: Für $(kurz "$HEAD_OID") gibt es noch keinen Lauf von pruefen.yml, warte (Ctrl+C bricht ab) …" ;;
+        *) meldung "CI: pruefen.yml läuft noch für $(kurz "$HEAD_OID") ($stand), warte (Ctrl+C bricht ab) …" ;;
+      esac
+    fi
+    versuch=$(( versuch + 1 ))
+    sleep "$CI_PAUSE"
+  done
 }
 
 # --- Anzeige ---------------------------------------------------------------------------------------------------

@@ -43,9 +43,18 @@ done
 exec ssh-keygen "${args[@]}"
 """
 
-# Ersatz für gh: meldet den CI-Stand aus FAKE_GH_STAND
+# Ersatz für gh: meldet den CI-Stand aus FAKE_GH_STAND. Mehrere Stände, mit «|» getrennt, gelten nacheinander (je
+# Aufruf der nächste, danach bleibt der letzte; gezählt in FAKE_GH_ZAEHLER). FAKE_GH_EXIT: kein Zugriff (Exit).
 GH = """#!/bin/sh
-printf '%s\\n' "${FAKE_GH_STAND:-completed success}"
+if [ -n "${FAKE_GH_EXIT:-}" ]; then exit "$FAKE_GH_EXIT"; fi
+stand=${FAKE_GH_STAND:-completed success}
+if [ -n "${FAKE_GH_ZAEHLER:-}" ]; then
+  n=$(cat "$FAKE_GH_ZAEHLER" 2>/dev/null || echo 0)
+  n=$((n + 1))
+  echo "$n" > "$FAKE_GH_ZAEHLER"
+  stand=$(printf '%s\\n' "$stand" | tr '|' '\\n' | sed -n "${n}p;\\$p" | head -n 1)
+fi
+printf '%s\\n' "$stand"
 """
 
 _modul = {}
@@ -173,6 +182,7 @@ class Basis(unittest.TestCase):
             "LC_ALL": "C",
             "SSH_AUTH_SOCK": _modul["sock"],
             "ZENOS_TEST_SIGNIERPROGRAMM": "ssh-keygen",
+            "ZENOS_TEST_CI_PAUSE": "0",
         }
         umgebung.update(extra)
         return {s: w for s, w in umgebung.items() if w is not None}
@@ -416,13 +426,48 @@ class Release(Basis):
                 self.assertNotIn("Durchgesehen?", ergebnis.ausgabe)
                 self.kein_tag("v0.1.0-rc4")
 
-    def test_ci_offen(self):
-        for stand, text in (("in_progress ", "läuft noch"), ("null null", "keinen Lauf"),
-                            ("completed success", "ist grün")):
-            with self.subTest(stand=stand):
-                ergebnis = self.lauf("v0.1.0-rc4", eingabe="nein\n", FAKE_GH_STAND=stand)
-                self.assertIn(text, ergebnis.ausgabe)
+    def test_ci_wartet_bis_gruen(self):
+        """Befund rel-01: Lief pruefen.yml noch oder gab es keinen Lauf, kam nur eine Warnung, und «ja» signierte. Jetzt
+        wartet das Skript, bis die Prüfung fertig ist, und signiert nur bei Grün."""
+        for staende in ("in_progress |queued |completed success", "null null|in_progress |completed success"):
+            with self.subTest(staende=staende):
+                zaehler = os.path.join(self.ordner, "gh-zaehler")
+                if os.path.exists(zaehler):
+                    os.remove(zaehler)
+                ergebnis = self.lauf("v0.1.0-rc4", eingabe="nein\n", FAKE_GH_STAND=staende, FAKE_GH_ZAEHLER=zaehler)
+                self.assertIn("warte", ergebnis.ausgabe)
+                self.assertIn("ist grün", ergebnis.ausgabe)
                 self.assertIn("Durchgesehen?", ergebnis.ausgabe)
+                with open(zaehler, encoding="utf-8") as f:
+                    self.assertEqual(f.read().strip(), "3", "dreimal gefragt")
+
+    def test_ci_wartet_und_wird_rot(self):
+        zaehler = os.path.join(self.ordner, "gh-zaehler")
+        ergebnis = self.lauf("v0.1.0-rc4", eingabe="ja\nja\n", FAKE_GH_STAND="in_progress |completed failure",
+                             FAKE_GH_ZAEHLER=zaehler)
+        self.assertEqual(ergebnis.returncode, 1, ergebnis.ausgabe)
+        self.assertIn("nicht grün (failure)", ergebnis.ausgabe)
+        self.assertNotIn("Durchgesehen?", ergebnis.ausgabe)
+        self.kein_tag("v0.1.0-rc4")
+
+    def test_ci_nie_fertig_bricht_ab(self):
+        for stand, text in (("in_progress ", "nicht fertig"), ("null null", "keinen Lauf von pruefen.yml")):
+            with self.subTest(stand=stand):
+                ergebnis = self.lauf("v0.1.0-rc4", eingabe="ja\nja\n", FAKE_GH_STAND=stand)
+                self.assertEqual(ergebnis.returncode, 1, ergebnis.ausgabe)
+                self.assertIn(text, ergebnis.ausgabe)
+                self.assertNotIn("Durchgesehen?", ergebnis.ausgabe)
+                self.kein_tag("v0.1.0-rc4")
+
+    def test_ci_ohne_zugriff_nur_bewusst(self):
+        ergebnis = self.lauf("v0.1.0-rc4", eingabe="ja\nja\n", FAKE_GH_EXIT="4")
+        self.assertEqual(ergebnis.returncode, 1, ergebnis.ausgabe)
+        self.assertIn("CI nicht geprüft: gh hat keinen Zugriff", ergebnis.ausgabe)
+        self.assertNotIn("Durchgesehen?", ergebnis.ausgabe)
+        self.kein_tag("v0.1.0-rc4")
+        ergebnis = self.lauf("v0.1.0-rc4", eingabe="ohne Prüfung\nnein\n", FAKE_GH_EXIT="4")
+        self.assertIn("bewusst bestätigt", ergebnis.ausgabe)
+        self.assertIn("Durchgesehen?", ergebnis.ausgabe)
 
     def test_ohne_gh(self):
         if shutil.which("gh", path=SYSTEM_PFAD):
@@ -430,6 +475,9 @@ class Release(Basis):
         os.remove(os.path.join(self.bin, "gh"))
         ergebnis = self.lauf("v0.1.0-rc4", eingabe="nein\n")
         self.assertIn("CI nicht geprüft: gh fehlt", ergebnis.ausgabe)
+        self.assertEqual(ergebnis.returncode, 1, ergebnis.ausgabe)
+        self.assertNotIn("Durchgesehen?", ergebnis.ausgabe)
+        ergebnis = self.lauf("v0.1.0-rc4", eingabe="ohne Prüfung\nnein\n")
         self.assertIn("Durchgesehen?", ergebnis.ausgabe)
 
     def test_verschobener_tag(self):

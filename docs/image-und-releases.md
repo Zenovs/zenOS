@@ -144,8 +144,9 @@ scripts/release-signieren.sh v0.1.0-rc4
      `v0.1.0-rc3` < `v0.1.0-rc10` < `v0.1.0` < `v0.1.1`. Ein Tag wird nie verschoben, auch kein alter: `v0.1.0-rc1`
      bis `rc3` bleiben unsigniert, der erste signierte Tag ist `v0.1.0-rc4` oder höher.
    - HEAD baut auf dem letzten Release auf, und dieser Tag ist lokal derselbe wie auf origin.
-   - Die Prüfung `pruefen.yml` für HEAD ist per `gh` nicht rot. Läuft sie noch oder fehlt gh, gibt es nur eine
-     Warnung.
+   - Die Prüfung `pruefen.yml` für HEAD ist per `gh` grün. Läuft sie noch (oder ist der Push noch nicht zu sehen),
+     wartet das Skript höchstens 25 Minuten; rot oder danach nicht fertig bricht es ab. Ist sie nicht prüfbar (gh
+     fehlt, kein Zugriff), geht es nur mit getipptem «ohne Prüfung» weiter.
    - Der Anker in HEAD ist vollständig. Gegenüber dem letzten Release ist er gleich, Kommentare ausgenommen. Oder er
      hat eine höhere Serie, und es gibt den Tag `vertrauen/NNNN`, der genau diesen Anker trägt. Die Wurzel bleibt
      immer gleich.
