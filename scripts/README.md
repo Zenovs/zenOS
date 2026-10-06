@@ -16,6 +16,7 @@
 | `pruefen.sh` | Selbsttest des Repos (Linux, nicht auf dem Mac) |
 | `release-signieren.sh` | signiert ein Release oder einen Tag `vertrauen/NNNN` mit 1Password (Mac, bash 3.2) |
 | `bin/zenos-kanal` | signierter Kanal auf dem Gerät: holen (ohne Rechte), prüfen und bereitstellen (root, ohne Netz), installieren mit Gesundheitsprüfung und Rückweg, nachstart, Status, Anker, Zeitpunkt, `jetzt` und `zustimmen` für die Einstellungen, `automatik` (Timer, Notschalter) und `bestaetigen` (nach dem Start); Kern von `zen update` und `zen rollback` |
+| `bin/zenos-gesten` | Wischen mit drei Fingern (Systemdienst `zenos-gesten.service`, Benutzer `zenos-gesten`): liest reine Touchpads nur lesend über libinput und meldet «oben» und «unten» an die Oberfläche; `--messen` misst die Schwelle ein, `--pruefen` für `zen doctor` (Modul und Prüfung `82-gesten`) |
 | `bin/zenos-kanal-bedienen` | Updates aus den Einstellungen (root über pkexec, polkit `org.zenos.kanal.*`): `pruefen`, `installieren ZIEL`, `zustimmen OBJEKT` starten die Units des Kanals (ZIEL und OBJEKT: der angezeigte Stand), `zeitpunkt …` setzt den Zeitpunkt; nur feste Wörter, Journal `-t zenos-kanal-bedienen` |
 
 ## install.sh
@@ -173,6 +174,31 @@ Prozesse nur mit Argumentlisten, jedes git mit leerer Umgebung und gehärteten E
 Exit-Codes: `docs/image-und-releases.md`, «Auf dem Gerät: zenos-kanal». Tests: `test/einheiten/kanal.test.py`,
 `test/einheiten/kanal-installieren.test.py`, `test/einheiten/kanal-automatik.test.py`, Ende-zu-Ende
 `test/container/kanal-e2e.sh`.
+
+## zenos-gesten
+
+`bin/zenos-gesten` (Python 3, nur Standardbibliothek, `python3 -I`) bindet `libinput.so.10` aus Ubuntu per ctypes
+ein (stabile C-API, udev-Backend für seat0) und läuft als `zenos-gesten.service` unter dem eigenen Benutzer
+`zenos-gesten`, nie als root. Es öffnet nur Knoten von `root:zenos-gesten` und nur lesend, greift kein Gerät und
+meldet je Wischen mit genau drei Fingern einmal «oben» oder «unten» auf `/run/zenos-gesten/gesten.sock`. Ausgelöst
+wird, sobald der senkrechte Weg (unbeschleunigt) die Schwelle erreicht und mindestens doppelt so gross ist wie der
+seitliche; Standard 60 libinput-Einheiten (im Container etwa 6 mm). Die Erkennung ist eine reine Funktion ohne Uhr
+und ohne Gerät.
+
+```
+sudo -u zenos-gesten /usr/bin/python3 -I /opt/zenos/scripts/bin/zenos-gesten --messen
+/opt/zenos/scripts/bin/zenos-gesten --pruefen
+```
+
+- `--messen`: neben dem laufenden Dienst, je Wischgeste eine Zeile mit Fingerzahl und Summe der Bewegung, keine
+  Positionen, nichts an die Oberfläche. Ende mit Ctrl+C. `--schwelle WERT` (10 bis 1000) probiert eine andere
+  Schwelle aus; der Dienst selbst nimmt den Standard im Code.
+- `--pruefen`: nur lesend, für `zen doctor`: Touchpads und Tastaturen mit Gruppe und Rechten ihrer Knoten, drei
+  Finger (`BTN_TOOL_TRIPLETAP`), Gruppen der Sitzung. Nennt nur Knoten wie «event5», keine Gerätenamen.
+- Modul `82-gesten` richtet Benutzer, udev-Regel und Einheit ein und nimmt mit `/etc/xdg/zenos/gesten-aus` alles
+  zurück; `doctor.d/82-gesten.sh` prüft Dateien, Benutzer, Knoten, Dienst und die Verbindung der Oberfläche. Rechte und
+  Restrisiko: `docs/sicherheit.md`, «Gesten». Tests: `test/einheiten/gesten.test.py`, Ende-zu-Ende
+  `test/container/gesten-e2e.sh`.
 
 ## pruefen.sh
 

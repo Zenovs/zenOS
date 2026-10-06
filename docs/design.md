@@ -26,7 +26,7 @@ Ruhig, warm, reduziert. Ein Akzent pro Modus, sonst neutrale Töne. Grosse Zahle
 `abdunkeln` liegt hinter Überlagerungen (Befehlsfeld, Auswahl beim Bildschirmfoto). Die Umgebung wird nur
 abgedunkelt, nie weichgezeichnet. `zudecken` ist `grund` mit 92 % Deckkraft und liegt hinter der
 Fensterübersicht: Dort sollen die Fenster dahinter nicht ablenken, mit `abdunkeln` schienen sie im Hellen stark
-durch.
+durch. Auch `zudecken` zeichnet nichts weich; die Fenster bleiben schwach zu ahnen.
 
 **Zwischentöne** aus Entwurf 2, für Rahmen und Flächen, die zwischen den Grundtönen liegen:
 
@@ -264,8 +264,8 @@ keine Kante, kein Strich.
   Ausblenden nur über die Deckkraft (120 ms). Keine Bewegung pro Symbol; Einträge, die beim Hereingleiten unter dem
   ruhenden Zeiger durchziehen, gelten nicht als gezeigt.
 - **Verschwinden:** 400 ms, nachdem der Zeiger Karte und Zone verlassen hat (kurzes Abrutschen schliesst nicht),
-  sofort nach einem Klick auf eine App und sobald Befehlsfeld, ein Menü der Leiste, die Modus- oder Zustand-Wahl
-  oder die Zentrale aufgehen. Während Sperre und Einrichtung erscheint sie nie.
+  sofort nach einem Klick auf eine App und sobald Befehlsfeld, ein Menü der Leiste, die Modus- oder Zustand-Wahl,
+  die Zentrale oder die Fensterübersicht aufgehen. Während Sperre und Einrichtung erscheint sie nie.
 - **Reihenfolge** fest, nach dem ersten Fenster jeder App; neue Apps kommen unten dazu, nichts springt beim
   Wechseln.
 - **Klick** holt das zuletzt aktive Fenster der App nach vorne, auch ein minimiertes und auch über ein
@@ -279,6 +279,10 @@ Hintergrund auf jedem Bildschirm, in `grund`: Wochentag und Monat (Mono, Grossbu
 Serif 300 px, Gruss nach Tageszeit mit Name (kursiv), Zusammenfassung, Moduszeile mit Akzentpunkt, unten die
 Tastenkappen für Befehlsfeld, Modus und Zustand. Die rechte Spalte (Termine, Aufgaben, Wetter) kommt «Danach».
 Während einer Freigabe und bei `heute: false` blendet der Inhalt aus (200 ms).
+
+Solange der Schreibtisch frei ist (Super+H, siehe «Schreibtisch»), steht rechts neben den drei Tastenkappen eine
+vierte: «Super H · Fenster zurück». Sie blendet in 120 ms nur über die Deckkraft ein und aus; die anderen bleiben
+stehen, nichts rückt.
 
 ### Befehlsfeld
 
@@ -312,8 +316,8 @@ Während einer Freigabe und bei `heute: false` blendet der Inhalt aus (200 ms).
 
 - Karten oben rechts unter der Leiste: 380 px, `flaeche`, Rahmen `linie2`, Radius 12, Zeiten in Geist Mono, ohne
   Schatten. Die Sammelkarte verschwindet nach 10 s, dringende Karten bleiben bis zum Schliessen. Solange auf ihrem
-  Bildschirm ein Menü der Leiste offen ist, treten die Karten zurück und kommen danach wieder (120 ms, nur
-  Deckkraft); die 10 s der Sammelkarte beginnen dann von vorn.
+  Bildschirm ein Menü der Leiste offen ist, und solange die Fensterübersicht offen ist, treten die Karten zurück und
+  kommen danach wieder (120 ms, nur Deckkraft); die 10 s der Sammelkarte beginnen dann von vorn.
 - Zentrale als Panel rechts (400 px). Kein Ton, kein Blinken; neue Karten kommen unten dazu, damit nichts verrutscht.
 - zenOS selbst meldet sich bei Updates (jede Mitteilung nur einmal je Zustand: «zenOS aktualisiert» still, «Update
   gescheitert» normal, «Update kaputt» und «Updates blockiert» dringend, dazu «Anker fehlt», «Update abgelehnt»,
@@ -346,6 +350,89 @@ mit `flaeche2` hinterlegt und hat den 2-px-Rahmen im Akzent wie der Tastaturfoku
 umrandet labwc im Akzent. Grenzen von labwc 0.9: keine runden Ecken, eine Schrift für Name und Titel (der Titel kann
 nicht kleiner oder gedämpft sein). Grössen und Farben schreibt `zenos-thema`, Felder und Schrift `zenos-labwc`.
 Warum nicht der Stil mit Vorschaubildern: `docs/module/m9.md`, «Entscheidungen».
+
+### Fensterübersicht (Super+Tab)
+
+Alle offenen App-Fenster auf einen Blick, als Karten ohne Vorschaubilder (`shell/uebersicht/`). Sie öffnet mit
+Super+Tab, mit drei Fingern nach oben auf dem Touchpad, über die Aktion «Fensterübersicht» im Befehlsfeld oder mit
+`zenos-ipc uebersicht umschalten` und bleibt offen, ohne dass eine Taste gehalten wird. Das unterscheidet sie von
+Alt+Tab. Warum ohne Bilder: `docs/module/m9.md`, «Entscheidungen».
+
+- **Fläche:** je Bildschirm eine Fläche über den ganzen Bildschirm, Ebene Overlay (liegt damit auch über Vollbild),
+  Namespace `zenos-uebersicht`. Hintergrund `zudecken`, kein Weichzeichnen.
+- **Filterzeile:** Pille oben mittig, 72 px von oben (Leiste + 32), 360 × 40 px, Radius 999, `flaeche` mit Rahmen
+  `linie2`. Lupe 16 px in `gedaempft`, Platzhalter «Tippen filtert» in `gedaempft`, Eingabe in Geist 14 (`text`),
+  Textcursor als stehender Strich (1 px, `text`).
+- **Kacheln:** 216 × 164 px, Lücke 16 px, Karte wie die Menüs (`flaeche`, Rahmen 1 px `linie2`, Radius 12, ohne
+  Schatten). App-Symbol 56 px mittig, darunter App-Name in Geist 14 (`text`) und Fenstertitel in Geist 12
+  (`gedaempft`), höchstens zwei Zeilen, dann gekürzt. Ohne Symbol der Anfangsbuchstabe (Geist 16, `text2`) auf
+  `flaeche2` mit Radius 12. Name und Symbol kommen wie in der App-Leiste aus dem Starter der App.
+- **Markierungen:** Das beim Öffnen aktive Fenster hat oben rechts einen Akzentpunkt (5 px) wie in der App-Leiste.
+  Oben links in Geist Mono 12 (`gedaempft`) «minimiert» oder «Vollbild», bei mehreren Bildschirmen dazu der Name
+  des Bildschirms, wenn das Fenster auf einem anderen liegt.
+- **Auswahl:** Zeigen und Auswahl hinterlegen die Karte mit `flaeche2` (120 ms); per Tastatur gewählt kommt der
+  Fokusrahmen dazu (2 px im Akzent). Die Startauswahl ist das vorige Fenster: Super+Tab und ↵ führt zurück wie
+  Alt+Tab.
+- **Reihenfolge:** fest wie in der App-Leiste. Apps stehen nach ihrem ersten Fenster, die Fenster einer App
+  nebeneinander. Nichts springt, wenn ein anderes Fenster aktiv wird.
+- **Raster:** so viele Spalten, wie mit 48 px Rand in die Breite passen (bei 1920 px 7), die Zeilen ausgeglichen
+  (10 Fenster ergeben 5 × 2, 12 auf 1440 px 4 × 3). Mittig zwischen Filter- und Fusszeile. Passt es nicht in die
+  Höhe, scrollt das Raster (ohne Animation), und die Auswahl bleibt ganz sichtbar.
+- **Fusszeile** direkt unter den Kacheln (am unteren Rand läge sie auf den Tastenkappen von «Heute»), Geist 13 in
+  `gedaempft`, vier Teile mit 20 px Abstand: «←↑↓→ wählen», «↵ wechseln», «Tippen filtert», «Esc schliessen». Ohne
+  Fenster nur «Esc schliessen».
+- **Leer:** Zeichen 32 px einfarbig `gedaempft`, darunter «Keine offenen Fenster» bzw. «Keine Treffer».
+- **Freigabe:** Während der Bildschirm geteilt wird, steht statt des Titels «Titel verborgen», und die Titel werden
+  nicht durchsucht (wie die Dateien im Befehlsfeld).
+
+**Bewegung:** Die Fläche blendet in 120 ms nur über die Deckkraft ein und aus. Die Kacheln blenden gestaffelt ein
+wie im App-Raster: je Diagonale 10 ms später, höchstens 8 Stufen, jede in 120 ms mit `bewegung.versatz` px nach oben.
+Alles ist nach 200 ms fertig. Beim Wählen läuft der Wechsel sofort, das Ausblenden darüber. Fenster fliegen nicht an
+ihren Platz (ohne Lage und Bild der Fenster ginge das nicht, und ein Übergang über den ganzen Bildschirm würde am Pi
+am ehesten ruckeln). Kommen oder gehen Fenster, ordnen sich die Kacheln ohne Animation neu.
+
+**Bedienung:**
+
+- **Tastatur:** Pfeile wandern im Raster, Tab und Shift+Tab wählen das nächste bzw. vorige Fenster, Pos1 und Ende
+  springen an den Anfang bzw. ans Ende (solange der Filter leer ist). ↵ wechselt, Esc oder ein zweites Super+Tab
+  schliesst.
+- **Tippen** filtert sofort nach App-Name, Titel und App-Kennung, bewertet wie im Befehlsfeld; der erste Treffer ist
+  gewählt.
+- **Maus:** Zeigen wählt (nur bei echter Bewegung), ein Klick auf eine Kachel wechselt. Ein Klick daneben oder in
+  eine Lücke schliesst, ebenso Rechts- und Mittelklick. Das Rad scrollt ein übervolles Raster.
+- **Touchpad:** Drei Finger nach unten schliessen, drei Finger nach oben öffnen (bei offener Übersicht tun sie
+  nichts, damit beim Nachwischen nichts flackert).
+
+**Verhalten:**
+
+- Minimierte Fenster stehen an ihrem Platz mit «minimiert»; Wählen holt sie zurück. Ein gewähltes Fenster kommt
+  auch über ein Vollbild-Fenster.
+- **Mehrere Bildschirme:** Filter, Kacheln und Tastatur liegen nur auf dem Bildschirm des aktiven Fensters (ohne
+  aktives Fenster auf dem ersten), dort stehen alle Fenster. Die anderen Bildschirme sind nur zugedeckt; ein Klick
+  dort schliesst. Je Bildschirm die eigenen Fenster wie bei Mission Control kommt «Danach».
+- Fenster der Oberfläche (Einstellungen) fehlen wie in der App-Leiste; für sie gibt es Super+Komma.
+- Wechselt das aktive Fenster von aussen (Alt+Tab, ein neues Fenster), schliesst die Übersicht.
+- **Eine Fläche zur Zeit:** Öffnet die Übersicht, schliessen Befehlsfeld, Modus- und Zustand-Wahl und Zentrale.
+  Öffnet eine von ihnen, ein Menü der Leiste oder die Einstellungen, schliesst die Übersicht (Super+Leertaste bei
+  offener Übersicht führt also direkt ins Befehlsfeld). Die App-Leiste erscheint nicht, die Mitteilungskarten
+  treten zurück.
+- Während Sperre und Einrichtung öffnet sie nie; das Sperren schliesst sie, nach dem Entsperren ist sie zu.
+
+### Schreibtisch (Super+H)
+
+Super+H, die Aktion «Schreibtisch zeigen» im Befehlsfeld oder `zenos-ipc schreibtisch umschalten` minimiert alle
+sichtbaren App-Fenster auf allen Bildschirmen, auch Vollbild-Fenster. Leiste, «Heute» und App-Leiste bleiben
+stehen, ebenso Fenster der Oberfläche (Einstellungen). Ein zweites Super+H holt genau diese Fenster zurück: das
+zuletzt aktive oben und wieder aktiv. Was vorher schon von Hand minimiert war, bleibt unten.
+
+- **Frei:** Solange alle gemerkten Fenster minimiert sind und kein App-Fenster sichtbar ist, gilt der Schreibtisch
+  als frei. Dann heisst die Aktion im Befehlsfeld «Fenster zurück», und «Heute» zeigt die Tastenkappe «Super H ·
+  Fenster zurück».
+- **Vorbei:** Holst du ein Fenster anders zurück (App-Leiste, Alt+Tab, Übersicht) oder erscheint ein neues, ist der
+  Schreibtisch nicht mehr frei. Das nächste Super+H minimiert dann wieder alles Sichtbare. Ohne App-Fenster
+  bewirkt Super+H nichts.
+- **Ruhig:** kein Hinweis, kein Symbol in der Leiste, keine Animation (labwc minimiert ohne Übergang, ein
+  nachgebauter Übergang würde ruckeln). Während Sperre und Einrichtung wirkt es nicht.
 
 ### Einstellungen
 

@@ -79,7 +79,8 @@ erscheint erst nach dem Neustart, und eine SSH-Verbindung bleibt während der In
   (`docs/design.md`).
 - **Komponenten** (`qs.komponenten`): gemeinsame Bausteine wie `Symbol`, `Chip`, `Knopf`, `Eingabe`, `Toast`.
 - **Oberflächen:** `leiste/`, `heute/`, `befehlsfeld/`, `mitteilungen/`, `appleiste/` (App-Leiste am rechten
-  Rand, Fenster über `ToplevelManager` aus Quickshell.Wayland, wlr-foreign-toplevel), `sperre/`, `freigabe/`, `modi/`
+  Rand, Fenster über `ToplevelManager` aus Quickshell.Wayland, wlr-foreign-toplevel), `uebersicht/`
+  (Fensterübersicht auf Super+Tab, Karten ohne Vorschaubilder, dieselbe Fensterliste), `sperre/`, `freigabe/`, `modi/`
   (Modus- und Zustand-Wahl), `einstellungen/`, `einrichtung/`, `polkit/` (Passwortdialog als polkit-Agent), dazu `komponenten/Hinweise.qml` (Toast) und
   `greeter.qml` mit `greeter/` für den Login.
 - **Apps aus der Oberfläche** starten über `zenos-oeffnen` in eigenen Einheiten
@@ -97,7 +98,9 @@ erscheint erst nach dem Neustart, und eine SSH-Verbindung bleibt während der In
 | `Pfade` | Orte: `~/.config/zenos`, `~/.local/state/zenos`, `~/Ablage`, `$XDG_RUNTIME_DIR/zenos`, `/opt/zenos`, `scripts/bin` |
 | `Einstellungen` | `einstellungen.json` lesen und schreiben (behält fremde Schlüssel, sichert eine ungültige Datei) |
 | `Erscheinung` | hell, dunkel oder nach Tageszeit, Akzent; überträgt beides mit `zenos-thema` nach aussen |
-| `Oberflaeche` | Zustand der Oberfläche (was offen ist, `gesperrt`), Hinweise, Sperr-Anforderung |
+| `Oberflaeche` | Zustand der Oberfläche (was offen ist, `gesperrt`, `uebersichtOffen`: eine Fläche zur Zeit, nie während Sperre und Einrichtung), Hinweise, Sperr-Anforderung |
+| `Schreibtisch` | Super+H: sichtbare App-Fenster über `ToplevelManager` minimieren, sich merken und genau diese zurückholen; `frei` nur aus der Lage der Fenster (Logik in `uebersicht/schreibtisch.mjs`) |
+| `Gesten` | liest «oben» und «unten» vom Socket des Systemdienstes `zenos-gesten` (verbindet erst, wenn `/run/zenos-gesten/bereit` da ist, danach mit wachsender Pause neu), öffnet bzw. schliesst die Fensterübersicht; keine Rechte am Touchpad |
 | `Aktionen` | Prozessstarts mit Argumentlisten: Apps, Terminal, Dateien, Ablage, Werkzeuge, Abmelden, Neustart, Ausschalten |
 | `System` | Temperatur, Netz, Ton (PipeWire), 1Password |
 | `Geraet` | Akku und Lüfter aus `/run/zenos/geraet.json` (`zenos-argon`) samt Lüfterwunsch, Mitteilung bei niedrigem Akku |
@@ -140,6 +143,9 @@ selbst endet in v0.3.1 auch bei Fehlern mit 0; `zenos-ipc` wertet die Ausgabe au
 | `leiste` | `menue(system\|raster\|wlan)` (`wlan`: System-Menü mit aufgeklappter WLAN-Liste), `schliessen` |
 | `polkit` | `status` (`offen`/`zu`), `agent` (`angemeldet`/`nicht angemeldet`), `abbrechen` |
 | `appleiste` | `zeigen` (auf dem Bildschirm des aktiven Fensters, nur wenn sie erscheinen darf), `verbergen`, `status` (`offen`/`zu`), `apps` (eine Zeile pro App: appId, Anzahl Fenster, `aktiv`) |
+| `uebersicht` | `umschalten`, `oeffnen`, `schliessen` (Fensterübersicht; öffnet nie während Sperre und Einrichtung), `status` (`offen`/`zu`, `zu` erst nach dem Ausblenden), `fenster` (eine Zeile je Kachel: Index, appId, «Titel» bzw. bei Freigabe «Titel verborgen», dazu `aktiv`, `minimiert`, `vollbild`, `gewaehlt`) |
+| `schreibtisch` | `umschalten` (Schreibtisch zeigen bzw. die gemerkten Fenster zurück; nicht während Sperre und Einrichtung), `status` (`frei`/`normal`) |
+| `gesten` | `status` (`verbunden`/`getrennt`: liest die Oberfläche den Dienst `zenos-gesten`?) |
 
 Die Tastenkürzel von labwc rufen dieselben Ziele auf (Liste in `docs/module/m9.md`).
 
@@ -160,6 +166,7 @@ Die Tastenkürzel von labwc rufen dieselben Ziele auf (Liste in `docs/module/m9.
 | `zenos-chrome`, `zenos-webapp` | Chrome im Profil des Modus, Web-Apps |
 | `zenos-apps` | proprietäre Apps installieren (`zen apps`) |
 | `zenos-argon` | Argon ONE: Lüfter und Power-Button (V3), Akku-Messchip, Deckel und kontrolliertes Ausschalten bei 3 % (ONE UP), Mindeststufe für den Lüfter, Werte für die Leiste |
+| `zenos-gesten` | Wischen mit drei Fingern: Systemdienst `zenos-gesten.service` (eigener Benutzer, liest reine Touchpads nur lesend über libinput, meldet «oben» und «unten» auf `/run/zenos-gesten/gesten.sock`); dazu `--messen` (Schwelle einmessen) und `--pruefen` (für `zen doctor`) |
 | `zenos-luefter` | Lüfterwunsch schreiben («auto» oder Mindeststufe 1–4; root: über pkexec oder sudo, `zen luefter`) |
 | `zenos-kanal-bedienen` | Updates aus den Einstellungen (root über pkexec): prüfen, jetzt installieren und zustimmen starten Units des Kanals, Zeitpunkt setzen über `zenos-kanal zeitpunkt` |
 | `zenos-netzwerk` | Netz von netplan/systemd-networkd auf NetworkManager umstellen und zurück (`zen netzwerk`) |
@@ -264,6 +271,14 @@ Die Regeln aus dem Manifest stehen im Code, nicht in der Konfiguration, und lass
   stellt Zeno im System-Menü oder mit `zen luefter` auf «auto» oder eine Mindeststufe 1–4: Der Helfer
   `zenos-luefter` (pkexec bzw. sudo) schreibt nur den Wunsch, `zenos-argon` setzt ihn um (beim ONE UP über den
   Regler `user_space` der Thermal-Zone, nie weniger als automatisch). Einzelheiten in `docs/module/m13.md`.
+- **Touchpad-Gesten:** labwc 0.9.3 bindet keine Gesten an Aktionen und reicht sie nur an die Fläche unter dem
+  Zeiger weiter. Für das Wischen mit drei Fingern (Fensterübersicht auf und zu) liest deshalb der Systemdienst
+  `zenos-gesten.service` die Touchpads mit: als eigener Benutzer `zenos-gesten`, nur lesend und ohne sie zu greifen,
+  über libinput aus Ubuntu (udev-Backend für seat0, ein neu erscheinendes Touchpad nimmt er von selbst auf). Eine
+  udev-Regel gibt nur die Knoten reiner Touchpads (ohne Tasten) seiner Gruppe zum Lesen und startet ihn; ohne
+  Touchpad läuft er nie. labwc öffnet die Geräte weiter über logind und bekommt jede Bewegung unverändert. Die
+  Oberfläche (`Gesten`) liest nur die Wörter «oben» und «unten» von seinem Socket. Rechte, Härtung, Restrisiko und
+  Rückweg in `docs/sicherheit.md`, «Gesten».
 
 ## Entscheidung: Logik für Modi und Zustände (C5)
 
@@ -300,6 +315,7 @@ Die Logik läuft in Quickshell selbst, ohne eigenen Hintergrunddienst.
 | Lüfterkurve (optional) | `/etc/xdg/zenos/argon.json` | nie |
 | Freigabe Akkuprofil (ONE UP) | `/etc/xdg/zenos/argon-akkuprofil` (`zen akku freigeben`) | nie |
 | Gerätewerte (Akku, Lüfter) | `/run/zenos/geraet.json` (flüchtig, Ordner gehört `zenos-argon`) | nie |
+| Gesten | Socket `/run/zenos-gesten/gesten.sock` und Merker `bereit` (flüchtig, Ordner gehört `zenos-gesten`); Einheit `/etc/systemd/system/zenos-gesten.service`, udev-Regel `/etc/udev/rules.d/72-zenos-gesten.rules`, Benutzer `/etc/sysusers.d/zenos-gesten.conf`; Notschalter `/etc/xdg/zenos/gesten-aus` (root, `install.sh` nimmt dann alles zurück) | Einheit, Regel und Benutzer ja (Kopien), sonst nie |
 | Lüfterwunsch | `/var/lib/zenos/luefter` (`modus=auto\|mindest`, `stufe=1…4`, `seit=…`; root, 0644; fehlt = auto) | nie |
 | Firewall, bewusster Zustand | `/var/lib/zenos/firewall` (`zustand=an\|aus`, `seit=…`; root, 0644; fehlt = Standard an) | nie |
 | polkit-Aktionen | `/usr/share/polkit-1/actions/org.zenos.firewall.policy`, `org.zenos.luefter.policy`, `org.zenos.kanal.policy` | ja (Kopie von `system/polkit/`) |
@@ -366,6 +382,7 @@ Systemteile, dann alle Benutzerteile.
 | `72-kennung` | Systemkennung zenOS (`zenos-kennung`, apt-Hook, Version, Logo), nur nach der Vorab-Prüfung der Ubuntu-Sicherheitsquelle |
 | `75-apps` | Werkzeuge für `zen apps`, Starter für Chrome und Web-Apps |
 | `80-argon` | Argon-Dienst (V3 und ONE UP) und Shutdown-Hook |
+| `82-gesten` | Wischen mit drei Fingern: Dienstbenutzer `zenos-gesten` (systemd-sysusers), udev-Regel für reine Touchpads, `zenos-gesten.service` (startet ihn, wenn es ein Touchpad gibt; nach Änderungen neu); keine Pakete. Mit Notschalter `/etc/xdg/zenos/gesten-aus` nimmt es alles zurück |
 | `90-benutzer` | Oberfläche verknüpfen, Ordner für persönliche Daten |
 | `95-zen` | `/usr/local/bin/zen`, Log-Ordner |
 

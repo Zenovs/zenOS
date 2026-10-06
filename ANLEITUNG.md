@@ -467,6 +467,62 @@ systemctl --user start zenos-shell.service
 - [ ] App mit zwei Fenstern (z. B. zwei kitty): Die Karte zeigt «2» am Symbol, ein Klick auf die schon aktive App
   wechselt zum anderen Fenster. Ein minimiertes Fenster kommt per Klick zurück.
 
+**Fensterübersicht, Schreibtisch und Wischen** (Einzelheiten in `docs/design.md` und `docs/module/m9.md`, Rechte in
+`docs/sicherheit.md`, «Gesten»). Am 06.10.2026 schon lesend geprüft: Das Touchpad meldet drei bis fünf Finger.
+- [ ] `zen doctor`, Abschnitt «Gesten»: «Touchpad eventN: nur für zenos-gesten lesbar (0640)», «… meldet drei Finger
+  (BTN_TOOL_TRIPLETAP)», «Diese Sitzung hat keine Rechte an /dev/input», der Dienst läuft als zenos-gesten, «Oberfläche
+  liest die Gesten», ohne Fehler. Steht dort «hat auch Tasten», liegt das Touchpad auf einem Knoten mit
+  Tastatur-Tasten: Dann bleibt es für den Dienst gesperrt, das Wischen fällt weg (Super+Tab geht weiter). Melden.
+- [ ] Touchpad, Zeiger, Tippen und Scrollen gehen nach der udev-Regel wie vorher. `id` zeigt weder `input` noch
+  `zenos-gesten`, und `test -r /dev/input/eventN && echo lesbar || echo gesperrt` (N aus `zen doctor`) zeigt
+  «gesperrt».
+- [ ] `systemd-analyze security zenos-gesten.service` zeigt höchstens 1.0. `/opt/zenos/scripts/install.sh` läuft
+  zweimal hintereinander ohne Fehler, der zweite Lauf meldet `0 Änderungen`.
+- [ ] Display des Argon ONE UP: `wlr-randr` zeigt Auflösung und Skalierung. Notieren und melden (der Entwurf nahm
+  1920 × 1200 an, ungeprüft). Daraus folgen die Spalten der Übersicht (bei 1920 px höchstens 7) und wie viele Zeilen
+  ohne Scrollen passen.
+- [ ] `Super + Tab` mit 10 oder mehr echten Fenstern (Chrome, VS Code, kitty, Firefox), hell und dunkel: Die
+  Übersicht ist sofort da, die Kacheln blenden ruhig ein, nichts ruckelt. Der Hintergrund deckt die Fenster ruhig zu,
+  Name und Titel sind gut lesbar. Das aktive Fenster hat den Punkt, vorgewählt ist das vorige: `Enter` führt dorthin
+  zurück.
+- [ ] In der Übersicht: Pfeile, `Tab` und `Shift + Tab` wählen (mit Fokusrahmen), Tippen filtert («chr» lässt nur
+  Chrome stehen), `Enter` wechselt, `Esc` oder nochmals `Super + Tab` schliesst. Mit der Maus wählt Zeigen, ein Klick
+  wechselt, ein Klick daneben schliesst. Ein minimiertes Fenster («minimiert») kommt per Klick zurück, ein Fenster
+  wechselt auch aus einem Video im Vollbild.
+- [ ] Wie schnell? Per SSH `time /opt/zenos/scripts/bin/zenos-ipc uebersicht umschalten` (zweimal, das zweite Mal
+  schliesst es). Im Container dauerte der Aufruf 16 bis 20 ms; am Pi die Zeit «real» notieren und melden.
+- [ ] `Super + Tab` und `Super + H` in kitty, Chrome, Firefox und VS Code: Sie lösen aus, ohne dass die App selbst
+  reagiert. In kitty schliesst `Super + W` weiter einen Tab, und `Super + D` teilt weiter.
+- [ ] Schreibtisch mit drei Fenstern, ein viertes vorher von Hand minimiert: `Super + H` räumt alle weg, «Heute» zeigt
+  rechts «Super H · Fenster zurück» (hell und dunkel). Nochmals `Super + H`: Die drei kommen zurück, das von Hand
+  minimierte bleibt unten, das vorher aktive ist wieder aktiv. Liegen die Fenster wieder brauchbar übereinander?
+  Dasselbe mit einem Video im Vollbild in Chrome.
+- [ ] Nach `Super + H` ein Fenster über die App-Leiste holen: Die Tastenkappe «Super H · Fenster zurück»
+  verschwindet, und das nächste `Super + H` räumt wieder alles weg.
+- [ ] Sperre: Übersicht offen, dann `Super + L`. Nach dem Entsperren ist sie zu. Gesperrt bewirken `Super + Tab`,
+  `Super + H` und das Wischen nichts.
+- [ ] Bildschirm teilen (etwa in Chrome): Die Übersicht zeigt «Titel verborgen».
+- [ ] Wischen mit drei Fingern: nach oben öffnet die Übersicht, nach unten schliesst sie. Scrollen mit zwei Fingern,
+  Wischen zur Seite, Tippen mit drei Fingern (Mittelklick) und Schreiben mit aufliegendem Handballen lösen nie aus.
+- [ ] Schwelle einmessen, wenn das Wischen zu früh oder zu spät auslöst. Per SSH (Ende mit `Ctrl + C`):
+  `sudo -u zenos-gesten /usr/bin/python3 -I /opt/zenos/scripts/bin/zenos-gesten --messen`. Am Gerät ein paar Mal
+  bewusst mit drei Fingern hoch und runter wischen und ein paar Mal nur leicht: Je Geste kommt eine Zeile mit
+  Fingerzahl und Weg («senkrecht +85 (Schwelle 60) · löst aus: unten»). Die Zeilen melden; die Schwelle passt Claude
+  dann im Code an.
+- [ ] Reagieren Chrome, Firefox, VS Code oder kitty selbst auf das Wischen mit drei Fingern (labwc reicht es ihnen
+  zusätzlich weiter), etwa mit Vor und Zurück im Browser? Melden.
+- [ ] Last des Dienstes: per SSH `systemctl show zenos-gesten -p CPUUsageNSec -p MemoryCurrent`, dann eine Minute
+  lang das Touchpad benutzen, dann noch einmal. Im Container war es gut 1 % eines Kerns und rund 15 MB. Beide Zeilen
+  melden.
+- [ ] Deckel zu und wieder auf: Die Geste geht danach weiter. Kommt das Touchpad dabei neu, steht in
+  `journalctl -u zenos-gesten` «Touchpad eventN dazu».
+- [ ] Hat die Tastatur eine Mission-Control-, Launchpad- oder F3-Taste mit Fenster-Symbol? Wenn ja, melden. Dann
+  bestimmt Claude ihr Keysym (dafür braucht es das Paket `wev`, nur nach deinem Ja) und legt die Übersicht darauf.
+- [ ] Rückweg ausprobieren (optional, per SSH): `sudo touch /etc/xdg/zenos/gesten-aus`, dann
+  `/opt/zenos/scripts/install.sh`. `zen doctor` sagt «Gesten aus» und «Regel, Dienst und Benutzer sind entfernt»,
+  Touchpad und `Super + Tab` gehen weiter. Wieder an: `sudo rm /etc/xdg/zenos/gesten-aus`, dann noch einmal
+  `/opt/zenos/scripts/install.sh`.
+
 **Terminal**
 - [ ] `Ctrl + Alt + T` öffnet kitty mit fish und der zenOS-Eingabezeile.
 - [ ] Text markieren, dann `Ctrl + C`: Der Text ist kopiert. Ohne Markierung bricht `Ctrl + C` ein laufendes
@@ -626,8 +682,8 @@ systemctl --user start zenos-shell.service
   ONE» den Lüfterwunsch und den Regler ohne Warnung.
 
 **Flüssigkeit**
-- [ ] Befehlsfeld, Hell/Dunkel, Fensterwechsel (`Alt + Tab` und App-Leiste) und Einrasten laufen flüssig (60 fps).
-  Nichts ruckelt, nichts blinkt.
+- [ ] Befehlsfeld, Hell/Dunkel, Fensterwechsel (`Alt + Tab`, App-Leiste und Fensterübersicht) und Einrasten laufen
+  flüssig (60 fps). Nichts ruckelt, nichts blinkt.
 
 ---
 

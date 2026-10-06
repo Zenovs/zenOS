@@ -210,6 +210,13 @@ zeigt den Passwortdialog, wenn ein Programm Rechte verlangt, die polkit nur nach
   hemmt (Video), hält sie höchstens 60 Minuten ohne Eingabe auf (Abschnitt «Energie»).
 - Bei Bildschirmfreigabe werden Mitteilungsinhalte immer verborgen.
 - Das Befehlsfeld startet Prozesse mit Argument-Listen, nie über `sh -c`.
+- **Fensterübersicht und Schreibtisch:** Der Filtertext der Übersicht wird nur mit App-Namen, Titeln und
+  App-Kennungen verglichen und erreicht nie einen Prozess. Beide wirken nur über `wlr-foreign-toplevel`
+  (`activate`, `minimized`), ohne Shell. Super+Tab und Super+H rufen `zenos-ipc` mit fester Argumentliste auf, ohne
+  `allowWhenLocked`. Während Sperre und Einrichtung öffnet die Übersicht nie, Super+H und das Wischen wirken nicht,
+  und das Sperren schliesst die Übersicht (ext-session-lock liegt ohnehin über allem). Während einer Freigabe sind
+  die Fenstertitel verborgen und werden nicht durchsucht, auch in `zenos-ipc uebersicht fenster`; das ist Vorsicht
+  wie «Netzname verborgen», keine neue Leitplanke.
 - Die Nutzungsstatistik des Befehlsfelds speichert nur Desktop-IDs, Zähler und die Reihenfolge der zuletzt genutzten
   Apps, keine Zeiten und keine Fenstertitel (`~/.local/share/zenos/`, nur für den Benutzer lesbar).
 - Eine Zwischenablage-Historie, falls sie kommt, ignoriert 1Password und löscht sich selbst.
@@ -366,6 +373,58 @@ Rest von `/sys` bleibt nur lesbar). Firmware-Einstellungen (`/boot/firmware/conf
 
   Ein «aus» gibt es nicht. Den Wunsch schreibt nur der Helfer `zenos-luefter` nach `/var/lib/zenos/luefter` (root,
   0644). Ein ungültiger Inhalt gilt als «auto».
+
+## Gesten (Touchpad)
+
+Wischen mit drei Fingern öffnet und schliesst die Fensterübersicht. labwc 0.9.3 bindet keine Gesten, deshalb liest
+der Systemdienst `zenos-gesten` (`scripts/bin/zenos-gesten`, Modul `82-gesten`) die Touchpads mit. Grundsatz: Die
+Sitzung bekommt keinerlei Rechte an `/dev/input`, und niemand kommt in die Gruppe `input`. Mit dieser Gruppe könnte
+jeder Prozess der Sitzung die Tastatur und damit Passwörter mitlesen. Deshalb fallen libinput-gestures und fusuma
+weg (beide brauchen die Gruppe `input` und fehlen in Ubuntu 26.04).
+
+- **Eigener Benutzer:** `zenos-gesten` über systemd-sysusers, gesperrt, ohne Anmeldung, ohne Home und ohne weitere
+  Gruppen. Niemand sonst ist in der Gruppe `zenos-gesten`; `zen doctor` meldet Mitglieder als Fehler, ebenso eine
+  Sitzung in `input` oder `zenos-gesten`. Der Dienst läuft nie als root, auch der Messmodus nicht.
+- **Nur reine Touchpads, nur lesen:** Die udev-Regel `72-zenos-gesten.rules` greift nur bei `ID_INPUT_TOUCHPAD=1`
+  ohne `ID_INPUT_KEY` und ohne `ID_INPUT_KEYBOARD`. Dann gehört der Knoten `root:zenos-gesten` mit 0640 statt
+  `root:input` mit 0660: Der Dienst darf lesen, schreiben nur root. Ein Touchpad, das auf demselben Knoten Tasten
+  meldet, bleibt `root:input` und für den Dienst gesperrt (kein Wischen, Super+Tab geht). labwc öffnet die Geräte
+  über logind als root und ist von den Rechten nicht betroffen (im Container mit einer Sitzung auf seat0 belegt, am
+  Pi zu bestätigen). Sonst nutzt in zenOS nichts die Gruppe `input`.
+- **Kein uaccess, keine ACL, kein Schreibrecht:** Schreibrecht auf einen Touchpad-Knoten reichte im Container, um
+  Klicks in die Wayland-Sitzung einzuspeisen. Deshalb bekommt die Sitzung gar nichts und der Dienst nur Leserecht.
+- **Tastaturen dreifach ausgeschlossen:** über die Dateirechte (nur reine Touchpads gehören der Gruppe), über die
+  Bedingung der udev-Regel und im Code: `open_restricted` öffnet nur Knoten von `root:zenos-gesten`, nur mit
+  `O_RDONLY`, alles andere sofort mit EACCES. Dazu erlaubt die Einheit nur `DeviceAllow=char-input r`. Der Dienst
+  greift kein Gerät (kein `EVIOCGRAB`), labwc bekommt jede Bewegung unverändert.
+- **Härtung** (`system/systemd/system/zenos-gesten.service`): `User=zenos-gesten`, leeres `CapabilityBoundingSet`,
+  `NoNewPrivileges`, `DevicePolicy=closed` mit `DeviceAllow=char-input r`, `ProtectSystem=strict`, `ProtectHome`,
+  `PrivateTmp`, `PrivateIPC`, `IPAddressDeny=any`, `RestrictAddressFamilies=AF_UNIX AF_NETLINK`, Schutz von Kernel,
+  Uhr und Protokollen, `MemoryDenyWriteExecute`, `SystemCallFilter=@system-service ~@privileged @resources`,
+  `python3 -I`. Geschrieben wird nur `/run/zenos-gesten`. Ohne `PrivateNetwork`: udev meldet neue Geräte über
+  netlink nur im Netz-Namensraum des Systems, mit `PrivateNetwork` fände der Dienst ein Touchpad nach dem Aufwachen
+  nicht wieder (im Container belegt). Ins Netz kommt er trotzdem nicht (nur Unix-Sockets und netlink, keine
+  IP-Adresse). `systemd-analyze security` bewertet ihn im Container mit 1.0. Die Einheit hat kein `[Install]`: udev
+  startet sie, sobald es ein reines Touchpad gibt; ohne Touchpad (Bürorechner) läuft er nie.
+- **Ausgabe:** Der Socket `/run/zenos-gesten/gesten.sock` (0666) bekommt je Geste genau eine Zeile «oben» oder
+  «unten», sonst nichts. Der Dienst liest nie von seinen Klienten (ihre Richtung ist zu), höchstens 8 gleichzeitig,
+  ein neunter verdrängt den ältesten, wer nicht liest, fliegt. Vertraulicher als `/run/zenos/geraet.json` von
+  `zenos-argon` (0644) ist das nicht. Die Oberfläche nimmt nur genau diese zwei Wörter an und ignoriert sie während
+  Sperre und Einrichtung.
+- **Datenschutz:** Im Journal stehen nur Start, Touchpads dazu und weg und Fehler, keine einzelnen Gesten, keine
+  Positionen, keine Gerätenamen. Der Messmodus (`--messen`, von Hand mit `sudo -u zenos-gesten …`) gibt je Geste nur
+  Fingerzahl und die Summe der Bewegung aus, keine Positionen. Kein Netz, keine Telemetrie.
+- **Restrisiko:** Ein kompromittierter Dienst könnte die Lage der Finger auf dem Touchpad lesen und das Touchpad per
+  `EVIOCGRAB` blockieren, denn schon Leserecht erlaubt den Grab. Dann ginge das Touchpad nicht mehr; Tastatur, Maus
+  und SSH gehen weiter. Tastendrücke kann er nicht lesen. Dagegen helfen der Sandkasten, der kleine Code ohne Grab
+  und dass er von aussen nichts annimmt ausser den Ereignissen von libinput.
+- **Pakete:** keine neuen. libinput (`libinput.so.10`) kommt schon mit labwc, python3 und systemd sind da.
+- **Rückweg:** `sudo touch /etc/xdg/zenos/gesten-aus`, dann `/opt/zenos/scripts/install.sh`: Das Modul stoppt den
+  Dienst, entfernt Regel, Einheit und sysusers-Datei, gibt die Touchpads zurück (`root:input` 0660 wie ohne
+  Regel) und löscht Benutzer und Gruppe; `zen doctor` prüft, dass nichts liegen bleibt. Ohne die Datei richtet der
+  nächste Lauf alles wieder ein. Ein `zen rollback` auf einen Stand ohne dieses Modul lässt Regel, Einheit und
+  Benutzer liegen, harmlos: Ohne `/opt/zenos/scripts/bin/zenos-gesten` startet der Dienst nicht, und die Touchpads
+  liest dann niemand ausser labwc.
 
 ## 1Password
 

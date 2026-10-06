@@ -21,6 +21,7 @@ was davon erst «Danach» kommt oder noch ohne Wirkung ist. «nach 0.1, unveröf
 | Mitteilungen | gebündelt statt einzeln; Dringendes kommt sofort | ✓ |
 | Raster | Einrasten per Tastendruck; Vorlagen Voll, Hälften, 3 Spalten, 4er-Grid, Gross + 2 | ✓ |
 | Fenster wechseln | `Alt + Tab` mit grossen App-Symbolen · App-Leiste: Zeiger rechts mittig an den Rand, ein Symbol pro offener App, ein Klick wechselt, auch aus dem Vollbild | ✓ (beides nach 0.1, unveröffentlicht) |
+| Fensterübersicht und Schreibtisch | `Super + Tab` oder drei Finger nach oben auf dem Touchpad: alle offenen Fenster als Karten mit App-Symbol, Name und Titel, bleibt offen, Tippen filtert, drei Finger nach unten schliessen · `Super + H`: alle Fenster weg, noch einmal: genau diese zurück · beides auch im Befehlsfeld | nach 0.1, unveröffentlicht (ohne Vorschaubilder, Grenze von labwc 0.9; Wischen nur mit Touchpad) |
 | Bildschirm-Profile | erkennt angeschlossene Bildschirme und lädt das passende Raster | ✓ (ein Raster für alle Bildschirme, Grenze von labwc 0.9) |
 | Sperrbildschirm | ohne Inhalte; sperrt 1Password mit | ✓ |
 | Energie | Einstellungen → Energie: Bildschirm aus 1–10 Min. nach der Sperre (nie ungesperrt), Wecktaste landet nicht im Passwortfeld; «Bildschirm aus» im System-Menü, im Befehlsfeld und mit Super+Shift+L; auf Wunsch ausschalten nach 30–240 Min. gesperrt (Standard: im Akkubetrieb nach 60 Min.) mit 60 s Vorwarnung, nie während SSH, tmux oder Updates, am Login-Bildschirm im Akkubetrieb nach 30 Min.; Ein/Aus-Taste sperrt statt auszuschalten; ein Video hält die Sperre höchstens 60 Min. auf; `zen energie`. Keine Bereitschaft (Kernel ohne Schlafzustand) | nach 0.1, unveröffentlicht |
@@ -74,6 +75,7 @@ Alles in dieser Tabelle kommt nach Version 0.1.
 | Datei-Verlauf | frühere Versionen einer Datei aus dem Backup |
 | Diktieren | lokale Spracherkennung |
 | Claude im Befehlsfeld | nur auf ausdrückliche Aktion, zeigt vorher, was gesendet wird |
+| Fensterübersicht mit Bildern | Standbilder der Fenster in der Fensterübersicht und je Bildschirm die eigenen Fenster; erst mit labwc ab 0.20 und nach einer Messung am Pi |
 | Fokus-Fenster | Zustand mit `fenster: fokus`: alles ausser dem aktiven Fenster tritt zurück (Schlüssel und Editor gibt es schon) |
 | Kalender-Auslöser | ein Zustand startet mit einem Termin (Auslöser `kalender`, heute im Editor als «später» markiert) |
 | Widgets | Schlüssel `widgets` im Zustand; was Widgets zeigen, ist noch offen |
