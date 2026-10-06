@@ -46,13 +46,27 @@ def tearDownModule():
 
 INSTALL_ATTRAPPE = """#!/bin/bash
 # Attrappe für install.sh (Test): Gerät wie 10-code auf den Stand dieser Quelle, Zeilen ins install.log
+# und wie das echte install.sh ins Ergebnis für den Kanal (ZENOS_KANAL_ERGEBNIS)
 set -u
 quelle=$(cd "$(dirname "$0")/.." && pwd -P)
 modus=normal
 if [ "${1:-}" = --nur-code ]; then modus=code; fi
+marke() {
+  printf '%s\\n' "$1" >> "$ZENOS_TEST_LOG"
+  if [ -n "${ZENOS_KANAL_ERGEBNIS:-}" ]; then printf '%s\\n' "$1" >> "$ZENOS_KANAL_ERGEBNIS"; fi
+}
+# Ein Prozess mit Benutzerrechten verändert das install.log (gehört nach einem Lauf von Hand dem Benutzer): kürzt es
+# und hängt ein «== Beginn» ohne Ende an
+sabotage() {
+  if [ -e "$quelle/log-sabotage" ]; then
+    : > "$ZENOS_TEST_LOG"
+    printf '== Beginn 2026-10-05 10:00:02 · normal · zenOS-Installation\\n' >> "$ZENOS_TEST_LOG"
+  fi
+}
 # Sperre von install.sh belegt: Exit 75, bevor etwas beginnt (wie das echte install.sh)
-if [ -e "$ZENOS_TEST_CODE.sperre-belegt" ]; then exit 75; fi
-printf '\\n== Beginn 2026-10-05 10:00:00 · %s · zenOS-Installation\\n' "$modus" >> "$ZENOS_TEST_LOG"
+if [ -e "$ZENOS_TEST_CODE.sperre-belegt" ]; then sabotage; exit 75; fi
+printf '\\n' >> "$ZENOS_TEST_LOG"
+marke "== Beginn 2026-10-05 10:00:00 · $modus · zenOS-Installation"
 commit=$(git -C "$quelle" rev-parse HEAD) || exit 3
 git -C "$ZENOS_TEST_CODE" fetch -q --no-tags "$quelle" HEAD || exit 3
 git -C "$ZENOS_TEST_CODE" checkout -q --force --detach "$commit" || exit 4
@@ -60,8 +74,14 @@ printf '%s %s %s\\n' "$modus" "$commit" "${ZENOS_KANAL_LAUF:-}" >> "$ZENOS_TEST_
 if [ "$modus" = normal ] && [ -e "$quelle/greetd-kaputt" ]; then : > "$ZENOS_TEST_CODE.greetd-ausgefallen"; fi
 if [ "$modus" = normal ] && [ -e "$quelle/kaputt-und-sperre" ]; then : > "$ZENOS_TEST_CODE.sperre-belegt"; exit 1; fi
 if [ "$modus" = normal ] && [ -e "$quelle/kaputt" ]; then exit 1; fi
-printf '== Ende 2026-10-05 10:00:01 · %s · ok · 0 Änderungen · 0 Warnungen\\n' "$modus" >> "$ZENOS_TEST_LOG"
+marke "== Ende 2026-10-05 10:00:01 · $modus · ok · 0 Änderungen · 0 Warnungen"
+if [ -e "$quelle/ergebnis-offen" ] && [ -n "${ZENOS_KANAL_ERGEBNIS:-}" ]; then chmod 0666 "$ZENOS_KANAL_ERGEBNIS"; fi
+sabotage
 """
+
+# Ein älteres install.sh (etwa v0.1.0-rc3) kennt das Ergebnis für den Kanal nicht und schreibt nur ins install.log
+ALTE_ATTRAPPE = "".join(z for z in INSTALL_ATTRAPPE.splitlines(True) if "ZENOS_KANAL_ERGEBNIS" not in z)
+assert "ZENOS_KANAL_ERGEBNIS" not in ALTE_ATTRAPPE
 
 ZEN_ATTRAPPE = """#!/bin/bash
 if [ "${1:-}" = version ]; then printf 'zenOS        test\\n'; exit 0; fi
@@ -962,6 +982,64 @@ class Befunde(Geraet):
         self.assertEqual(self.zen(), 10, self.ausgabe)
         self.assertIn("Kein Kontakt zu origin", self.ausgabe)
         self.assertNotIn("origin/dev fehlt", self.ausgabe)
+
+
+@unittest.skipUnless(B.HAT_WERKZEUGE, "git oder ssh-keygen fehlt unter /usr/bin")
+class Ergebnis(Geraet):
+    """Befund sich-01: Die Gesundheitsprüfung stützte sich auf das install.log, das nach einem Lauf von Hand dem
+    Benutzer gehört. Ein Prozess mit Benutzerrechten konnte es kürzen oder ein «== Beginn» anhängen; die gültige
+    Version wurde gesperrt, und das Gerät ging zurück. Jetzt zählt nur das root-eigene Ergebnis von install.sh."""
+
+    def ergebnis(self):
+        with open(os.path.join(K.STATE_DIR, K.INSTALL_RESULT), encoding="utf-8") as f:
+            return f.read().splitlines()
+
+    def test_veraendertes_install_log_sperrt_nichts(self):
+        gut = self.signiert_installiert("v0.1.0-rc4")
+        neu = self.commit("neu", {"log-sabotage": "1\n"})
+        self.signieren("v0.1.0-rc5")
+        self.assertEqual(self.zen(), 0, self.ausgabe)
+        self.assertEqual(self.kopf(), neu)
+        self.assertNotEqual(neu, gut)
+        self.assertFalse(os.path.exists(os.path.join(K.STATE_DIR, "gesperrt")), "nichts gesperrt")
+        self.assertEqual(self.zustand("letzte.json")["ergebnis"], "installiert")
+        with open(self.log, encoding="utf-8") as f:
+            self.assertFalse(K.marks_ok(f.read().splitlines()), "das install.log allein sähe nicht gesund aus")
+        self.assertEqual(self.ergebnis(), ["== Beginn 2026-10-05 10:00:00 · normal · zenOS-Installation",
+                                           "== Ende 2026-10-05 10:00:01 · normal · ok · 0 Änderungen · 0 Warnungen"],
+                         "nur dieser Lauf, ohne die Zeilen davor")
+
+    def test_veraendertes_install_log_macht_aus_belegt_keinen_fehlschlag(self):
+        gut = self.signiert_installiert("v0.1.0-rc4")
+        self.commit("neu", {"log-sabotage": "1\n"})
+        self.signieren("v0.1.0-rc5")
+        marke = K.CODE_DIR + ".sperre-belegt"
+        open(marke, "w").close()
+        self.addCleanup(lambda: os.path.exists(marke) and os.unlink(marke))
+        self.assertEqual(self.zen(), 75, self.ausgabe)
+        self.assertIn("kam nicht an seine Sperre", self.ausgabe)
+        self.assertFalse(os.path.exists(os.path.join(K.STATE_DIR, "gesperrt")), "nichts gesperrt")
+        self.assertEqual(self.kopf(), gut)
+
+    def test_ergebnis_fuer_andere_schreibbar_zaehlt_nicht(self):
+        gut = self.signiert_installiert("v0.1.0-rc4")
+        self.commit("offen", {"ergebnis-offen": "1\n"})
+        self.signieren("v0.1.0-rc5")
+        self.assertEqual(self.zen(), 4, self.ausgabe)
+        letzte = self.zustand("letzte.json")
+        self.assertEqual(letzte["ergebnis"], "zurueck")
+        self.assertIn(f"im {os.path.join(K.STATE_DIR, K.INSTALL_RESULT)} fehlt «== Ende … ok»", letzte["grund"])
+        self.assertEqual(self.kopf(), gut)
+
+    def test_aelteres_install_sh_nutzt_das_install_log(self):
+        # Ein Stand vor dieser Änderung (etwa v0.1.0-rc3) schreibt kein Ergebnis: Für ihn gilt weiter das install.log
+        self.signiert_installiert("v0.1.0-rc4")
+        neu = self.commit("alt", {"scripts/install.sh": ALTE_ATTRAPPE})
+        self.signieren("v0.1.0-rc5")
+        self.assertEqual(self.zen(), 0, self.ausgabe)
+        self.assertEqual(self.kopf(), neu)
+        self.assertFalse(os.path.exists(os.path.join(K.STATE_DIR, K.INSTALL_RESULT)), "das alte Ergebnis ist weg")
+        self.assertEqual(self.zustand("letzte.json")["ergebnis"], "installiert")
 
 
 if __name__ == "__main__":

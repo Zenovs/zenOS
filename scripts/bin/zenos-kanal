@@ -96,7 +96,8 @@ Installieren (root, mit Netz, unter einem Block-Inhibitor für Ausschalten und R
 Hand (Vermerk /run/zenos-sperre/hand), wartet es (Exit 75). Vorher: zurückgebliebene Sperrdateien von git in
 /opt/zenos/.git weg, «dpkg --configure -a», falls dpkg unterbrochen wurde, und eine Bereitstellung des laufenden Stands
 als Rückweg. Dann <bereit>/scripts/install.sh mit ZENOS_KANAL_LAUF=1; 10-code übernimmt den Code Datei für Datei atomar
-nach /opt/zenos. Gesund heisst: Exit 0 und «== Ende … ok» im install.log, /opt/zenos auf dem Commit und sauber, die
+nach /opt/zenos. Gesund heisst: Exit 0 und «== Ende … ok» im Ergebnis von install.sh (root-eigen,
+/var/lib/zenos/kanal/install-ergebnis; ältere Stände nur im install.log), /opt/zenos auf dem Commit und sauber, die
 Shell-Skripte ohne Syntaxfehler, scripts/zen läuft, quickshell läuft und greetd ist nicht ausgefallen (beides nur, wenn
 es vor install.sh noch ging), und der neue zenos-kanal besteht seinen Selbsttest (mit Probelauf, wenn er geändert
 ist; beim Rückweg nur den Anker). Sonst: Version nach gesperrt/,
@@ -203,6 +204,12 @@ UI_LOCK_FILE = "/run/zenos-sperre/bedienung.lock"
 HAND_MARK = "/run/zenos-sperre/hand"
 RUNTIME_DIR = "/run/zenos-kanal"
 INSTALL_LOG = "/var/log/zenos/install.log"
+# Ergebnis von install.sh für die Gesundheitsprüfung («== Beginn» und «== Ende» dieses Laufs), root-eigen im Zustand des
+# Kanals. Das install.log gehört nach einem Lauf von Hand dem Benutzer (Gruppe adm, 0640): Ein Prozess mit
+# Benutzerrechten könnte es kürzen oder eine Zeile anhängen und so ein gültiges Update als «nicht gesund» sperren.
+INSTALL_RESULT = "install-ergebnis"
+# Woran ein install.sh zu erkennen ist, das dieses Ergebnis schreibt; für ältere Stände gilt weiter das install.log
+INSTALL_RESULT_MARK = b"ZENOS_KANAL_ERGEBNIS"
 INSTALLED_PROGRAM = "/usr/local/libexec/zenos/zenos-kanal"
 SPACE_PATHS = ("/var",)
 DPKG_UPDATES = "/var/lib/dpkg/updates"
@@ -435,8 +442,10 @@ def run_visible(argv, env, timeout=None, cwd="/"):
 
 def install_env():
     """Umgebung für install.sh und die Prüfungen danach: leer bis auf das Nötigste. ZENOS_KANAL_LAUF=1 sagt 10-code,
-    dass der Lauf vom Kanal kommt (der die Sperre schon hält)."""
-    return {"PATH": INSTALL_PATH, "HOME": "/root", "LANG": "C.UTF-8", "ZENOS_KANAL_LAUF": "1"}
+    dass der Lauf vom Kanal kommt (der die Sperre schon hält); ZENOS_KANAL_ERGEBNIS, wohin install.sh sein Ergebnis
+    schreibt (INSTALL_RESULT)."""
+    return {"PATH": INSTALL_PATH, "HOME": "/root", "LANG": "C.UTF-8", "ZENOS_KANAL_LAUF": "1",
+            "ZENOS_KANAL_ERGEBNIS": state_path(INSTALL_RESULT)}
 
 
 def state_path(*parts):
@@ -2771,9 +2780,28 @@ def install_log_marks(offset):
     return [z for z in text.split("\n") if z.startswith("== Beginn ") or z.startswith("== Ende ")]
 
 
-def install_log_ok(offset):
-    """Steht im install.log nach OFFSET der Abschluss eines normalen Laufs mit «ok»?"""
-    marks = install_log_marks(offset)
+def writes_result(script):
+    """Schreibt dieses install.sh sein Ergebnis für den Kanal (ZENOS_KANAL_ERGEBNIS)? Ältere Stände kennen es nicht;
+    für sie gilt weiter das install.log."""
+    try:
+        with open(script, "rb") as f:
+            return INSTALL_RESULT_MARK in f.read(1 << 20)
+    except OSError:
+        return False
+
+
+def result_marks():
+    """Zeilen «== Beginn …» und «== Ende …» aus dem Ergebnis von install.sh. Nur root-eigen und für andere nicht
+    schreibbar zählt es, sonst ist es leer."""
+    try:
+        text = read_small(state_path(INSTALL_RESULT), trusted=True)
+    except (FileNotFoundError, Failure):
+        return []
+    return [z for z in text.split("\n") if z.startswith("== Beginn ") or z.startswith("== Ende ")]
+
+
+def marks_ok(marks):
+    """Steht in MARKS nach dem letzten Beginn eines normalen Laufs dessen Abschluss mit «ok»?"""
     begins = [i for i, z in enumerate(marks) if z.startswith("== Beginn ") and " · normal · " in z]
     if not begins:
         return False
@@ -2842,16 +2870,17 @@ def shell_files():
     return [p for p in paths if os.path.isfile(p)]
 
 
-def healthy(entry, offset, anchor_ok, baseline=None, tag_check=True, notes=None):
-    """Gesundheitsprüfung nach install.sh: Liste der Probleme (leer: gesund). baseline: Zustand vor install.sh
+def healthy(entry, marks, source, anchor_ok, baseline=None, tag_check=True, notes=None):
+    """Gesundheitsprüfung nach install.sh: Liste der Probleme (leer: gesund). marks: «== Beginn/Ende» dieses Laufs aus
+    source (Ergebnis von install.sh, bei älteren Ständen das install.log). baseline: Zustand vor install.sh
     (health_baseline). tag_check: Der Selbsttest prüft auch den Tag des Ziels und macht, wenn der Stand einen anderen
     zenos-kanal brachte, einen Probelauf. Beides nicht beim Rückweg: Dessen Schlüssel kann inzwischen widerrufen sein,
     und sein zenos-kanal lief schon; der alte Stand soll zurückkommen, auch wenn der Selbsttest etwas fände."""
     baseline = baseline or {}
     problems = []
     env = install_env()
-    if not install_log_ok(offset):
-        problems.append(f"im {INSTALL_LOG} fehlt «== Ende … ok» für diesen Lauf")
+    if not marks_ok(marks):
+        problems.append(f"im {source} fehlt «== Ende … ok» für diesen Lauf")
     head = installed_commit()
     if head != entry["commit"]:
         problems.append(f"{CODE_DIR} steht auf {str(head)[:12]} statt auf {entry['commit'][:12]}")
@@ -3170,15 +3199,20 @@ class Installation:
         script = os.path.join(entry["pfad"], "scripts", "install.sh")
         argv = [script] + ([] if entry.get("von_hand") else ["--ruhig"])
         print(f"install.sh aus {entry['pfad']} ({target_label(entry)}) …")
+        own = writes_result(script)
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(state_path(INSTALL_RESULT))
         offset = log_size()
         with inhibitor(f"zenOS wird aktualisiert ({target_label(entry)})"), takeover_flag(entry):
             rc = run_visible(argv, install_env())
-        if rc == EXIT_BUSY and not any(z.startswith("== Beginn ") for z in install_log_marks(offset)):
+        marks, source = ((result_marks(), state_path(INSTALL_RESULT)) if own
+                         else (install_log_marks(offset), INSTALL_LOG))
+        if rc == EXIT_BUSY and not any(z.startswith("== Beginn ") for z in marks):
             raise Busy("install.sh kam nicht an seine Sperre, eine andere Installation lief")
         if self.stop_requested:
             self.result["hinweise"].append("Während install.sh kam ein Stopp (Ausschalten?); install.sh lief zu Ende.")
         problems = [] if rc == 0 else [f"install.sh endete mit Exit {rc}"]
-        problems += healthy(entry, offset, anchor_ok, baseline, tag_check=phase == "ziel",
+        problems += healthy(entry, marks, source, anchor_ok, baseline, tag_check=phase == "ziel",
                             notes=self.result["hinweise"])
         if baseline["greetd_ausgefallen"] and greetd_failed():
             self.result["hinweise"].append("greetd war schon vor dem Update ausgefallen und ist es noch "

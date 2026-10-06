@@ -89,6 +89,7 @@ export ZENOS_QUELLE ZENOS_CODE ZENOS_IMAGE ZENOS_BENUTZER ZENOS_HOME ZENOS_SYSTE
 if (( ZENOS_IMAGE )); then _MODUS=image; elif (( _NUR_BENUTZER )); then _MODUS=benutzer
 elif (( _NUR_CODE )); then _MODUS=code; else _MODUS=normal; fi
 _LOG=""
+_ERGEBNIS=""
 _TEE_PID=""
 _SUDO_WACH_PID=""
 
@@ -132,9 +133,11 @@ _ende() {
       printf '\nzenOS-Installation abgebrochen (Exit %s) · %s · Log: %s\n' "$rc" \
         "$(_anzahl "$aenderungen" Änderung Änderungen)" "$_LOG" | tee -a -- "$_LOG" >&2
     fi
-    printf '== Ende %s · %s · %s · %s · %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$_MODUS" "$ergebnis" \
-      "$(_anzahl "$aenderungen" Änderung Änderungen)" "$(_anzahl "$warnungen" Warnung Warnungen)" \
-      >> "$_LOG"
+    local ende
+    ende=$(printf '== Ende %s · %s · %s · %s · %s' "$(date '+%Y-%m-%d %H:%M:%S')" "$_MODUS" "$ergebnis" \
+      "$(_anzahl "$aenderungen" Änderung Änderungen)" "$(_anzahl "$warnungen" Warnung Warnungen)")
+    printf '%s\n' "$ende" >> "$_LOG"
+    if [[ -n "$_ERGEBNIS" ]]; then printf '%s\n' "$ende" >> "$_ERGEBNIS"; fi
   fi
   exit "$rc"
 }
@@ -255,6 +258,23 @@ _sudo_vorbereiten() {
 
 # --- Log -------------------------------------------------------------------
 
+# Ergebnis für den Kanal: Ruft zenos-kanal install.sh als root auf (ZENOS_KANAL_LAUF=1), stehen «== Beginn» und
+# «== Ende» dieses Laufs zusätzlich in ZENOS_KANAL_ERGEBNIS (im Zustand des Kanals, root-eigen). Die
+# Gesundheitsprüfung liest nur diese Datei: Das install.log gehört nach einem Lauf von Hand dem Benutzer, und ein
+# Prozess mit Benutzerrechten könnte es kürzen oder eine Zeile anhängen. Ist der Ordner nicht root-eigen, schreibt
+# install.sh nichts; der Kanal findet dann kein Ergebnis und hält den Stand für nicht gesund.
+_ergebnis_vorbereiten() {
+  local datei=${ZENOS_KANAL_ERGEBNIS:-} ordner
+  (( EUID == 0 && ! ZENOS_IMAGE )) && [[ "${ZENOS_KANAL_LAUF:-}" == 1 && "$datei" == /?*/?* ]] || return 0
+  ordner=${datei%/*}
+  if [[ -d "$ordner" && ! -L "$ordner" && -O "$ordner" ]] && rm -f -- "$datei" 2>/dev/null &&
+    { : > "$datei"; } 2>/dev/null; then
+    _ERGEBNIS=$datei
+  else
+    echo "install.sh: Ergebnis für den Kanal ($datei) nicht schreibbar" >&2
+  fi
+}
+
 _log_vorbereiten() {
   local ordner=/var/log/zenos datei=/var/log/zenos/install.log besitzer gruppe=root ist
   local -a vorab=()
@@ -308,7 +328,11 @@ _log_vorbereiten() {
   fi
   _TEE_PID=$!
 
-  printf '\n== Beginn %s · %s · zenOS-Installation\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$_MODUS" >> "$_LOG"
+  local beginn
+  beginn=$(printf '== Beginn %s · %s · zenOS-Installation' "$(date '+%Y-%m-%d %H:%M:%S')" "$_MODUS")
+  printf '\n%s\n' "$beginn" >> "$_LOG"
+  _ergebnis_vorbereiten
+  if [[ -n "$_ERGEBNIS" ]]; then printf '%s\n' "$beginn" >> "$_ERGEBNIS"; fi
   if (( ! _RUHIG )); then
     # HOME fehlt womöglich (systemd-Dienst ohne User=); dann bleibt die Quelle ungekürzt
     local quelle=$ZENOS_QUELLE

@@ -525,7 +525,10 @@ stehen in `docs/image-und-releases.md`, Abschnitt «Signierte Releases».
   0700). Früher lagen sie in `/run/lock`, für alle beschreibbar: Jeder Prozess als Benutzer (etwa ein Agent nach einer
   Prompt-Injection) konnte eine Sperre halten, den Kanal abschneiden und über die Kette Versuch → gesperrt → Rückweg
   an derselben Sperre ein «kaputt» erzwingen (Prüfung, selbst nachgestellt). Scheitert `install.sh` nur an seiner
-  Sperre (Exit 75, nichts begonnen), zählt der Versuch nicht.
+  Sperre (Exit 75, nichts begonnen), zählt der Versuch nicht. Aus demselben Grund stützt sich die Gesundheitsprüfung
+  nicht auf `/var/log/zenos/install.log` (gehört nach einem Lauf von Hand dem Benutzer und liesse sich kürzen oder
+  ergänzen), sondern auf das root-eigene `/var/lib/zenos/kanal/install-ergebnis`, das `install.sh` nur im Lauf des
+  Kanals schreibt.
 - **Prüfung auf dem Gerät** (`scripts/bin/zenos-kanal`): Holen und Prüfen sind getrennt. Ein flüchtiger Systembenutzer
   ohne Rechte holt in einer Sandbox nur über https und gibt ein Bundle weiter; root öffnet dessen Repo nie. root prüft
   ohne Netz in einem Repo, das jedes Mal neu entsteht, mit leerer Umgebung für git (keine fremde config, keine Hooks,

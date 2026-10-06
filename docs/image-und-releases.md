@@ -378,9 +378,10 @@ Bereitstellung (Commit ohne Änderungen von Hand). Dann:
    Dateien nicht einzeln nach.
 3. `<bereit>/scripts/install.sh` als root mit `ZENOS_KANAL_LAUF=1`, ohne Terminal; 10-code übernimmt den Code Datei
    für Datei atomar nach `/opt/zenos`. Ein SIGTERM (Ausschalten durch root) wartet auf das Ende von install.sh.
-   Scheitert `install.sh` nur an seiner Sperre (Exit 75, kein «== Beginn» im Log), zählt der Versuch nicht: keine
+   Scheitert `install.sh` nur an seiner Sperre (Exit 75, kein «== Beginn» im Ergebnis), zählt der Versuch nicht: keine
    Sperre der Version, kein Rückweg, Ergebnis `wartet` (Exit 75).
-4. Gesundheit: Exit 0 und «== Ende … ok» im install.log, `/opt/zenos` auf dem Commit und sauber, `scripts/zen`,
+4. Gesundheit: Exit 0 und «== Ende … ok» im Ergebnis von `install.sh` (`/var/lib/zenos/kanal/install-ergebnis`,
+   root-eigen; ältere Stände ohne dieses Ergebnis: im install.log), `/opt/zenos` auf dem Commit und sauber, `scripts/zen`,
    `install.sh`, `zenos-greeter` und `zenos-sitzung` nicht leer, `bash -n` über `scripts/zen`, `install.sh` und
    `scripts/{zen.d,lib,module,doctor.d}/*.sh`, `zen version` gibt «zenOS …» aus, `quickshell --version` läuft und
    greetd ist nicht ausgefallen (beides nur, wenn es vor `install.sh` noch ging: Ein schon ausgefallenes greetd soll
