@@ -43,9 +43,9 @@ _energie_werkzeuge() {
     fehler "$helfer fehlt (zen update oder install.sh)"
   fi
   if command -v wlopm >/dev/null 2>&1; then
-    ok "wlopm installiert (Bildschirm aus nach der Sperre)"
+    ok "wlopm installiert (Bildschirm aus nach der Sperre und am Login-Bildschirm)"
   else
-    warnung "wlopm fehlt – gesperrt wird weiter, aber der Bildschirm bleibt an (sudo apt install wlopm)"
+    warnung "wlopm fehlt – gesperrt wird weiter, aber der Bildschirm bleibt an, auch am Login-Bildschirm (sudo apt install wlopm)"
   fi
 }
 

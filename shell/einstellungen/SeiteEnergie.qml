@@ -214,7 +214,7 @@ Item {
 
                 Text {
                     width: parent.width
-                    text: "Dunkel heisst gesperrt: Der Bildschirm geht nur aus, wenn zenOS gesperrt ist. Eine Taste weckt ihn, sie landet nicht im Passwortfeld."
+                    text: "Dunkel heisst gesperrt: Der Bildschirm geht nur aus, wenn zenOS gesperrt ist. Eine Taste weckt ihn, sie landet nicht im Passwortfeld. Am Login-Bildschirm geht er nach " + Dienste.Leitplanken.loginBildschirmAusMinuten + " Min. ohne Eingabe aus."
                     wrapMode: Text.WordWrap
                     color: Theme.gedaempft
                     font.family: Theme.schriftText
