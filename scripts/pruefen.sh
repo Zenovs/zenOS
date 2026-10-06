@@ -793,8 +793,25 @@ START_RUNDGANG=(
   "appleiste zeigen"
   "appleiste status → zu"
   "appleiste verbergen"
+  # Fensterübersicht und Schreibtisch, weiterhin ohne App-Fenster (leere Übersicht). Eine Fläche zur Zeit: Das
+  # Befehlsfeld schliesst die Übersicht und umgekehrt. Ohne App-Fenster bewirkt der Schreibtisch nichts.
+  "uebersicht status → zu"
+  "uebersicht oeffnen"
+  "uebersicht status → offen"
+  "uebersicht fenster"
+  "befehlsfeld oeffnen"
+  "uebersicht status → zu"
+  "uebersicht umschalten"
+  "befehlsfeld status → zu"
+  "uebersicht umschalten"
+  "uebersicht status → zu"
+  "schreibtisch umschalten"
+  "schreibtisch status → normal"
   "einrichtung oeffnen"
   "einrichtung status → offen 1"
+  # Während der Einrichtung öffnet die Übersicht nicht
+  "uebersicht oeffnen"
+  "uebersicht status → zu"
   "hinweis zeigen Prüfung"
   "hinweis warnen Prüfung"
   # polkit-Dialog geladen, keine Anfrage offen
