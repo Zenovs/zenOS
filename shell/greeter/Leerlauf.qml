@@ -19,6 +19,8 @@ import "../modi/zustandslogik.js" as Logik
 //   nach 5 Min.; lehnt logind ab, erst nach der nächsten Eingabe.
 // - Leerer Akku (zenos-argon, «akku.ausschaltenUm»): dieselbe Zeile mit der Uhrzeit, auch hier sichtbar. Sie hat
 //   Vorrang, abbrechen kann nur das Netzteil.
+// - Deckel (Argon ONE UP): Aufklappen meldet «aufgeklappt» (Bildschirm.qml schaltet den Bildschirm an). Zuklappen tut
+//   hier nichts, angemeldet ist niemand.
 // Die Logik steht in dienste/energie.js (wie in der Sitzung, dienste/Energie.qml). Prozesse nur mit Argumentlisten.
 Scope {
     id: root
@@ -29,6 +31,11 @@ Scope {
     readonly property bool akkuLeer: _akkuUhrzeit.length > 0
     // Sicher im Akkubetrieb: Dann zählt die Zeit bis zum Ausschalten
     readonly property bool zaehlt: EnergieLogik.loginAusschaltenAktiv(_geraet.akku)
+    // Die Vorwarnung vor dem Ausschalten läuft (der Bildschirm muss dann an sein, Bildschirm.qml)
+    readonly property bool vorwarnungLaeuft: _laeuft
+
+    // Der Deckel wurde aufgeklappt (auch wenn das Zuklappen davor in einer Lücke lag)
+    signal aufgeklappt
 
     // --- intern ---
 
@@ -39,15 +46,27 @@ Scope {
     property var _vorwarnung: EnergieLogik.vorwarnung()
     property int _pruefNummer: 0
     property bool _faehrtHerunter: false
+    // Zuletzt bekannter Deckel { zustand, seit } (null: noch keiner), wie in dienste/Geraet.qml
+    property var _deckelVorher: null
 
     readonly property bool _laeuft: _vorwarnung.phase === "laeuft"
     readonly property string _uhrzeit: _laeuft && _vorwarnung.um > 0 ? Qt.formatDateTime(new Date(_vorwarnung.um), "HH:mm") : ""
     readonly property string _akkuUhrzeit: _geraet.ausschaltenUm > 0 ? Qt.formatDateTime(new Date(_geraet.ausschaltenUm), "HH:mm") : ""
 
     function _lesen(): void {
-        const daten = GeraetLogik.lesen(root._geraetText, Date.now());
+        const jetzt = Date.now();
+        const daten = GeraetLogik.lesen(root._geraetText, jetzt);
         if (JSON.stringify(daten) !== JSON.stringify(root._geraet))
             root._geraet = daten;
+        const aktion = GeraetLogik.deckelAktion(root._deckelVorher, daten.deckel, jetzt);
+        if (daten.deckel.vorhanden && daten.deckel.zustand !== "")
+            root._deckelVorher = {
+                zustand: daten.deckel.zustand,
+                seit: daten.deckel.seit
+            };
+        // «sperren» heisst hier: wieder offen, das Zuklappen davor fiel in eine Lücke
+        if (aktion === "aufklappen" || aktion === "sperren")
+            root.aufgeklappt();
     }
 
     function _pruefen(): void {

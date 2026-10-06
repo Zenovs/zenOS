@@ -30,6 +30,13 @@ ShellRoot {
         id: leerlauf
     }
 
+    // Nach 1 Min. ohne Eingabe Bildschirm aus; die Eingabe, die weckt, wird verworfen
+    Bildschirm {
+        id: bildschirm
+
+        leerlauf: leerlauf
+    }
+
     Variants {
         model: Quickshell.screens
 
@@ -40,6 +47,7 @@ ShellRoot {
             konten: kontoliste
             ablauf: anmeldung
             leerlauf: leerlauf
+            bildschirm: bildschirm
             updateLaeuft: root.updateLaeuft
             // Formular und Tastaturfokus auf dem ersten Bildschirm
             mitFormular: Quickshell.screens.length === 0 || Quickshell.screens[0] === modelData

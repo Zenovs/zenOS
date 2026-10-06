@@ -14,7 +14,7 @@ import "energie.js" as EnergieLogik
 // - Die automatische Sperre lässt sich nicht abschalten (1–15 Minuten). Ein Idle-Hemmer (Video) darf sie
 //   höchstens sperreTrotzHemmerMinuten aufhalten.
 // - Dunkel heisst gesperrt: Der Bildschirm geht nur gesperrt aus, 1–10 Minuten nach der Sperre
-//   (zenos-bildschirm sperrt immer zuerst).
+//   (zenos-bildschirm sperrt immer zuerst). Am Login-Bildschirm, wo niemand angemeldet ist, nach 1 Minute ohne Eingabe.
 // - Ausschalten frühestens 30 Minuten nach der Sperre und immer mit 60 s Vorwarnung.
 // Die Werte stehen eingefroren in modi/zustandslogik.js (dort auch getestet), die Logik in energie.js.
 Singleton {
@@ -32,6 +32,7 @@ Singleton {
     readonly property int ausschaltenMinutenMax: Logik.LEITPLANKEN.ausschaltenMinutenMax
     readonly property int vorwarnungSekunden: Logik.LEITPLANKEN.vorwarnungSekunden
     readonly property int loginAusschaltenMinuten: Logik.LEITPLANKEN.loginAusschaltenMinuten
+    readonly property int loginBildschirmAusMinuten: Logik.LEITPLANKEN.loginBildschirmAusMinuten
     readonly property int akkuAusschaltenProzent: Logik.LEITPLANKEN.akkuAusschaltenProzent
 
     // Inhalte gerade verbergen? (Bildschirm wird geteilt)

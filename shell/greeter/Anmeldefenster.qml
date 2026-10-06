@@ -8,17 +8,49 @@ import qs.komponenten
 
 // Ein Bildschirm des Logins, gestaltet wie der Sperrbildschirm in Entwurf 2: grosse Uhrzeit, Datum, Konto,
 // Formular, unten die Bildmarke. Formular, Knöpfe und Tastaturfokus nur auf einem Bildschirm.
+// Ist der Bildschirm aus (Bildschirm.qml), weckt die erste Taste, der erste Klick oder die erste Berührung nur: Solange
+// die Wecktaste aussteht, hat der Wecker den Tastaturfokus und der Klickfang liegt über allem. Beide verwerfen genau
+// eine Eingabe, dann geht der Fokus dorthin zurück, wo er war. Was im Formular steht, bleibt unverändert.
 PanelWindow {
     id: root
 
     required property Konten konten
     required property Ablauf ablauf
     required property Leerlauf leerlauf
+    required property Bildschirm bildschirm
     property bool mitFormular: true
     // Ein Update aus dem Kanal läuft gerade: ruhige Zeile über dem Formular
     property bool updateLaeuft: false
 
     readonly property var _konto: konten.liste.length === 1 ? konten.liste[0] : null
+
+    // Wecktaste: Fokus auf den Wecker, solange sie aussteht, danach zurück (sonst ins Formular). Geprüft wird «focus»,
+    // nicht «activeFocus»: Auch wenn das Fenster gerade keinen Tastaturfokus hat, bleibt der Wecker nie hängen.
+    function _weckerFokus(): void {
+        if (!root.mitFormular)
+            return;
+        if (!root.bildschirm.wecktasteOffen) {
+            root._weckerZurueck();
+            return;
+        }
+        if (!wecker.focus) {
+            const vorher = wecker.Window.activeFocusItem;
+            wecker.vorher = vorher !== wecker ? vorher : null;
+            wecker.forceActiveFocus();
+        }
+    }
+
+    function _weckerZurueck(): void {
+        if (!wecker.focus)
+            return;
+        const ziel = wecker.vorher;
+        wecker.vorher = null;
+        wecker.focus = false;
+        if (ziel !== null && ziel.visible && ziel.enabled)
+            ziel.forceActiveFocus();
+        else
+            formular.fokussieren();
+    }
 
     anchors.top: true
     anchors.bottom: true
@@ -226,5 +258,47 @@ PanelWindow {
         anchors.bottomMargin: Theme.a5
     }
 
-    Component.onCompleted: if (mitFormular) Qt.callLater(() => formular.fokussieren())
+    // Hält den Tastaturfokus, solange die Wecktaste aussteht, und verwirft die erste Taste (auch Return, Escape, Tab).
+    // Ihr Loslassen landet danach im Formular und bewirkt dort nichts.
+    Item {
+        id: wecker
+
+        // Wo der Fokus vorher war (zurück nach der Wecktaste)
+        property Item vorher: null
+
+        Keys.onPressed: event => {
+            event.accepted = true;
+            root.bildschirm.verworfen("Taste");
+            // Spätestens jetzt zurück: nie mehr als eine Taste
+            root._weckerZurueck();
+        }
+    }
+
+    Connections {
+        target: root.bildschirm
+
+        function onWecktasteOffenChanged(): void {
+            root._weckerFokus();
+        }
+    }
+
+    // Klickfang über allem: Der Klick oder die Berührung, die den dunklen Bildschirm weckt, löst nichts aus (auch nicht
+    // «Anmelden», «Neustart» oder «Ausschalten»). Nur solange die Wecktaste aussteht, sonst gehen Klicks durch.
+    MouseArea {
+        id: klickfang
+
+        anchors.fill: parent
+        z: 10
+        enabled: root.bildschirm.wecktasteOffen || klickfang.pressed
+        acceptedButtons: Qt.AllButtons
+        onPressed: root.bildschirm.verworfen("Klick")
+    }
+
+    Component.onCompleted: {
+        if (mitFormular)
+            Qt.callLater(() => {
+                formular.fokussieren();
+                root._weckerFokus();
+            });
+    }
 }
