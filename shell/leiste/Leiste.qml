@@ -243,6 +243,12 @@ Scope {
             if (Oberflaeche.einstellungenOffen)
                 root.menueSchliessen();
         }
+        // Die Übersicht (Overlay) nimmt die Tastatur: Ein offenes Menü, etwa mit dem WLAN-Passwortfeld, bliebe sonst
+        // darunter offen, und Getipptes landete im Filter der Übersicht
+        function onUebersichtOffenChanged(): void {
+            if (Oberflaeche.uebersichtOffen)
+                root.menueSchliessen();
+        }
         function onSperrenAngefordert(): void {
             root.menueSchliessen();
         }
@@ -252,7 +258,7 @@ Scope {
         }
     }
 
-    // zenos-ipc leiste menue system|raster|wlan|luefter · zenos-ipc leiste schliessen
+    // zenos-ipc leiste menue system|raster|wlan|luefter · zenos-ipc leiste schliessen · zenos-ipc leiste status
     // (für Tests und eigene Tastenkürzel; öffnet auf dem ersten Bildschirm; «wlan» bzw. «luefter» ist das System-Menü
     // mit aufgeklappter WLAN-Liste bzw. Wahl des Lüfters)
     IpcHandler {
@@ -276,6 +282,11 @@ Scope {
 
         function schliessen(): void {
             root.menueSchliessen();
+        }
+
+        // Offenes Menü: "system", "raster" oder "zu" (für Tests)
+        function status(): string {
+            return root.menue !== "" ? root.menue : "zu";
         }
     }
 }

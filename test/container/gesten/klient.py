@@ -5,6 +5,8 @@
   klient.py schreiben [SOCKET]       verbinden und etwas schicken: «EPIPE» (richtig, der Dienst liest nie),
                                      sonst «gesendet»
   klient.py viele N [SOCKET]         N Klienten nacheinander; dann je Klient «offen» oder «zu» (vom Dienst getrennt)
+  klient.py flut SEKUNDEN [SOCKET]   so lange immer neue Klienten, je 8 zugleich offen (wie ein Angreifer, der die
+                                     Oberfläche verdrängen will); am Ende die Zahl der Verbindungen
 """
 
 import os
@@ -71,6 +73,23 @@ def many(count, path):
     return 0
 
 
+def flood(seconds, path):
+    clients = []
+    count = 0
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        try:
+            clients.append(connect(path))
+            count += 1
+        except OSError:
+            time.sleep(0.01)
+        while len(clients) > 8:
+            clients.pop(0).close()
+        time.sleep(0.01)
+    print(count)
+    return 0
+
+
 def main(argv):
     if len(argv) < 2:
         print(__doc__.strip(), file=sys.stderr)
@@ -82,6 +101,8 @@ def main(argv):
         return try_write(argv[2] if len(argv) > 2 else SOCKET_PATH)
     if mode == "viele" and len(argv) >= 3:
         return many(int(argv[2]), argv[3] if len(argv) > 3 else SOCKET_PATH)
+    if mode == "flut" and len(argv) >= 3:
+        return flood(float(argv[2]), argv[3] if len(argv) > 3 else SOCKET_PATH)
     print(__doc__.strip(), file=sys.stderr)
     return 2
 

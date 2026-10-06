@@ -24,10 +24,12 @@ UMask=0077
 SyslogIdentifier=zenos-gesten
 
 # Härtung: eigener Benutzer ohne weitere Gruppen und ohne Capabilities, von den Geräten nur Eingabegeräte und nur
-# lesend (welche, regeln die Dateirechte: nur reine Touchpads gehören der Gruppe zenos-gesten), System nur lesbar.
-# Geschrieben wird nur /run/zenos-gesten. Kein Netz: nur Unix-Sockets und netlink. Kein PrivateNetwork: udev meldet
-# neue Geräte über netlink nur im Netz-Namensraum des Systems. Mit PrivateNetwork fände der Dienst ein Touchpad, das
-# nach dem Aufwachen neu erscheint, nicht wieder (im Testcontainer belegt).
+# lesend (welche, regeln die Dateirechte und die Prüfung im Programm: nur reine Touchpads), System nur lesbar.
+# Geschrieben wird nur /run/zenos-gesten, /dev/shm ist zu. Kein Netz: nur Unix-Sockets und netlink.
+# Kein PrivateNetwork: udev meldet neue Geräte über netlink nur im Netz-Namensraum des Systems. Mit PrivateNetwork
+# fände der Dienst ein Touchpad, das nach dem Aufwachen neu erscheint, nicht wieder (im Testcontainer belegt).
+# Eigener Benutzer-Namensraum (PrivateUsers): «identity» statt «yes», denn mit «yes» sähe SO_PEERCRED jeden anderen
+# Benutzer als nobody, und der Dienst könnte nicht prüfen, ob am Socket der Benutzer von seat0 liest.
 CapabilityBoundingSet=
 AmbientCapabilities=
 NoNewPrivileges=yes
@@ -37,6 +39,8 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 PrivateIPC=yes
+PrivateUsers=identity
+InaccessiblePaths=-/dev/shm -/var/log
 IPAddressDeny=any
 RestrictAddressFamilies=AF_UNIX AF_NETLINK
 ProtectKernelTunables=yes

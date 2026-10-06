@@ -140,10 +140,10 @@ selbst endet in v0.3.1 auch bei Fehlern mit 0; `zenos-ipc` wertet die Ausgabe au
 | `raster` | `setzen(id)`, `aktiv` |
 | `hinweis` | `zeigen(text)`, `warnen(text)` |
 | `einrichtung` | `oeffnen`, `apps`, `schliessen`, `status` |
-| `leiste` | `menue(system\|raster\|wlan)` (`wlan`: System-Menü mit aufgeklappter WLAN-Liste), `schliessen` |
+| `leiste` | `menue(system\|raster\|wlan\|luefter)` (`wlan`: System-Menü mit aufgeklappter WLAN-Liste, `luefter`: mit Wahl des Lüfters), `schliessen`, `status` (`system`/`raster`/`zu`) |
 | `polkit` | `status` (`offen`/`zu`), `agent` (`angemeldet`/`nicht angemeldet`), `abbrechen` |
 | `appleiste` | `zeigen` (auf dem Bildschirm des aktiven Fensters, nur wenn sie erscheinen darf), `verbergen`, `status` (`offen`/`zu`), `apps` (eine Zeile pro App: appId, Anzahl Fenster, `aktiv`) |
-| `uebersicht` | `umschalten`, `oeffnen`, `schliessen` (Fensterübersicht; öffnet nie während Sperre und Einrichtung), `status` (`offen`/`zu`, `zu` erst nach dem Ausblenden), `fenster` (eine Zeile je Kachel: Index, appId, «Titel» bzw. bei Freigabe «Titel verborgen», dazu `aktiv`, `minimiert`, `vollbild`, `gewaehlt`) |
+| `uebersicht` | `umschalten`, `oeffnen`, `schliessen` (Fensterübersicht; öffnet nie während Sperre, Einrichtung und polkit-Dialog), `status` (`offen`/`zu`, `zu` erst nach dem Ausblenden), `fenster` (eine Zeile je Kachel: Index, appId, «Titel» bzw. bei Freigabe «Titel verborgen», dazu `aktiv`, `minimiert`, `vollbild`, `gewaehlt`) |
 | `schreibtisch` | `umschalten` (Schreibtisch zeigen bzw. die gemerkten Fenster zurück; nicht während Sperre und Einrichtung), `status` (`frei`/`normal`) |
 | `gesten` | `status` (`verbunden`/`getrennt`: liest die Oberfläche den Dienst `zenos-gesten`?) |
 

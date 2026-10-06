@@ -412,11 +412,12 @@ am ehesten ruckeln). Kommen oder gehen Fenster, ordnen sich die Kacheln ohne Ani
   dort schliesst. Je Bildschirm die eigenen Fenster wie bei Mission Control kommt «Danach».
 - Fenster der Oberfläche (Einstellungen) fehlen wie in der App-Leiste; für sie gibt es Super+Komma.
 - Wechselt das aktive Fenster von aussen (Alt+Tab, ein neues Fenster), schliesst die Übersicht.
-- **Eine Fläche zur Zeit:** Öffnet die Übersicht, schliessen Befehlsfeld, Modus- und Zustand-Wahl und Zentrale.
-  Öffnet eine von ihnen, ein Menü der Leiste oder die Einstellungen, schliesst die Übersicht (Super+Leertaste bei
-  offener Übersicht führt also direkt ins Befehlsfeld). Die App-Leiste erscheint nicht, die Mitteilungskarten
-  treten zurück.
-- Während Sperre und Einrichtung öffnet sie nie; das Sperren schliesst sie, nach dem Entsperren ist sie zu.
+- **Eine Fläche zur Zeit:** Öffnet die Übersicht, schliessen Befehlsfeld, Modus- und Zustand-Wahl, Zentrale und
+  ein offenes Menü der Leiste. Öffnet eine von ihnen, ein Menü der Leiste oder die Einstellungen, schliesst die
+  Übersicht (Super+Leertaste bei offener Übersicht führt also direkt ins Befehlsfeld). Die App-Leiste erscheint
+  nicht, die Mitteilungskarten treten zurück.
+- Während Sperre, Einrichtung und polkit-Dialog öffnet sie nie; das Sperren und eine Passwortfrage von polkit
+  schliessen sie. Nach dem Ausblenden ist der Filter leer.
 
 ### Schreibtisch (Super+H)
 

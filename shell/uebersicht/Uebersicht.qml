@@ -99,9 +99,13 @@ Scope {
         if (offen)
             _aufbauen();
     }
+    // Ausgeblendet: Kacheln weg und Filter leer. Was getippt war, bleibt nicht bis zum nächsten Öffnen stehen.
     onSichtbarChanged: {
-        if (!sichtbar)
-            _aufgebaut = false;
+        if (sichtbar)
+            return;
+        _aufgebaut = false;
+        filterText = "";
+        geleert();
     }
     onGezeigtChanged: {
         if (auswahl >= gezeigt.length)

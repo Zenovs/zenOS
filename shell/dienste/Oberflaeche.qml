@@ -33,10 +33,14 @@ Singleton {
     property string leisteMenueBildschirm: ""
     // true von Beginn der Sperre bis zum Entsperren; setzt nur sperre/Sperre.qml
     property bool gesperrt: false
+    // true, solange der polkit-Dialog nach dem Passwort fragt; setzt nur polkit/Polkit.qml. Dann öffnet die Übersicht
+    // nicht: Sie nähme dem Dialog die Tastatur, und der Rest des Passworts stünde lesbar im Filter.
+    property bool polkitOffen: false
     // Fensterübersicht (Super+Tab). Nur über uebersichtOeffnen(), uebersichtSchliessen() und uebersichtUmschalten()
-    // setzen. Es ist immer nur eine Fläche offen: Öffnet die Übersicht, weichen Befehlsfeld, Modus- und Zustand-Wahl
-    // und Zentrale; öffnet eine von ihnen, ein Menü der Leiste oder die Einstellungen, schliesst die Übersicht. Sperre
-    // und Einrichtung schliessen sie ebenfalls.
+    // setzen. Es ist immer nur eine Fläche offen: Öffnet die Übersicht, weichen Befehlsfeld, Modus- und Zustand-Wahl,
+    // Zentrale und Menüs der Leiste (Leiste.qml); öffnet eine von ihnen, ein Menü der Leiste oder die Einstellungen,
+    // schliesst die Übersicht. Sperre, Einrichtung und der polkit-Dialog schliessen sie ebenfalls, und solange einer
+    // von ihnen offen ist, öffnet sie nicht.
     property bool uebersichtOffen: false
 
     // Kurzer Hinweis (Toast), z. B. «Farbe kopiert». symbol: Name aus qs.komponenten/Symbol
@@ -79,9 +83,9 @@ Singleton {
     }
 
     // Fensterübersicht öffnen (Super+Tab, Drei-Finger-Wischen, Befehlsfeld, IPC). Während der Sperre und der
-    // Einrichtung öffnet sie nicht (wie befehlsfeldApps()).
+    // Einrichtung öffnet sie nicht (wie befehlsfeldApps()), ebenso wenig, solange polkit nach dem Passwort fragt.
     function uebersichtOeffnen(): void {
-        if (gesperrt || einrichtungOffen)
+        if (gesperrt || einrichtungOffen || polkitOffen)
             return;
         befehlsfeldOffen = false;
         modusWahlOffen = false;
@@ -101,7 +105,7 @@ Singleton {
             uebersichtOeffnen();
     }
 
-    // Eine Fläche zur Zeit: Andere Flächen, Sperre und Einrichtung schliessen die Übersicht
+    // Eine Fläche zur Zeit: Andere Flächen, Sperre, Einrichtung und polkit schliessen die Übersicht
     onBefehlsfeldOffenChanged: {
         if (befehlsfeldOffen)
             uebersichtSchliessen();
@@ -132,6 +136,10 @@ Singleton {
     }
     onGesperrtChanged: {
         if (gesperrt)
+            uebersichtSchliessen();
+    }
+    onPolkitOffenChanged: {
+        if (polkitOffen)
             uebersichtSchliessen();
     }
     onSperrenAngefordert: uebersichtSchliessen()

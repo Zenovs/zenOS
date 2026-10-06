@@ -21,6 +21,7 @@ import re
 import shutil
 import socket
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -176,7 +177,7 @@ class HandlerTest(unittest.TestCase):
                 [("bewegung", 0.0, 12.0)] * 10 + [("ende", True), ("weg", "event5")]:
             h.handle(ereignis)
         self.assertEqual(gesendet, ["oben", "unten"])
-        self.assertEqual(log.zeilen, [("info", "Touchpad event5 dazu"), ("info", "event7 dazu, ohne Gesten"),
+        self.assertEqual(log.zeilen, [("info", "Touchpad event5 dazu"), ("info", "event7 dazu, ohne Gesten (geschlossen)"),
                                       ("info", "event5 weg")])
         self.assertEqual(h.devices, {"event7": False})
 
@@ -213,10 +214,101 @@ class RiegelTest(unittest.TestCase):
         # _open gibt -EACCES für eine gewöhnliche Datei und -ENOENT für einen fehlenden Pfad, nie eine Ausnahme
         t = G.Touchpads.__new__(G.Touchpads)
         t.allowed_gid = os.getegid()
+        t.log = StilleLog()
         with tempfile.NamedTemporaryFile() as datei:
             self.assertEqual(t._open(datei.name.encode(), os.O_RDWR, None), -errno.EACCES)
         self.assertEqual(t._open(b"/gibt/es/nicht", os.O_RDWR, None), -errno.ENOENT)
         self.assertEqual(t._open(None, 0, None), -errno.EACCES)
+
+
+def bits(*nummern):
+    return sum(1 << n for n in nummern)
+
+
+# Fähigkeiten wie vom Kernel (EVIOCGBIT): ein reines Touchpad wie am Gerät, eine Tastatur, ein Touchpad mit Tasten
+TOUCHPAD_KEYS = bits(0x110, G.BTN_TOOL_FINGER, 0x148, 0x14A, 0x14D, G.BTN_TOOL_TRIPLETAP, 0x14F)
+TOUCHPAD_ABS = bits(0x00, 0x01, G.ABS_MT_SLOT, 0x35, 0x36, 0x37, 0x39)
+TASTATUR_KEYS = bits(*range(1, 59))
+
+
+class FaehigkeitenTest(unittest.TestCase):
+    """Zweite Schicht neben der udev-Regel: Was der Kernel über den geöffneten Knoten sagt (Befund: Tastaturen hingen
+    nur an der Gruppe des Knotens)."""
+
+    def test_wie_udev_input_id(self):
+        # ID_INPUT_KEY in udev: jedes Bit unter BTN_MISC und in den Blöcken KEY_OK…BTN_DPAD_UP, KEY_ALS_TOGGLE…
+        # BTN_TRIGGER_HAPPY
+        erwartet = [n for n in range(G.KEY_CNT) if n < 0x100 or 0x160 <= n < 0x220 or 0x230 <= n < 0x2C0]
+        self.assertEqual([n for n in range(G.KEY_CNT) if G.KEY_MASK >> n & 1], erwartet)
+        self.assertEqual((G.BTN_TOOL_FINGER, G.BTN_TOOL_TRIPLETAP, G.ABS_MT_SLOT), (325, 334, 47))
+
+    def test_nur_reines_touchpad(self):
+        self.assertTrue(G.touchpad_only(TOUCHPAD_KEYS, TOUCHPAD_ABS))
+        faelle = {
+            "Tastatur": (TASTATUR_KEYS, 0),
+            "Tastatur mit Touchpad-Achsen": (TASTATUR_KEYS | TOUCHPAD_KEYS, TOUCHPAD_ABS),
+            "Touchpad mit KEY_A": (TOUCHPAD_KEYS | bits(30), TOUCHPAD_ABS),
+            "Touchpad mit Lautstärke": (TOUCHPAD_KEYS | bits(115), TOUCHPAD_ABS),
+            "Touchpad mit KEY_RESERVED": (TOUCHPAD_KEYS | bits(0), TOUCHPAD_ABS),
+            "hoher Block KEY_OK": (TOUCHPAD_KEYS | bits(0x160), TOUCHPAD_ABS),
+            "hoher Block KEY_ALS_TOGGLE": (TOUCHPAD_KEYS | bits(0x230), TOUCHPAD_ABS),
+            "ohne Slots": (TOUCHPAD_KEYS, bits(0x00, 0x01)),
+            "ohne Finger": (TOUCHPAD_KEYS & ~bits(G.BTN_TOOL_FINGER), TOUCHPAD_ABS),
+            "Maus": (bits(0x110, 0x111, 0x112), 0),
+            "nichts": (0, 0),
+        }
+        for name, (tasten, achsen) in faelle.items():
+            self.assertFalse(G.touchpad_only(tasten, achsen), name)
+        # BTN_* ausserhalb der Tastenblöcke (Steuerkreuz, Joystick) sind keine Tasten
+        self.assertTrue(G.touchpad_only(TOUCHPAD_KEYS | bits(0x220, 0x2C0), TOUCHPAD_ABS))
+
+    def test_nur_lesende_anfragen(self):
+        # EVIOCGBIT(EV_KEY, 96) und EVIOCGBIT(EV_ABS, 8) wie in linux/input.h
+        self.assertEqual(G._ioc_read(0x20 + G.EV_KEY, 96), 0x80604521)
+        self.assertEqual(G._ioc_read(0x20 + G.EV_ABS, 8), 0x80084523)
+        anfragen = []
+
+        def ioctl(fd, anfrage, puffer, veraendern):
+            anfragen.append((fd, anfrage, len(puffer), veraendern))
+            breite = struct.calcsize("L")
+            wert = TASTATUR_KEYS if anfrage & 0xFF == 0x21 else TOUCHPAD_ABS
+            woerter = [(wert >> (8 * breite * i)) & ((1 << 8 * breite) - 1) for i in range(len(puffer) // breite)]
+            puffer[:] = struct.pack(f"@{len(woerter)}L", *woerter)
+            return len(puffer)
+
+        self.assertEqual(G.read_capabilities(7, ioctl), (TASTATUR_KEYS, TOUCHPAD_ABS))
+        self.assertEqual(anfragen, [(7, 0x80604521, 96, True), (7, 0x80084523, 8, True)])
+        self.assertTrue(all(a >> 30 == 2 for _, a, _, _ in anfragen), "nur _IOC_READ")
+
+    def test_bitmaske_aus_bytes(self):
+        breite = struct.calcsize("L")
+        daten = struct.pack(f"@{16 // breite}L", *([0] * (16 // breite - 1) + [1]))
+        self.assertEqual(G.bitmask_from_bytes(daten), 1 << (128 - 8 * breite))
+        self.assertEqual(G.bitmask_from_bytes(bytes(8)), 0)
+
+    def test_rueckruf_lehnt_tastatur_trotz_gruppe_ab(self):
+        t = G.Touchpads.__new__(G.Touchpads)
+        t.allowed_gid = os.getegid()
+        t.log = StilleLog()
+        with tempfile.NamedTemporaryFile() as datei, mock.patch.object(G, "node_allowed", return_value=True):
+            with mock.patch.object(G, "read_capabilities", return_value=(TASTATUR_KEYS, 0)):
+                self.assertEqual(t._open(datei.name.encode(), 0, None), -errno.EACCES)
+            self.assertEqual(len(t.log.zeilen), 1)
+            art, text = t.log.zeilen[0]
+            self.assertEqual(art, "fehler")
+            self.assertTrue(text.startswith(os.path.basename(datei.name) + " abgelehnt: kein reines Touchpad"), text)
+            with mock.patch.object(G, "read_capabilities", side_effect=OSError(errno.ENOTTY, "kein evdev")):
+                self.assertEqual(t._open(datei.name.encode(), 0, None), -errno.EACCES)
+            with mock.patch.object(G, "read_capabilities", return_value=(TOUCHPAD_KEYS, TOUCHPAD_ABS)):
+                fd = t._open(datei.name.encode(), 0, None)
+            self.assertGreater(fd, 2)
+            t._close(fd, None)
+        self.assertEqual(len(t.log.zeilen), 1)
+
+    def test_ohne_gesten_wird_geschlossen(self):
+        code = lesen(PROGRAMM)
+        self.assertIn("libinput_device_config_send_events_set_mode(device, SEND_EVENTS_DISABLED)", code)
+        self.assertEqual(G.SEND_EVENTS_DISABLED, 1)
 
 
 # --- Socket -------------------------------------------------------------------------
@@ -228,7 +320,9 @@ class SocketTest(unittest.TestCase):
         self.ordner = tempfile.mkdtemp(prefix="zg.", dir="/tmp")
         self.pfad = os.path.join(self.ordner, "gesten.sock")
         self.weg = []
-        self.b = G.Broadcaster(self.pfad, max_clients=3, on_drop=self.weg.append)
+        # Hier verbindet der Test selbst (als root oder als Benutzer): seine uid ist erlaubt, je uid bis zu 3
+        self.b = G.Broadcaster(self.pfad, max_clients=3, per_uid=3, on_drop=self.weg.append,
+                               allow=lambda uid: uid == os.geteuid())
         self.b.open()
         self.klienten = []
 
@@ -271,7 +365,7 @@ class SocketTest(unittest.TestCase):
         with self.assertRaises(BrokenPipeError):
             a.send(b"oben\n", socket.MSG_NOSIGNAL)
 
-    def test_aeltester_fliegt(self):
+    def test_aeltester_derselben_uid_fliegt(self):
         a, b, c = self.klient(), self.klient(), self.klient()
         erster = self.b.clients[0].fileno()
         d = self.klient()
@@ -305,6 +399,61 @@ class SocketTest(unittest.TestCase):
         self.assertEqual(self.weg, [fd])
         self.assertEqual(a.recv(8), b"")
 
+    def test_uid_vom_kernel(self):
+        self.klient()
+        self.assertEqual(G.peer_uid(self.b.clients[0]), os.geteuid())
+        self.assertEqual(self.b.owners[self.b.clients[0]], os.geteuid())
+
+    def test_fremde_werden_sofort_getrennt(self):
+        # Befund: Jeder lokale Benutzer konnte mitlesen und mit 8 Verbindungen die Oberfläche verdrängen
+        self.b.allow = lambda uid: False
+        a = self.klient()
+        self.assertEqual(self.b.clients, [])
+        self.assertEqual(a.recv(8), b"", "getrennt, ohne je etwas zu bekommen")
+        self.b.allow = lambda uid: (_ for _ in ()).throw(OSError("kaputt"))
+        self.assertEqual(self.klient().recv(8), b"", "im Zweifel nicht annehmen")
+        self.b.get_uid = lambda conn: (_ for _ in ()).throw(OSError("kaputt"))
+        self.b.allow = lambda uid: True
+        self.assertEqual(self.klient().recv(8), b"")
+        self.assertEqual(self.b.clients, [])
+
+    def test_verdraengen_nur_innerhalb_derselben_uid(self):
+        uids = iter([1000, 1000, 2000, 2000, 1000, 2000])
+        self.b.per_uid = 2
+        self.b.get_uid = lambda conn: next(uids)
+        self.b.allow = lambda uid: True
+        a, b, c = self.klient(), self.klient(), self.klient()
+        self.assertEqual(sorted(self.b.owners.values()), [1000, 1000, 2000])
+        # voll: Ein zweiter von 2000 verdrängt niemanden von 1000, er geht selbst
+        d = self.klient()
+        self.assertEqual(d.recv(8), b"")
+        self.assertEqual(len(self.b.clients), 3)
+        # ein dritter von 1000 verdrängt den ältesten von 1000
+        e = self.klient()
+        self.assertEqual(a.recv(8), b"", "der älteste von 1000 ist getrennt")
+        self.b.send("oben")
+        for k in (b, c, e):
+            self.assertEqual(k.recv(8), b"oben\n")
+        # 2000 hat nur einen, die Plätze sind voll: Der Neue geht wieder, c bleibt
+        f = self.klient()
+        self.assertEqual(f.recv(8), b"")
+        self.b.send("unten")
+        self.assertEqual(c.recv(8), b"unten\n")
+        self.assertEqual(sorted(self.b.owners.values()), [1000, 1000, 2000])
+
+    def test_flut_eines_anderen_trifft_die_oberflaeche_nicht(self):
+        # Wie im Befund: ein fremder Benutzer verbindet immer wieder; die Oberfläche bekommt jede Geste
+        eigene = os.geteuid()
+        self.b.max_clients, self.b.per_uid = 8, 2
+        oberflaeche = self.klient()
+        self.b.get_uid = lambda conn: 65534
+        self.b.allow = lambda uid: G.peer_allowed(uid, eigene)
+        for _ in range(50):
+            self.klient()
+        self.assertEqual(len(self.b.clients), 1)
+        self.b.send("oben")
+        self.assertEqual(oberflaeche.recv(8), b"oben\n")
+
     def test_alter_socket_wird_ersetzt(self):
         self.b.close()
         with open(self.pfad, "w", encoding="utf-8"):
@@ -313,6 +462,50 @@ class SocketTest(unittest.TestCase):
         b.open()
         self.assertTrue(stat.S_ISSOCK(os.stat(self.pfad).st_mode))
         b.close()
+
+
+class LeserTest(unittest.TestCase):
+    """Wer darf die Gesten lesen? Der Benutzer an seat0, sonst gewöhnliche Benutzer, nie Dienste oder nobody."""
+
+    def test_aktiver_benutzer(self):
+        self.assertTrue(G.peer_allowed(1000, 1000))
+        for uid in (0, 65534, 1001, 999):
+            self.assertFalse(G.peer_allowed(uid, 1000), uid)
+
+    def test_niemand_aktiv(self):
+        for uid in (1000, 1001, 60000):
+            self.assertTrue(G.peer_allowed(uid, None), uid)
+        # root, Systemdienste, systemd-homed/DynamicUser (60001 bis 65519), nobody, Container-Bereiche
+        for uid in (0, 1, 102, 999, 60001, 61184, 65519, 65534, 524288):
+            self.assertFalse(G.peer_allowed(uid, None), uid)
+
+    def test_aktiv_aus_libsystemd(self):
+        class Lib:
+            def __init__(self, ergebnis, uid=0):
+                self.ergebnis, self.uid, self.aufrufe = ergebnis, uid, []
+
+            def sd_seat_get_active(self, sitz, sitzung, zeiger):
+                self.aufrufe.append((sitz, sitzung))
+                zeiger._obj.value = self.uid
+                return self.ergebnis
+
+        lib = Lib(0, 1000)
+        self.assertEqual(G.active_seat_uid(lib=lib), 1000)
+        self.assertEqual(lib.aufrufe, [(b"seat0", None)])
+        self.assertIsNone(G.active_seat_uid(lib=Lib(-errno.ENODATA)), "niemand aktiv")
+        self.assertIsNone(G.active_seat_uid(lib=Lib(-errno.ENXIO)), "seat0 unbekannt")
+        self.assertIsNone(G.active_seat_uid(lib=object()), "ohne libsystemd")
+
+    def test_dienst_nutzt_die_sitzregel(self):
+        b = G.Broadcaster("/gibt/es/nicht")
+        self.assertIs(b.allow, G.seat_policy)
+        self.assertIs(b.get_uid, G.peer_uid)
+        self.assertEqual((b.max_clients, b.per_uid), (8, 2))
+        with mock.patch.object(G, "active_seat_uid", return_value=None):
+            self.assertTrue(G.seat_policy(1000))
+            self.assertFalse(G.seat_policy(65534))
+        with mock.patch.object(G, "active_seat_uid", return_value=1001):
+            self.assertFalse(G.seat_policy(1000))
 
 
 # --- Ablauf und Aufruf --------------------------------------------------------------
@@ -359,9 +552,11 @@ class AufrufTest(unittest.TestCase):
         self.assertIn("Gruppe zenos-gesten fehlt", log.zeilen[0][1])
 
     def test_kein_grab_kein_schreiben_im_code(self):
-        # Kein ioctl überhaupt (also kein EVIOCGRAB), Geräte nur lesend, und von Klienten wird nie gelesen
+        # ioctl nur an einer Stelle und nur lesend (EVIOCGBIT über _ioc_read), also kein EVIOCGRAB; Geräte nur
+        # lesend, und von Klienten wird nie gelesen
         code = lesen(PROGRAMM)
-        self.assertNotRegex(code, r"\bioctl\b|import fcntl|0x40044590")
+        self.assertNotRegex(code, r"0x40044590|EVIOCS|_IOW|_ioc_write")
+        self.assertEqual(re.findall(r"\bioctl\(.*", code), ["ioctl(fd, _ioc_read(0x20 + event_type, len(buffer)), buffer, True)"])
         self.assertNotIn("O_RDWR", code)
         self.assertEqual(code.count("os.O_RDONLY"), 1)
         self.assertIn("os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC | os.O_NOCTTY)", code)
@@ -417,6 +612,30 @@ class PruefenTest(unittest.TestCase):
         self.assertIn("event2 hat Tasten", b[0][1])
         mit_tasten = self.touchpad("event6", ID_INPUT_KEY="1")
         self.assertEqual(self.befunde([mit_tasten])[0][0], "fehler")
+
+    def test_wie_regel_und_modul(self):
+        # Befund: «0» galt hier als nicht gesetzt, in Regel und Modul aber als gesetzt (jeder nicht leere Wert)
+        for schluessel in ("ID_INPUT_KEY", "ID_INPUT_KEYBOARD"):
+            frei = self.touchpad(gid=self.INPUT, modus=0o660, **{schluessel: "0"})
+            self.assertEqual(self.befunde([frei])[0][0], "hinweis", schluessel)
+            self.assertIn("hat auch Tasten", self.befunde([frei])[0][1])
+            self.assertEqual(self.befunde([self.touchpad(**{schluessel: "0"})])[0][0], "fehler", schluessel)
+        # Touchpad nur bei genau «1»
+        for wert in ("0", "true", "yes", ""):
+            b = self.befunde([self.geraet("event5", gid=self.INPUT, modus=0o660, ID_INPUT_TOUCHPAD=wert)])
+            self.assertEqual(b[0], ("hinweis", "Kein reines Touchpad: kein Wischen mit drei Fingern, Super+Tab geht "
+                                               "immer"), wert)
+            self.assertEqual(self.befunde([self.geraet("event5", ID_INPUT_TOUCHPAD=wert)])[0][0], "fehler", wert)
+        self.assertIn("ENV{ID_INPUT_TOUCHPAD}!=\"1\"", lesen(REGEL))
+        self.assertIn("ENV{ID_INPUT_KEY}==\"?*\"", lesen(REGEL))
+        self.assertIn("grep -qx 'ID_INPUT_TOUCHPAD=1'", lesen(MODUL))
+        self.assertIn("grep -qE '^ID_INPUT_(KEY|KEYBOARD)=.'", lesen(MODUL))
+
+    def test_tasten_laut_kernel(self):
+        # Meldet der Kernel eine Taste, zählt das wie ID_INPUT_KEY, auch wenn udev es (etwa per hwdb) anders sieht
+        mit_taste = self.touchpad(tasten="e520 10000 0 0 0 40000000")  # dazu KEY_A (30)
+        self.assertEqual(self.befunde([mit_taste])[0][0], "fehler")
+        self.assertIn("hat Tasten", self.befunde([mit_taste])[0][1])
 
     def test_kein_touchpad_in_der_gruppe(self):
         maus = self.geraet("event3", ID_INPUT="1", ID_INPUT_MOUSE="1")
@@ -537,6 +756,9 @@ class EinheitTest(unittest.TestCase):
                                  ("UMask", "0077")):
             self.assertEqual(self.eins(schluessel), wert, schluessel)
         self.assertEqual(self.s["SystemCallFilter"], ["@system-service", "~@privileged @resources"])
+        # identity, nicht yes: Mit yes sähe SO_PEERCRED jeden anderen Benutzer als nobody
+        self.assertEqual(self.eins("PrivateUsers"), "identity")
+        self.assertEqual(self.eins("InaccessiblePaths").split(), ["-/dev/shm", "-/var/log"])
 
     def test_start_und_ordner(self):
         self.assertEqual(self.eins("ExecStart"), "/usr/bin/python3 -I /opt/zenos/scripts/bin/zenos-gesten")
@@ -679,6 +901,19 @@ if WER == "getent":
     sys.exit(0)
 if WER == "systemctl" and argv[:2] == ["--quiet", "is-active"]:
     sys.exit(0 if datei("aktiv") is not None else 3)
+if WER == "systemctl" and argv[:1] == ["is-active"]:
+    zustand = datei("zustand") or ("active" if datei("aktiv") is not None else "inactive")
+    print(zustand)
+    sys.exit(0 if zustand == "active" else 3)
+if WER == "pgrep":
+    sys.exit(0 if datei("prozesse") is not None else 1)
+if WER == "pkill":
+    if argv[0] == "-" + (datei("prozesse") or "TERM").strip():
+        os.unlink(os.path.join(ORDNER, "prozesse"))
+    sys.exit(0)
+if WER in ("userdel", "groupdel") and datei(WER + ".fehler") is not None:
+    print(WER + ": user zenos-gesten is currently used by process 4242", file=sys.stderr)
+    sys.exit(8)
 if WER == "udevadm" and argv[:2] == ["control", "--ping"]:
     sys.exit(0 if datei("udev") is not None else 1)
 if WER == "find":
@@ -702,6 +937,8 @@ datei_entfernen() {
 source "$1"
 _GESTEN_AUS=$MODUL_TEST/gesten-aus
 shift
+# Wie install.sh: Ein Fehler bricht ab
+if [[ -n "${STRENG:-}" ]]; then set -Eeuo pipefail; trap 'echo "ABBRUCH $?" >&2' ERR; fi
 "$@"
 """
 
@@ -713,7 +950,7 @@ class ModulTest(unittest.TestCase):
         self.fake = os.path.join(self.w, "fake")
         os.makedirs(self.fake)
         for name in ("getent", "systemctl", "udevadm", "userdel", "groupdel", "systemd-sysusers", "stat", "find",
-                     "chgrp", "chmod"):
+                     "chgrp", "chmod", "pgrep", "pkill", "sleep"):
             pfad = os.path.join(self.fake, name)
             with open(pfad, "w", encoding="utf-8") as datei:
                 datei.write(ATTRAPPE % name)
@@ -757,7 +994,9 @@ class ModulTest(unittest.TestCase):
         befehle = [" ".join(e) for e in ereignisse if e[0] != "getent" and e[1:3] != ["--quiet", "is-active"]]
         # Kein «udevadm trigger --action=add»: ein zweites «add» sähe labwc womöglich als weiteres Gerät
         self.assertEqual(befehle, [
+            "systemctl is-active zenos-gesten.service",
             "systemctl stop zenos-gesten.service",
+            "pgrep -u zenos-gesten",
             "udevadm control --ping",
             "udevadm control --reload",
             "find /dev/input -maxdepth 1 -name event* -group zenos-gesten -print0",
@@ -771,6 +1010,55 @@ class ModulTest(unittest.TestCase):
         self.assertIn("aenderung: entfernt: /etc/udev/rules.d/72-zenos-gesten.rules", aus)
         self.assertIn("aenderung: entfernt: /etc/sysusers.d/zenos-gesten.conf", aus)
         self.assertIn("aenderung: Benutzer zenos-gesten gelöscht", aus)
+
+    def rueckweg_vorbereiten(self):
+        self.setzen("getent.passwd.zenos-gesten", "zenos-gesten:x:985:985::/:/usr/sbin/nologin\n")
+        self.setzen("getent.group.zenos-gesten", "zenos-gesten:x:985:\n")
+        self.setzen("gesten-aus")
+
+    def test_rueckweg_beendet_den_messmodus(self):
+        # Befund: Lief noch ein Prozess als zenos-gesten (Messmodus), scheiterte userdel, und install.sh brach ab
+        self.rueckweg_vorbereiten()
+        self.setzen("prozesse", "KILL")  # reagiert erst auf SIGKILL
+        aus, ereignisse = self.lauf("modul_system", STRENG="1")
+        befehle = [" ".join(e) for e in ereignisse if e[0] in ("pgrep", "pkill", "userdel")]
+        self.assertEqual(befehle[:2], ["pgrep -u zenos-gesten", "pkill -TERM -u zenos-gesten"])
+        self.assertIn("pkill -KILL -u zenos-gesten", befehle)
+        self.assertEqual(befehle[-1], "userdel zenos-gesten")
+        self.assertLess(befehle.index("pkill -KILL -u zenos-gesten"), befehle.index("userdel zenos-gesten"))
+        self.assertIn("aenderung: Prozesse von zenos-gesten beendet", aus)
+        self.assertIn("aenderung: Benutzer zenos-gesten gelöscht", aus)
+
+    def test_rueckweg_stoppt_auch_im_neustart(self):
+        # auto-restart: is-active meldet «activating», nicht «active»
+        self.rueckweg_vorbereiten()
+        self.setzen("zustand", "activating")
+        aus, ereignisse = self.lauf("modul_system", STRENG="1")
+        self.assertIn(["systemctl", "stop", "zenos-gesten.service"], ereignisse)
+        self.assertIn("aenderung: Dienst gestoppt: zenos-gesten.service", aus)
+        for zustand in ("inactive", "failed"):
+            self.setzen("zustand", zustand)
+            os.unlink(os.path.join(self.w, "ereignisse"))
+            _, ereignisse = self.lauf("modul_system", STRENG="1")
+            self.assertNotIn(["systemctl", "stop", "zenos-gesten.service"], ereignisse, zustand)
+
+    def test_rueckweg_bricht_nicht_ab_wenn_userdel_scheitert(self):
+        self.rueckweg_vorbereiten()
+        self.setzen("userdel.fehler")
+        self.setzen("groupdel.fehler")
+        ergebnis = subprocess.run(["bash", "-c", MODUL_TEIL, "modul", MODUL, "modul_system"], capture_output=True,
+                                  text=True, env={**self.umgebung, "STRENG": "1"}, check=False)
+        self.assertEqual(ergebnis.returncode, 0, ergebnis.stderr)
+        self.assertNotIn("ABBRUCH", ergebnis.stderr)
+        self.assertIn("warnung: Benutzer zenos-gesten liess sich nicht löschen", ergebnis.stdout)
+        self.assertIn("warnung: Gruppe zenos-gesten liess sich nicht löschen", ergebnis.stdout)
+        self.assertNotIn("gelöscht", ergebnis.stdout)
+
+    def test_rueckweg_nicht_im_image(self):
+        self.rueckweg_vorbereiten()
+        self.setzen("prozesse")
+        _, ereignisse = self.lauf("modul_system", ZENOS_IMAGE="1", ZENOS_SYSTEMD="0", STRENG="1")
+        self.assertFalse([e for e in ereignisse if e[0] in ("pgrep", "pkill", "systemctl")])
 
     def test_rueckweg_zweiter_lauf_ohne_aenderung(self):
         self.setzen("gesten-aus")

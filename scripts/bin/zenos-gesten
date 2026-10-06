@@ -29,14 +29,20 @@ Seite oder schräg, kurze Wege und vier Finger lösen nichts aus. libinput-Einhe
 Testcontainer waren 60 Einheiten etwa 6 mm, am Gerät wird die Schwelle mit --messen eingemessen.
 
 Ausgabe: ein Unix-Socket, je Auslösung eine Zeile «oben» oder «unten», sonst nichts. Der Dienst liest nie von den
-Klienten: Ihre Richtung zum Dienst ist zu (shutdown), ein Schreiben scheitert dort mit EPIPE. Höchstens 8 Klienten,
-ein neunter verdrängt den ältesten; wer nicht liest und den Puffer füllt, fliegt. Ist der Socket bereit, liegt daneben
-die Datei «bereit» (0644, Inhalt: PID). Die Oberfläche verbindet erst dann und bleibt sonst ohne Fehlermeldungen.
+Klienten: Ihre Richtung zum Dienst ist zu (shutdown), ein Schreiben scheitert dort mit EPIPE. Angenommen wird nur, wer
+an seat0 gerade aktiv ist (SO_PEERCRED gegen sd_seat_get_active); ist dort niemand aktiv, ein gewöhnlicher Benutzer
+(uid 1000 bis 60000). Alle anderen, etwa nobody oder ein Systemdienst, trennt er sofort. Je Benutzer höchstens 2
+Verbindungen, eine dritte verdrängt dessen älteste, nie die eines anderen; insgesamt höchstens 8, darüber geht der
+Neue gleich wieder. Wer nicht liest und den Puffer füllt, fliegt. Ist der Socket bereit, liegt daneben die Datei
+«bereit» (0644, Inhalt: PID). Die Oberfläche verbindet erst dann und bleibt sonst ohne Fehlermeldungen.
 
 Riegel: Geöffnet werden nur Geräteknoten, die root und der Gruppe zenos-gesten gehören (udev-Regel
-72-zenos-gesten.rules: reine Touchpads ohne Tasten, 0640), und nur lesend. Alles andere lehnt open_restricted mit
-EACCES ab, auch wenn die Dateirechte es erlaubten. Dazu kommen die Dateirechte selbst und im Dienst
-DeviceAllow=char-input r. Tastaturen sind so dreifach ausgeschlossen.
+72-zenos-gesten.rules: reine Touchpads ohne Tasten, 0640), und nur lesend. Danach fragt open_restricted den Kernel
+selbst nach den Fähigkeiten des geöffneten Knotens (EVIOCGBIT, nur lesend), unabhängig von udev: Meldet er eine
+Taste (KEY_* wie bei ID_INPUT_KEY) oder fehlen Finger (BTN_TOOL_FINGER) oder Mehrfinger-Slots (ABS_MT_SLOT), lehnt
+er mit EACCES ab und meldet es im Journal. Tastaturen sind so durch zwei unabhängige Schichten ausgeschlossen: die
+udev-Regel (Dateirechte) und diese Prüfung. DeviceAllow=char-input r im Dienst begrenzt nur auf Eingabegeräte und
+Lesen. Ein Touchpad, das libinput ohne Gesten führt (z. B. nur ein Slot), schliesst er gleich wieder (send-events aus).
 
 Journal: nur Start, Touchpads dazu und weg, Fehler. Keine einzelnen Gesten, keine Positionen, keine Gerätenamen.
 
@@ -45,6 +51,7 @@ Exit: 0 beendet · 1 Fehler · 2 Aufruf.
 
 import ctypes
 import errno
+import fcntl
 import grp
 import math
 import os
@@ -64,9 +71,25 @@ THRESHOLD_RANGE = (10.0, 1000.0)
 RATIO = 2.0
 FINGERS = 3
 MAX_CLIENTS = 8
+MAX_PER_UID = 2
 WORDS = ("oben", "unten")
 INPUT_MAJOR = 13
-BTN_TOOL_TRIPLETAP = 334
+# Gewöhnliche Benutzer (wie systemd: über SYS_UID_MAX, bis 60000); darüber liegen systemd-homed, DynamicUser und nobody
+REGULAR_UIDS = (1000, 60000)
+
+# linux/input-event-codes.h
+EV_KEY = 0x01
+EV_ABS = 0x03
+KEY_CNT = 0x300
+ABS_CNT = 0x40
+BTN_MISC = 0x100
+KEY_OK = 0x160
+BTN_DPAD_UP = 0x220
+KEY_ALS_TOGGLE = 0x230
+BTN_TRIGGER_HAPPY = 0x2C0
+BTN_TOOL_FINGER = 0x145
+BTN_TOOL_TRIPLETAP = 0x14E
+ABS_MT_SLOT = 0x2F
 
 # libinput.h (stabile API von libinput 1.x)
 EVENT_DEVICE_ADDED = 1
@@ -75,6 +98,7 @@ EVENT_GESTURE_SWIPE_BEGIN = 800
 EVENT_GESTURE_SWIPE_UPDATE = 801
 EVENT_GESTURE_SWIPE_END = 802
 DEVICE_CAP_GESTURE = 5
+SEND_EVENTS_DISABLED = 1
 
 # Nur für Tests: legt /sys/class/input, /run/udev/data und /dev/input für --pruefen unter diesen Ordner
 TEST_ROOT_VARIABLE = "ZENOS_GESTEN_TESTWURZEL"
@@ -192,20 +216,109 @@ def node_allowed(info, allowed_gid):
             and info.st_gid == allowed_gid)
 
 
+def _bit_range(start, end):
+    return ((1 << (end - start)) - 1) << start
+
+
+# Tasten wie in udev (input_id, ID_INPUT_KEY): alles unter BTN_MISC und die hohen Blöcke KEY_OK bis vor BTN_DPAD_UP
+# und KEY_ALS_TOGGLE bis vor BTN_TRIGGER_HAPPY. Die BTN_* eines Touchpads (Klick, Finger) sind keine Tasten.
+KEY_MASK = _bit_range(0, BTN_MISC) | _bit_range(KEY_OK, BTN_DPAD_UP) | _bit_range(KEY_ALS_TOGGLE, BTN_TRIGGER_HAPPY)
+
+
+def touchpad_only(keys, axes):
+    """Fähigkeiten eines reinen Touchpads? keys und axes: Bitmasken von EV_KEY und EV_ABS. Keine einzige Taste, dafür
+    Finger (BTN_TOOL_FINGER) und Mehrfinger-Slots (ABS_MT_SLOT)."""
+    return not keys & KEY_MASK and bool(keys >> BTN_TOOL_FINGER & 1) and bool(axes >> ABS_MT_SLOT & 1)
+
+
+def _ioc_read(number, size):
+    """_IOR('E', number, size) aus linux/input.h (asm-generic, wie auf arm64 und amd64): nur lesende Anfragen."""
+    return (2 << 30) | (size << 16) | (ord("E") << 8) | number
+
+
+def bitmask_from_bytes(data):
+    """Bitmaske des Kernels (Feld aus unsigned long in Maschinenordnung, das niedrigste zuerst) als Zahl."""
+    width = struct.calcsize("L")
+    words = struct.unpack(f"@{len(data) // width}L", data[:len(data) - len(data) % width])
+    return sum(word << (width * 8 * index) for index, word in enumerate(words))
+
+
+def read_capabilities(fd, ioctl=None):
+    """Tasten und Achsen des geöffneten Knotens als (keys, axes), direkt vom Kernel (EVIOCGBIT), nicht von udev.
+    Die einzigen ioctl des Dienstes, beide nur lesend."""
+    ioctl = ioctl or fcntl.ioctl
+    result = []
+    for event_type, count in ((EV_KEY, KEY_CNT), (EV_ABS, ABS_CNT)):
+        buffer = bytearray(count // 8)
+        ioctl(fd, _ioc_read(0x20 + event_type, len(buffer)), buffer, True)
+        result.append(bitmask_from_bytes(bytes(buffer)))
+    return tuple(result)
+
+
+# --- Wer darf mitlesen? ------------------------------------------------------
+
+
+def peer_allowed(uid, active_uid):
+    """Darf dieser Benutzer die Gesten lesen? Ist an seat0 jemand aktiv, nur er. Sonst nur gewöhnliche Benutzer, nie
+    root, Systemdienste, DynamicUser oder nobody."""
+    if active_uid is not None:
+        return uid == active_uid
+    low, high = REGULAR_UIDS
+    return low <= uid <= high
+
+
+_LIBSYSTEMD = []
+
+
+def active_seat_uid(seat=SEAT, lib=None):
+    """uid des Benutzers, der an seat0 gerade aktiv ist (sd_seat_get_active, libsystemd), sonst None."""
+    try:
+        if lib is None:
+            if not _LIBSYSTEMD:
+                function = ctypes.CDLL("libsystemd.so.0").sd_seat_get_active
+                function.restype = ctypes.c_int
+                function.argtypes = [ctypes.c_char_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)]
+                _LIBSYSTEMD.append(function)
+            function = _LIBSYSTEMD[0]
+        else:
+            function = lib.sd_seat_get_active
+        uid = ctypes.c_uint32(0)
+        result = function(seat, None, ctypes.byref(uid))
+    except (OSError, AttributeError):
+        return None
+    return uid.value if result >= 0 else None
+
+
+def seat_policy(uid):
+    return peer_allowed(uid, active_seat_uid())
+
+
+def peer_uid(conn):
+    """uid des Prozesses am anderen Ende (SO_PEERCRED, vom Kernel, beim connect festgehalten)."""
+    data = conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("iII"))
+    return struct.unpack("iII", data)[1]
+
+
 # --- Ausgabe: Unix-Socket ---------------------------------------------------
 
 
 class Broadcaster:
     """Unix-Socket, der nur schreibt: je Auslösung «oben» oder «unten» an alle Klienten. Liest nie.
-    on_drop(fd) erfährt jeden Klienten, der geht, bevor sein Socket schliesst (für poll)."""
+    allow(uid) entscheidet, wer bleiben darf (Standard: seat_policy), get_uid(conn) liefert die uid am anderen Ende
+    (Standard: SO_PEERCRED). on_drop(fd) erfährt jeden Klienten, der geht, bevor sein Socket schliesst (für poll)."""
 
-    def __init__(self, path, max_clients=MAX_CLIENTS, log=None, on_drop=None):
+    def __init__(self, path, max_clients=MAX_CLIENTS, per_uid=MAX_PER_UID, log=None, on_drop=None, allow=None,
+                 get_uid=None):
         self.path = path
         self.max_clients = max_clients
+        self.per_uid = per_uid
         self.log = log
         self.on_drop = on_drop
+        self.allow = allow or seat_policy
+        self.get_uid = get_uid or peer_uid
         self.server = None
         self.clients = []  # älteste zuerst
+        self.owners = {}  # Klient → uid
 
     def open(self):
         try:
@@ -215,7 +328,8 @@ class Broadcaster:
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM | socket.SOCK_CLOEXEC | socket.SOCK_NONBLOCK)
         try:
             server.bind(self.path)
-            # Jeder darf lesen: Es gehen nur zwei Wörter hinaus, und der Dienst liest nichts. Das Verzeichnis gehört
+            # Verbinden darf jeder, bleiben nur der Benutzer an seat0 (accept prüft SO_PEERCRED): Seine uid kennt der
+            # Dienst beim Start nicht, und eine Gruppe dafür gäbe es nur mit neuer Anmeldung. Das Verzeichnis gehört
             # zenos-gesten, nur er kann den Socket dort anlegen.
             os.chmod(self.path, 0o666)
             server.listen(self.max_clients)
@@ -243,8 +357,18 @@ class Broadcaster:
     def fileno(self):
         return self.server.fileno()
 
+    def _allowed(self, conn):
+        """uid des Klienten, wenn er bleiben darf, sonst None. Wirft nie (auch nicht aus allow)."""
+        try:
+            uid = self.get_uid(conn)
+            return uid if self.allow(uid) else None
+        except Exception:  # noqa: BLE001 – im Zweifel nicht annehmen
+            return None
+
     def accept(self):
-        """Nimmt alle wartenden Klienten an und gibt die neuen zurück. Über max_clients gehen die ältesten."""
+        """Nimmt alle wartenden Klienten an und gibt die neuen zurück. Nur erlaubte Benutzer (allow); je Benutzer
+        höchstens per_uid, ein weiterer verdrängt dessen ältesten, nie den eines anderen. Sind alle max_clients Plätze
+        belegt, geht der Neue gleich wieder: So kann niemand die Oberfläche hinausdrängen."""
         added = []
         while True:
             try:
@@ -255,6 +379,10 @@ class Broadcaster:
                 if self.log:
                     self.log.warning(f"Klient nicht angenommen ({err.strerror or err})")
                 break
+            uid = self._allowed(conn)
+            if uid is None:
+                conn.close()
+                continue
             try:
                 # Die Richtung zum Dienst ist zu: Ein Klient kann nichts schicken (EPIPE), der Dienst liest nie.
                 conn.shutdown(socket.SHUT_RD)
@@ -262,18 +390,23 @@ class Broadcaster:
             except OSError:
                 conn.close()
                 continue
+            own = [c for c in self.clients if self.owners.get(c) == uid]
+            if len(own) >= self.per_uid:
+                if own[0] in added:
+                    added.remove(own[0])
+                self.drop(own[0])
+            elif len(self.clients) >= self.max_clients:
+                conn.close()
+                continue
             self.clients.append(conn)
+            self.owners[conn] = uid
             added.append(conn)
-            while len(self.clients) > self.max_clients:
-                oldest = self.clients[0]
-                if oldest in added:
-                    added.remove(oldest)
-                self.drop(oldest)
         return added
 
     def drop(self, conn):
         if conn in self.clients:
             self.clients.remove(conn)
+        self.owners.pop(conn, None)
         if self.on_drop is not None:
             try:
                 self.on_drop(conn.fileno())
@@ -340,6 +473,7 @@ _SIGNATURES = (
     ("libinput_event_get_device", _P, [_P]),
     ("libinput_device_get_sysname", ctypes.c_char_p, [_P]),
     ("libinput_device_has_capability", ctypes.c_int, [_P, ctypes.c_int]),
+    ("libinput_device_config_send_events_set_mode", ctypes.c_int, [_P, ctypes.c_uint32]),
     ("libinput_event_get_gesture_event", _P, [_P]),
     ("libinput_event_gesture_get_finger_count", ctypes.c_int, [_P]),
     ("libinput_event_gesture_get_cancelled", ctypes.c_int, [_P]),
@@ -391,6 +525,12 @@ class Touchpads:
             return -errno.EACCES
         try:
             allowed = node_allowed(os.fstat(fd), self.allowed_gid)
+            # Zweite Schicht, unabhängig von udev: Was der Kernel über den Knoten sagt
+            if allowed and not touchpad_only(*read_capabilities(fd)):
+                allowed = False
+                name = os.path.basename(os.fsdecode(path))
+                self.log.error(f"{name} abgelehnt: kein reines Touchpad (Tasten, keine Finger oder keine Slots), "
+                               f"gehört aber der Gruppe {GROUP} (udev-Regeln prüfen)")
         except Exception:  # noqa: BLE001 – Rückruf aus C
             allowed = False
         if not allowed:
@@ -421,7 +561,11 @@ class Touchpads:
                     device = lib.libinput_event_get_device(event)
                     name = (lib.libinput_device_get_sysname(device) or b"?").decode("ascii", "replace")
                     if kind == EVENT_DEVICE_ADDED:
-                        yield ("dazu", name, bool(lib.libinput_device_has_capability(device, DEVICE_CAP_GESTURE)))
+                        gestures = bool(lib.libinput_device_has_capability(device, DEVICE_CAP_GESTURE))
+                        if not gestures:
+                            # Ohne Gesten nichts zu lesen: send-events aus, libinput schliesst den Knoten
+                            lib.libinput_device_config_send_events_set_mode(device, SEND_EVENTS_DISABLED)
+                        yield ("dazu", name, gestures)
                     else:
                         yield ("weg", name)
                 elif kind in (EVENT_GESTURE_SWIPE_BEGIN, EVENT_GESTURE_SWIPE_UPDATE, EVENT_GESTURE_SWIPE_END):
@@ -461,7 +605,7 @@ class Handler:
         if kind == "dazu":
             _, name, gestures = event
             self.devices[name] = gestures
-            self.log.info(f"Touchpad {name} dazu" if gestures else f"{name} dazu, ohne Gesten")
+            self.log.info(f"Touchpad {name} dazu" if gestures else f"{name} dazu, ohne Gesten (geschlossen)")
         elif kind == "weg":
             name = event[1]
             self.devices.pop(name, None)
@@ -647,8 +791,9 @@ def scan_devices(root=None):
     return devices
 
 
-def _is_set(props, key):
-    return props.get(key, "") not in ("", "0")
+def _has_value(props, key):
+    """Wie die udev-Regel (ENV{…}=="?*") und das Modul: Jeder nicht leere Wert zählt, auch «0»."""
+    return props.get(key, "") != ""
 
 
 def evaluate(devices, group_gid, input_gid, own_groups, group_members=(), input_members=()):
@@ -657,8 +802,11 @@ def evaluate(devices, group_gid, input_gid, own_groups, group_members=(), input_
     pure = 0
     for device in devices:
         name, props, gid, mode = device["name"], device["props"], device["gid"], device["mode"]
-        touchpad = _is_set(props, "ID_INPUT_TOUCHPAD")
-        keys = _is_set(props, "ID_INPUT_KEY") or _is_set(props, "ID_INPUT_KEYBOARD")
+        # Wie die udev-Regel: Touchpad nur bei genau «1», Tasten bei jedem Wert. Dazu die Tasten laut Kernel (sysfs),
+        # wie sie auch der Dienst beim Öffnen prüft
+        touchpad = props.get("ID_INPUT_TOUCHPAD", "") == "1"
+        keys = (_has_value(props, "ID_INPUT_KEY") or _has_value(props, "ID_INPUT_KEYBOARD")
+                or bool(device["keys"] & KEY_MASK))
         ours = group_gid is not None and gid == group_gid
         shown_mode = f"{mode:04o}" if mode is not None else "?"
         if ours and keys:

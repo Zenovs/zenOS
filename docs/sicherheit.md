@@ -200,6 +200,10 @@ zeigt den Passwortdialog, wenn ein Programm Rechte verlangt, die polkit nur nach
   und eine Passwortfrage gleich nach dem Entsperren verleitet dazu, das Passwort aus Gewohnheit ein zweites Mal
   einzutippen, ohne zu lesen, wofür.
 - Ein Klick neben den Dialog bricht nicht ab; Esc oder «Abbrechen» schon.
+- **Eine Fläche zur Zeit:** Solange der Dialog fragt, öffnen Befehlsfeld, Zentrale, Modus- und Zustand-Wahl und
+  Fensterübersicht nicht, auch nicht per Wischen, Tastenkürzel oder IPC (`Oberflaeche.polkitOffen`). Sonst nähme eine
+  zweite exklusive Fläche dem Dialog die Tastatur, und der Rest des Passworts landete dort, in der Übersicht lesbar im
+  Filter. Ist eine von ihnen schon offen, wenn polkit fragt, schliesst sie.
 
 ## Oberfläche
 
@@ -216,7 +220,9 @@ zeigt den Passwortdialog, wenn ein Programm Rechte verlangt, die polkit nur nach
   `allowWhenLocked`. Während Sperre und Einrichtung öffnet die Übersicht nie, Super+H und das Wischen wirken nicht,
   und das Sperren schliesst die Übersicht (ext-session-lock liegt ohnehin über allem). Während einer Freigabe sind
   die Fenstertitel verborgen und werden nicht durchsucht, auch in `zenos-ipc uebersicht fenster`; das ist Vorsicht
-  wie «Netzname verborgen», keine neue Leitplanke.
+  wie «Netzname verborgen», keine neue Leitplanke. Öffnet die Übersicht, schliesst ein Menü der Leiste (samt
+  WLAN-Passwortfeld), und solange polkit nach dem Passwort fragt, öffnet sie nicht. Nach dem Ausblenden ist der
+  Filter leer; Getipptes bleibt nicht bis zum nächsten Öffnen stehen.
 - Die Nutzungsstatistik des Befehlsfelds speichert nur Desktop-IDs, Zähler und die Reihenfolge der zuletzt genutzten
   Apps, keine Zeiten und keine Fenstertitel (`~/.local/share/zenos/`, nur für den Benutzer lesbar).
 - Eine Zwischenablage-Historie, falls sie kommt, ignoriert 1Password und löscht sich selbst.
@@ -393,35 +399,63 @@ weg (beide brauchen die Gruppe `input` und fehlen in Ubuntu 26.04).
   Pi zu bestätigen). Sonst nutzt in zenOS nichts die Gruppe `input`.
 - **Kein uaccess, keine ACL, kein Schreibrecht:** Schreibrecht auf einen Touchpad-Knoten reichte im Container, um
   Klicks in die Wayland-Sitzung einzuspeisen. Deshalb bekommt die Sitzung gar nichts und der Dienst nur Leserecht.
-- **Tastaturen dreifach ausgeschlossen:** über die Dateirechte (nur reine Touchpads gehören der Gruppe), über die
-  Bedingung der udev-Regel und im Code: `open_restricted` öffnet nur Knoten von `root:zenos-gesten`, nur mit
-  `O_RDONLY`, alles andere sofort mit EACCES. Dazu erlaubt die Einheit nur `DeviceAllow=char-input r`. Der Dienst
-  greift kein Gerät (kein `EVIOCGRAB`), labwc bekommt jede Bewegung unverändert.
+- **Tastaturen zweifach ausgeschlossen, unabhängig voneinander:**
+  1. Die udev-Regel gibt die Gruppe nur reinen Touchpads; nur dann darf der Dienst den Knoten überhaupt öffnen.
+  2. Der Dienst fragt nach dem Öffnen selbst den Kernel (`EVIOCGBIT`, nur lesend) statt udev: Meldet der Knoten eine
+     Taste (dieselben `KEY_*`-Bereiche wie `ID_INPUT_KEY` in udev) oder fehlen Finger (`BTN_TOOL_FINGER`) oder
+     Mehrfinger-Slots (`ABS_MT_SLOT`), schliesst `open_restricted` ihn sofort mit EACCES und meldet es im Journal.
+     Gibt eine fremde Regel, eine hwdb-Überschreibung oder ein Bedienfehler einer Tastatur die Gruppe, liest der Dienst
+     sie trotzdem nicht (im Container belegt); `zen doctor` meldet den Knoten als Fehler.
+
+  `open_restricted` öffnet zudem nur Knoten von `root:zenos-gesten` und nur mit `O_RDONLY`. Das ist keine eigene
+  Schicht, denn die Gruppe setzt dieselbe Regel. `DeviceAllow=char-input r` begrenzt nur auf Eingabegeräte und Lesen,
+  Tastaturen schliesst es nicht aus. Ein Touchpad, das libinput ohne Gesten führt (etwa mit nur einem Slot), schliesst
+  der Dienst gleich wieder. Er greift kein Gerät (kein `EVIOCGRAB`), labwc bekommt jede Bewegung unverändert.
 - **Härtung** (`system/systemd/system/zenos-gesten.service`): `User=zenos-gesten`, leeres `CapabilityBoundingSet`,
   `NoNewPrivileges`, `DevicePolicy=closed` mit `DeviceAllow=char-input r`, `ProtectSystem=strict`, `ProtectHome`,
-  `PrivateTmp`, `PrivateIPC`, `IPAddressDeny=any`, `RestrictAddressFamilies=AF_UNIX AF_NETLINK`, Schutz von Kernel,
-  Uhr und Protokollen, `MemoryDenyWriteExecute`, `SystemCallFilter=@system-service ~@privileged @resources`,
-  `python3 -I`. Geschrieben wird nur `/run/zenos-gesten`. Ohne `PrivateNetwork`: udev meldet neue Geräte über
-  netlink nur im Netz-Namensraum des Systems, mit `PrivateNetwork` fände der Dienst ein Touchpad nach dem Aufwachen
-  nicht wieder (im Container belegt). Ins Netz kommt er trotzdem nicht (nur Unix-Sockets und netlink, keine
-  IP-Adresse). `systemd-analyze security` bewertet ihn im Container mit 1.0. Die Einheit hat kein `[Install]`: udev
-  startet sie, sobald es ein reines Touchpad gibt; ohne Touchpad (Bürorechner) läuft er nie.
-- **Ausgabe:** Der Socket `/run/zenos-gesten/gesten.sock` (0666) bekommt je Geste genau eine Zeile «oben» oder
-  «unten», sonst nichts. Der Dienst liest nie von seinen Klienten (ihre Richtung ist zu), höchstens 8 gleichzeitig,
-  ein neunter verdrängt den ältesten, wer nicht liest, fliegt. Vertraulicher als `/run/zenos/geraet.json` von
-  `zenos-argon` (0644) ist das nicht. Die Oberfläche nimmt nur genau diese zwei Wörter an und ignoriert sie während
-  Sperre und Einrichtung.
+  `PrivateTmp`, `PrivateIPC`, `PrivateUsers=identity`, `/dev/shm` und `/var/log` unzugänglich, `IPAddressDeny=any`,
+  `RestrictAddressFamilies=AF_UNIX AF_NETLINK`, Schutz von Kernel, Uhr und Protokollen, `MemoryDenyWriteExecute`,
+  `SystemCallFilter=@system-service ~@privileged @resources`, `python3 -I`. Geschrieben wird nur
+  `/run/zenos-gesten`. `PrivateUsers=identity` statt `yes`: Mit `yes` sähe der Dienst jeden anderen Benutzer am
+  Socket als nobody und könnte nicht prüfen, wer liest. Ohne `PrivateNetwork`: udev meldet neue Geräte über netlink
+  nur im Netz-Namensraum des Systems, mit `PrivateNetwork` fände der Dienst ein Touchpad nach dem Aufwachen nicht
+  wieder (im Container belegt). Ins Netz kommt er trotzdem nicht (nur Unix-Sockets und netlink, keine IP-Adresse).
+  `systemd-analyze security` bewertet ihn im Container mit 0.8 (offen bleiben `PrivateNetwork`, `PrivateDevices` wegen
+  `/dev/input` und `AF_NETLINK`). Die Einheit hat kein `[Install]`: udev startet sie, sobald es ein reines Touchpad
+  gibt; ohne Touchpad (Bürorechner) läuft er nie.
+- **Ausgabe:** Der Socket `/run/zenos-gesten/gesten.sock` bekommt je Geste genau eine Zeile «oben» oder «unten»,
+  sonst nichts. Der Dienst liest nie von seinen Klienten (ihre Richtung ist zu). Verbinden darf jeder (0666), bleiben
+  nur der Benutzer, der an seat0 gerade aktiv ist: Der Dienst fragt den Kernel nach der uid am anderen Ende
+  (`SO_PEERCRED`) und vergleicht sie mit `sd_seat_get_active` aus libsystemd. Ist an seat0 niemand aktiv, nimmt er
+  nur gewöhnliche Benutzer an (uid 1000 bis 60000), nie root, Systemdienste, DynamicUser oder nobody. Alle anderen
+  trennt er sofort, sie bekommen keine einzige Geste. Je Benutzer höchstens 2 Verbindungen; eine dritte verdrängt
+  dessen älteste, nie die eines anderen. Insgesamt höchstens 8, darüber geht der Neue gleich wieder. So kann kein
+  anderes Konto die Oberfläche hinausdrängen oder mitlesen, wann jemand am Gerät ist (im Container belegt: nobody
+  flutet, die Oberfläche bekommt jede Geste). Wer nicht liest, fliegt. Die Oberfläche nimmt nur genau diese zwei
+  Wörter an und ignoriert sie während Sperre und Einrichtung. Restrisiko: Ein lokales Konto kann den Dienst mit
+  `connect` und `close` in einer Schleife beschäftigen (Rechenzeit), aber nicht blockieren.
 - **Datenschutz:** Im Journal stehen nur Start, Touchpads dazu und weg und Fehler, keine einzelnen Gesten, keine
   Positionen, keine Gerätenamen. Der Messmodus (`--messen`, von Hand mit `sudo -u zenos-gesten …`) gibt je Geste nur
   Fingerzahl und die Summe der Bewegung aus, keine Positionen. Kein Netz, keine Telemetrie.
-- **Restrisiko:** Ein kompromittierter Dienst könnte die Lage der Finger auf dem Touchpad lesen und das Touchpad per
-  `EVIOCGRAB` blockieren, denn schon Leserecht erlaubt den Grab. Dann ginge das Touchpad nicht mehr; Tastatur, Maus
-  und SSH gehen weiter. Tastendrücke kann er nicht lesen. Dagegen helfen der Sandkasten, der kleine Code ohne Grab
-  und dass er von aussen nichts annimmt ausser den Ereignissen von libinput.
+- **Restrisiko:** Ein kompromittierter Dienst könnte die Lage der Finger auf dem Touchpad lesen und mit verändernden
+  ioctl auf den nur lesend geöffneten Knoten eingreifen, denn evdev prüft dafür kein Schreibrecht:
+  - `EVIOCGRAB` blockiert das Touchpad. Dann geht es nicht mehr; Tastatur, Maus und SSH gehen weiter.
+  - `EVIOCSABS` verstellt Achsbereiche und Auflösung des Touchpads im Kernel, für alle Leser einschliesslich labwc,
+    bis das Gerät neu erscheint (Zeiger und Gesten verhalten sich dann falsch; im Container belegt und
+    zurückgesetzt).
+  - `EVIOCSKEYCODE` kann auf echten HID-Touchpads die Belegung der Klicktasten umschreiben (auf dem virtuellen Gerät
+    im Container nicht möglich, am Gerät ungeprüft).
+
+  Tastendrücke kann er nicht lesen, und ins Netz kommt er nicht. Dagegen helfen der Sandkasten, der kleine Code, der
+  selbst nur `EVIOCGBIT` (lesend) aufruft, und dass er von aussen nichts annimmt ausser den Ereignissen von libinput.
+  Ein seccomp-Filter, der `ioctl` nur mit lesenden Nummern erlaubt, ginge noch weiter; systemd kann Argumente nicht
+  filtern, deshalb steht er aus (`docs/module/m9.md`, «Befunde der Sicherheitsprüfung»).
 - **Pakete:** keine neuen. libinput (`libinput.so.10`) kommt schon mit labwc, python3 und systemd sind da.
 - **Rückweg:** `sudo touch /etc/xdg/zenos/gesten-aus`, dann `/opt/zenos/scripts/install.sh`: Das Modul stoppt den
-  Dienst, entfernt Regel, Einheit und sysusers-Datei, gibt die Touchpads zurück (`root:input` 0660 wie ohne
-  Regel) und löscht Benutzer und Gruppe; `zen doctor` prüft, dass nichts liegen bleibt. Ohne die Datei richtet der
+  Dienst (auch mitten im Neustart), beendet übrige Prozesse von `zenos-gesten` (etwa den Messmodus), entfernt Regel,
+  Einheit und sysusers-Datei, gibt die Touchpads zurück (`root:input` 0660 wie ohne Regel) und löscht Benutzer und
+  Gruppe. Gelingt das Löschen nicht, warnt es nur und versucht es beim nächsten Lauf wieder; `zen doctor` prüft, dass
+  nichts liegen bleibt. Ohne die Datei richtet der
   nächste Lauf alles wieder ein. Ein `zen rollback` auf einen Stand ohne dieses Modul lässt Regel, Einheit und
   Benutzer liegen, harmlos: Ohne `/opt/zenos/scripts/bin/zenos-gesten` startet der Dienst nicht, und die Touchpads
   liest dann niemand ausser labwc.

@@ -15,8 +15,10 @@
 # Keine Pakete: libinput10 kommt mit labwc, python3 und systemd sind da.
 #
 # Rückweg (Notschalter /etc/xdg/zenos/gesten-aus, «sudo touch …», dann install.sh): Das Modul nimmt alles zurück. Es
-# stoppt den Dienst, entfernt die Regel, gibt die Touchpads zurück (root:input 0660 wie ohne Regel), entfernt Einheit
-# und sysusers-Datei und löscht Benutzer und Gruppe. Ohne Schalter richtet der nächste Lauf alles wieder ein. Ein
+# stoppt den Dienst (auch mitten im Neustart), beendet übrige Prozesse von zenos-gesten (etwa den Messmodus), entfernt
+# die Regel, gibt die Touchpads zurück (root:input 0660 wie ohne Regel), entfernt Einheit und sysusers-Datei und löscht
+# Benutzer und Gruppe. Lässt sich einer davon nicht löschen, warnt es nur (der nächste Lauf versucht es wieder, zen
+# doctor meldet den Rest). Ohne Schalter richtet der nächste Lauf alles wieder ein. Ein
 # zen rollback auf einen Stand ohne dieses Modul lässt alles liegen, harmlos: Ohne /opt/zenos/scripts/bin/zenos-gesten
 # startet der Dienst nicht, und die Touchpads liest dann niemand ausser labwc (über logind).
 
@@ -146,11 +148,7 @@ _gesten_dienst() {
 # Rückweg: alles zurücknehmen, die Touchpads wieder root:input 0660
 _gesten_entfernen() {
   local regel_weg=0 vorher
-  if [[ "$ZENOS_SYSTEMD" == 1 && "$ZENOS_IMAGE" != 1 ]] &&
-    systemctl --quiet is-active "$_GESTEN_EINHEIT" 2> /dev/null; then
-    $SUDO systemctl stop "$_GESTEN_EINHEIT"
-    aenderung "Dienst gestoppt: $_GESTEN_EINHEIT"
-  fi
+  _gesten_stoppen
   vorher=$(zenos_anzahl aenderung)
   datei_entfernen "$_GESTEN_REGEL"
   (( $(zenos_anzahl aenderung) > vorher )) && regel_weg=1
@@ -165,15 +163,52 @@ _gesten_entfernen() {
     $SUDO systemctl reset-failed "$_GESTEN_EINHEIT" 2> /dev/null || true
   fi
   # Erst jetzt Benutzer und Gruppe: Kein Prozess läuft mehr als zenos-gesten, kein Knoten gehört noch der Gruppe.
-  # userdel nimmt die gleichnamige Gruppe meist gleich mit.
+  # userdel nimmt die gleichnamige Gruppe meist gleich mit. Scheitert es doch (ein Prozess kam neu dazu), bricht die
+  # Installation nicht ab: Regel und Einheit sind weg, der nächste Lauf versucht es wieder.
   if getent passwd "$_GESTEN_NAME" > /dev/null; then
-    $SUDO userdel "$_GESTEN_NAME"
-    aenderung "Benutzer $_GESTEN_NAME gelöscht"
+    if $SUDO userdel "$_GESTEN_NAME"; then
+      aenderung "Benutzer $_GESTEN_NAME gelöscht"
+    else
+      log_warnung "Benutzer $_GESTEN_NAME liess sich nicht löschen (läuft noch ein Prozess?)," \
+        "der nächste Lauf versucht es wieder"
+    fi
   fi
   if getent group "$_GESTEN_NAME" > /dev/null; then
-    $SUDO groupdel "$_GESTEN_NAME"
-    aenderung "Gruppe $_GESTEN_NAME gelöscht"
+    if $SUDO groupdel "$_GESTEN_NAME"; then
+      aenderung "Gruppe $_GESTEN_NAME gelöscht"
+    else
+      log_warnung "Gruppe $_GESTEN_NAME liess sich nicht löschen, der nächste Lauf versucht es wieder"
+    fi
   fi
+}
+
+# Dienst stoppen, auch wenn er gerade startet oder auf den Neustart wartet (is-active: activating), dann jeden
+# übrigen Prozess von zenos-gesten beenden, etwa den Messmodus in einem zweiten Terminal. Nicht im Image: Dort zeigte
+# /proc womöglich Prozesse des bauenden Rechners.
+_gesten_stoppen() {
+  local zustand
+  [[ "$ZENOS_SYSTEMD" == 1 && "$ZENOS_IMAGE" != 1 ]] || return 0
+  zustand=$(systemctl is-active "$_GESTEN_EINHEIT" 2> /dev/null) || true
+  case "$zustand" in
+    inactive | failed | unknown | "") ;;
+    *)
+      $SUDO systemctl stop "$_GESTEN_EINHEIT" || log_warnung "$_GESTEN_EINHEIT liess sich nicht stoppen"
+      aenderung "Dienst gestoppt: $_GESTEN_EINHEIT"
+      ;;
+  esac
+  getent passwd "$_GESTEN_NAME" > /dev/null || return 0
+  befehl_vorhanden pgrep || return 0
+  pgrep -u "$_GESTEN_NAME" > /dev/null 2>&1 || return 0
+  $SUDO pkill -TERM -u "$_GESTEN_NAME" 2> /dev/null || true
+  for _ in {1..30}; do
+    pgrep -u "$_GESTEN_NAME" > /dev/null 2>&1 || break
+    sleep 0.1
+  done
+  if pgrep -u "$_GESTEN_NAME" > /dev/null 2>&1; then
+    $SUDO pkill -KILL -u "$_GESTEN_NAME" 2> /dev/null || true
+    sleep 0.2
+  fi
+  aenderung "Prozesse von $_GESTEN_NAME beendet (z. B. Messmodus)"
 }
 
 # Knoten der Gruppe zenos-gesten wieder so, wie udev sie ohne die Regel anlegt (50-udev-default.rules: root:input

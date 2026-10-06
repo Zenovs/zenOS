@@ -26,8 +26,9 @@ import qs.komponenten
 //   sperre/Sperre.qml), und eine Passwortfrage direkt nach dem Entsperren lädt dazu ein, das Passwort aus
 //   Gewohnheit ein zweites Mal einzutippen, ohne zu lesen, wofür. Das Programm erfährt «abgebrochen» und kann
 //   neu fragen; der Schalter in den Einstellungen springt zurück.
-// - Solange der Dialog offen ist, bleiben Befehlsfeld, Zentrale und Modus-/Zustandswahl zu (sonst stritten
-//   zwei exklusive Flächen um die Tastatur).
+// - Solange der Dialog offen ist, bleiben Befehlsfeld, Zentrale, Modus-/Zustandswahl und Fensterübersicht zu (sonst
+//   stritten zwei exklusive Flächen um die Tastatur, und was für das Passwort gedacht war, landete in einer anderen
+//   Fläche, in der Übersicht lesbar im Filter). Die Übersicht prüft das schon beim Öffnen (Oberflaeche.polkitOffen).
 // - Mehrere Anfragen nacheinander stellt Quickshell in eine Reihe; der Dialog zeigt jeweils die vorderste.
 // - IPC «polkit»: status (offen/zu), agent (angemeldet/nicht angemeldet), abbrechen.
 Scope {
@@ -132,6 +133,7 @@ Scope {
         Oberflaeche.zentraleOffen = false;
         Oberflaeche.modusWahlOffen = false;
         Oberflaeche.zustandWahlOffen = false;
+        Oberflaeche.uebersichtSchliessen();
     }
 
     // Nach dem Neuladen der Oberfläche übernimmt Quickshell den Agenten samt laufender Anfrage, ohne das Signal
@@ -139,6 +141,13 @@ Scope {
     Component.onCompleted: {
         if (agent.flow)
             _neueAnfrage();
+    }
+
+    // Für die anderen Flächen: Solange der Dialog fragt, öffnet die Fensterübersicht nicht
+    Binding {
+        target: Oberflaeche
+        property: "polkitOffen"
+        value: root.offen
     }
 
     PolkitAgent {
@@ -201,6 +210,10 @@ Scope {
         }
         function onZustandWahlOffenChanged(): void {
             if (root.offen && Oberflaeche.zustandWahlOffen)
+                root._overlaysSchliessen();
+        }
+        function onUebersichtOffenChanged(): void {
+            if (root.offen && Oberflaeche.uebersichtOffen)
                 root._overlaysSchliessen();
         }
     }

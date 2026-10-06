@@ -19,13 +19,15 @@ an; eine Version entspricht einem Tag `v…` im Repo.
   («Fensterübersicht», «Schreibtisch zeigen» bzw. «Fenster zurück»). Drei Finger nach oben auf dem Touchpad öffnen
   die Übersicht, nach unten schliessen sie: Der neue Systemdienst `zenos-gesten` (Modul `82-gesten`) liest dafür als
   eigener Benutzer nur reine Touchpads und nur lesend (udev-Regel `72-zenos-gesten.rules`, gehärtete Einheit, ohne
-  Touchpad läuft er nie). Die Sitzung bekommt keine Rechte an `/dev/input`, niemand kommt in die Gruppe `input`, kein
+  Touchpad läuft er nie). Er prüft jeden Knoten zusätzlich selbst beim Kernel (keine Tasten) und gibt die Gesten nur
+  dem Benutzer an seat0. Die Sitzung bekommt keine Rechte an `/dev/input`, niemand kommt in die Gruppe `input`, kein
   neues Paket. Notschalter `/etc/xdg/zenos/gesten-aus` nimmt alles zurück. Nichts davon wirkt während Sperre und
-  Einrichtung; während einer Freigabe sind die Titel verborgen. Die App-Leiste erscheint bei offener Übersicht nicht,
-  Mitteilungskarten treten zurück. IPC `zenos-ipc uebersicht`, `schreibtisch` und `gesten`, `zen doctor` mit dem
-  Abschnitt «Gesten», Ende-zu-Ende-Test `test/container/gesten-e2e.sh` (Testbild mit python3-libevdev, python3-yaml
-  und libinput-tools). Aussehen in `docs/design.md`, Entscheidungen in `docs/module/m9.md`, Rechte und Restrisiko in
-  `docs/sicherheit.md`, «Gesten»; am Gerät zu prüfen: ANLEITUNG E, «Fensterübersicht, Schreibtisch und Wischen».
+  Einrichtung, und solange polkit nach dem Passwort fragt, öffnet die Übersicht nicht; während einer Freigabe sind die
+  Titel verborgen. Die App-Leiste erscheint bei offener Übersicht nicht, Mitteilungskarten treten zurück. IPC
+  `zenos-ipc uebersicht`, `schreibtisch` und `gesten`, `zen doctor` mit dem Abschnitt «Gesten», Ende-zu-Ende-Test
+  `test/container/gesten-e2e.sh` (Testbild mit python3-libevdev, python3-yaml und libinput-tools). Aussehen in
+  `docs/design.md`, Entscheidungen in `docs/module/m9.md`, Rechte und Restrisiko in `docs/sicherheit.md`, «Gesten»;
+  am Gerät zu prüfen: ANLEITUNG E, «Fensterübersicht, Schreibtisch und Wischen».
 - **Images nur aus signierten Tags, mit Kanal und Anker:** `image.yml` prüft vor dem Bau im Job «Tag und Signatur»
   mit dem neuen `image/tag-pruefen.sh`, ob der Tag ein Release-Tag `vX.Y.Z` oder `vX.Y.Z-rcN` ist und mit dem
   Release-Schlüssel des Ankers `system/vertrauen` in seinem Stand gültig signiert (gehärtetes `git verify-tag` und

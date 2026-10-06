@@ -476,7 +476,7 @@ systemctl --user start zenos-shell.service
 - [ ] Touchpad, Zeiger, Tippen und Scrollen gehen nach der udev-Regel wie vorher. `id` zeigt weder `input` noch
   `zenos-gesten`, und `test -r /dev/input/eventN && echo lesbar || echo gesperrt` (N aus `zen doctor`) zeigt
   «gesperrt».
-- [ ] `systemd-analyze security zenos-gesten.service` zeigt höchstens 1.0. `/opt/zenos/scripts/install.sh` läuft
+- [ ] `systemd-analyze security zenos-gesten.service` zeigt höchstens 0.8. `/opt/zenos/scripts/install.sh` läuft
   zweimal hintereinander ohne Fehler, der zweite Lauf meldet `0 Änderungen`.
 - [ ] Display des Argon ONE UP: `wlr-randr` zeigt Auflösung und Skalierung. Notieren und melden (der Entwurf nahm
   1920 × 1200 an, ungeprüft). Daraus folgen die Spalten der Übersicht (bei 1920 px höchstens 7) und wie viele Zeilen
@@ -501,6 +501,10 @@ systemctl --user start zenos-shell.service
   verschwindet, und das nächste `Super + H` räumt wieder alles weg.
 - [ ] Sperre: Übersicht offen, dann `Super + L`. Nach dem Entsperren ist sie zu. Gesperrt bewirken `Super + Tab`,
   `Super + H` und das Wischen nichts.
+- [ ] Passwortfragen gehen vor: In den Einstellungen die Firewall ausschalten, der polkit-Dialog fragt nach dem
+  Passwort. Jetzt mit drei Fingern nach oben wischen und `Super + Tab` drücken: Die Übersicht öffnet nicht, was du
+  tippst, landet als Punkte im Passwortfeld. Dann `Abbrechen`. Ebenso: System-Menü der Leiste mit WLAN-Liste offen,
+  dann wischen: Das Menü geht zu, die Übersicht öffnet.
 - [ ] Bildschirm teilen (etwa in Chrome): Die Übersicht zeigt «Titel verborgen».
 - [ ] Wischen mit drei Fingern: nach oben öffnet die Übersicht, nach unten schliesst sie. Scrollen mit zwei Fingern,
   Wischen zur Seite, Tippen mit drei Fingern (Mittelklick) und Schreiben mit aufliegendem Handballen lösen nie aus.

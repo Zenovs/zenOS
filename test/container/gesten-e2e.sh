@@ -19,16 +19,20 @@
 #   install      install.sh zweimal als tester (der zweite Lauf ohne Änderung): Benutzer, Regel, Dienst. Danach gehört
 #                das Touchpad root:zenos-gesten 0640, Tastatur und Touchpad mit Tasten bleiben root:input; tester liest
 #                keins davon; der Dienst läuft (gestartet vom Modul bzw. von udev)
-#   dienst       läuft als zenos-gesten ohne Capabilities, nur das reine Touchpad offen, systemd-analyze höchstens 1.0,
-#                Socket 0666 mit «bereit», ein Klient kann nichts schicken, ein neunter verdrängt den ältesten.
-#                3 Finger hoch und runter → «oben» und «unten»; 2 Finger, seitlich, schräg, kurz, 4 Finger, Tippen →
-#                nichts; keine Geste im Journal; ein zweites Touchpad kommt und geht im laufenden Betrieb
+#   dienst       läuft als zenos-gesten ohne Capabilities, nur das reine Touchpad offen, systemd-analyze höchstens 0.8,
+#                Socket 0666 mit «bereit», ein Klient kann nichts schicken, je Benutzer höchstens 2 Verbindungen,
+#                nobody wird sofort getrennt und kann die Oberfläche nicht verdrängen. Tastatur und Touchpad mit Tasten
+#                in der Gruppe zenos-gesten: trotzdem abgelehnt (Prüfung im Dienst); ein Touchpad ohne Gesten (1 Slot)
+#                bleibt nicht offen. 3 Finger hoch und runter → «oben» und «unten»; 2 Finger, seitlich, schräg, kurz,
+#                4 Finger, Tippen → nichts; keine Geste im Journal; ein zweites Touchpad kommt und geht
 #   labwc        labwc über logind öffnet das Touchpad trotz 0640, Zeiger und swipe.begin mit 3 Fingern kommen beim
 #                Client an, zugleich meldet der Dienst «oben»
 #   oberflaeche  zenOS-Oberfläche in dieser Sitzung: verbunden, 3 Finger hoch → Übersicht offen, runter → zu, die
-#                anderen Bewegungen → nichts; nach einem Neustart des Dienstes wieder verbunden; gesperrt → nichts
+#                anderen Bewegungen → nichts; polkit fragt → Übersicht zu und öffnet weder per Wischen noch per IPC;
+#                Menü der Leiste geht zu, wenn die Übersicht öffnet; nach einem Neustart des Dienstes wieder verbunden;
+#                gesperrt → nichts
 #   rueckweg     Notschalter /etc/xdg/zenos/gesten-aus: install.sh nimmt alles zurück (Touchpad wieder root:input 0660),
-#                ohne Schalter richtet es alles wieder ein
+#                auch wenn der Messmodus gerade läuft; ohne Schalter richtet es alles wieder ein
 #   aufraeumen   Sitzung, Geräte und udev beenden, Knoten weg, /dev/tty0 zurück, logind neu
 
 set -euo pipefail
@@ -54,6 +58,10 @@ install -d -o "$TESTER" -g "$TESTER" "$E2E/tester"
 
 als_tester() {
   runuser -u "$TESTER" -- env HOME=/home/$TESTER XDG_RUNTIME_DIR="$LAUFZEIT" LANG=C.UTF-8 "$@"
+}
+
+als_nobody() {
+  setpriv --reuid=nobody --regid=nogroup --clear-groups -- env -i PATH=/usr/bin:/bin LANG=C.UTF-8 "$@"
 }
 
 ipc() { als_tester "$REPO/scripts/bin/zenos-ipc" "$@" 2> /dev/null | tail -n 1; }
@@ -87,12 +95,13 @@ knoten() { cat "$E2E/$1.knoten"; }
 rechte() { stat -c '%U:%G %a' -- "/dev/input/$(knoten "$1")"; }
 eigenschaft() { udevadm info --query=property --property="$2" --value "/sys/class/input/$(knoten "$1")"; }
 
-# geraet_anlegen NAME ART – virtuelles Gerät im Hintergrund, Knoten anlegen, udev «add»
+# geraet_anlegen NAME ART [OPTION…] – virtuelles Gerät im Hintergrund, Knoten anlegen, udev «add»
 geraet_anlegen() {
   local name=$1 art=$2 knoten="" nummer i
   rm -f "$E2E/$name.fifo" "$E2E/$name.log"
   mkfifo -m 0600 "$E2E/$name.fifo"
-  setsid python3 "$HILFE/touchpad_uinput.py" "$E2E/$name.fifo" --art "$art" > "$E2E/$name.log" 2>&1 < /dev/null &
+  setsid python3 "$HILFE/touchpad_uinput.py" "$E2E/$name.fifo" --art "$art" "${@:3}" > "$E2E/$name.log" 2>&1 \
+    < /dev/null &
   echo "$!" > "$E2E/$name.pid"
   for i in $(seq 1 50); do
     knoten=$(sed -n 's|^geraet /dev/input/\(event[0-9]*\) .*|\1|p' "$E2E/$name.log")
@@ -229,7 +238,7 @@ geste_erwartet() {
 
 schritt_dienst() {
   schritt "dienst: Rechte, Socket, Erkennung, Hotplug"
-  local pid status uid gid exposure fds fd ziel
+  local pid status uid gid exposure
   pid=$(systemctl show -p MainPID --value zenos-gesten.service)
   [[ "$pid" =~ ^[1-9][0-9]*$ ]] || fehler "kein Hauptprozess"
   status=/proc/$pid/status
@@ -243,18 +252,15 @@ schritt_dienst() {
     "$(awk '/^CapBnd:/ { print $2 }' "$status")" == 0000000000000000 ]] || fehler "hat Capabilities"
   [[ "$(awk '/^NoNewPrivs:/ { print $2 }' "$status")" == 1 ]] || fehler "NoNewPrivs fehlt"
   ok "läuft als zenos-gesten, nur Gruppe zenos-gesten, ohne Capabilities, NoNewPrivs"
-  fds=""
-  for fd in "/proc/$pid/fd"/*; do
-    ziel=$(readlink -- "$fd" 2> /dev/null) || continue
-    [[ "$ziel" == /dev/input/* ]] && fds+="$ziel "
-  done
-  [[ "$fds" == "/dev/input/$(knoten tp) " ]] || fehler "offene Knoten: «$fds» statt nur dem Touchpad"
+  [[ "$(offene_knoten)" == "/dev/input/$(knoten tp) " ]] || fehler "offene Knoten: «$(offene_knoten)» statt nur dem Touchpad"
   ok "offen ist nur /dev/input/$(knoten tp)"
   exposure=$(systemd-analyze security --no-pager zenos-gesten.service 2> /dev/null |
     sed -n 's/.*Overall exposure level for zenos-gesten.service: \([0-9.]*\).*/\1/p')
   [[ -n "$exposure" ]] || fehler "systemd-analyze security ohne Ergebnis"
-  awk -v e="$exposure" 'BEGIN { exit !(e <= 1.0) }' || fehler "systemd-analyze security: $exposure (höchstens 1.0)"
+  awk -v e="$exposure" 'BEGIN { exit !(e <= 0.8) }' || fehler "systemd-analyze security: $exposure (höchstens 0.8)"
   ok "systemd-analyze security: $exposure"
+  [[ "$(cat "/proc/$pid/uid_map" | xargs)" == "0 0 65536" ]] || fehler "PrivateUsers=identity greift nicht"
+  ok "eigener Benutzer-Namensraum, uids 0 bis 65535 unverändert (für SO_PEERCRED)"
 
   [[ "$(stat -c '%U:%G %a' /run/zenos-gesten)" == "zenos-gesten:zenos-gesten 755" ]] ||
     fehler "Ordner /run/zenos-gesten"
@@ -264,12 +270,25 @@ schritt_dienst() {
   ok "Socket 0666 und «bereit» (PID) in /run/zenos-gesten (zenos-gesten, 0755)"
   [[ "$(als_tester python3 "$HILFE/klient.py" schreiben)" == EPIPE ]] || fehler "ein Klient kann dem Dienst schreiben"
   ok "ein Klient kann nichts schicken (EPIPE)"
-  [[ "$(als_tester python3 "$HILFE/klient.py" viele 9)" == "zu offen offen offen offen offen offen offen offen" ]] ||
-    fehler "neunter Klient verdrängt nicht genau den ältesten"
-  ok "höchstens 8 Klienten: der neunte verdrängt den ältesten"
+  [[ "$(als_tester python3 "$HILFE/klient.py" viele 3)" == "zu offen offen" ]] ||
+    fehler "dritte Verbindung desselben Benutzers verdrängt nicht genau seine älteste"
+  ok "je Benutzer höchstens 2 Verbindungen: die dritte verdrängt seine älteste"
+  install -m 0644 "$HILFE/klient.py" "$E2E/klient.py"
+  [[ "$(als_nobody python3 "$E2E/klient.py" viele 1)" == zu ]] || fehler "nobody bleibt verbunden"
+  ok "nobody wird sofort getrennt"
 
   local lesen=$E2E/tester/lesen-dienst
   leser_starten "$lesen"
+  # Wie im Befund: nobody verbindet immer wieder, je 8 zugleich; die Oberfläche (hier der Leser) bleibt
+  als_nobody python3 "$E2E/klient.py" flut 6 > "$E2E/flut.log" 2>&1 < /dev/null &
+  local flut=$!
+  sleep 1
+  geste_erwartet "$lesen" oben tp swipe3 hoch
+  geste_erwartet "$lesen" unten tp swipe3 runter
+  wait "$flut" || true
+  (( $(cat "$E2E/flut.log" 2> /dev/null || echo 0) > 100 )) || fehler "Flut lief nicht ($(cat "$E2E/flut.log"))"
+  if grep -qx getrennt "$lesen"; then fehler "Leser wurde während der Flut getrennt"; fi
+  ok "Flut von nobody ($(cat "$E2E/flut.log") Verbindungen): Der Leser bleibt verbunden und bekommt jede Geste"
   geste_erwartet "$lesen" oben tp swipe3 hoch
   geste_erwartet "$lesen" unten tp swipe3 runter
   geste_erwartet "$lesen" oben tp pfad 3 0 -12 0.08
@@ -283,6 +302,15 @@ schritt_dienst() {
   geste_erwartet "$lesen" nichts tp zeiger1 30
   geste_erwartet "$lesen" nichts kb swipe3 hoch
   geste_erwartet "$lesen" nichts tk swipe3 hoch
+
+  # Ein Touchpad mit nur einem Slot: libinput führt es ohne Gesten, der Dienst hält es nicht offen
+  geraet_anlegen t1 touchpad --slots 1
+  warte_bis 5 enthaelt "$(knoten t1) dazu, ohne Gesten (geschlossen)" journalctl -u zenos-gesten.service -o cat \
+    --no-pager || fehler "Touchpad mit einem Slot nicht gemeldet"
+  pid=$(systemctl show -p MainPID --value zenos-gesten.service)
+  [[ "$(offene_knoten)" == "/dev/input/$(knoten tp) " ]] || fehler "offene Knoten mit Touchpad ohne Gesten: $(offene_knoten)"
+  ok "Touchpad ohne Gesten ($(knoten t1), 1 Slot) bleibt nicht offen"
+  geraet_entfernen t1
 
   geraet_anlegen tp2 touchpad
   warte_bis 5 enthaelt "Touchpad $(knoten tp2) dazu" journalctl -u zenos-gesten.service -o cat --no-pager ||
@@ -301,6 +329,48 @@ schritt_dienst() {
   journal=$(journalctl -u zenos-gesten.service -o cat --no-pager)
   if grep -qwE 'oben|unten' <<< "$journal"; then fehler "Gesten stehen im Journal"; fi
   ok "Journal ohne einzelne Gesten ($(grep -c . <<< "$journal") Zeilen)"
+  riegel_pruefen
+}
+
+# Befund: Tastaturen hingen nur an der Gruppe des Knotens. Jetzt Tastatur und Touchpad mit Tasten von Hand in die Gruppe
+# zenos-gesten (wie durch eine fremde Regel): Der Dienst prüft selbst und lehnt beide ab.
+riegel_pruefen() {
+  local name lesen=$E2E/tester/lesen-riegel seit
+  for name in kb tk; do
+    chgrp zenos-gesten "/dev/input/$(knoten "$name")"
+    chmod 0640 "/dev/input/$(knoten "$name")"
+  done
+  seit=$(date '+%Y-%m-%d %H:%M:%S')
+  systemctl restart zenos-gesten.service
+  warte_bis 10 test -f /run/zenos-gesten/bereit || fehler "Dienst nach Neustart nicht bereit"
+  pid=$(systemctl show -p MainPID --value zenos-gesten.service)
+  [[ "$(offene_knoten)" == "/dev/input/$(knoten tp) " ]] ||
+    fehler "falsche Gruppe: offen sind «$(offene_knoten)» statt nur dem Touchpad"
+  for name in kb tk; do
+    enthaelt "$(knoten "$name") abgelehnt: kein reines Touchpad" journalctl -u zenos-gesten.service -o cat \
+      --no-pager --since "$seit" || fehler "$(knoten "$name") nicht als abgelehnt gemeldet"
+  done
+  ok "Tastatur und Touchpad mit Tasten in der Gruppe zenos-gesten: abgelehnt (EACCES), nur das Touchpad offen"
+  leser_starten "$lesen"
+  geste_erwartet "$lesen" nichts tk swipe3 hoch
+  geste_erwartet "$lesen" oben tp swipe3 hoch
+  leser_stoppen
+  for name in kb tk; do
+    chgrp input "/dev/input/$(knoten "$name")"
+    chmod 0660 "/dev/input/$(knoten "$name")"
+  done
+  systemctl restart zenos-gesten.service
+  warte_bis 10 test -f /run/zenos-gesten/bereit || fehler "Dienst nach Neustart nicht bereit"
+}
+
+# Offene Eingabeknoten des Dienstes (PID in $pid), durch Leerzeichen getrennt
+offene_knoten() {
+  local fd ziel liste=""
+  for fd in "/proc/$pid/fd"/*; do
+    ziel=$(readlink -- "$fd" 2> /dev/null) || continue
+    [[ "$ziel" == /dev/input/* ]] && liste+="$ziel "
+  done
+  printf '%s' "$liste"
 }
 
 enthaelt() { # MUSTER BEFEHL… – kommt MUSTER in der Ausgabe vor (ohne Pipe, wegen pipefail)
@@ -418,6 +488,10 @@ schritt_oberflaeche() {
   warte_bis 10 gleich zu ipc einrichtung status || fehler "Einrichtung geht nicht zu"
   warte_bis 10 gleich verbunden ipc gesten status || fehler "Oberfläche nicht mit zenos-gesten verbunden"
   ok "Oberfläche läuft und ist mit zenos-gesten verbunden"
+  # Ist an seat0 jemand aktiv, nur er (sd_seat_get_active im Sandkasten): ein anderer gewöhnlicher Benutzer fliegt
+  [[ "$(setpriv --reuid=1500 --regid=1500 --clear-groups -- python3 "$E2E/klient.py" viele 1)" == zu ]] ||
+    fehler "uid 1500 bleibt verbunden, obwohl $TESTER an seat0 aktiv ist"
+  ok "$TESTER ist an seat0 aktiv: ein anderer Benutzer (uid 1500) wird sofort getrennt"
   uebersicht_ist zu || fehler "Übersicht ist schon offen"
   oberflaeche_geste offen swipe3 hoch
   oberflaeche_geste zu swipe3 runter
@@ -432,6 +506,8 @@ schritt_oberflaeche() {
   warte_bis 3 uebersicht_ist offen || fehler "Übersicht über IPC nicht offen"
   oberflaeche_geste offen swipe3 hoch
   oberflaeche_geste zu swipe3 runter
+  polkit_pruefen
+  leiste_pruefen
 
   systemctl restart zenos-gesten.service
   warte_bis 5 gleich getrennt ipc gesten status || true
@@ -459,15 +535,58 @@ schritt_oberflaeche() {
   rm -f "$LAUFZEIT/zenos/gesperrt"
 }
 
+# Befund: Die Übersicht verdrängte den polkit-Dialog und zeigte Getipptes im Filter. Jetzt: Fragt polkit, geht die
+# Übersicht zu und öffnet weder per Wischen noch per IPC; nach dem Dialog wieder wie gewohnt.
+polkit_pruefen() {
+  command -v pkexec > /dev/null || fehler "pkexec fehlt (kommt mit install.sh, scripts/pakete/sicherheit.txt)"
+  warte_bis 10 gleich angemeldet ipc polkit agent || fehler "Oberfläche ist nicht als polkit-Agent angemeldet"
+  oberflaeche_geste offen swipe3 hoch
+  # pkexec aus der Benutzerinstanz: polkit fragt den Agenten der Sitzung auf seat0
+  als_tester systemd-run --user --quiet --collect --unit=e2e-gesten-pkexec pkexec /bin/true
+  warte_bis 10 gleich offen ipc polkit status || fehler "polkit fragt nicht"
+  warte_bis 3 uebersicht_ist zu || fehler "polkit fragt, die Übersicht bleibt offen"
+  ok "polkit fragt → Übersicht zu"
+  oberflaeche_geste zu swipe3 hoch
+  ipc uebersicht oeffnen > /dev/null
+  ipc uebersicht umschalten > /dev/null
+  sleep 0.6
+  uebersicht_ist zu || fehler "polkit offen: Übersicht öffnet über IPC"
+  [[ "$(ipc polkit status)" == offen ]] || fehler "polkit-Dialog ging zu"
+  ok "solange polkit fragt: weder Wischen noch IPC öffnet die Übersicht, der Dialog bleibt"
+  ipc polkit abbrechen > /dev/null
+  warte_bis 10 gleich zu ipc polkit status || fehler "polkit-Anfrage geht nicht zu"
+  oberflaeche_geste offen swipe3 hoch
+  oberflaeche_geste zu swipe3 runter
+}
+
+# Befund: Ein Menü der Leiste (mit WLAN-Passwortfeld) blieb unter der Übersicht offen. Jetzt schliesst es.
+leiste_pruefen() {
+  ipc leiste menue wlan > /dev/null
+  warte_bis 3 gleich system ipc leiste status || fehler "System-Menü geht nicht auf"
+  oberflaeche_geste offen swipe3 hoch
+  [[ "$(ipc leiste status)" == zu ]] || fehler "Menü der Leiste bleibt unter der Übersicht offen"
+  ok "Übersicht öffnet → Menü der Leiste zu"
+  oberflaeche_geste zu swipe3 runter
+}
+
 # --- Rückweg ------------------------------------------------------------------------
 
 schritt_rueckweg() {
   schritt "rueckweg: Notschalter nimmt alles zurück, ohne Schalter wieder da"
-  local zeile
+  local zeile uid_dienst
   install -d /etc/xdg/zenos
+  uid_dienst=$(id -u zenos-gesten)
+  # Befund: Lief der Messmodus noch, scheiterte userdel und install.sh brach ab
+  setsid setpriv --reuid=zenos-gesten --regid=zenos-gesten --clear-groups -- \
+    python3 -I /opt/zenos/scripts/bin/zenos-gesten --messen > "$E2E/messen.log" 2>&1 < /dev/null &
+  warte_bis 10 grep -q Messmodus "$E2E/messen.log" || { cat "$E2E/messen.log" >&2; fehler "Messmodus startet nicht"; }
+  ok "Messmodus läuft als zenos-gesten"
   touch /etc/xdg/zenos/gesten-aus
   zeile=$(install_lauf rueckweg-1)
   ok "mit Notschalter: $zeile"
+  grep -q 'Prozesse von zenos-gesten beendet' "$E2E/rueckweg-1.log" || fehler "Messmodus nicht beendet"
+  if pgrep -u "$uid_dienst" > /dev/null 2>&1; then fehler "es läuft noch ein Prozess als zenos-gesten"; fi
+  ok "Messmodus beendet, install.sh lief durch"
   if systemctl --quiet is-active zenos-gesten.service; then fehler "Dienst läuft noch"; fi
   local datei
   for datei in /etc/udev/rules.d/72-zenos-gesten.rules /etc/systemd/system/zenos-gesten.service \
