@@ -518,7 +518,8 @@ systemctl --user start zenos-shell.service
 - [ ] Automatik: `systemctl list-timers 'zenos-kanal*'` zeigt `zenos-kanal.timer` (nächstes Holen in höchstens 6 h),
   `zenos-kanal-gelegenheit.timer` (alle 15 Min.) und `zenos-kanal-bestaetigen.timer`. `zen kanal automatik` sagt «an»
   und was sie zuletzt tat; auf dem Kanal `dev` steht dort «Kanal dev: Automatisch kommt nie etwas».
-- [ ] Erst wenn der Pi auf `vorschau` ist und ein neues signiertes rc bereit steht (`zen kanal status`: «neue Version
+- [ ] Erst wenn der Pi auf `vorschau` ist (`sudo zen kanal wechseln vorschau`, nach G10) und ein neues signiertes rc
+  bereit steht (`zen kanal status`: «neue Version
   bereit»): sperren (Super+L) und mindestens 20 Minuten warten. Danach kommt still «zenOS aktualisiert» in die
   Zentrale, und `zen kanal status` sagt unter «Update» «… automatisch installiert …, gilt als gut nach einem Neustart
   mit Login». Neustart; nach etwa 5 Minuten steht unter «Update» der neue Stand als gut (`journalctl -u
@@ -655,7 +656,11 @@ lässt sie aus; noch einmal versuchen geht bewusst mit `zen rollback <version>` 
 stehen dabei). Das ist gewollt; mit «nein» bleibt alles, wie es ist.
 
 `zen update` meldet auf `stabil` oder `vorschau` «Anker fehlt»: Ohne Schlüssel im Anker kommt dort nichts. Von Hand
-geht es auf `dev` weiter (in `/etc/xdg/zenos/kanal` `dev` eintragen).
+geht es auf `dev` weiter:
+
+```
+sudo zen kanal wechseln dev
+```
 
 `zen update` meldet «läuft gerade»: Ein anderes `zen update`, eine Prüfung oder ein `install.sh` von Hand läuft
 noch; die Meldung nennt den Prozess (vergessene tmux-Sitzung? `tmux ls`). Wer die Sperren hält, zeigt auch:
@@ -916,6 +921,16 @@ Manifest für den Raspberry Pi Imager und der Quellcode aller Pakete (`docs/imag
 Den Stand des Baus zeigt GitHub unter Actions; der Quellcode-Job braucht je nach Netz bis zu einigen Stunden. Ein
 Image aus `v0.1.0` folgt dem Kanal `stabil`, eines aus einem `-rc` dem Kanal `vorschau`; beide bringen den Anker mit
 und aktualisieren sich danach selbst.
+
+**Kanal wechseln.** Nach dem ersten signierten `-rc` stellst du den Pi von `dev` auf `vorschau` (danach `zen update`).
+`vorschau` bekommt auch die Endversionen wie `v0.1.0`. Steht der Pi auf einem neueren `dev`-Stand als das `-rc`,
+fragt `zen update` «Rückschritt: Der installierte Stand ist neuer als …» nach «ja»; mit «nein» bleibt er, bis eine
+neuere Version kommt. Ein Gerät aus einem `-rc`-Image wechselt nach `v0.1.0` genauso auf `stabil`
+(`sudo zen kanal wechseln stabil`).
+
+```
+sudo zen kanal wechseln vorschau
+```
 
 **G11 bis G14: `main` auf den Stand bringen** (deine Entscheidung). Solange `main` nur den Start-Commit enthält,
 braucht jede Installation `git switch dev`. Vorschlag: `main` auf `v0.1.0` vorspulen. Dann funktionieren

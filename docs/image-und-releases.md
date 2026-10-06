@@ -248,7 +248,8 @@ Rückfrage-Pfade, nach der Wartezeit und zum Zeitpunkt, den der Benutzer am Ger�
 | `sudo zen kanal zeitpunkt sperre\|jederzeit\|hand`, `… fenster VON BIS` | root | setzt ihn (dasselbe wie in den Einstellungen; VON und BIS als HH:MM, mindestens eine Stunde, über Mitternacht erlaubt) |
 | `zen kanal automatik` | alle | ob die Automatik an ist, nächstes Holen, was sie zuletzt tat, ein Stand, der auf die Bestätigung wartet, eine zurückgestellte Version |
 | `sudo zen kanal automatik an\|aus` | root | Notschalter: Timer ein bzw. aus, Vermerk `/etc/xdg/zenos/kanal-automatik-aus` (install.sh hält sich daran). `zen update` geht immer, die Signaturprüfung bleibt |
-| `sudo zen kanal anker ORDNER` | root, nur im Terminal | setzt den Anker von Hand: den Fingerabdruck der Wurzel und von jedem Release-Schlüssel die ersten 8 Zeichen nach `SHA256:` aus 1Password eintippen. Die Werte aus dem Ordner zeigt es erst danach (auch nach einer falschen Eingabe nicht), damit niemand abtippt, was auf dem Bildschirm steht. Bei gleicher Wurzel nie mit kleinerer Serie, Widerrufe des Geräts bleiben |
+| `sudo zen kanal wechseln stabil\|vorschau\|dev` | root | setzt den Kanal in `/etc/xdg/zenos/kanal` (atomar, 0644, nur diese drei Wörter, Eintrag im Journal). Installiert nichts; ist der installierte Stand neuer als die neueste Version des neuen Kanals, fragt `zen update` danach nach «ja» (Rückschritt) |
+| `sudo zen kanal anker ORDNER` | root, nur im Terminal | setzt den Anker von Hand: den Fingerabdruck der Wurzel und von jedem Release-Schlüssel die ersten 8 Zeichen nach `SHA256:` aus einer vertrauenswürdigen Quelle eintippen (1Password beim Besitzer der Schlüssel, sonst «Signierte Releases» oben). Die Werte aus dem Ordner zeigt es erst danach (auch nach einer falschen Eingabe nicht), damit niemand abtippt, was auf dem Bildschirm steht. Bei gleicher Wurzel nie mit kleinerer Serie, Widerrufe des Geräts bleiben |
 
 Ablauf:
 

@@ -292,7 +292,7 @@ Die Logik läuft in Quickshell selbst, ohne eigenen Hintergrunddienst.
 | Verweise ins Repo | `~/.config/labwc/{autostart,environment,shutdown,menu.xml}`, `~/.config/kitty/kitty.conf`, `~/.config/fish/conf.d/zenos.fish` | ja |
 | Erzeugte Konfiguration | `~/.config/labwc/rc.xml` und `themerc-override`, `~/.config/kanshi/config`, `~/.config/kitty/*-theme.auto.conf` | nein, erzeugt |
 | `zen` | `/usr/local/bin/zen` verweist auf `/opt/zenos/scripts/zen` | ja |
-| Kanal für `zen update` | `/etc/xdg/zenos/kanal` (`dev` oder `main`; der signierte Kanal kennt `stabil`, `vorschau`, `dev`, `main` gilt als `stabil`) | nein, vom Installer |
+| Kanal für `zen update` | `/etc/xdg/zenos/kanal` (`stabil`, `vorschau` oder `dev`; ein alter Wert `main` gilt als `stabil`). Der Installer legt ihn beim ersten Mal an (`main` → `stabil`, sonst `dev`; im Image der Kanal des Tags), wechseln: `sudo zen kanal wechseln` | nein, vom Installer |
 | Zeitpunkt automatischer Updates | `/etc/xdg/zenos/kanal-zeitpunkt` (`zeitpunkt=sperre\|fenster\|jederzeit\|hand`, bei `fenster` `von=` und `bis=` als HH:MM, `seit=…`; root, 0644; fehlt = `sperre`). Setzen: Einstellungen › System › Updates oder `sudo zen kanal zeitpunkt` | nie |
 | Notschalter der Automatik | `/etc/xdg/zenos/kanal-automatik-aus` (root, 0644): Timer aus, `install.sh` lässt sie aus. Setzen und entfernen: `sudo zen kanal automatik aus\|an` | nie |
 | Vertrauensanker | `/etc/zenos/vertrauen/{release,wurzel,widerrufen,serie}` (root, 0644). Mit Schlüsseln gefüllt nur im Image (aus `system/vertrauen/`) oder von Hand (`sudo zen kanal anker ORDNER`, Fingerabdrücke aus 1Password eintippen), danach nur über `vertrauen/NNNN` | im Image ja (`system/vertrauen/`), sonst nein |

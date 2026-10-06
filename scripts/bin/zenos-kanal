@@ -16,6 +16,9 @@ Aufruf:
   zenos-kanal zeitpunkt [sperre|fenster VON BIS|jederzeit|hand]
                                        zeigt bzw. setzt (root) den Zeitpunkt automatischer Updates in
                                        /etc/xdg/zenos/kanal-zeitpunkt; ohne Datei gilt «sperre»
+  zenos-kanal wechseln stabil|vorschau|dev
+                                       setzt den Kanal in /etc/xdg/zenos/kanal (root, atomar, 0644; sudo zen kanal
+                                       wechseln). Installiert nichts: Das tut danach zen update bzw. die Automatik
   zenos-kanal status [--json|--kurz|--installation]
                                        Kanal, Anker mit Fingerabdrücken, letzte Prüfung und Installation (ohne root)
   zenos-kanal pruefen                  prüft das zuletzt geholte Bundle ohne Netz, erfüllt einen Wunsch von update oder
@@ -1474,6 +1477,59 @@ def cmd_schedule(argv):
     return EXIT_OK
 
 
+CHANNEL_HINT = {
+    "stabil": "nur gültig signierte Versionen vX.Y.Z, 24 h nach dem ersten Sehen auch automatisch",
+    "vorschau": "gültig signierte Versionen vX.Y.Z und Release-Kandidaten vX.Y.Z-rcN, ohne Wartezeit",
+    "dev": "der Branch dev, nur von Hand mit zen update (nicht durchgehend Signiertes nur mit «ja»), nie automatisch",
+}
+
+
+def cmd_switch_channel(argv):
+    """wechseln: den Kanal setzen (root, nur die drei festen Wörter, atomar). Installiert nichts."""
+    if len(argv) != 1 or argv[0] not in CHANNELS:
+        print(f"{NAME} wechseln stabil|vorschau|dev", file=sys.stderr)
+        return EXIT_USAGE
+    channel = argv[0]
+    if os.geteuid() not in TRUSTED_UIDS:
+        print(f"{NAME} wechseln: nur als root (sudo zen kanal wechseln {channel})", file=sys.stderr)
+        return EXIT_USAGE
+    os.umask(0o022)
+    folder = os.path.dirname(CHANNEL_FILE)
+    os.makedirs(folder, mode=0o755, exist_ok=True)
+    problem = path_problem(folder)
+    if problem:
+        print(f"{NAME} wechseln: {problem}. Nichts geändert.", file=sys.stderr)
+        return EXIT_BLOCKED
+    lock = lock_or_exit()
+    if not isinstance(lock, Locked):
+        return lock
+    try:
+        try:
+            before, _ = read_channel()
+        except Failure:
+            before = None
+        if before == channel and os.path.lexists(CHANNEL_FILE):
+            print(f"Kanal: schon {channel} ({CHANNEL_HINT[channel]}).")
+            return EXIT_OK
+        # Auch ein unbekannter Wert (der Kanal war blockiert) wird so ersetzt
+        via = caller_text()
+        write_atomic(CHANNEL_FILE, channel + "\n")
+        journal(f"Kanal: {channel}, vorher {before or 'unbekannt'} ({via})")
+    finally:
+        lock.release()
+    print(f"Kanal: {channel}, vorher {before or 'unbekannt'} ({CHANNEL_HINT[channel]}).")
+    if channel != "dev":
+        try:
+            load_device_anchor()
+        except AnchorError:
+            print(f"  Anker fehlt: Auf {channel} kommt nichts, bis er gesetzt ist (sudo zen kanal anker "
+                  f"{CODE_DIR}/system/vertrauen; die Fingerabdrücke mit einer vertrauenswürdigen Quelle vergleichen).")
+        print("  Ist der installierte Stand neuer als die neueste Version dort (etwa ein Stand von dev), installiert "
+              "zen update sie nur nach «ja» (Rückschritt); sonst kommt erst die nächste Version.")
+    print("  Was jetzt gilt: zen kanal pruefen · installieren: zen update")
+    return EXIT_OK
+
+
 def read_fetch_status():
     """Zeitpunkt des letzten erfolgreichen Holens und Fehler des letzten Versuchs, nur zur Anzeige (der Holer
     schreibt die Datei, root glaubt ihr nichts weiter)."""
@@ -2434,7 +2490,7 @@ class Check:
     def channel_target(self, trusted):
         if not self.anchor:
             raise Refusal(f"Anker fehlt ({self.stand['anker_problem']}). Auf {self.channel} kommt nur gültig "
-                          "Signiertes. Von Hand weiter geht es auf dev (Kanal in /etc/xdg/zenos/kanal).")
+                          "Signiertes. Von Hand weiter geht es auf dev (sudo zen kanal wechseln dev).")
         if not trusted:
             raise Refusal(f"Kanal blockiert: {self.stand['grund']}")
         floor = self.floor_value
@@ -4896,7 +4952,7 @@ def main(argv):
         return EXIT_OK if argv else EXIT_USAGE
     commands = {"status": cmd_status, "pruefen": cmd_check, "anker": cmd_anchor, "holen-intern": cmd_fetch_internal,
                 "update": cmd_update, "rollback": cmd_rollback, "jetzt": cmd_now, "zustimmen": cmd_consent,
-                "zeitpunkt": cmd_schedule, "installieren": cmd_install, "nachstart": cmd_after_boot,
+                "zeitpunkt": cmd_schedule, "wechseln": cmd_switch_channel, "installieren": cmd_install, "nachstart": cmd_after_boot,
                 "selbsttest": cmd_selftest, "automatik": cmd_automatic, "bestaetigen": cmd_confirm,
                 "image": cmd_image}
     command = commands.get(argv[0])

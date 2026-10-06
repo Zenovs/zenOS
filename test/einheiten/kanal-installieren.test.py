@@ -985,6 +985,76 @@ class Befunde(Geraet):
 
 
 @unittest.skipUnless(B.HAT_WERKZEUGE, "git oder ssh-keygen fehlt unter /usr/bin")
+class Wechseln(Geraet):
+    """Befund rel-03: Einen Befehl für den Kanal gab es nicht; wer wechseln wollte, schrieb die Datei von Hand (ohne
+    sudo scheiterte es, ein Tippfehler blockierte den Kanal)."""
+
+    def wechseln(self, *argv):
+        aus = io.StringIO()
+        with contextlib.redirect_stdout(aus), contextlib.redirect_stderr(aus):
+            rc = K.cmd_switch_channel(list(argv))
+        self.ausgabe = aus.getvalue()
+        return rc
+
+    def kanal_datei(self):
+        with open(K.CHANNEL_FILE, encoding="utf-8") as f:
+            return f.read()
+
+    def test_setzt_nur_feste_woerter(self):
+        self.kanal("dev")
+        self.assertEqual(self.wechseln("vorschau"), 0, self.ausgabe)
+        self.assertEqual(self.kanal_datei(), "vorschau\n")
+        self.assertEqual(os.stat(K.CHANNEL_FILE).st_mode & 0o777, 0o644)
+        self.assertEqual(K.read_channel(), ("vorschau", None))
+        self.assertIn("Kanal: vorschau, vorher dev", self.ausgabe)
+        self.assertIn("zen update", self.ausgabe)
+        self.assertEqual(self.wechseln("vorschau"), 0)
+        self.assertIn("schon vorschau", self.ausgabe)
+        for falsch in (("main",), ("Stabil",), ("",), ("dev\nstabil",), ("../x",), (), ("stabil", "dev")):
+            with self.subTest(argumente=falsch):
+                self.assertEqual(self.wechseln(*falsch), K.EXIT_USAGE)
+                self.assertEqual(self.kanal_datei(), "vorschau\n", "nichts geändert")
+        # Ein unbekannter Wert (der Kanal war blockiert) wird ersetzt
+        self.kanal("kaputt")
+        self.assertEqual(self.wechseln("stabil"), 0, self.ausgabe)
+        self.assertIn("vorher unbekannt", self.ausgabe)
+        self.assertEqual(self.kanal_datei(), "stabil\n")
+
+    def test_nur_als_root(self):
+        if os.geteuid() == 0:
+            self.skipTest("als root gibt es keinen fremden Benutzer")
+        self.kanal("dev")
+        self.addCleanup(setattr, K, "TRUSTED_UIDS", K.TRUSTED_UIDS)
+        K.TRUSTED_UIDS = (0,)
+        self.assertEqual(self.wechseln("stabil"), K.EXIT_USAGE)
+        self.assertIn("nur als root", self.ausgabe)
+        self.assertEqual(self.kanal_datei(), "dev\n")
+
+    def test_ohne_anker_ein_hinweis(self):
+        self.kanal("dev")
+        self.ohne_anker()
+        self.assertEqual(self.wechseln("stabil"), 0, self.ausgabe)
+        self.assertIn("Anker fehlt", self.ausgabe)
+        self.assertIn("sudo zen kanal anker", self.ausgabe)
+        self.assertNotIn("1Password", self.ausgabe)
+
+    def test_zurueck_von_dev_ist_ein_rueckschritt_nur_mit_ja(self):
+        # Der Pi nach rc4 weiter auf dev, dann zurück auf vorschau: rc4 ist älter als der installierte Stand
+        self.kanal("dev")
+        self.commit("rc4", signiert_mit="rel")
+        self.signieren("v0.1.0-rc4")
+        neuer = self.commit("danach", signiert_mit="rel")
+        self.assertEqual(self.zen(), 0, self.ausgabe)
+        self.assertEqual(self.kopf(), neuer)
+        self.assertEqual(self.wechseln("vorschau"), 0, self.ausgabe)
+        self.assertIn("Rückschritt", self.ausgabe)
+        self.antworten = ["nein"]
+        self.assertEqual(self.zen(), 10, self.ausgabe)
+        self.assertIn("Rückschritt", self.ausgabe)
+        self.assertEqual(self.kopf(), neuer, "ohne «ja» bleibt der Stand")
+
+
+@unittest.skipUnless(B.HAT_WERKZEUGE, "git oder ssh-keygen fehlt unter /usr/bin")
 class Ergebnis(Geraet):
     """Befund sich-01: Die Gesundheitsprüfung stützte sich auf das install.log, das nach einem Lauf von Hand dem
     Benutzer gehört. Ein Prozess mit Benutzerrechten konnte es kürzen oder ein «== Beginn» anhängen; die gültige

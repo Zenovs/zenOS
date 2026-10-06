@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# hilfe: kanal [status|pruefen|anker|zeitpunkt|automatik] – signierter Update-Kanal: Stand zeigen und prüfen (installieren: zen update)
+# hilfe: kanal [status|pruefen|anker|zeitpunkt|automatik|wechseln] – signierter Update-Kanal: Stand zeigen und prüfen (installieren: zen update)
 #   zen kanal [status]           Kanal, Zustand, Anker mit Fingerabdrücken, gültige und abgelehnte Tags, letzte
 #                                Installation, guter Stand, gesperrte Stände
 #   sudo zen kanal pruefen       holt Tags und Branches von origin (ohne Rechte), prüft sie ohne Netz, schreibt den
@@ -18,6 +18,9 @@
 #   sudo zen kanal automatik an|aus
 #                                Notschalter: Timer ein bzw. aus (/etc/xdg/zenos/kanal-automatik-aus; install.sh
 #                                hält sich daran). zen update geht immer
+#   sudo zen kanal wechseln stabil|vorschau|dev
+#                                setzt den Kanal (/etc/xdg/zenos/kanal, atomar). Installiert nichts; danach
+#                                zen update
 # Das Programm ist /usr/local/libexec/zenos/zenos-kanal (kommt mit install.sh). Installiert wird mit «zen update» und
 # «zen rollback <tag>» über dieselben Units.
 # shellcheck shell=bash
@@ -69,8 +72,16 @@ befehl_kanal() {
         return 2
       fi
       ;;
+    wechseln)
+      if (( $# == 1 )) && [[ "$1" == stabil || "$1" == vorschau || "$1" == dev ]]; then
+        $SUDO /usr/bin/python3 -I "$_KANAL_PROGRAMM" wechseln "$1"
+      else
+        zen_fehler "zen kanal wechseln stabil|vorschau|dev"
+        return 2
+      fi
+      ;;
     *)
-      zen_fehler "zen kanal kennt «$befehl» nicht (status, pruefen, anker, zeitpunkt, automatik)"
+      zen_fehler "zen kanal kennt «$befehl» nicht (status, pruefen, anker, zeitpunkt, automatik, wechseln)"
       return 2
       ;;
   esac

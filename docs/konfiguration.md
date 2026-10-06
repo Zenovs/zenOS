@@ -270,7 +270,8 @@ Damit Browser und Apps dort speichern, zeigen die XDG-Benutzerordner in `~/.conf
   dev, nur von Hand). Der Installer legt die Datei beim ersten Mal an (aus dem Branch der Quelle: `main` → `stabil`,
   sonst `dev`; im Image der Kanal des Tags: `vX.Y.Z` → `stabil`, `vX.Y.Z-rcN` → `vorschau`) und ändert sie danach nicht mehr, ausser ein alter Wert `main` wird zu `stabil`. Eine
   fehlende Datei gilt als `dev`, ein unbekannter Wert blockiert den Kanal (`zen update` installiert nichts, der Notweg
-  in ANLEITUNG F geht weiter).
+  in ANLEITUNG F geht weiter). Wechseln: `sudo zen kanal wechseln stabil|vorschau|dev` (schreibt atomar, nur diese
+  drei Wörter; installiert nichts, das tut danach `zen update`).
 - **`/etc/zenos/vertrauen/`:** `release`, `wurzel`, `widerrufen`, `serie` (root, 0644, Ordner 0755). Nicht von Hand
   bearbeiten: Ein Anker, der für andere schreibbar ist oder ein Verweis, gilt als fehlend. Format und Wechsel:
   `docs/image-und-releases.md`, «Signierte Releases».
