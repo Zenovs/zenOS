@@ -3,7 +3,8 @@
 Übersicht aller geplanten Funktionen. Der Zeitpunkt steht in `ROADMAP.md`.
 
 Spalte «0.1»: ✓ ist in Version 0.1 umgesetzt (im Container getestet, Abnahme auf dem Pi steht aus). In Klammern,
-was davon erst «Danach» kommt oder noch ohne Wirkung ist.
+was davon erst «Danach» kommt oder noch ohne Wirkung ist. «nach 0.1, unveröffentlicht» heisst: kam nach
+`v0.1.0-rc2` dazu und gehört zu `v0.1.0`.
 
 ## Basis (Version 1)
 
@@ -26,7 +27,7 @@ was davon erst «Danach» kommt oder noch ohne Wirkung ist.
 | WLAN-Menü | oben rechts im System-Menü: Netze in Reichweite, verbinden (mit Passwortfeld), vergessen, WLAN an/aus; nur eine Oberfläche für NetworkManager, eingeschaltet mit `zen netzwerk umstellen` | nach 0.1, unveröffentlicht |
 | Akku und Lüfter | Argon ONE UP: Akku in der Leiste; Akku, Lüfter und CPU-Temperatur im System-Menü; Mitteilung bei 10 % (ruhig) und 5 % (dringend, sofort); bei 3 % schaltet zenOS nach 60 s Vorwarnung kontrolliert aus (nur das Netzteil bricht ab); Zuklappen sperrt sofort und schaltet den Bildschirm aus; der Messchip misst erst nach `zen akku freigeben` | nach 0.1, unveröffentlicht |
 | Lüfter einstellen | im System-Menü (Zeile «Lüfter»: «Auto · 1 · 2 · 3 · 4», ohne Passwort) oder mit `zen luefter`: automatisch oder eine Mindeststufe; bei Wärme immer schneller, nie leiser als automatisch, ab 80 °C voll; bleibt über Neustarts | nach 0.1, unveröffentlicht |
-| Firewall | standardmässig an: eingehend gesperrt, nur SSH aus lokalen Netzen; ausschalten nur bewusst, im Schalter der Einstellungen mit Passwort (polkit-Dialog) oder mit `zen firewall deaktivieren` | nach 0.1, unveröffentlicht (in 0.1 nur vorbereitet und aus) |
+| Firewall | standardmässig an: eingehend gesperrt, nur SSH aus lokalen Netzen; ausschalten nur bewusst, im Schalter der Einstellungen mit Passwort (polkit-Dialog) oder mit `zen firewall deaktivieren` | nach 0.1, unveröffentlicht (bis `v0.1.0-rc2` nur vorbereitet und aus) |
 | Systemkennung | Das System heisst zenOS (`ID=zenos`, «basiert auf Ubuntu 26.04 LTS»): Textkonsole, Begrüssung bei der Anmeldung ohne Ubuntu-Werbung, `hostnamectl`, `lsb_release`; Einstellungen → System und `zen version` zeigen eine eigene Zeile «Basis Ubuntu …». Nur mit nachgewiesenen Ubuntu-Sicherheitsupdates; zurück mit `sudo zenos-kennung ubuntu` | nach 0.1, unveröffentlicht |
 | Terminal | kitty + fish; Ctrl+C kopiert oder bricht ab; Befehlsblöcke; `?` erklärt; Warnung bei gefährlichen Befehlen | ✓ |
 | Erster Start | Name, Ort (optional), Erscheinungsbild, erster Modus; installiert proprietäre Apps | ✓ (Apps nach Zustimmung; Ort fürs Wetter noch ohne Wirkung) |

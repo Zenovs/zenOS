@@ -19,7 +19,9 @@ Fehler durchlief.
 
 Der Bau lief nicht auf dem Pi, sondern auf dem Mac: Claude Code hat dort gebaut und in Docker-Containern mit Ubuntu
 26.04 arm64 getestet, also mit derselben Architektur wie der Pi. Das Repo liegt auf GitHub: `main` enthält den
-Start-Commit, `dev` zenOS 0.1 mit dem Tag `v0.1.0-rc2`. Die früheren Schritte A1 bis A14 fallen weg.
+Start-Commit, `dev` zenOS 0.1 mit den Release-Kandidaten `v0.1.0-rc1` bis `v0.1.0-rc3` (unsigniert, nur als
+Workflow-Artefakt). Als Nächstes kommt der erste signierte, `v0.1.0-rc4` (G). Die früheren Schritte A1 bis A14 fallen
+weg.
 
 ---
 
@@ -120,7 +122,7 @@ git clone https://github.com/Zenovs/zenOS.git ~/zenOS
 cd ~/zenOS
 ```
 
-**B11.** zenOS 0.1 liegt auf `dev`, solange `main` nur den Start-Commit enthält (bis G3):
+**B11.** zenOS 0.1 liegt auf `dev`, solange `main` nur den Start-Commit enthält (bis G11):
 
 ```
 git switch dev

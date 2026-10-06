@@ -2,9 +2,9 @@
 
 Jeder Checkpoint endet mit einem Tag und einer Abnahme durch Zeno auf echter Hardware.
 
-**Version 0.1:** C1 bis C8 werden gemeinsam in einem Durchgang gebaut, nach `BAUAUFTRAG.md`. Den Workflow für C9 baut Claude Code mit; das erste Image entsteht aber erst nach Zenos Abnahme mit dem Tag `v0.1.0`.
+**Version 0.1:** C1 bis C8 werden gemeinsam in einem Durchgang gebaut, nach `BAUAUFTRAG.md`. Den Workflow für C9 baut Claude Code mit; das erste Release mit Image entsteht aber erst nach Zenos Abnahme mit dem Tag `v0.1.0`.
 
-**Stand 0.1 (Release-Kandidat `v0.1.0-rc2`):** C1 bis C8 und der Workflow für C9 sind gebaut und im Container getestet, die Abnahme auf dem Pi steht aus. Abweichungen sind unten mit «0.1:» markiert. Was genau umgesetzt ist, steht in `docs/funktionen.md`.
+**Stand 0.1 (Oktober 2026):** C1 bis C9 sind gebaut und im Container getestet. Seit `v0.1.0-rc2` kamen dazu: der signierte Update-Kanal (`stabil`, `vorschau`, `dev`, Vertrauensanker, Automatik mit einstellbarem Zeitpunkt), Energie (Bildschirm aus nach der Sperre, Ausschalten nach langer Sperre und bei 3 % Akku), die Systemkennung zenOS (`ID=zenos`) und das Image als eigenständige Distribution mit Release-Seite und Quellcode aller Pakete. `v0.1.0-rc3` ist gebaut (unsigniert, nur als Workflow-Artefakt). In Arbeit: die Fensterübersicht. Nächster Schritt ist der erste signierte Release-Kandidat `v0.1.0-rc4`, danach die Abnahme auf echter Hardware und `v0.1.0`. Abweichungen sind unten mit «0.1:» markiert. Was genau umgesetzt ist, steht in `docs/funktionen.md`.
 
 ## C0 · Grundlagen
 
@@ -17,7 +17,7 @@ Jeder Checkpoint endet mit einem Tag und einer Abnahme durch Zeno auf echter Har
 - Ubuntu Server 26.04 LTS auf dem Pi 5
 - `scripts/install.sh`, idempotent: labwc, Quickshell, kitty, fish, Schriften
 - Autostart: Der Pi bootet direkt in eine leere labwc-Sitzung (0.1: Login über greetd mit Quickshell-Greeter, kein Autologin)
-- Sicherheit Basis: automatische Sicherheitsupdates, Firewall, SSH nur mit Schlüssel über den 1Password-Agent (0.1: Firewall vorbereitet, aber aus; danach standardmässig an, Ausschalten nur mit Passwort; SSH-Konfiguration fasst zenOS nicht an)
+- Sicherheit Basis: automatische Sicherheitsupdates, Firewall, SSH nur mit Schlüssel über den 1Password-Agent (0.1: Firewall standardmässig an, Ausschalten nur mit Passwort, bis `v0.1.0-rc2` nur vorbereitet; SSH-Konfiguration fasst zenOS nicht an)
 - `zen update` und `zen rollback`
 - Argon ONE: Lüftersteuerung als Dienst
 

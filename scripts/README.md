@@ -29,7 +29,8 @@
   sudo (chroot) gibt es keine Benutzerteile.
 - `--image`: für den Image-Bau im chroot. Keine Benutzerteile, kein Zugriff auf `~`, Dienste werden nur
   aktiviert, nie gestartet. `ZENOS_KANAL=<kanal>` legt den Kanal beim ersten Mal fest (`stabil`, `vorschau` oder
-  `dev`, `main` gilt als `stabil`; der Image-Bau setzt `dev`, solange es keine signierten Releases gibt).
+  `dev`, `main` gilt als `stabil`; der Image-Bau setzt den Kanal des Tags: `vX.Y.Z` → `stabil`, `-rcN` →
+  `vorschau`, `dev` nur im Testbau).
 - `--nur-benutzer`: nur die Benutzerteile, ohne sudo. Läuft auch beim Sitzungsstart (mit `--ruhig`). Ohne
   `--ruhig` (`zen update`, `zen benutzer`) startet es die Oberfläche neu, wenn sich QML geändert hat.
 - `--nur-code`: nur als root, nur Modul 10-code (Code nach `/opt/zenos`), ohne Netz. Für

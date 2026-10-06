@@ -16,7 +16,7 @@ Status: `offen` · `in Arbeit` · `fertig` · `offener Punkt`
 | M8 · Modi und Zustände | fertig | Schemas, zenos-konfig, Modi/Zustände/Leitplanken, Freigabe über xdg-desktop-portal-wlr, Einstellungen mit «Modi & Zustände». Details: `docs/module/m8.md` |
 | M9 · Raster und Bildschirme | fertig | zenos-labwc (Regionen, Kürzel, Theme-Teil), zenos-kanshi, Raster-Vorlagen. Details: `docs/module/m9.md` |
 | M10 · Terminal | fertig | kitty (Ctrl+C/V, Super-Kürzel), fish mit Statuszeile, «?» offline, Warnung bei gefährlichen Befehlen. Details: `docs/module/m10.md` |
-| M11 · Sicherheit | fertig | unattended-upgrades, Chrome-Richtlinien, gitleaks-Hook + CI, ufw vorbereitet (nicht aktiv). Details: `docs/module/m11.md` |
+| M11 · Sicherheit | fertig | unattended-upgrades, Chrome-Richtlinien, gitleaks-Hook + CI, ufw (seit `v0.1.0-rc3` standardmässig an). Details: `docs/module/m11.md` |
 | M12 · Erster Start | fertig | Einrichtung nach Entwurf 2, Zustimmung, zen apps (Chrome, VS Code, 1Password, CLI, coremail), Web-Apps. Nubix: kein ARM-Build. Details: `docs/module/m12.md` |
 | M13 · Argon ONE | fertig | zenos-argon (Lüfterkurve, Power-Button, Abschaltsignal beim Ausschalten), Temperatur in der Leiste. Details: `docs/module/m13.md` |
 | M14 · Image-Workflow | fertig | image.yml + image/bauen.sh; -rc-Tags nur Artefakt. Details: `docs/module/m14.md` |
@@ -32,6 +32,11 @@ siehe `test/container/`. Was nur auf echter Hardware prüfbar ist (Grafik über 
 I2C/GPIO des Argon ONE, Tastatur), ist pro Modul unter «am Pi prüfen» notiert.
 
 ## Stand
+
+**Oktober 2026:** Nach `v0.1.0-rc2` kamen der signierte Update-Kanal, Energie, die Systemkennung zenOS und das Image
+als eigenständige Distribution (Release-Seite, Quellcode) dazu; `v0.1.0-rc3` ist gebaut (unsigniert, nur Artefakt).
+Die Fensterübersicht ist in Arbeit. Nächster Schritt: der erste signierte Release-Kandidat `v0.1.0-rc4`, dann die
+Abnahme auf echter Hardware und `v0.1.0` (`ROADMAP.md`). Der Rest dieses Abschnitts beschreibt den Stand von rc1/rc2.
 
 Alle Module sind gebaut und im Container getestet (Ubuntu 26.04 arm64 mit systemd, headless labwc, echte
 PAM-/logind-Sitzungen). Die Abnahme auf dem Pi steht aus: `ANLEITUNG.md`, Abschnitte C bis E. Pro Modul steht unter
@@ -80,7 +85,9 @@ Abnahme in einer echten VM (lima/Apple Virtualization, Ubuntu 26.04 arm64, virti
 - **Ubuntu motd-news und apt-news aus**, VS Code mit `TelemetryLevel` off (Leitplanke «keine Telemetrie»); umkehrbar,
   siehe `docs/sicherheit.md`.
 - **Argon-Abschaltsignal** als system-shutdown-Hook wie im Original-Skript (nur bei poweroff/halt, nur mit Argon).
-- **Kanal:** Pi und Image folgen `dev`, solange `main` nur den Start-Commit trägt.
+- **Kanal:** Pi und Image folgen `dev`, solange `main` nur den Start-Commit trägt. Überholt: Seit dem signierten
+  Kanal folgt das Image dem Kanal seines Tags (`stabil` bzw. `vorschau`), siehe `docs/image-und-releases.md`, «Name,
+  Version und Kanal».
 - **Tags `v0.1.0-rc1` und `v0.1.0-rc2`** gesetzt, obwohl die Abnahme auf dem Pi aussteht: Die Testliste braucht
   einen Tag für `zen rollback`, und der Workflow baut damit das Image nur als Artefakt, ohne Release. rc2 enthält die
   neue Bildmarke und die Behebungen aus der VM-Abnahme.
