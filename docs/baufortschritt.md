@@ -129,3 +129,13 @@ Abnahme in einer echten VM (lima/Apple Virtualization, Ubuntu 26.04 arm64, virti
 - **`esm-cache` von ubuntu-pro-client** fragt bei `apt update` `contracts.canonical.com` ab; abschalten oder lassen.
 - **GitHub:** Issues sind im Repo noch eingeschaltet (ANLEITUNG A6 sah vor, sie auszuschalten), 2FA prüfen.
 - **Festplattenverschlüsselung und Backups** auf dem Pi sind Ziel, in 0.1 nicht umgesetzt.
+- **Name und Marke vor der ersten Weitergabe:** die Markenrecherche zu «zenOS» und bei Canonical schriftlich anfragen
+  oder sich auf die Klausel der IPR-Policy zu den Open-Source-Lizenzen stützen (`docs/image-und-releases.md`, «Name
+  und Marke»).
+- **sudo ohne Passwort von cloud-init:** Hat der Imager den Benutzer angelegt (bis 2.0.10 oder mit
+  «passwordlessSudo») oder kam der Benutzer `ubuntu` aus Ubuntus Vorgabe, gibt es eine Regel ohne Passwort
+  (`/etc/sudoers.d/90-cloud-init-users`). `zen doctor` warnt dann («sudo geht ohne Passwort»); zenOS ändert sie nicht.
+  Entfernen oder lassen.
+- **Login-Bildschirm:** Dort geht der Bildschirm nicht von selbst aus (am Netzteil dauerhaft an; geplant nach 1 Min.
+  ohne Eingabe mit verworfener Wecktaste, `docs/module/energie.md`). Berührt das Passwortfeld des Logins; eigener
+  Schritt nach Zenos Ja.

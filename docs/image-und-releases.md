@@ -847,10 +847,15 @@ Chrome, VS Code, 1Password und coremail sind nicht im Image; Chrome, VS Code und
 ## Name und Marke
 
 Geprüft am 04.10.2026 gegen die IPR-Policy von Canonical (Fassung vom 15.07.2015, an dem Tag neu abgerufen und
-unverändert). Sie verlangt bei einer veränderten Weitergabe ohne Genehmigung, die Marken zu entfernen und zu ersetzen:
-Name, Logo, Systemkennung und Begrüssung. Bis `v0.1.0-rc2` stimmte das nicht: Das Image meldete sich als Ubuntu
-(`ID=ubuntu`, `LOGO=ubuntu-logo`, «Welcome to Ubuntu» bei der Anmeldung, «Ubuntu 26.04.1 LTS» an der Konsole), und die
-Ubuntu-Logos lagen als Dateien von base-files im Image.
+unverändert, am 06.10.2026 wieder). Für eine veränderte Weitergabe ohne Genehmigung sagt sie vollständig: «Otherwise you
+must remove and replace the Trademarks and will need to recompile the source code to create your own binaries.» Gleich
+danach: «This does not affect your rights under any open source licence applicable to any of the components of Ubuntu.»
+Die Marken (Name, Logo, Systemkennung und Begrüssung) ersetzt zenOS. Bis `v0.1.0-rc2` stimmte das nicht: Das Image
+meldete sich als Ubuntu (`ID=ubuntu`, `LOGO=ubuntu-logo`, «Welcome to Ubuntu» bei der Anmeldung, «Ubuntu 26.04.1 LTS» an
+der Konsole), und die Ubuntu-Logos lagen als Dateien von base-files im Image. Die Binärpakete von Ubuntu baut zenOS
+dagegen nicht neu (unten); dafür liesse sich die Klausel zu den Open-Source-Lizenzen anwenden, wie bei anderen
+Ablegern. Ob das genügt oder Canonical schriftlich gefragt wird, entscheidet Zeno vor der ersten Weitergabe
+(`docs/baufortschritt.md`, «Offene Punkte für Zeno»).
 
 Seit der Systemkennung (`docs/module/kennung.md`, Modul `72-kennung`) gilt:
 
@@ -872,9 +877,10 @@ Seit der Systemkennung (`docs/module/kennung.md`, Modul `72-kennung`) gilt:
 
 Der Quellcode zu jedem Release liegt auf derselben Release-Seite («Quellcode und Lizenzen»), die Markenhinweise
 stehen auch in den Versionshinweisen und unter `/usr/local/share/doc/zenos/RECHTLICHES`. Offen vor einer Weitergabe
-an andere: die schriftliche Anfrage bei Canonical, eine Ähnlichkeitsrecherche zum Namen zenOS und ein signierter
-Update-Kanal «stabil». Signieren, Prüfung auf den Geräten und Images nur aus signierten Tags sind eingerichtet
-(«Signierte Releases»); das erste signierte Release `vX.Y.Z` steht noch aus.
+an andere (beides in `docs/baufortschritt.md`, «Offene Punkte für Zeno», und ANLEITUNG G): die schriftliche Anfrage bei
+Canonical oder der Entscheid, sich auf die Klausel zu den Open-Source-Lizenzen zu stützen, und eine
+Ähnlichkeitsrecherche zum Namen zenOS. Signieren, Prüfung auf den Geräten und Images nur aus signierten Tags sind
+eingerichtet («Signierte Releases»); das erste signierte Release `vX.Y.Z` steht noch aus.
 
 ## Bürorechner
 

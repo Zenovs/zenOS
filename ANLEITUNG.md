@@ -212,10 +212,10 @@ Bricht die Verbindung ab: wie in B3 wieder verbinden, dann `tmux attach -t zenos
 zen doctor
 ```
 
-Erwartet wird `0 Fehler`. Hinweise sind normal, zum Beispiel «greetd läuft noch nicht», «Bootsplash vorbereitet,
-nicht aktiv» und die noch nicht installierten Apps. Eine Warnung gibt es nur, wenn du die sudo-Regel aus B12 angelegt
-hast, oder wenn die Firewall aus ist. Sie ist ab jetzt an («Firewall an»); bleibt sie aus, steht der Grund in der
-Ausgabe von C2 (zum Beispiel eine SSH-Verbindung aus einem anderen Netz).
+Erwartet wird `0 Fehler`. Hinweise sind normal, zum Beispiel «greetd läuft noch nicht», «Bootsplash vorbereitet, nicht
+aktiv» und die noch nicht installierten Apps. Eine Warnung gibt es nur, wenn du die sudo-Regel aus B12 angelegt hast
+(ohne sie: wenn sudo sonst ohne Passwort geht, siehe G1), oder wenn die Firewall aus ist. Sie ist ab jetzt an («Firewall
+an»); bleibt sie aus, steht der Grund in der Ausgabe von C2 (zum Beispiel eine SSH-Verbindung aus einem anderen Netz).
 
 **C5.** WLAN-Menü einschalten. Bis hier läuft das Netz wie bei Ubuntu Server über netplan; ein neues WLAN müsstest
 du von Hand in eine netplan-Datei schreiben. Mit diesem Befehl verwaltet NetworkManager das Netz, und du wählst WLANs
@@ -851,7 +851,8 @@ die Fehler, committe und pushe auf dev.» Danach wiederholst du D und die Punkte
 ## G · Abschluss
 
 **G1.** Die temporäre sudo-Regel löschen, falls du B12 gemacht hast. Danach zeigt `zen doctor` dazu keine Warnung
-mehr:
+mehr. Meldet es stattdessen «sudo geht ohne Passwort», stammt die Regel von cloud-init (Imager-Einstellungen, Imager
+bis 2.0.10 oder Benutzer `ubuntu`); ob sie bleibt, entscheidest du (`docs/baufortschritt.md`, «Offene Punkte»):
 
 ```
 sudo rm /etc/sudoers.d/zenos-bau
@@ -882,16 +883,19 @@ ruleset»:
 anhaken. Das gilt für Releases, die danach erscheinen. Ein Release lässt sich weiter löschen (Notbremse), nur sein
 Name ist danach verbraucht.
 
-**G5.** Prüfen, auf dem Mac. Es zeigt beide Rulesets als aktiv:
+**G5.** Prüfen, auf dem Mac, dein GitHub-Konto statt `<konto>` (ausserhalb des Repo-Ordners findet `gh` es sonst
+nicht). Es zeigt beide Rulesets als aktiv:
 
 ```
-gh ruleset list
+gh ruleset list --repo <konto>/zenOS
 ```
 
 **G6 bis G10: Final signieren.** Der signierte Tag startet auf GitHub den Bau des Images. Lass vorher in
-`CHANGELOG.md` einen Abschnitt «0.1.0» mit Datum ergänzen (was sich seit `v0.1.0-rc2` geändert hat), committen und
-pushen; die Prüfung `pruefen.yml` für diesen Stand muss grün sein. Für jedes `-rc` gehst du genauso vor, nur mit
-dessen Namen (etwa `v0.1.0-rc4`).
+`CHANGELOG.md` einen Abschnitt mit Version und Datum ergänzen (was sich seit dem letzten Tag geändert hat; fehlt einem
+früheren Tag sein Abschnitt, etwa `v0.1.0-rc3`, zuerst diesen), committen und pushen. Die Prüfung `pruefen.yml` für
+diesen Stand muss grün sein: Läuft sie noch, wartet das Skript in G9 auf sie; ist sie rot oder fehlt sie, bricht es
+ab. Für jedes `-rc` gehst du genauso vor, nur mit dessen Namen (etwa `v0.1.0-rc4`). Vor `v0.1.0`, der ersten
+Weitergabe an andere, zuerst «Name und Marke» unten klären.
 
 **G6.** Öffne einen eigenen Terminal-Tab, in dem Claude Code nicht läuft, und wechsle in den Ordner:
 
@@ -939,11 +943,13 @@ neuere Version kommt. Ein Gerät aus einem `-rc`-Image wechselt nach `v0.1.0` ge
 sudo zen kanal wechseln vorschau
 ```
 
-**G11 bis G14: `main` auf den Stand bringen** (deine Entscheidung). Solange `main` nur den Start-Commit enthält,
-braucht jede Installation `git switch dev`. Vorschlag: `main` auf `v0.1.0` vorspulen. Dann funktionieren
-`git clone … ~/zenOS` und `./scripts/install.sh` ohne `git switch dev`, und neue Installationen folgen dem Kanal
-`stabil` (aus `main`). Dein Pi bleibt auf seinem Kanal (steht in `/etc/xdg/zenos/kanal`). Ein Push auf `main`
-ist mit den Regeln aus G3 nur vorwärts möglich, ohne Force-Push.
+**G11 bis G14: `main` auf den Stand bringen** (deine Entscheidung). Solange `main` nur den Start-Commit enthält, braucht
+jede Installation `git switch dev`. Vorschlag: `main` auf `v0.1.0` vorspulen. Dann funktionieren `git clone … ~/zenOS`
+und `./scripts/install.sh` ohne `git switch dev`, und neue Installationen folgen dem Kanal `stabil` (aus `main`). Etwas
+bekommen sie dort erst mit dem Anker, den nur das Image mitbringt: von Hand `sudo zen kanal anker
+/opt/zenos/system/vertrauen`, die Fingerabdrücke aus `docs/image-und-releases.md` («Signierte Releases») bzw. den
+Versionshinweisen; sonst meldet `zen update` «Anker fehlt». Dein Pi bleibt auf seinem Kanal (steht in
+`/etc/xdg/zenos/kanal`). Ein Push auf `main` ist mit den Regeln aus G3 nur vorwärts möglich, ohne Force-Push.
 
 **G11.**
 
@@ -970,6 +976,8 @@ git switch dev
 ```
 
 **Offene Entscheidungen für dich**
+- Name und Marke, vor `v0.1.0`: die Markenrecherche zu «zenOS» und bei Canonical schriftlich anfragen oder dich auf
+  die Klausel der IPR-Policy zu den Open-Source-Lizenzen stützen (`docs/image-und-releases.md`, «Name und Marke»).
 - Firewall: Sie ist jetzt standardmässig an (eingehend gesperrt, SSH nur aus lokalen Netzen, je Adresse höchstens
   fünf neue Verbindungen in 30 s). Wer SSH über ein VPN (z. B. Tailscale) braucht, sagt es; dafür fehlt heute
   eine Regel. Verbindet sich dein Mac über eine öffentliche IPv6-Adresse des Geräts (möglich, wenn das Heimnetz
