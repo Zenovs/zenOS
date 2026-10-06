@@ -80,6 +80,7 @@ def node_da():
     return shutil.which("node") is not None
 
 
+@unittest.skipUnless(os.path.exists("/proc/self"), "nur unter Linux (GNU stat, /proc)")
 class IdleTest(unittest.TestCase):
     def setUp(self):
         self.wurzel = tempfile.mkdtemp(prefix="zenos-idle-test.")

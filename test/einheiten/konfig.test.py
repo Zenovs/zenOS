@@ -23,6 +23,16 @@ def raster(*bereiche, **mehr):
     return daten
 
 
+def jsonschema_da():
+    """Hat das python3 im PATH, mit dem zenos-konfig läuft, python3-jsonschema? (pruefen.sh verlangt es ohnehin)"""
+    try:
+        lauf = subprocess.run(["python3", "-c", "import jsonschema"], capture_output=True, timeout=30, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return lauf.returncode == 0
+
+
+@unittest.skipUnless(jsonschema_da(), "python3-jsonschema fehlt")
 class KonfigTest(unittest.TestCase):
     def setUp(self):
         self.home = tempfile.mkdtemp(prefix="zenos-konfig-test.")

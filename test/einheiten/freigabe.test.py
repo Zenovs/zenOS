@@ -47,6 +47,7 @@ class Beobachter(threading.Thread):
         return self.verlauf
 
 
+@unittest.skipUnless(os.path.exists("/proc/self"), "nur unter Linux (zenos-freigabe liest /proc)")
 class FreigabeTest(unittest.TestCase):
     def setUp(self):
         self.wurzel = tempfile.mkdtemp(prefix="zenos-freigabe-test.")
@@ -275,9 +276,11 @@ class FreigabeTest(unittest.TestCase):
         self.aufruf("start")
         b = self.beobachten()
         ende = self.hintergrund("ende")
-        time.sleep(2.5)
+        # Sobald das Ende vermerkt ist, neu wählen: Die Wahl ist neuer als das Ende und nach dem Nachlauf (3 s) noch
+        # frisch (10 s). Vorher lag die Wahl fest 2,5 s nach dem Start von «ende», mit nur 0,5 s Spielraum.
+        self.assertTrue(self.warten(lambda: os.path.exists(self.datei("freigabe-ende"))), "«ende» vermerkt sich nicht")
         self.aufruf("waehlen")
-        time.sleep(1.5)
+        time.sleep(3.5)
         self.assertEqual(self.marker(), ["HEADLESS-1"], "eine frische Wahl hält den Marker")
         self.aufruf("start")
         self.assertEqual(ende.wait(15), 0)
