@@ -31,6 +31,12 @@ an; eine Version entspricht einem Tag `v…` im Repo.
   `test/container/gesten-e2e.sh` (Testbild mit python3-libevdev, python3-yaml und libinput-tools). Aussehen in
   `docs/design.md`, Entscheidungen in `docs/module/m9.md`, Rechte und Restrisiko in `docs/sicherheit.md`, «Gesten»;
   am Gerät zu prüfen: ANLEITUNG E, «Fensterübersicht, Schreibtisch und Wischen».
+- **`sudo zen kanal wechseln stabil|vorschau|dev`:** setzt den Kanal in `/etc/xdg/zenos/kanal`, statt ihn von Hand zu
+  schreiben (ohne sudo scheiterte das, ein Tippfehler blockierte den Kanal). `zenos-kanal wechseln` schreibt atomar
+  unter der Kanal-Sperre (root, 0644, nur diese drei Wörter, Eintrag im Journal), installiert nichts und sagt, was
+  danach gilt: «Anker fehlt», oder ein «ja» für einen Rückschritt, wenn der installierte Stand neuer ist. Installiert
+  wird danach mit `zen update`. ANLEITUNG E, F und G nennen den Schritt, etwa den Pi nach dem ersten signierten `-rc`
+  auf `vorschau` und ein Gerät aus einem `-rc`-Image nach `v0.1.0` auf `stabil`.
 - **Images nur aus signierten Tags, mit Kanal und Anker:** `image.yml` prüft vor dem Bau im Job «Tag und Signatur»
   mit dem neuen `image/tag-pruefen.sh`, ob der Tag ein Release-Tag `vX.Y.Z` oder `vX.Y.Z-rcN` ist und mit dem
   Release-Schlüssel des Ankers `system/vertrauen` in seinem Stand gültig signiert (gehärtetes `git verify-tag` und
@@ -42,10 +48,10 @@ an; eine Version entspricht einem Tag `v…` im Repo.
   jeden Tag `v*`. Der Anker im Stand muss der sein, den ein Gerät über das Netz hätte: Wurzel und Release-Schlüssel
   von Serie 1 stehen fest in `tag-pruefen.sh`, jede spätere Serie braucht die ganze Kette `vertrauen/0002…NNNN`.
   Lokale Testbauten ohne Signatur nur mit `--testbau-ohne-signatur` (Version `-testbau`) oder `--nur-mechanik`, beide
-  in GitHub Actions verweigert; `bauen.sh --nur-pruefen` prüft ohne root und ohne Bau. ANLEITUNG G: GitHub-Rulesets für `v*`
-  und `vertrauen/*`, kein Force-Push auf `dev` und `main`, Immutable Releases, Release signieren mit
-  `scripts/release-signieren.sh` (`image/README.md`, «Signatur des Tags»; `docs/image-und-releases.md`, «Vom Tag zum
-  Image»).
+  in GitHub Actions verweigert; `bauen.sh --nur-pruefen` prüft ohne root und ohne Bau. ANLEITUNG G: GitHub-Rulesets für
+  `v*` und `vertrauen/*`, kein Force-Push auf `dev` und `main`, Immutable Releases, Release signieren mit
+  `scripts/release-signieren.sh` (`image/README.md`, «Signatur des Tags»; `docs/image-und-releases.md`,
+  «Vom Tag zum Image»).
 - **Automatische Updates über den signierten Kanal:** `zenos-kanal.timer` holt und prüft 10–20 Min. nach dem Start
   und danach alle 6 h. Installiert wird nur auf stabil und vorschau (nie auf dev), nur gültig signiert und ohne
   Änderung an Firewall, Netz oder Boot (sonst «wartet auf Zustimmung»), nach der Wartezeit (stabil 24 h ab dem ersten
@@ -67,9 +73,9 @@ an; eine Version entspricht einem Tag `v…` im Repo.
 - **Updates in den Einstellungen:** Einstellungen › System › Updates zeigt den signierten Kanal: Zustand mit
   Erklärung, Kanal, installierte und bereite Version, letzte Prüfung, Kontakt mit origin und den Anker mit kurzen
   Fingerabdrücken. «Jetzt prüfen» und «Jetzt installieren» gehen ohne Passwort, aber nur in der aktiven Sitzung am
-  Gerät und nur für genau den angezeigten, gültig signierten, schon geprüften Stand; ändert er Firewall, Netz oder Boot, erscheint
-  «Zustimmen …» mit Passwort, gebunden an das gezeigte Tag-Objekt. Der Zeitpunkt automatischer Updates ist wählbar
-  («Bei Sperre» als Standard, Zeitfenster von–bis, Jederzeit, Von Hand) und gilt für das ganze Gerät
+  Gerät und nur für genau den angezeigten, gültig signierten, schon geprüften Stand; ändert er Firewall, Netz oder Boot,
+  erscheint «Zustimmen …» mit Passwort, gebunden an das gezeigte Tag-Objekt. Der Zeitpunkt automatischer Updates ist
+  wählbar («Bei Sperre» als Standard, Zeitfenster von–bis, Jederzeit, Von Hand) und gilt für das ganze Gerät
   (`/etc/xdg/zenos/kanal-zeitpunkt`, auch `sudo zen kanal zeitpunkt`). Der Satz «zenOS aktualisiert sich nicht von
   selbst» ist weg. Mitteilungen, jede nur einmal je Zustand: installiert (still), zurück, kaputt und blockiert
   (dringend), Anker fehlt, abgelehnt, wartet auf Zustimmung, 14 Tage ohne Kontakt und beim Zeitpunkt «Von Hand»
@@ -87,11 +93,11 @@ an; eine Version entspricht einem Tag `v…` im Repo.
   Video hält die automatische Sperre höchstens 60 Min. ohne Eingabe auf, dann sperrt zenOS trotzdem (Leitplanke).
   Die Ein/Aus-Taste sperrt in der Sitzung und macht dunkel (oder öffnet das System-Menü), statt sofort auszuschalten;
   gedrückt halten schaltet weiter aus. Beim Argon ONE UP sperrt Zuklappen sofort, und bei 3 % Akku schaltet zenOS
-  nach 60 s Vorwarnung kontrolliert aus (nur das Netzteil bricht ab); offene Terminals, auch per SSH, bekommen eine
-  Meldung, und der Login-Bildschirm zeigt die Uhrzeit. Bereitschaft gibt es auf diesem Gerät nicht:
-  Der Kernel bietet keinen Schlafzustand an, die Seite sagt das offen. Neues Paket: wlopm. `zen energie
-  [status|aus]`, `zen doctor` (Abschnitt «Energie»), IPC `zenos-ipc energie aus|status|vorwarnung` und `sperre
-  bildschirm|taste` (`docs/module/energie.md`).
+  nach 60 s Vorwarnung kontrolliert aus (nur das Netzteil bricht ab; laufen nach den 60 s `install.sh`, `dpkg` oder ein
+  Update über den Kanal, wartet es höchstens 5 Min. länger); offene Terminals, auch per SSH, bekommen eine Meldung, und
+  der Login-Bildschirm zeigt die Uhrzeit. Bereitschaft gibt es auf diesem Gerät nicht: Der Kernel bietet keinen
+  Schlafzustand an, die Seite sagt das offen. Neues Paket: wlopm. `zen energie [status|aus]`, `zen doctor` (Abschnitt
+  «Energie»), IPC `zenos-ipc energie aus|status|vorwarnung` und `sperre bildschirm|taste` (`docs/module/energie.md`).
 - **Kanal gehärtet nach der Prüfung von Schritt 4:** Das Hauptbuch vergleicht Commits statt Objekt-IDs: Eine ohne
   Schlüssel neu umbrochene Signatur löst keinen ALARM mehr aus, der jedes Gerät blockierte. Sperren liegen in
   `/run/zenos-sperre` (nur root) statt in `/run/lock`, wo jeder Benutzer den Kanal abschneiden und über die belegte
@@ -135,11 +141,132 @@ an; eine Version entspricht einem Tag `v…` im Repo.
 - **Signierte Releases vorbereitet:** `scripts/release-signieren.sh vX.Y.Z[-rcN]` signiert ein Release auf dem Mac
   mit dem Schlüssel «zenOS Release» aus 1Password (Touch ID, kein privater Schlüssel in einer Datei). Vorher prüft
   es sauberen Baum, HEAD auf origin, Tag neu und höher, CI und Anker und zeigt die Commits seit dem letzten Release
-  sowie gesondert die sensiblen Pfade (Firewall, Netz, Boot, Anmeldung, Vertrauen). Danach prüft es den Tag mit
-  `git verify-tag` gegen den Anker und pusht nur nach Rückfrage. `--vertrauen` signiert mit dem Schlüssel «zenOS
-  Wurzel» einen Tag `vertrauen/NNNN`, der den Anker ändert (neuer Release-Schlüssel, Widerruf). Der Anker
-  `system/vertrauen/` hat Serie 1 mit den öffentlichen Schlüsseln «zenOS Release» und «zenOS Wurzel». Manifest 0
-  erlaubt jetzt ausdrücklich die öffentlichen Prüfschlüssel.
+  sowie gesondert die sensiblen Pfade (Firewall, Netz, Boot, Anmeldung, Vertrauen). Signiert wird erst, wenn
+  `pruefen.yml` für den Stand grün ist: Läuft die Prüfung noch oder ist noch kein Lauf zu sehen, wartet es höchstens
+  25 Min.; ist sie rot oder danach nicht fertig, bricht es ab. Ist die CI nicht prüfbar (gh fehlt, kein Zugriff), geht
+  es nur mit getipptem «ohne Prüfung» weiter, denn einen gepushten Tag nehmen Geräte auf `vorschau` sofort. Danach prüft
+  es den Tag mit `git verify-tag` gegen den Anker und pusht nur nach Rückfrage. `--vertrauen` signiert mit dem Schlüssel
+  «zenOS Wurzel» einen Tag `vertrauen/NNNN`, der den Anker ändert (neuer Release-Schlüssel, Widerruf). Der Anker
+  `system/vertrauen/` hat Serie 1 mit den öffentlichen Schlüsseln «zenOS Release» und «zenOS Wurzel». Manifest 0 erlaubt
+  jetzt ausdrücklich die öffentlichen Prüfschlüssel.
+
+### Geändert
+
+- **Leerer Akku (Argon ONE UP):** Bei 3 % schaltet zenOS kontrolliert aus (siehe «Energie»); bis `v0.1.0-rc3` fuhr es
+  nicht selbst herunter.
+
+### Behoben
+
+- **Hinweise zum Anker:** `zen kanal status` versprach bei leerem Anker «kommt mit install.sh, sobald system/vertrauen
+  Schlüssel hat». Die Schlüssel sind seit Serie 1 im Repo, aber `install.sh` übernimmt sie ausserhalb des Images bewusst
+  nie; jetzt nennt es den Weg von Hand (`sudo zen kanal anker /opt/zenos/system/vertrauen`). Die Meldungen von
+  `zen kanal anker`, `12-vertrauen` und `zen kanal` verweisen nicht mehr nur auf 1Password, sondern auf eine
+  vertrauenswürdige Quelle: 1Password beim Besitzer der Schlüssel, sonst die veröffentlichten Fingerabdrücke in
+  `docs/image-und-releases.md`. README und Doku sagen, was die Installation per Skript bedeutet: Kanal `dev`, ein «ja»
+  je Update, kein Anker; das Image ist der empfohlene Weg.
+- **Lizenzhinweise:** `RECHTLICHES` nennt jetzt auch die Schriften Geist, Geist Mono und Instrument Serif (SIL Open Font
+  License 1.1, Lizenztexte unter `/usr/local/share/fonts/zenos`). `QUELLEN` und der copyright-Text von Quickshell
+  verwiesen auch bei einem Release-Kandidaten auf eine Release-Seite, die es dafür nicht gibt: Image und Quellen eines
+  `-rc` gibt es nur als Workflow-Artefakte des Laufs «Image» (14 Tage). Dazu der richtige Name
+  `zenos-<version>-QUELLEN.txt`.
+- **Prüfung der Automatik und der Updates-Seite (Teil B):**
+  - Die Automatik installiert nicht mehr über einen Stand von Hand («angehalten»), auch nicht, wenn ein `install.sh`
+    von Hand genau zwischen Prüfen und Installieren fertig wird.
+  - Am Login-Bildschirm erst nach 5 Minuten (nicht gleich beim Start, wenn der Timer einen Lauf nachholt), nie während
+    einer SSH-Sitzung, nie neben einer offenen Textkonsole; die Sperre zählt erst ab dem ersten Abgleich der Uhr.
+  - Nur am Netzteil oder ab 50 % Akku, auch fürs Fortsetzen.
+  - Den Zeitpunkt liest die Automatik vor dem Installieren neu («von Hand» bremst einen laufenden Lauf).
+  - Eine unterbrochene Installation von Hand (etwa auf dev mit «ja») setzt nur `zen update` fort, nie die Automatik.
+  - Bestätigung nach dem Start: Eine Anmeldung auf der Textkonsole zählt nicht als Login; die Bestätigung wartet auf
+    eine laufende Automatik, statt bis zum nächsten Start zu verfallen; die Automatik installiert nichts Neues, solange
+    ein Stand aus einem früheren Start auf sie wartet. Der Weg zurück nimmt keinen Rückweg auf den Stand ohne Login
+    mehr und sperrt den guten Stand nicht; scheitert er, «kaputt», und der nächste Start versucht es noch einmal.
+  - `zen update` und «Jetzt installieren» zielen nicht mehr auf eine gesperrte höhere Version; der Knopf gilt nur dem
+    angezeigten, schon geprüften Stand (ohne neues Holen).
+  - Updates in einer offenen Sitzung: Während der Übernahme lädt die Oberfläche nicht Datei für Datei nach, die Sperre
+    lädt nicht mitten hinein neu; danach richtet die Oberfläche die Benutzerteile ein und startet neu, wenn sich QML
+    geändert hat. Der Login-Bildschirm zeigt «zenOS wird aktualisiert».
+  - Die Seite zeigt «Update kaputt», «Update unterbrochen», «Update läuft», «Letztes Update» und «Von Hand» auch nach
+    der Prüfung danach; «Bereit» sagt je Zeitpunkt, wann es kommt; ehrliche Sätze zum Zeitpunkt; «Datei ungültig» in
+    der Warnfarbe, und «Bei Sperre» repariert sie; «Wird installiert …»; die Zeilen bauen sich nur neu auf, wenn sich
+    etwas ändert.
+  - Mitteilungen: gescheitert und zurück auch nach mehr als 24 h genau einmal; «Seit N Tagen kein Kontakt zu origin»;
+    Verweise auf «Einstellungen › System › Updates»; eine Änderung des Zeitpunkts, die nicht aus den Einstellungen
+    kam, meldet sich mit dem Weg (pkexec oder sudo, uid).
+  - `image/tag-pruefen.sh` nimmt keinen fremden oder ohne neue Serie gewachsenen Anker mehr an; `--nur-mechanik` gibt
+    es in GitHub Actions nicht.
+  - `install.sh` startet `zenos-kanal-bestaetigen.timer` nicht mehr im laufenden Betrieb (nur aktivieren): Er feuerte
+    sonst nach jedem install.sh sofort und hielt kurz die Sperre der Bedienung (im Ende-zu-Ende-Test endete die
+    Automatik so mit 75).
+- **`zen update` bricht nicht mehr an einem verschobenen Tag ab:** Wurde ein Tag auf GitHub auf einen anderen Commit
+  gesetzt (so bei `v0.1.0-rc1`), scheiterte `zen update` mit «git fetch ist fehlgeschlagen», ohne Grund. Jetzt holt
+  es den Branch ohne Tags und die Tags getrennt, ohne `--force`: Ein verschobener Tag bleibt beim Stand, den das
+  Gerät kennt, und erscheint nur als Warnung mit Grund. Wer noch einen Stand bis `v0.1.0-rc3` hat, kommt über den
+  Notweg in `ANLEITUNG.md` (Abschnitt F) einmal darüber.
+- **`zen update` und `zen rollback` robuster:** eigene Sperre (`/run/lock/zenos-kanal.lock`), damit nie zwei Wechsel
+  gleichzeitig `/opt/zenos` umschreiben; der Wechsel wartet, bis ein laufendes `install.sh` fertig ist; `git fetch`
+  hat 180 s Zeit und fragt nie nach Zugangsdaten; mit weniger als 1 GB frei bricht der Wechsel ab, bevor er etwas
+  ändert (bei voller Platte schrieb `git checkout` Dateien nur halb).
+- **`install.sh`:** läuft als root auch ohne `HOME` durch (etwa aus einem systemd-Dienst). Ein Abbruch durch SIGHUP
+  (SSH weg, ohne tmux) oder SIGPIPE steht im Log als «abbruch» statt «ok».
+- **`zen doctor`:** meldet eine Installation, die nach «== Beginn» nie ans Ende kam (Stromausfall, SIGKILL), und einen
+  mittendrin unterbrochenen dpkg-Lauf (Reste in `/var/lib/dpkg/updates`), nach dem apt und unattended-upgrades
+  nichts mehr installieren, mit dem Rat `sudo dpkg --configure -a`. Scheitert apt in `install.sh` daran, nennt die
+  Meldung denselben Rat statt «Netz kurz weg». Ein Pi 5 ohne Argon-Gehäuse ergibt Hinweise statt Warnungen: Das Gehäuse
+  ist optional, `zenos-argon` endet dann absichtlich mit Erfolg und «Kein Argon ONE … hat nichts zu tun», und der
+  ruhende Dienst und keine Antwort an 0x1a bzw. 0x64 sind nur ein Hinweis (bisher «läuft nicht, der Argon-Lüfter wird
+  nicht geregelt» und «Keine Antwort an 0x1a» als Warnungen). Nach einem Fehlschlag oder mit anderer Meldung bleibt es
+  bei Warnung bzw. Fehler. Ist kein Bildschirm aktiv (Deckel zu, kein Monitor oder alle Ausgänge aus), gibt es einen
+  Hinweis statt der Warnung «wlopm erreicht die Bildschirme der Sitzung nicht»; `zenos-bildschirm status` meldet dann
+  «keiner», `zen energie` «kein Bildschirm aktiv».
+- **Doku:** Ziel eines Rollbacks ist die letzte gültig signierte Version aus `zen kanal status`, nicht mehr `v0.1.0-rc3`
+  (ANLEITUNG F, Beispiel in `zenos-kanal`): Auf `vorschau` und `stabil` brächte ein Stand ohne Kanal den alten
+  `zen update` zurück, der nur Branches kennt und abbricht, und `zen kanal` fehlte; die Doku nennt die Grenze und den
+  Weg ohne `zen` (`zenos-kanal update`). ROADMAP, README, ANLEITUNG A und `docs/baufortschritt.md` nannten noch
+  `v0.1.0-rc2` als Stand; jetzt: rc3 gebaut, als Nächstes der signierte rc4, die Firewall seit rc3 an (auch
+  `docs/funktionen.md`). `scripts/README.md`, m1 und m14 nennen für das Image den Kanal des Tags statt `dev` und
+  `user`/`user` statt `ubuntu`/`ubuntu`. ANLEITUNG G sammelt die offenen Entscheidungen und Schritte vor `v0.1.0-rc4`
+  und `v0.1.0`: Name und Marke (die IPR-Policy von Canonical steht jetzt vollständig zitiert in
+  `docs/image-und-releases.md`), ein CHANGELOG-Abschnitt je Tag, das Warten auf die grüne Prüfung,
+  `gh ruleset list --repo`, der Anker für Installationen aus `main` und die sudo-Regel von cloud-init.
+
+### Sicherheit
+
+- **Gesundheitsprüfung des Kanals ohne install.log:** `/var/log/zenos/install.log` gehört nach einem Lauf von Hand dem
+  Benutzer (adm, 0640). Ein Prozess mit Benutzerrechten konnte es während eines Kanal-Laufs kürzen oder ein «== Beginn»
+  anhängen: Die gültige Version galt dann als nicht gesund, wurde gesperrt, und das Gerät ging zurück. Jetzt schreibt
+  `install.sh` im Lauf des Kanals Beginn und Ende zusätzlich nach `/var/lib/zenos/kanal/install-ergebnis` (root-eigen),
+  und `zenos-kanal` liest für die Gesundheit und für die Frage, ob `install.sh` nur an seiner Sperre scheiterte, nur
+  noch diese Datei. Ältere Stände ohne dieses Ergebnis prüft es weiter über das install.log.
+- **sudo ohne Passwort:** `zen doctor` warnt «sudo geht ohne Passwort …», wenn eine Regel sudo ohne Passwort erlaubt,
+  etwa `/etc/sudoers.d/90-cloud-init-users`: Die schreibt cloud-init, wenn der Raspberry Pi Imager bis 2.0.10 oder mit
+  «sudo ohne Passwort» (`passwordlessSudo`) den Benutzer anlegt, und dann schützt keine Passwortabfrage über sudo, etwa
+  bei `sudo zen firewall deaktivieren`. Bisher prüfte doctor nur die temporäre Regel aus dem Bau und zeigte ✓. Es fragt
+  nur `sudo -n -k true` und ändert nichts, als root ohne Aussage. «sudo fragt immer nach dem Passwort» (seit
+  `v0.1.0-rc3`) gilt nur für das Konto `user`, für einen Benutzer aus den Imager-Einstellungen nur mit einem Imager ab
+  2.0.11 und ohne «sudo ohne Passwort». README, Versionshinweise und Doku sagen das jetzt; zenOS ändert die Regel von
+  cloud-init nicht (offene Entscheidung in ANLEITUNG C4 und G1).
+- **Manifest in Prüfsummen und Herkunftsbestätigung:** Über das Manifest lädt der Raspberry Pi Imager das Image und
+  prüft es gegen die Prüfsummen darin; das Manifest selbst entstand aber erst nach der Herkunftsbestätigung und stand
+  nicht in `SHA256SUMS`. Jetzt schreibt der Workflow es vorher, nimmt es in `SHA256SUMS` auf, und GitHub bestätigt die
+  Herkunft von Image, Paketliste und Manifest. README und Versionshinweise prüfen mit
+  `sha256sum -c --ignore-missing SHA256SUMS` (ohne die Paketliste endete der Befehl bisher mit Exit 1, obwohl alles
+  stimmte) und mit `gh attestation verify` auch das Manifest, nennen den Raspberry Pi Imager ab 2.0.11 und empfehlen
+  `image/tag-pruefen.sh` statt eines blossen `git verify-tag`, das den Namen des Tags nicht prüft.
+
+## 0.1.0-rc3 – 2026-10-05
+
+Alles seit `v0.1.0-rc2`: zenOS als eigenständige Distribution «basiert auf Ubuntu» (Systemkennung, ohne snapd und
+landscape-common, Image mit Standardkonto `user`, Quellcode und Herkunft), Akku, Lüfter und WLAN-Menü für den
+Argon ONE UP, die Ablage mit Thunar, die Firewall standardmässig an, App-Übersicht und App-Leiste.
+
+**Nur als unsignierter Tag gebaut:** Das Image entstand als Workflow-Artefakt, ein Release wurde nicht
+veröffentlicht. Geräte auf den Kanälen `stabil` und `vorschau` installieren `v0.1.0-rc3` nicht, denn dort gelten
+nur gültig signierte Tags (`v0.1.0-rc1` bis `rc3` sind unsigniert). Den signierten Kanal hat rc3 selbst noch nicht;
+ein `zen rollback` dorthin ist auf `stabil` und `vorschau` eine Sackgasse (ANLEITUNG F).
+
+### Neu
+
 - **Systemkennung zenOS:** Das System weist sich als zenOS aus (`ID=zenos`, `ID_LIKE="ubuntu debian"`), wie Pop!_OS,
   Mint und elementary: an der Textkonsole («zenOS 0.1.0-… <rechner> tty1»), bei `hostnamectl` und `lsb_release`, mit
   eigenem Logo (`LOGO=zenos`) und einer ruhigen Begrüssung bei der Anmeldung («zenOS … · Basis Ubuntu 26.04.1 LTS ·
@@ -160,9 +287,9 @@ an; eine Version entspricht einem Tag `v…` im Repo.
   den Akku mit Prozent, beim Laden mit Blitz; bei höchstens 10 % im Akkubetrieb ruhig in der Warnfarbe. Das
   System-Menü zeigt Akku, Lüfter («aus» oder «Stufe 2 von 4 · 3120 U/min») und CPU-Temperatur. Bei 10 % kommt eine
   ruhige Mitteilung, bei 5 % ersetzt sie eine dringende Karte, die sofort erscheint (ohne Ton); am Netzteil
-  verschwindet sie. Bei 3 % schaltet zenOS kontrolliert aus (siehe «Energie»). Der Dienst `zenos-argon` erkennt das
-  Gerät und liest den Akku-Messchip (Cellwise CW2217). Schläft der Chip, weckt er ihn und lädt Argons Akkuprofil,
-  aber erst nach `zen akku freigeben` und nur wenn nötig; danach misst er alle 15 s. Den Lüfter regelt weiter der Kernel.
+  verschwindet sie. zenOS fährt nicht selbst herunter. Der Dienst `zenos-argon` erkennt das Gerät und liest den
+  Akku-Messchip (Cellwise CW2217). Schläft der Chip, weckt er ihn und lädt Argons Akkuprofil, aber erst nach
+  `zen akku freigeben` und nur wenn nötig; danach misst er alle 15 s. Den Lüfter regelt weiter der Kernel.
   `zen akku status`, `zenos-argon --pruefen` und `zen doctor` zeigen den Akku.
 - **Lüfter einstellen:** Im System-Menü klappt die Zeile «Lüfter» eine ruhige Wahl «Auto · 1 · 2 · 3 · 4» auf; ohne
   Passwort, nur am Gerät. «Auto» ist der Standard wie bisher, eine Stufe ist das Minimum: Bei Wärme läuft der Lüfter
@@ -253,8 +380,8 @@ an; eine Version entspricht einem Tag `v…` im Repo.
 - **Fenstergrösse leichter ziehen:** Ränder wirken mindestens 16 px breit (vorher 8), Ecken greifen auf 40 px
   entlang jeder Kante (vorher 17).
 - **SSH-Regeln der Firewall mit Begrenzung** (`limit` statt `allow`): Je Adresse lässt sie in 30 s fünf neue
-  Verbindungen zu und weist die sechste ab. `zen firewall aktivieren` schaltet über denselben Helfer ein wie der Schalter
-  (`scripts/bin/zenos-firewall`) und merkt sich «an».
+  Verbindungen zu und weist die sechste ab. `zen firewall aktivieren` schaltet über denselben Helfer ein wie der
+  Schalter (`scripts/bin/zenos-firewall`) und merkt sich «an».
 - **Neue Pakete:** `pkexec` (für den Schalter) und `iproute2` (`ss`, für die Prüfung der SSH-Verbindungen; bei Ubuntu
   Server schon dabei).
 - **Passwortfelder leeren gründlicher:** Nach dem Weiterreichen bleibt das Getippte auch nicht im
@@ -284,51 +411,9 @@ an; eine Version entspricht einem Tag `v…` im Repo.
 
 ### Behoben
 
-- **Prüfung der Automatik und der Updates-Seite (Teil B):**
-  - Die Automatik installiert nicht mehr über einen Stand von Hand («angehalten»), auch nicht, wenn ein `install.sh`
-    von Hand genau zwischen Prüfen und Installieren fertig wird.
-  - Am Login-Bildschirm erst nach 5 Minuten (nicht gleich beim Start, wenn der Timer einen Lauf nachholt), nie während
-    einer SSH-Sitzung, nie neben einer offenen Textkonsole; die Sperre zählt erst ab dem ersten Abgleich der Uhr.
-  - Nur am Netzteil oder ab 50 % Akku, auch fürs Fortsetzen.
-  - Den Zeitpunkt liest die Automatik vor dem Installieren neu («von Hand» bremst einen laufenden Lauf).
-  - Eine unterbrochene Installation von Hand (etwa auf dev mit «ja») setzt nur `zen update` fort, nie die Automatik.
-  - Bestätigung nach dem Start: Eine Anmeldung auf der Textkonsole zählt nicht als Login; die Bestätigung wartet auf
-    eine laufende Automatik, statt bis zum nächsten Start zu verfallen; die Automatik installiert nichts Neues, solange
-    ein Stand aus einem früheren Start auf sie wartet. Der Weg zurück nimmt keinen Rückweg auf den Stand ohne Login
-    mehr und sperrt den guten Stand nicht; scheitert er, «kaputt», und der nächste Start versucht es noch einmal.
-  - `zen update` und «Jetzt installieren» zielen nicht mehr auf eine gesperrte höhere Version; der Knopf gilt nur dem
-    angezeigten, schon geprüften Stand (ohne neues Holen).
-  - Updates in einer offenen Sitzung: Während der Übernahme lädt die Oberfläche nicht Datei für Datei nach, die Sperre
-    lädt nicht mitten hinein neu; danach richtet die Oberfläche die Benutzerteile ein und startet neu, wenn sich QML
-    geändert hat. Der Login-Bildschirm zeigt «zenOS wird aktualisiert».
-  - Die Seite zeigt «Update kaputt», «Update unterbrochen», «Update läuft», «Letztes Update» und «Von Hand» auch nach
-    der Prüfung danach; «Bereit» sagt je Zeitpunkt, wann es kommt; ehrliche Sätze zum Zeitpunkt; «Datei ungültig» in
-    der Warnfarbe, und «Bei Sperre» repariert sie; «Wird installiert …»; die Zeilen bauen sich nur neu auf, wenn sich
-    etwas ändert.
-  - Mitteilungen: gescheitert und zurück auch nach mehr als 24 h genau einmal; «Seit N Tagen kein Kontakt zu origin»;
-    Verweise auf «Einstellungen › System › Updates»; eine Änderung des Zeitpunkts, die nicht aus den Einstellungen
-    kam, meldet sich mit dem Weg (pkexec oder sudo, uid).
-  - `image/tag-pruefen.sh` nimmt keinen fremden oder ohne neue Serie gewachsenen Anker mehr an; `--nur-mechanik` gibt
-    es in GitHub Actions nicht.
-  - `install.sh` startet `zenos-kanal-bestaetigen.timer` nicht mehr im laufenden Betrieb (nur aktivieren): Er feuerte
-    sonst nach jedem install.sh sofort und hielt kurz die Sperre der Bedienung (im Ende-zu-Ende-Test endete die
-    Automatik so mit 75).
-
-- **`zen update` bricht nicht mehr an einem verschobenen Tag ab:** Wurde ein Tag auf GitHub auf einen anderen Commit
-  gesetzt (so bei `v0.1.0-rc1`), scheiterte `zen update` mit «git fetch ist fehlgeschlagen», ohne Grund. Jetzt holt
-  es den Branch ohne Tags und die Tags getrennt, ohne `--force`: Ein verschobener Tag bleibt beim Stand, den das
-  Gerät kennt, und erscheint nur als Warnung mit Grund. Wer noch einen Stand bis `v0.1.0-rc3` hat, kommt über den
-  Notweg in `ANLEITUNG.md` (Abschnitt F) einmal darüber.
-- **`zen update` und `zen rollback` robuster:** eigene Sperre (`/run/lock/zenos-kanal.lock`), damit nie zwei Wechsel
-  gleichzeitig `/opt/zenos` umschreiben; der Wechsel wartet, bis ein laufendes `install.sh` fertig ist; `git fetch`
-  hat 180 s Zeit und fragt nie nach Zugangsdaten; mit weniger als 1 GB frei bricht der Wechsel ab, bevor er etwas
-  ändert (bei voller Platte schrieb `git checkout` Dateien nur halb).
-- **`install.sh`:** läuft als root auch ohne `HOME` durch (etwa aus einem systemd-Dienst). Ein Abbruch durch SIGHUP
-  (SSH weg, ohne tmux) oder SIGPIPE steht im Log als «abbruch» statt «ok».
-- **`zen doctor`:** meldet eine Installation, die nach «== Beginn» nie ans Ende kam (Stromausfall, SIGKILL), und einen
-  mittendrin unterbrochenen dpkg-Lauf (Reste in `/var/lib/dpkg/updates`), nach dem apt und unattended-upgrades
-  nichts mehr installieren, mit dem Rat `sudo dpkg --configure -a`. Scheitert apt in `install.sh` daran, nennt die
-  Meldung denselben Rat statt «Netz kurz weg».
+- **Login:** Er zeigte «Anmelden als Ubuntu»: cloud-init gibt dem ersten Benutzer eines Ubuntu-Images den Anzeigenamen
+  «Ubuntu», auch wenn der Raspberry Pi Imager einen eigenen Login setzt. Steht im GECOS-Feld «Ubuntu», zeigt der Login
+  jetzt den Login-Namen.
 
 ## 0.1.0-rc2 – 2026-09-28
 
