@@ -343,6 +343,14 @@ class AufrufTest(unittest.TestCase):
             self.assertEqual(G.run(G.parse_args(["--messen"]), log, measure=True), 1)
         self.assertTrue(all(art == "fehler" and "nie als root" in text for art, text in log.zeilen))
 
+    def test_beenden_nur_einmal(self):
+        # Ein zweites SIGTERM oder SIGINT während des Aufräumens bricht nicht mit einer Ausnahme ab
+        with mock.patch.object(G.signal, "signal") as setzen:
+            with self.assertRaises(G.Stop):
+                G._stop(G.signal.SIGTERM, None)
+        self.assertEqual(sorted(c.args for c in setzen.call_args_list),
+                         sorted([(G.signal.SIGTERM, G.signal.SIG_IGN), (G.signal.SIGINT, G.signal.SIG_IGN)]))
+
     def test_ohne_gruppe(self):
         log = StilleLog()
         with mock.patch.object(G.os, "geteuid", return_value=1000), \

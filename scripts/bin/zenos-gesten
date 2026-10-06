@@ -479,6 +479,9 @@ class Handler:
 
 
 def _stop(_signum, _frame):
+    # Nur einmal: Ctrl+C unter sudo oder timeout kommt oft doppelt (an die Gruppe und weitergereicht)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
     raise Stop()
 
 
