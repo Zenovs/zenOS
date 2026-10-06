@@ -75,6 +75,20 @@ Scope {
             woerter: "erscheinungsbild hell dunkel thema theme light dark"
         },
         {
+            // Wie Super+Tab: alle offenen Fenster als Karten
+            id: "uebersicht",
+            titel: "Fensterübersicht",
+            symbol: "raster4",
+            woerter: "fensterubersicht fenster ubersicht uebersicht alle fenster wechseln mission control expose"
+        },
+        {
+            // Wie Super+H: alle Fenster minimieren; ist der Schreibtisch frei, kommen sie zurück
+            id: "schreibtisch",
+            titel: Schreibtisch.frei ? "Fenster zurück" : "Schreibtisch zeigen",
+            symbol: "monitor",
+            woerter: "schreibtisch zeigen desktop alle fenster minimieren ausblenden zuruck"
+        },
+        {
             // ~/Ablage im Dateimanager, wie der Knopf in der Leiste
             id: "ablage",
             titel: "Ablage",
@@ -283,6 +297,12 @@ Scope {
             break;
         case "erscheinung":
             Erscheinung.umschalten();
+            break;
+        case "uebersicht":
+            Oberflaeche.uebersichtOeffnen();
+            break;
+        case "schreibtisch":
+            Schreibtisch.umschalten();
             break;
         case "ablage":
             Aktionen.ablageOeffnen();

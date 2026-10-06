@@ -44,8 +44,9 @@ Scope {
         return offen !== "" && offen === (kartenBildschirm?.name ?? "");
     }
     // Zurückgetreten: Fenster weg, Karten bleiben erhalten und gelten nicht als angesehen. Bei offener
-    // Zentrale ebenso (die Karten verschwinden dort ohnehin, siehe allesAusblenden).
-    readonly property bool zurueckgetreten: menueUeberKarten || Dienste.Oberflaeche.zentraleOffen
+    // Zentrale ebenso (die Karten verschwinden dort ohnehin, siehe allesAusblenden), und solange die
+    // Fensterübersicht offen ist (ihre Fläche deckt alles zu, die Karten fingen dort Klicks ab).
+    readonly property bool zurueckgetreten: menueUeberKarten || Dienste.Oberflaeche.zentraleOffen || Dienste.Oberflaeche.uebersichtOffen
     // Einträge der Sammelkarte (neueste zuerst); verschwindet eine Mitteilung, fällt sie heraus
     readonly property var sammlung: sammlungNummern.length === 0 ? [] : Dienste.Mitteilungen.zugestellt.filter(e => root.sammlungNummern.indexOf(e.nummer) >= 0)
     // Modell der Kartenspalte: { schluessel, eintrag } (eintrag nur bei dringenden Karten)

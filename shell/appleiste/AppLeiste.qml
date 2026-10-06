@@ -12,8 +12,9 @@ import "fenster.mjs" as Fenster
 // (Ebene Overlay; labwc legt Vollbild nur über die Ebene Top). Sonst ist nichts zu sehen: Pro Bildschirm liegt im
 // mittleren Drittel des rechten Rands eine unsichtbare Auslösezone von 1 px. Verweilt der Zeiger dort
 // root.verweilen ms, gleitet die Karte herein; verlässt er Karte und Zone, verschwindet sie nach root.gnadenfrist ms,
-// ebenso nach einem Klick auf eine App. Nie während Sperre und Einrichtung; offene Menüs, Befehlsfeld, Wahl und
-// Zentrale gehen vor. Mausbedienung, keine Tastatur (das Befehlsfeld ist die Zentrale). Doku: docs/design.md.
+// ebenso nach einem Klick auf eine App. Nie während Sperre und Einrichtung; offene Menüs, Befehlsfeld, Wahl,
+// Zentrale und Fensterübersicht gehen vor. Mausbedienung, keine Tastatur (das Befehlsfeld ist die Zentrale).
+// Doku: docs/design.md.
 // IPC «appleiste»: zeigen, verbergen, status (offen/zu), apps (eine Zeile pro App).
 Scope {
     id: root
@@ -33,7 +34,7 @@ Scope {
     readonly property int beschriftungMax: 240
 
     // Darf die Leiste erscheinen? Leitplanken (Sperre, Einrichtung) und andere Oberflächen gehen vor.
-    readonly property bool erlaubt: !Oberflaeche.gesperrt && !Oberflaeche.einrichtungOffen && !Oberflaeche.befehlsfeldOffen && Oberflaeche.leisteMenueBildschirm === "" && !Oberflaeche.modusWahlOffen && !Oberflaeche.zustandWahlOffen && !Oberflaeche.zentraleOffen
+    readonly property bool erlaubt: !Oberflaeche.gesperrt && !Oberflaeche.einrichtungOffen && !Oberflaeche.befehlsfeldOffen && Oberflaeche.leisteMenueBildschirm === "" && !Oberflaeche.modusWahlOffen && !Oberflaeche.zustandWahlOffen && !Oberflaeche.zentraleOffen && !Oberflaeche.uebersichtOffen
     // Gibt es keine offene App, erscheint die Leiste nicht (auch die Auslösezone fehlt dann)
     readonly property bool bereit: erlaubt && gruppen.length > 0
 

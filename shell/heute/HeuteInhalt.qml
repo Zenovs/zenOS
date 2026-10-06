@@ -268,6 +268,8 @@ Item {
     }
 
     Row {
+        id: kuerzelZeile
+
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 30
@@ -288,6 +290,25 @@ Item {
         Kuerzel {
             tasten: ["Super", "Z"]
             was: "Zustand"
+        }
+    }
+
+    // Solange der Schreibtisch frei ist (Super+H): der Weg zurück, rechts neben den übrigen Kürzeln. Er blendet nur
+    // über die Deckkraft ein und aus (Theme.dauerKurz), die übrigen bleiben stehen.
+    Kuerzel {
+        anchors.left: kuerzelZeile.right
+        anchors.leftMargin: kuerzelZeile.spacing
+        anchors.verticalCenter: kuerzelZeile.verticalCenter
+        tasten: ["Super", "H"]
+        was: "Fenster zurück"
+        opacity: Schreibtisch.frei ? kuerzelZeile.opacity : 0
+        visible: opacity > 0
+
+        Behavior on opacity {
+            NumberAnimation {
+                duration: Theme.dauerKurz
+                easing.type: Theme.kurve
+            }
         }
     }
 }
