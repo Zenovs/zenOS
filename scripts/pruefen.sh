@@ -807,6 +807,8 @@ START_RUNDGANG=(
   "uebersicht status → zu"
   "schreibtisch umschalten"
   "schreibtisch status → normal"
+  # Wischen mit drei Fingern: ohne zenos-gesten (CI, Container) «getrennt», auf dem Pi mit Touchpad «verbunden»
+  "gesten status"
   "einrichtung oeffnen"
   "einrichtung status → offen 1"
   # Während der Einrichtung öffnet die Übersicht nicht
