@@ -1,0 +1,59 @@
+# zenOS: Wischen mit drei Fingern auf dem Touchpad (scripts/bin/zenos-gesten) für die Fensterübersicht. labwc 0.9.3
+# bindet keine Gesten; der Dienst liest die Touchpads deshalb mit, nur lesend und ohne Grab, und meldet nur «oben» und
+# «unten» auf /run/zenos-gesten/gesten.sock (shell/dienste/Gesten.qml). Er hat keine [Install]-Zeile: udev startet
+# ihn, sobald es ein reines Touchpad gibt (72-zenos-gesten.rules, SYSTEMD_WANTS). Auf einem Rechner ohne Touchpad
+# läuft er nie. Rechte und Restrisiko: docs/sicherheit.md.
+[Unit]
+Description=zenOS Gesten (Touchpad, nur lesend)
+Documentation=file:///opt/zenos/docs/sicherheit.md
+ConditionPathExists=/opt/zenos/scripts/bin/zenos-gesten
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=zenos-gesten
+Group=zenos-gesten
+ExecStart=/usr/bin/python3 -I /opt/zenos/scripts/bin/zenos-gesten
+Restart=on-failure
+RestartSec=5
+RuntimeDirectory=zenos-gesten
+RuntimeDirectoryMode=0755
+UMask=0077
+SyslogIdentifier=zenos-gesten
+
+# Härtung: eigener Benutzer ohne weitere Gruppen und ohne Capabilities, von den Geräten nur Eingabegeräte und nur
+# lesend (welche, regeln die Dateirechte: nur reine Touchpads gehören der Gruppe zenos-gesten), System nur lesbar.
+# Geschrieben wird nur /run/zenos-gesten. Kein Netz: nur Unix-Sockets und netlink. Kein PrivateNetwork: udev meldet
+# neue Geräte über netlink nur im Netz-Namensraum des Systems. Mit PrivateNetwork fände der Dienst ein Touchpad, das
+# nach dem Aufwachen neu erscheint, nicht wieder (im Testcontainer belegt).
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=yes
+DevicePolicy=closed
+DeviceAllow=char-input r
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateIPC=yes
+IPAddressDeny=any
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RemoveIPC=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM

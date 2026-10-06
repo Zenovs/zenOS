@@ -1,0 +1,782 @@
+#!/usr/bin/python3
+"""zenos-gesten: Wischen mit drei Fingern auf dem Touchpad für die Fensterübersicht.
+
+labwc 0.9.3 bindet keine Touchpad-Gesten, es reicht sie nur an das Fenster unter dem Zeiger weiter. Dieser kleine
+Systemdienst liest die Touchpads deshalb mit, nur lesend und ohne sie zu greifen (kein EVIOCGRAB): labwc bekommt jede
+Bewegung und Geste unverändert. Er nutzt libinput aus Ubuntu (libinput.so.10, stabile C-API, per ctypes) mit dem
+udev-Backend für seat0, so dieselbe Erkennung wie labwc (Handballen, Daumen, Touchpads mit nur zwei Slots). Ein
+Touchpad, das nach dem Aufwachen oder Einstecken neu erscheint, nimmt er von selbst auf.
+
+Aufruf:
+  zenos-gesten               Dienst (zenos-gesten.service, als Benutzer zenos-gesten, nie als root)
+  zenos-gesten --messen      Messmodus zum Einmessen der Schwelle, neben dem laufenden Dienst:
+                               sudo -u zenos-gesten /usr/bin/python3 -I /opt/zenos/scripts/bin/zenos-gesten --messen
+                             Je Wischgeste eine Zeile mit Fingerzahl und Summe der Bewegung (unbeschleunigt), keine
+                             Positionen. Meldet nichts an die Oberfläche. Ende mit Ctrl+C.
+  zenos-gesten --pruefen     nur lesend, für zen doctor: Touchpads und Tastaturen mit Gruppe und Rechten ihrer
+                             Geräteknoten, drei Finger (BTN_TOOL_TRIPLETAP), Gruppen dieser Sitzung. Je Zeile
+                             «ok|hinweis|warnung|fehler», ein Tabulator, der Text. Nennt nur Knoten wie «event5».
+  zenos-gesten --hilfe
+
+Optionen:
+  --socket PFAD     Ausgabe des Dienstes (Standard /run/zenos-gesten/gesten.sock)
+  --schwelle WERT   senkrechter Weg in libinput-Einheiten bis zum Auslösen (Standard 60, erlaubt 10 bis 1000)
+
+Erkennung: Wischen mit genau drei Fingern (libinput: GESTURE_SWIPE). Die Bewegung wird unbeschleunigt aufsummiert.
+Einmal je Geste löst es aus, sobald der senkrechte Weg die Schwelle erreicht und mindestens doppelt so gross ist wie der
+seitliche: nach oben «oben», nach unten «unten». Scrollen mit zwei Fingern (für libinput keine Geste), Wischen zur
+Seite oder schräg, kurze Wege und vier Finger lösen nichts aus. libinput-Einheiten sind keine Millimeter: Im
+Testcontainer waren 60 Einheiten etwa 6 mm, am Gerät wird die Schwelle mit --messen eingemessen.
+
+Ausgabe: ein Unix-Socket, je Auslösung eine Zeile «oben» oder «unten», sonst nichts. Der Dienst liest nie von den
+Klienten: Ihre Richtung zum Dienst ist zu (shutdown), ein Schreiben scheitert dort mit EPIPE. Höchstens 8 Klienten,
+ein neunter verdrängt den ältesten; wer nicht liest und den Puffer füllt, fliegt. Ist der Socket bereit, liegt daneben
+die Datei «bereit» (0644, Inhalt: PID). Die Oberfläche verbindet erst dann und bleibt sonst ohne Fehlermeldungen.
+
+Riegel: Geöffnet werden nur Geräteknoten, die root und der Gruppe zenos-gesten gehören (udev-Regel
+72-zenos-gesten.rules: reine Touchpads ohne Tasten, 0640), und nur lesend. Alles andere lehnt open_restricted mit
+EACCES ab, auch wenn die Dateirechte es erlaubten. Dazu kommen die Dateirechte selbst und im Dienst
+DeviceAllow=char-input r. Tastaturen sind so dreifach ausgeschlossen.
+
+Journal: nur Start, Touchpads dazu und weg, Fehler. Keine einzelnen Gesten, keine Positionen, keine Gerätenamen.
+
+Exit: 0 beendet · 1 Fehler · 2 Aufruf.
+"""
+
+import ctypes
+import errno
+import grp
+import math
+import os
+import select
+import signal
+import socket
+import stat
+import struct
+import sys
+
+SOCKET_PATH = "/run/zenos-gesten/gesten.sock"
+GROUP = "zenos-gesten"
+SEAT = b"seat0"
+THRESHOLD = 60.0
+THRESHOLD_RANGE = (10.0, 1000.0)
+# senkrecht mindestens so viel mal der seitliche Weg
+RATIO = 2.0
+FINGERS = 3
+MAX_CLIENTS = 8
+WORDS = ("oben", "unten")
+INPUT_MAJOR = 13
+BTN_TOOL_TRIPLETAP = 334
+
+# libinput.h (stabile API von libinput 1.x)
+EVENT_DEVICE_ADDED = 1
+EVENT_DEVICE_REMOVED = 2
+EVENT_GESTURE_SWIPE_BEGIN = 800
+EVENT_GESTURE_SWIPE_UPDATE = 801
+EVENT_GESTURE_SWIPE_END = 802
+DEVICE_CAP_GESTURE = 5
+
+# Nur für Tests: legt /sys/class/input, /run/udev/data und /dev/input für --pruefen unter diesen Ordner
+TEST_ROOT_VARIABLE = "ZENOS_GESTEN_TESTWURZEL"
+
+
+class UsageError(Exception):
+    pass
+
+
+class Stop(Exception):
+    """SIGTERM oder SIGINT: sauber beenden."""
+
+
+# --- Log -------------------------------------------------------------------
+
+
+class Log:
+    """Meldungen auf stderr; unter systemd mit Priorität für das Journal."""
+
+    def __init__(self, journal=None, stream=None):
+        self.journal = ("JOURNAL_STREAM" in os.environ) if journal is None else journal
+        self.stream = stream
+
+    def _write(self, priority, text):
+        prefix = f"<{priority}>" if self.journal else ""
+        print(prefix + text, file=self.stream or sys.stderr, flush=True)
+
+    def info(self, text):
+        self._write(6, text)
+
+    def warning(self, text):
+        self._write(4, text)
+
+    def error(self, text):
+        self._write(3, text)
+
+
+def notify(text):
+    """Meldung an systemd (Type=notify, NotifyAccess=main). Ohne NOTIFY_SOCKET (Tests, von Hand) geschieht nichts."""
+    address = os.environ.get("NOTIFY_SOCKET", "")
+    if not address:
+        return
+    if address.startswith("@"):
+        address = "\0" + address[1:]
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM | socket.SOCK_CLOEXEC) as sock:
+            sock.connect(address)
+            sock.sendall(text.encode("utf-8"))
+    except OSError:
+        pass
+
+
+# --- Erkennung (ohne Gerät, ohne Uhr) --------------------------------------
+
+
+class SwipeDetector:
+    """Wischen mit drei Fingern, rein aus den Ereignissen von libinput, ohne Uhr und ohne Gerät.
+
+    begin(finger) beginnt eine Geste, update(dx, dy) gibt «oben», «unten» oder None zurück (höchstens einmal je Geste),
+    end() schliesst sie ab und gibt (finger, dx, dy, wort oder None) für den Messmodus zurück."""
+
+    def __init__(self, threshold=THRESHOLD, fingers=FINGERS, ratio=RATIO):
+        self.threshold = float(threshold)
+        self.fingers = int(fingers)
+        self.ratio = float(ratio)
+        self.reset()
+
+    def reset(self):
+        self.count = 0
+        self.dx = 0.0
+        self.dy = 0.0
+        self.word = None
+        self.running = False
+
+    def begin(self, fingers):
+        self.reset()
+        self.count = int(fingers)
+        self.running = True
+
+    def update(self, dx, dy):
+        if not self.running:
+            return None
+        if not (math.isfinite(dx) and math.isfinite(dy)):
+            return None
+        self.dx += dx
+        self.dy += dy
+        if self.word is not None or self.count != self.fingers:
+            return None
+        if abs(self.dy) >= self.threshold and abs(self.dy) >= self.ratio * abs(self.dx):
+            self.word = "oben" if self.dy < 0 else "unten"
+            return self.word
+        return None
+
+    def end(self):
+        summary = (self.count, self.dx, self.dy, self.word) if self.running else None
+        self.reset()
+        return summary
+
+
+def describe_gesture(summary, threshold):
+    """Zeile für den Messmodus: Fingerzahl und Summen, keine Positionen."""
+    count, dx, dy, word = summary
+    result = f"löst aus: {word}" if word else "löst nichts aus"
+    return (f"Wischen mit {count} Fingern: seitlich {dx:+.0f}, senkrecht {dy:+.0f} "
+            f"(Schwelle {threshold:.0f}) · {result}")
+
+
+# --- Riegel: nur Knoten der Gruppe zenos-gesten ----------------------------
+
+
+def node_allowed(info, allowed_gid):
+    """Darf der Dienst diesen geöffneten Knoten behalten? Nur Eingabegeräte (char, Major 13), die root und der Gruppe
+    zenos-gesten gehören. info: os.stat_result des schon geöffneten fd (fstat, kein Wettlauf mit dem Pfad)."""
+    return (stat.S_ISCHR(info.st_mode) and os.major(info.st_rdev) == INPUT_MAJOR and info.st_uid == 0
+            and info.st_gid == allowed_gid)
+
+
+# --- Ausgabe: Unix-Socket ---------------------------------------------------
+
+
+class Broadcaster:
+    """Unix-Socket, der nur schreibt: je Auslösung «oben» oder «unten» an alle Klienten. Liest nie.
+    on_drop(fd) erfährt jeden Klienten, der geht, bevor sein Socket schliesst (für poll)."""
+
+    def __init__(self, path, max_clients=MAX_CLIENTS, log=None, on_drop=None):
+        self.path = path
+        self.max_clients = max_clients
+        self.log = log
+        self.on_drop = on_drop
+        self.server = None
+        self.clients = []  # älteste zuerst
+
+    def open(self):
+        try:
+            os.unlink(self.path)
+        except FileNotFoundError:
+            pass
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM | socket.SOCK_CLOEXEC | socket.SOCK_NONBLOCK)
+        try:
+            server.bind(self.path)
+            # Jeder darf lesen: Es gehen nur zwei Wörter hinaus, und der Dienst liest nichts. Das Verzeichnis gehört
+            # zenos-gesten, nur er kann den Socket dort anlegen.
+            os.chmod(self.path, 0o666)
+            server.listen(self.max_clients)
+        except OSError:
+            server.close()
+            raise
+        self.server = server
+        return server
+
+    def ready_path(self):
+        return os.path.join(os.path.dirname(self.path), "bereit")
+
+    def mark_ready(self):
+        """Legt «bereit» neben dem Socket an (atomar, 0644, Inhalt: PID)."""
+        target = self.ready_path()
+        temporary = f"{target}.neu"
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_CLOEXEC | os.O_NOFOLLOW, 0o644)
+        try:
+            os.fchmod(fd, 0o644)
+            os.write(fd, f"{os.getpid()}\n".encode("ascii"))
+        finally:
+            os.close(fd)
+        os.replace(temporary, target)
+
+    def fileno(self):
+        return self.server.fileno()
+
+    def accept(self):
+        """Nimmt alle wartenden Klienten an und gibt die neuen zurück. Über max_clients gehen die ältesten."""
+        added = []
+        while True:
+            try:
+                conn, _ = self.server.accept()
+            except (BlockingIOError, InterruptedError):
+                break
+            except OSError as err:
+                if self.log:
+                    self.log.warning(f"Klient nicht angenommen ({err.strerror or err})")
+                break
+            try:
+                # Die Richtung zum Dienst ist zu: Ein Klient kann nichts schicken (EPIPE), der Dienst liest nie.
+                conn.shutdown(socket.SHUT_RD)
+                conn.setblocking(False)
+            except OSError:
+                conn.close()
+                continue
+            self.clients.append(conn)
+            added.append(conn)
+            while len(self.clients) > self.max_clients:
+                oldest = self.clients[0]
+                if oldest in added:
+                    added.remove(oldest)
+                self.drop(oldest)
+        return added
+
+    def drop(self, conn):
+        if conn in self.clients:
+            self.clients.remove(conn)
+        if self.on_drop is not None:
+            try:
+                self.on_drop(conn.fileno())
+            except (OSError, ValueError):
+                pass
+        conn.close()
+
+    def find(self, fd):
+        for conn in self.clients:
+            if conn.fileno() == fd:
+                return conn
+        return None
+
+    def send(self, word):
+        """Schickt ein Wort an alle. Wer es nicht ganz annimmt (getrennt, Puffer voll), fliegt; gibt deren Zahl."""
+        if word not in WORDS:
+            raise ValueError(word)
+        data = (word + "\n").encode("ascii")
+        gone = 0
+        for conn in list(self.clients):
+            try:
+                sent = conn.send(data, socket.MSG_DONTWAIT | socket.MSG_NOSIGNAL)
+            except OSError:
+                sent = -1
+            if sent != len(data):
+                gone += 1
+                self.drop(conn)
+        return gone
+
+    def close(self):
+        for conn in list(self.clients):
+            self.drop(conn)
+        if self.server is not None:
+            self.server.close()
+            self.server = None
+            for path in (self.ready_path(), self.path):
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+
+
+# --- libinput über ctypes ---------------------------------------------------
+
+
+_OPEN = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_void_p)
+_CLOSE = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_void_p)
+
+
+class _Interface(ctypes.Structure):
+    _fields_ = [("open_restricted", _OPEN), ("close_restricted", _CLOSE)]
+
+
+_P = ctypes.c_void_p
+_SIGNATURES = (
+    ("libinput_udev_create_context", _P, [ctypes.POINTER(_Interface), _P, _P]),
+    ("libinput_udev_assign_seat", ctypes.c_int, [_P, ctypes.c_char_p]),
+    ("libinput_unref", _P, [_P]),
+    ("libinput_get_fd", ctypes.c_int, [_P]),
+    ("libinput_dispatch", ctypes.c_int, [_P]),
+    ("libinput_get_event", _P, [_P]),
+    ("libinput_event_get_type", ctypes.c_int, [_P]),
+    ("libinput_event_destroy", None, [_P]),
+    ("libinput_event_get_device", _P, [_P]),
+    ("libinput_device_get_sysname", ctypes.c_char_p, [_P]),
+    ("libinput_device_has_capability", ctypes.c_int, [_P, ctypes.c_int]),
+    ("libinput_event_get_gesture_event", _P, [_P]),
+    ("libinput_event_gesture_get_finger_count", ctypes.c_int, [_P]),
+    ("libinput_event_gesture_get_cancelled", ctypes.c_int, [_P]),
+    ("libinput_event_gesture_get_dx_unaccelerated", ctypes.c_double, [_P]),
+    ("libinput_event_gesture_get_dy_unaccelerated", ctypes.c_double, [_P]),
+)
+
+
+class Touchpads:
+    """libinput-Kontext für seat0 über udev. Liefert Ereignisse als einfache Tupel:
+    ("dazu", sysname, gesten) · ("weg", sysname) · ("beginn", finger) · ("bewegung", dx, dy) · ("ende", abgebrochen)."""
+
+    def __init__(self, allowed_gid, log):
+        self.allowed_gid = allowed_gid
+        self.log = log
+        self.lib = ctypes.CDLL("libinput.so.10")
+        udev = ctypes.CDLL("libudev.so.1")
+        udev.udev_new.restype = _P
+        udev.udev_unref.restype = _P
+        udev.udev_unref.argtypes = [_P]
+        for name, restype, argtypes in _SIGNATURES:
+            function = getattr(self.lib, name)
+            function.restype = restype
+            function.argtypes = argtypes
+        # Die Rückrufe müssen so lange leben wie der Kontext
+        self._open_cb = _OPEN(self._open)
+        self._close_cb = _CLOSE(self._close)
+        self._interface = _Interface(self._open_cb, self._close_cb)
+        context = udev.udev_new()
+        if not context:
+            raise OSError("udev nicht verfügbar")
+        try:
+            self.ctx = self.lib.libinput_udev_create_context(ctypes.byref(self._interface), None, context)
+        finally:
+            udev.udev_unref(context)
+        if not self.ctx:
+            raise OSError("libinput-Kontext nicht angelegt")
+        if self.lib.libinput_udev_assign_seat(self.ctx, SEAT) != 0:
+            self.close()
+            raise OSError("seat0 nicht zugewiesen")
+
+    def _open(self, path, _flags, _user_data):
+        # Nie eine Ausnahme nach libinput durchreichen: ctypes gäbe sonst 0 zurück, und 0 wäre stdin
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC | os.O_NOCTTY)
+        except OSError as err:
+            return -(err.errno or errno.EACCES)
+        except Exception:  # noqa: BLE001 – Rückruf aus C
+            return -errno.EACCES
+        try:
+            allowed = node_allowed(os.fstat(fd), self.allowed_gid)
+        except Exception:  # noqa: BLE001 – Rückruf aus C
+            allowed = False
+        if not allowed:
+            os.close(fd)
+            return -errno.EACCES
+        return fd
+
+    def _close(self, fd, _user_data):
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+    def fileno(self):
+        return self.lib.libinput_get_fd(self.ctx)
+
+    def events(self):
+        if self.lib.libinput_dispatch(self.ctx) != 0:
+            raise OSError("libinput_dispatch gescheitert")
+        lib = self.lib
+        while True:
+            event = lib.libinput_get_event(self.ctx)
+            if not event:
+                return
+            try:
+                kind = lib.libinput_event_get_type(event)
+                if kind in (EVENT_DEVICE_ADDED, EVENT_DEVICE_REMOVED):
+                    device = lib.libinput_event_get_device(event)
+                    name = (lib.libinput_device_get_sysname(device) or b"?").decode("ascii", "replace")
+                    if kind == EVENT_DEVICE_ADDED:
+                        yield ("dazu", name, bool(lib.libinput_device_has_capability(device, DEVICE_CAP_GESTURE)))
+                    else:
+                        yield ("weg", name)
+                elif kind in (EVENT_GESTURE_SWIPE_BEGIN, EVENT_GESTURE_SWIPE_UPDATE, EVENT_GESTURE_SWIPE_END):
+                    gesture = lib.libinput_event_get_gesture_event(event)
+                    if kind == EVENT_GESTURE_SWIPE_BEGIN:
+                        yield ("beginn", lib.libinput_event_gesture_get_finger_count(gesture))
+                    elif kind == EVENT_GESTURE_SWIPE_UPDATE:
+                        yield ("bewegung", lib.libinput_event_gesture_get_dx_unaccelerated(gesture),
+                               lib.libinput_event_gesture_get_dy_unaccelerated(gesture))
+                    else:
+                        yield ("ende", bool(lib.libinput_event_gesture_get_cancelled(gesture)))
+            finally:
+                lib.libinput_event_destroy(event)
+
+    def close(self):
+        if getattr(self, "ctx", None):
+            self.lib.libinput_unref(self.ctx)
+            self.ctx = None
+
+
+# --- Ablauf -----------------------------------------------------------------
+
+
+class Handler:
+    """Verarbeitet die Ereignisse aus Touchpads.events(): Erkennung, Ausgabe und Journal. send(wort) schickt an die
+    Oberfläche (im Messmodus None), line(text) schreibt die Messzeilen."""
+
+    def __init__(self, detector, log, send=None, line=None):
+        self.detector = detector
+        self.log = log
+        self.send = send
+        self.line = line
+        self.devices = {}
+
+    def handle(self, event):
+        kind = event[0]
+        if kind == "dazu":
+            _, name, gestures = event
+            self.devices[name] = gestures
+            self.log.info(f"Touchpad {name} dazu" if gestures else f"{name} dazu, ohne Gesten")
+        elif kind == "weg":
+            name = event[1]
+            self.devices.pop(name, None)
+            self.log.info(f"{name} weg")
+        elif kind == "beginn":
+            self.detector.begin(event[1])
+        elif kind == "bewegung":
+            word = self.detector.update(event[1], event[2])
+            if word and self.send:
+                self.send(word)
+        elif kind == "ende":
+            summary = self.detector.end()
+            if summary and self.line:
+                self.line(describe_gesture(summary, self.detector.threshold))
+
+
+def _stop(_signum, _frame):
+    raise Stop()
+
+
+def _allowed_gid(log):
+    try:
+        return grp.getgrnam(GROUP).gr_gid
+    except KeyError:
+        log.error(f"Gruppe {GROUP} fehlt (install.sh legt sie über systemd-sysusers an)")
+        return None
+
+
+def run(options, log, measure=False):
+    if os.geteuid() == 0:
+        log.error("zenos-gesten läuft nie als root (Dienst: Benutzer zenos-gesten; messen: sudo -u zenos-gesten …)")
+        return 1
+    gid = _allowed_gid(log)
+    if gid is None:
+        return 1
+    signal.signal(signal.SIGTERM, _stop)
+    signal.signal(signal.SIGINT, _stop)
+    detector = SwipeDetector(options["schwelle"])
+    broadcaster = None
+    touchpads = None
+    try:
+        try:
+            touchpads = Touchpads(gid, log)
+        except OSError as err:
+            log.error(f"libinput nicht bereit: {err}")
+            return 1
+        poller = select.poll()
+        poller.register(touchpads.fileno(), select.POLLIN)
+        if measure:
+            handler = Handler(detector, log, line=lambda text: print(text, flush=True))
+        else:
+            broadcaster = Broadcaster(options["socket"], log=log, on_drop=lambda fd: _unregister_fd(poller, fd))
+            try:
+                broadcaster.open()
+            except OSError as err:
+                log.error(f"Socket {options['socket']} nicht angelegt ({err.strerror or err})")
+                return 1
+            poller.register(broadcaster.fileno(), select.POLLIN)
+
+            handler = Handler(detector, log, send=broadcaster.send)
+        # Die Geräte von seat0 stehen schon in der Warteschlange: einmal abholen, bevor poll wartet
+        for event in touchpads.events():
+            handler.handle(event)
+        if not any(handler.devices.values()):
+            log.info(f"Noch kein Touchpad lesbar (Gruppe {GROUP}); warte auf eins")
+        if measure:
+            print(f"Messmodus, Schwelle {detector.threshold:.0f}. Wischen, Ende mit Ctrl+C.", flush=True)
+        else:
+            try:
+                broadcaster.mark_ready()
+            except OSError as err:
+                log.error(f"{broadcaster.ready_path()} nicht angelegt ({err.strerror or err})")
+                return 1
+            log.info(f"Bereit: {options['socket']}, Schwelle {detector.threshold:.0f}")
+            notify("READY=1\nSTATUS=Bereit")
+        lfd = touchpads.fileno()
+        while True:
+            for fd, flags in poller.poll():
+                if fd == lfd:
+                    for event in touchpads.events():
+                        handler.handle(event)
+                elif broadcaster is not None and fd == broadcaster.fileno():
+                    for conn in broadcaster.accept():
+                        # Nur Auflegen und Fehler zählen (Ereignismaske 0); gelesen wird nie
+                        poller.register(conn.fileno(), 0)
+                elif broadcaster is not None and flags & (select.POLLHUP | select.POLLERR | select.POLLNVAL):
+                    conn = broadcaster.find(fd)
+                    if conn is not None:
+                        broadcaster.drop(conn)
+                    else:
+                        _unregister_fd(poller, fd)
+    except Stop:
+        return 0
+    except OSError as err:
+        log.error(f"Abbruch: {err}")
+        return 1
+    finally:
+        if broadcaster is not None:
+            broadcaster.close()
+        if touchpads is not None:
+            touchpads.close()
+
+
+def _unregister_fd(poller, fd):
+    if fd < 0:
+        return
+    try:
+        poller.unregister(fd)
+    except (KeyError, ValueError):
+        pass
+
+
+# --- Prüfen für zen doctor ---------------------------------------------------
+
+
+def _test_root():
+    return os.environ.get(TEST_ROOT_VARIABLE, "").rstrip("/")
+
+
+def _bits_per_long():
+    return struct.calcsize("l") * 8
+
+
+def parse_bitmask(text, bits=None):
+    """Bitmaske aus sysfs (Wörter in Hex, das höchste zuerst) als Zahl."""
+    bits = bits or _bits_per_long()
+    value = 0
+    for index, word in enumerate(reversed(text.split())):
+        value |= int(word, 16) << (bits * index)
+    return value
+
+
+def read_udev_properties(path):
+    props = {}
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                if line.startswith("E:") and "=" in line:
+                    key, _, value = line[2:].rstrip("\n").partition("=")
+                    props[key] = value
+    except OSError:
+        pass
+    return props
+
+
+def _event_sort_key(name):
+    digits = name[len("event"):]
+    return int(digits) if digits.isdigit() else 1 << 30
+
+
+def scan_devices(root=None):
+    """Eingabegeräte (eventN) mit udev-Eigenschaften, Tasten-Bitmaske und Gruppe/Rechten des Knotens. Nur lesen."""
+    root = _test_root() if root is None else root
+    classdir = f"{root}/sys/class/input"
+    devices = []
+    try:
+        names = sorted((n for n in os.listdir(classdir) if n.startswith("event")), key=_event_sort_key)
+    except OSError:
+        return devices
+    for name in names:
+        device = {"name": name, "props": {}, "keys": 0, "gid": None, "mode": None}
+        try:
+            with open(f"{classdir}/{name}/dev", encoding="ascii") as handle:
+                major, _, minor = handle.read().strip().partition(":")
+            device["props"] = read_udev_properties(f"{root}/run/udev/data/c{int(major)}:{int(minor)}")
+        except (OSError, ValueError):
+            pass
+        try:
+            with open(f"{classdir}/{name}/device/capabilities/key", encoding="ascii") as handle:
+                device["keys"] = parse_bitmask(handle.read())
+        except (OSError, ValueError):
+            pass
+        try:
+            info = os.stat(f"{root}/dev/input/{name}")
+            device["gid"] = info.st_gid
+            device["mode"] = stat.S_IMODE(info.st_mode)
+        except OSError:
+            pass
+        devices.append(device)
+    return devices
+
+
+def _is_set(props, key):
+    return props.get(key, "") not in ("", "0")
+
+
+def evaluate(devices, group_gid, input_gid, own_groups, group_members=(), input_members=()):
+    """Befunde für zen doctor als Liste (art, text). Rein: alle Werte kommen herein."""
+    findings = []
+    pure = 0
+    for device in devices:
+        name, props, gid, mode = device["name"], device["props"], device["gid"], device["mode"]
+        touchpad = _is_set(props, "ID_INPUT_TOUCHPAD")
+        keys = _is_set(props, "ID_INPUT_KEY") or _is_set(props, "ID_INPUT_KEYBOARD")
+        ours = group_gid is not None and gid == group_gid
+        shown_mode = f"{mode:04o}" if mode is not None else "?"
+        if ours and keys:
+            findings.append(("fehler", f"{name} hat Tasten und gehört trotzdem der Gruppe {GROUP}: Der Dienst dürfte "
+                                       "Tastendrücke lesen (udev-Regeln prüfen, 72-zenos-gesten.rules)"))
+            continue
+        if ours and not touchpad:
+            findings.append(("fehler", f"{name} ist kein Touchpad und gehört trotzdem der Gruppe {GROUP} "
+                                       "(udev-Regeln prüfen)"))
+            continue
+        if not touchpad:
+            continue
+        if keys:
+            findings.append(("hinweis", f"Touchpad {name} hat auch Tasten und bleibt für den Gestendienst gesperrt "
+                                        "(kein Wischen, Super+Tab geht immer)"))
+            continue
+        pure += 1
+        if not ours:
+            findings.append(("warnung", f"Touchpad {name}: Knoten mit {shown_mode} ohne Gruppe {GROUP}, der Dienst "
+                                        "kann es nicht lesen (install.sh, sonst udev-Regeln prüfen)"))
+        elif mode is None or mode & 0o027:
+            findings.append(("fehler", f"Touchpad {name}: Rechte {shown_mode} statt 0640 (nur root schreibt, "
+                                       f"{GROUP} liest; udev-Regeln prüfen)"))
+        else:
+            findings.append(("ok", f"Touchpad {name}: nur für {GROUP} lesbar (0640)"))
+        if device["keys"] >> BTN_TOOL_TRIPLETAP & 1:
+            findings.append(("ok", f"Touchpad {name} meldet drei Finger (BTN_TOOL_TRIPLETAP)"))
+        else:
+            findings.append(("hinweis", f"Touchpad {name} meldet keine drei Finger (BTN_TOOL_TRIPLETAP): kein "
+                                        "Wischen, Super+Tab geht immer"))
+    if not pure:
+        findings.append(("hinweis", "Kein reines Touchpad: kein Wischen mit drei Fingern, Super+Tab geht immer"))
+    if group_gid is None:
+        findings.append(("hinweis", f"Gruppe {GROUP} gibt es nicht (Gesten aus oder install.sh noch nicht gelaufen)"))
+    elif group_members:
+        findings.append(("fehler", f"Die Gruppe {GROUP} hat Mitglieder: Nur der Dienst darf die Touchpads lesen "
+                                   f"(gpasswd -d <benutzer> {GROUP})"))
+    if input_members:
+        findings.append(("warnung", "Die Gruppe input hat Mitglieder: Ihre Prozesse können alle Eingabegeräte lesen, "
+                                    "auch die Tastatur"))
+    if own_groups is None:
+        pass
+    elif input_gid is not None and input_gid in own_groups:
+        findings.append(("fehler", "Diese Sitzung ist in der Gruppe input: Jeder ihrer Prozesse könnte die Tastatur "
+                                   "mitlesen (aus der Gruppe nehmen, neu anmelden)"))
+    elif group_gid is not None and group_gid in own_groups:
+        findings.append(("fehler", f"Diese Sitzung ist in der Gruppe {GROUP}, die nur dem Dienst gehört"))
+    else:
+        findings.append(("ok", f"Diese Sitzung hat keine Rechte an /dev/input (weder input noch {GROUP})"))
+    return findings
+
+
+def run_check():
+    def gid_and_members(name):
+        try:
+            entry = grp.getgrnam(name)
+        except KeyError:
+            return None, ()
+        return entry.gr_gid, tuple(entry.gr_mem)
+
+    group_gid, group_members = gid_and_members(GROUP)
+    input_gid, input_members = gid_and_members("input")
+    own = None if os.geteuid() == 0 else set(os.getgroups()) | {os.getegid()}
+    for kind, text in evaluate(scan_devices(), group_gid, input_gid, own, group_members, input_members):
+        print(f"{kind}\t{text}")
+    return 0
+
+
+# --- Aufruf ------------------------------------------------------------------
+
+
+def _option_value(items, name):
+    if not items:
+        raise UsageError(f"{name} braucht einen Wert")
+    return items.pop(0)
+
+
+def parse_args(argv):
+    options = {"mode": "dienst", "socket": SOCKET_PATH, "schwelle": THRESHOLD}
+    modes = {"--messen": "messen", "--pruefen": "pruefen"}
+    items = list(argv)
+    while items:
+        arg = items.pop(0)
+        if arg in ("-h", "--hilfe", "--help"):
+            options["mode"] = "hilfe"
+        elif arg in modes:
+            if options["mode"] not in ("dienst", modes[arg]):
+                raise UsageError("--messen und --pruefen schliessen sich aus")
+            options["mode"] = modes[arg]
+        elif arg == "--socket":
+            options["socket"] = _option_value(items, arg)
+        elif arg == "--schwelle":
+            text = _option_value(items, arg)
+            try:
+                value = float(text)
+            except ValueError:
+                raise UsageError(f"--schwelle: «{text}» ist keine Zahl") from None
+            low, high = THRESHOLD_RANGE
+            if not math.isfinite(value) or not low <= value <= high:
+                raise UsageError(f"--schwelle: erlaubt {low:.0f} bis {high:.0f}")
+            options["schwelle"] = value
+        else:
+            raise UsageError(f"unbekannte Option «{arg}»")
+    return options
+
+
+def main(argv=None):
+    try:
+        options = parse_args(sys.argv[1:] if argv is None else argv)
+    except UsageError as err:
+        print(f"zenos-gesten: {err}", file=sys.stderr)
+        print("Aufruf: zenos-gesten [--messen | --pruefen] [--socket PFAD] [--schwelle WERT] (--hilfe)",
+              file=sys.stderr)
+        return 2
+    if options["mode"] == "hilfe":
+        print(__doc__.strip())
+        return 0
+    if options["mode"] == "pruefen":
+        return run_check()
+    return run(options, Log(), measure=options["mode"] == "messen")
+
+
+if __name__ == "__main__":
+    sys.exit(main())

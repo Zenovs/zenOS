@@ -1,0 +1,18 @@
+# zenOS: Geräteknoten reiner Touchpads für den Gestendienst zenos-gesten (scripts/bin/zenos-gesten), nur lesbar.
+#
+# Statt root:input mit 0660 (50-udev-default.rules) gehört der Knoten root:zenos-gesten mit 0640: Nur der
+# Dienstbenutzer zenos-gesten darf ihn lesen, schreiben nur root. labwc öffnet Eingabegeräte über logind (libseat) als
+# root und ist von den Rechten nicht betroffen.
+# - Nur Touchpads (ID_INPUT_TOUCHPAD) ohne jede Taste (weder ID_INPUT_KEY noch ID_INPUT_KEYBOARD): Wer eine Tastatur
+#   lesen darf, liest Passwörter mit. Ein Touchpad mit Tasten auf demselben Knoten bleibt deshalb root:input.
+# - Kein uaccess, keine ACL: Schreibrecht auf einen Touchpad-Knoten reicht, um Klicks in die Sitzung einzuspeisen.
+# - Gibt es ein solches Touchpad, startet systemd den Dienst (SYSTEMD_WANTS). Ohne Touchpad läuft er nie.
+# Geprüft in test/einheiten/gesten.test.py, am Gerät mit zen doctor (Abschnitt «Gesten»).
+ACTION=="remove", GOTO="zenos_gesten_ende"
+SUBSYSTEM!="input", GOTO="zenos_gesten_ende"
+KERNEL!="event[0-9]*", GOTO="zenos_gesten_ende"
+ENV{ID_INPUT_TOUCHPAD}!="1", GOTO="zenos_gesten_ende"
+ENV{ID_INPUT_KEY}=="?*", GOTO="zenos_gesten_ende"
+ENV{ID_INPUT_KEYBOARD}=="?*", GOTO="zenos_gesten_ende"
+GROUP="zenos-gesten", MODE="0640", TAG+="systemd", ENV{SYSTEMD_WANTS}+="zenos-gesten.service"
+LABEL="zenos_gesten_ende"
