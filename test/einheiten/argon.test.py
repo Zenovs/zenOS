@@ -1753,5 +1753,65 @@ class DoctorDeckel(unittest.TestCase):
         self.assertEqual(len(zeilen), 1)
 
 
+DOCTOR_DIENST = r"""
+ok() { printf 'ok: %s\n' "$*"; }
+hinweis() { printf 'hinweis: %s\n' "$*"; }
+warnung() { printf 'warnung: %s\n' "$*"; }
+fehler() { printf 'fehler: %s\n' "$*"; }
+source "$1"
+keins=0
+if _argon_keins; then keins=1; fi
+_argon_dienst 1 "$keins"
+"""
+
+# systemctl und journalctl für den Test: Zustand, Ergebnis und letzte Meldung von zenos-argon aus der Umgebung
+SYSTEMCTL_DIENST = """#!/bin/sh
+case "$1" in
+  is-active) echo "$FAKE_AKTIV"; [ "$FAKE_AKTIV" = active ] ;;
+  show) echo "$FAKE_ERGEBNIS" ;;
+  *) exit 1 ;;
+esac
+"""
+JOURNALCTL_DIENST = """#!/bin/sh
+printf '%s\\n' "$FAKE_MELDUNG"
+"""
+
+
+@unittest.skipUnless(shutil.which("bash"), "braucht bash")
+class DoctorDienst(unittest.TestCase):
+    """Befund argon-01: Ein Pi 5 ohne Argon-Gehäuse (vorgesehen, das Gehäuse ist optional) zeigte im Doctor die Warnung
+    «zenos-argon läuft nicht, der Argon-Lüfter wird nicht geregelt», obwohl der Dienst absichtlich nichts tut."""
+
+    def doctor(self, aktiv, ergebnis, meldung):
+        with tempfile.TemporaryDirectory() as ordner:
+            for name, text in (("systemctl", SYSTEMCTL_DIENST), ("journalctl", JOURNALCTL_DIENST)):
+                with open(os.path.join(ordner, name), "w", encoding="utf-8") as f:
+                    f.write(text)
+                os.chmod(os.path.join(ordner, name), 0o755)
+            umgebung = {"PATH": ordner + os.pathsep + "/usr/bin:/bin", "LANG": "C.UTF-8", "FAKE_AKTIV": aktiv,
+                        "FAKE_ERGEBNIS": ergebnis, "FAKE_MELDUNG": meldung}
+            lauf = subprocess.run(["bash", "-c", DOCTOR_DIENST, "test", DOCTOR], capture_output=True, text=True,
+                                  env=umgebung, timeout=30, check=False)
+        self.assertEqual((lauf.returncode, lauf.stderr), (0, ""))
+        return lauf.stdout.splitlines()
+
+    def test_ohne_argon_nur_ein_hinweis(self):
+        for meldung in ("Kein Argon ONE an I2C-Adresse 0x1a, zenos-argon hat nichts zu tun",
+                        "Kein Argon ONE UP: kein Akku-Messchip CW2217 an I2C-Adresse 0x64 (keine Antwort), "
+                        "zenos-argon hat nichts zu tun"):
+            with self.subTest(meldung=meldung):
+                zeilen = self.doctor("inactive", "success", meldung)
+                self.assertEqual(len(zeilen), 1, zeilen)
+                self.assertTrue(zeilen[0].startswith("hinweis: Kein Argon-Gehäuse erkannt"), zeilen)
+
+    def test_mit_argon_beendet_bleibt_es_eine_warnung(self):
+        zeilen = self.doctor("inactive", "success", "zenos-argon beendet (Signal 15)")
+        self.assertTrue(zeilen[0].startswith("warnung: zenos-argon.service läuft nicht"), zeilen)
+        self.assertTrue(self.doctor("failed", "exit-code", "")[0].startswith("fehler: "))
+        # Nach einem Fehlschlag mit derselben Meldung zählt «kein Argon» nicht
+        zeilen = self.doctor("inactive", "exit-code", "Kein Argon ONE an I2C-Adresse 0x1a, zenos-argon hat nichts zu tun")
+        self.assertTrue(zeilen[0].startswith("fehler: zenos-argon.service läuft nicht"), zeilen)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

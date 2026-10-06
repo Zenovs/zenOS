@@ -6,7 +6,7 @@
 
 pruefe_argon() {
   abschnitt "Argon ONE"
-  local modell geraet i2c=0
+  local modell geraet i2c=0 keins=0
   _argon_einheit
   modell=$(_argon_modell)
   case "$modell" in
@@ -23,9 +23,10 @@ pruefe_argon() {
   _argon_temperatur
   if _argon_i2c; then
     i2c=1
-    if [[ "$geraet" == up ]]; then _argon_messchip; else _argon_antwort; fi
+    if _argon_keins; then keins=1; fi
+    if [[ "$geraet" == up ]]; then _argon_messchip "$keins"; else _argon_antwort "$keins"; fi
   fi
-  _argon_dienst "$i2c"
+  _argon_dienst "$i2c" "$keins"
   [[ "$geraet" == up ]] || _argon_kurve
   _argon_luefter "$geraet"
   _argon_originalskript
@@ -110,7 +111,17 @@ _argon_i2c() {
   return 1
 }
 
-# Nur lesen (i2cget ohne Register = «receive byte»), nie an den Argon schreiben
+# Fand zenos-argon beim Start kein Argon-Gehäuse? Dann endet es mit Erfolg und der Meldung «Kein Argon ONE … hat
+# nichts zu tun» (ein Pi 5 ohne Argon ist vorgesehen, das Gehäuse ist optional). Fehlende Antworten an 0x1a bzw. 0x64
+# und der ruhende Dienst sind dann nur ein Hinweis.
+_argon_keins() {
+  local einheit=zenos-argon.service
+  [[ "$(systemctl is-active "$einheit" 2> /dev/null)" != active ]] || return 1
+  [[ "$(systemctl show -p Result --value "$einheit" 2> /dev/null)" == success ]] || return 1
+  [[ "$(_argon_letzte_meldung)" == "Kein Argon ONE"*"hat nichts zu tun"* ]]
+}
+
+# Nur lesen (i2cget ohne Register = «receive byte»), nie an den Argon schreiben. $1=1: zenos-argon fand keinen Argon
 _argon_antwort() {
   if ! command -v i2cget > /dev/null 2>&1; then
     hinweis "i2cget fehlt (Paket i2c-tools), Argon an 0x1a nicht direkt geprüft"
@@ -122,12 +133,15 @@ _argon_antwort() {
   fi
   if i2cget -y 1 0x1a > /dev/null 2>&1; then
     ok "Argon ONE antwortet an I2C-Adresse 0x1a"
+  elif (( ${1:-0} )); then
+    hinweis "Keine Antwort an I2C-Adresse 0x1a: kein Argon ONE verbaut"
   else
     warnung "Keine Antwort an I2C-Adresse 0x1a (Argon-Platine nicht erkannt)"
   fi
 }
 
-# Argon ONE UP: Akku-Messchip CW2217 an 0x64, nur Chip-ID lesen (Register 0x00 = 0xa0), nie schreiben
+# Argon ONE UP: Akku-Messchip CW2217 an 0x64, nur Chip-ID lesen (Register 0x00 = 0xa0), nie schreiben. $1=1:
+# zenos-argon fand keinen Argon ONE UP
 _argon_messchip() {
   local id
   if ! command -v i2cget > /dev/null 2>&1; then
@@ -141,7 +155,13 @@ _argon_messchip() {
   id=$(i2cget -y 1 0x64 0x00 2> /dev/null) || id=""
   case "$id" in
     0xa0) ok "Akku-Messchip CW2217 antwortet an I2C-Adresse 0x64 (Argon ONE UP)" ;;
-    "") warnung "Keine Antwort an I2C-Adresse 0x64 (Akku-Messchip des Argon ONE UP nicht erkannt)" ;;
+    "")
+      if (( ${1:-0} )); then
+        hinweis "Keine Antwort an I2C-Adresse 0x64: kein Argon ONE UP verbaut"
+      else
+        warnung "Keine Antwort an I2C-Adresse 0x64 (Akku-Messchip des Argon ONE UP nicht erkannt)"
+      fi
+      ;;
     *) warnung "An I2C-Adresse 0x64 antwortet kein CW2217 (Chip-ID $id statt 0xa0)" ;;
   esac
 }
@@ -152,7 +172,7 @@ _argon_letzte_meldung() {
 }
 
 _argon_dienst() {
-  local i2c=$1 einheit=zenos-argon.service aktiv ergebnis meldung
+  local i2c=$1 keins=${2:-0} einheit=zenos-argon.service aktiv ergebnis meldung
   aktiv=$(systemctl is-active "$einheit" 2> /dev/null)
   case "$aktiv" in
     active)
@@ -167,6 +187,8 @@ _argon_dienst() {
   meldung=$(_argon_letzte_meldung)
   if (( ! i2c )); then
     hinweis "$einheit ruht ohne I2C-Bus${meldung:+ · $meldung}"
+  elif (( keins )); then
+    hinweis "Kein Argon-Gehäuse erkannt, $einheit hat nichts zu regeln (das Gehäuse ist optional)"
   elif [[ "$ergebnis" == success ]]; then
     warnung "$einheit läuft nicht, der Argon-Lüfter wird nicht geregelt${meldung:+ · $meldung}"
   else
