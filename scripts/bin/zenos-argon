@@ -243,8 +243,14 @@ CRITICAL_MAX_DEFER = 300
 # Erholt sich der Ladestand während der Vorwarnung (zwei sichere Messungen hintereinander ab 3 + 3 %), endet sie
 CRITICAL_RECOVERY_MARGIN = 3
 CRITICAL_RECOVERY_CONFIRMATIONS = 2
-# install.sh hält diese Sperre exklusiv, solange es läuft
+# install.sh hält diese Sperre exklusiv, solange es läuft (als Benutzer, von Hand)
 INSTALL_LOCK_PATH = "/run/lock/zenos-install.lock"
+# install.sh als root (Kanal, nachstart) sperrt hier (Ordner nur root, 0700; zenos-argon läuft als root und kommt
+# auch ohne CAP_DAC_OVERRIDE hinein)
+ROOT_INSTALL_LOCK_PATH = "/run/zenos-sperre/install.lock"
+# Laufzeitordner von zenos-kanal-installieren.service: Es gibt ihn, solange der Kanal installiert, auch zwischen den
+# Läufen von install.sh (Gesundheitsprüfung, Rückweg)
+CHANNEL_RUN_PATH = "/run/zenos-kanal"
 
 
 # --- Log -------------------------------------------------------------------
@@ -1560,9 +1566,12 @@ def process_running(name, proc=None):
 
 
 def system_busy():
-    """Warum jetzt nicht ausgeschaltet werden sollte (install.sh oder dpkg läuft), sonst ""."""
-    if install_running():
+    """Warum jetzt nicht ausgeschaltet werden sollte (install.sh, ein Update über den Kanal oder dpkg läuft), sonst
+    ""."""
+    if install_running() or install_running(system_path(ROOT_INSTALL_LOCK_PATH)):
         return "install.sh läuft"
+    if os.path.isdir(system_path(CHANNEL_RUN_PATH)):
+        return "zenOS-Update läuft"
     if process_running("dpkg"):
         return "dpkg läuft"
     return ""

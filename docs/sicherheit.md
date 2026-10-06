@@ -342,8 +342,10 @@ Rest von `/sys` bleibt nur lesbar). Firmware-Einstellungen (`/boot/firmware/conf
   Ausschalten, schon eine Messung «lädt» bricht ab. Läuft `dpkg` oder `install.sh`, wartet es höchstens 5 Min.
   Vorher meldet `wall` es allen offenen Terminals: Dafür darf der Dienst nur schreibend auf Pseudo-Terminals und
   Konsolen (`DeviceAllow=char-pts w`, `char-tty w`, Gruppe `tty` wie `wall` selbst), sonst bleibt er gehärtet.
-  Gelesen wird dafür nur `/proc/*/comm` und die Sperre `/run/lock/zenos-install.lock` (lesend geöffnet, kurz geteilt
-  gesperrt). Die Grenze steht im Code (`CRITICAL_PERCENT`, gespiegelt aus `LEITPLANKEN.akkuAusschaltenProzent`).
+  Gelesen wird dafür nur `/proc/*/comm`, die Sperren `/run/lock/zenos-install.lock` und
+  `/run/zenos-sperre/install.lock` (install.sh als root, etwa vom Kanal; lesend geöffnet, kurz geteilt gesperrt) und
+  ob `/run/zenos-kanal` besteht (der Kanal installiert, auch zwischen den Läufen von install.sh). Die Grenze steht im
+  Code (`CRITICAL_PERCENT`, gespiegelt aus `LEITPLANKEN.akkuAusschaltenProzent`).
 - **Lüfter einstellen (Mindeststufe).** Standard ist «auto»: Am Compute Module 5 regelt der Kernel (`step_wise`)
   allein, zenOS liest nur. Wählt Zeno eine Mindeststufe 1–4 (System-Menü oder `zen luefter`), stellt zenos-argon die
   Thermal-Zone des Lüfters auf den Regler `user_space` und setzt alle 2 s die Stufe selbst. Beim Argon ONE V3 hebt

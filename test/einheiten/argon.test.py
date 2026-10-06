@@ -1636,6 +1636,25 @@ class WaechterBeimAusschalten(unittest.TestCase):
             os.symlink(os.path.join(ordner, "woanders"), pfad)
             self.assertTrue(A.install_running(pfad))
 
+    def test_installation_ueber_den_kanal(self):
+        """Befund sich-02: install.sh als root (Kanal) sperrt in /run/zenos-sperre, nicht in /run/lock; zwischen den
+        Läufen (Gesundheitsprüfung, Rückweg) hält es gar keine Sperre. Beides hielt das Ausschalten nicht auf."""
+        with tempfile.TemporaryDirectory() as wurzel, \
+                mock.patch.dict(os.environ, {"ZENOS_ARGON_TESTWURZEL": wurzel}), \
+                mock.patch.object(A, "process_running", lambda name, proc=None: False):
+            self.assertEqual(A.system_busy(), "")
+            sperren = os.path.join(wurzel, "run", "zenos-sperre")
+            os.makedirs(sperren, mode=0o700)
+            pfad = os.path.join(sperren, "install.lock")
+            open(pfad, "w").close()
+            self.assertEqual(A.system_busy(), "", "eine freie Sperre hält nichts auf")
+            with open(pfad) as gehalten:
+                fcntl.flock(gehalten, fcntl.LOCK_EX)
+                self.assertEqual(A.system_busy(), "install.sh läuft")
+            self.assertEqual(A.system_busy(), "")
+            os.makedirs(os.path.join(wurzel, "run", "zenos-kanal"))
+            self.assertEqual(A.system_busy(), "zenOS-Update läuft")
+
     def test_dpkg(self):
         with tempfile.TemporaryDirectory() as proc:
             for pid, name in (("1", "systemd"), ("77", "bash"), ("self", "x")):
