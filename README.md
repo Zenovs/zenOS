@@ -42,6 +42,8 @@ sudo reboot
 
 `install.sh` fragt einmal nach dem sudo-Passwort und baut beim ersten Mal Quickshell aus dem Quellcode. Ein zweiter Lauf meldet `0 Änderungen`, `zen doctor` prüft das Ergebnis. Nach dem Neustart erscheint der zenOS-Login. Alle Schritte, Voraussetzungen (Imager-Einstellungen, aktueller Bootloader) und die Testliste stehen in [ANLEITUNG.md](ANLEITUNG.md).
 
+So installiert, folgt zenOS dem Kanal `dev`: `zen update` zeigt die neuen Commits und installiert sie nur nach deinem «ja», automatisch kommt auf `dev` nichts. Signierte Versionen (Kanäle `stabil` und `vorschau`, `sudo zen kanal wechseln …`) brauchen den Vertrauensanker, den nur das Image mitbringt. Von Hand setzt ihn `sudo zen kanal anker /opt/zenos/system/vertrauen`; die Fingerabdrücke zum Eintippen stehen in [docs/image-und-releases.md](docs/image-und-releases.md) unter «Signierte Releases». Empfohlen ist deshalb das Image.
+
 Chrome, VS Code, 1Password (mit CLI) und coremail installiert zenOS beim ersten Start, erst nach deiner ausdrücklichen Zustimmung. Sie kommen aus den offiziellen Quellen der Hersteller und nie ins Image; das hat Lizenzgründe, und die Updates kommen so direkt vom Hersteller. Nubix hat noch keinen ARM-Build und wird angeboten, sobald es einen gibt.
 
 ## Herunterladen und installieren

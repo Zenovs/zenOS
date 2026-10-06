@@ -7,7 +7,8 @@
 #   zen kanal anker              zeigt den Vertrauensanker /etc/zenos/vertrauen
 #   sudo zen kanal anker ORDNER  setzt den Anker von Hand aus ORDNER (etwa /opt/zenos/system/vertrauen): den ganzen
 #                                Fingerabdruck der Wurzel und von jedem Release-Schlüssel die ersten 8 Zeichen nach
-#                                «SHA256:» aus 1Password eintippen
+#                                «SHA256:» aus einer vertrauenswürdigen Quelle eintippen (1Password beim Besitzer
+#                                der Schlüssel, sonst docs/image-und-releases.md auf GitHub)
 #   zen kanal zeitpunkt          zeigt, wann automatische Updates installiert werden (ohne Datei: «sperre»)
 #   sudo zen kanal zeitpunkt sperre|jederzeit|hand
 #   sudo zen kanal zeitpunkt fenster VON BIS

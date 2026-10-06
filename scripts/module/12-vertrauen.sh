@@ -9,10 +9,10 @@
 # Dieses Modul überschreibt einen Anker deshalb nie, und es füllt ihn nur beim Image-Bau (--image) aus dem Repo:
 # - Fehlt /etc/zenos/vertrauen, legt es den Ordner an. Im Image kommt der Anker aus system/vertrauen des gebauten
 #   Stands. Sonst nur, solange system/vertrauen noch keine Schlüssel hat (dann sind es leere Dateien).
-# - Ist der Anker leer (nur Kommentare, wie heute im Repo, solange die Schlüssel fehlen) und hat system/vertrauen
+# - Ist der Anker leer (nur Kommentare, wie im Repo vor Serie 1) und hat system/vertrauen
 #   inzwischen Schlüssel, übernimmt es sie nicht von selbst: Dieser Stand kam womöglich ungeprüft (dev mit «ja»), und
 #   ein untergeschobener Anker gälte danach für jedes signierte Release. Es sagt, wie es von Hand geht: «sudo zen kanal
-#   anker /opt/zenos/system/vertrauen» mit den Fingerabdrücken aus 1Password.
+#   anker /opt/zenos/system/vertrauen» mit den Fingerabdrücken aus einer vertrauenswürdigen Quelle.
 # - Sonst bleibt der Inhalt, wie er ist. Nur Besitz und Rechte (root, 0755 bzw. 0644) stellt es wieder her.
 # Unvollständig oder ungültig gibt es eine Warnung: Der Kanal gilt dann als «Anker fehlt» und installiert nichts.
 
@@ -61,7 +61,8 @@ modul_system() {
 # Schlüssel im Repo, Anker leer: nur ein Hinweis, übernommen wird von Hand
 _vertrauen_von_hand() {
   log_info "system/vertrauen hat Schlüssel, der Anker des Geräts noch nicht. Einmal von Hand übernehmen"
-  log_info "(Fingerabdrücke aus 1Password eintippen): sudo zen kanal anker $ZENOS_CODE/system/vertrauen"
+  log_info "(Fingerabdrücke aus einer vertrauenswürdigen Quelle eintippen, etwa docs/image-und-releases.md auf GitHub):"
+  log_info "sudo zen kanal anker $ZENOS_CODE/system/vertrauen"
 }
 
 # Inhalt prüfen mit zenos-kanal: «vollständig: …», «leer: …» oder «ungültig: …»

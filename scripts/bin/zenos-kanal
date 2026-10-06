@@ -35,7 +35,9 @@ Aufruf:
   zenos-kanal anker                    zeigt den Vertrauensanker /etc/zenos/vertrauen
   zenos-kanal anker ORDNER             setzt den Anker von Hand aus ORDNER (root, nur im Terminal: der Fingerabdruck
                                        der Wurzel und von jedem Release-Schlüssel die ersten 8 Zeichen werden aus
-                                       1Password eingetippt; die Werte aus dem Ordner zeigt es erst danach)
+                                       einer vertrauenswürdigen Quelle eingetippt, etwa 1Password beim Besitzer der
+                                       Schlüssel oder docs/image-und-releases.md auf GitHub; die Werte aus dem Ordner
+                                       zeigt es erst danach)
   zenos-kanal anker --pruefen ORDNER   prüft nur den Inhalt eines Ankers: vollständig (Exit 0), leer (1), ungültig (3)
   zenos-kanal automatik                zeigt, ob die Automatik an ist, wann sie läuft und was sie zuletzt tat
   zenos-kanal automatik an|aus         Notschalter (root, sudo zen kanal automatik an|aus): schaltet die Timer ein bzw.
@@ -4596,9 +4598,12 @@ def anchor_lines():
     try:
         anchor = load_device_anchor()
     except AnchorError as e:
-        hint = " (kommt mit install.sh, sobald system/vertrauen Schlüssel hat)" if e.empty else ""
+        # Ausserhalb des Images übernimmt install.sh die Schlüssel aus system/vertrauen nie von selbst (12-vertrauen)
+        hint = (f" (das Image bringt ihn mit; von Hand: sudo zen kanal anker {CODE_DIR}/system/vertrauen)" if e.empty
+                else "")
         return [f"{'Anker':<12}{ANCHOR_DIR} · fehlt: {e.reason}{hint}"], False
-    lines = [f"{'Anker':<12}{ANCHOR_DIR} · Serie {anchor.series} (Fingerabdrücke mit 1Password vergleichen)",
+    lines = [f"{'Anker':<12}{ANCHOR_DIR} · Serie {anchor.series} (Fingerabdrücke mit einer vertrauenswürdigen Quelle "
+             "vergleichen)",
              f"{'  Wurzel':<14}{fingerprint(anchor.root)}"]
     for i, key in enumerate(anchor.release):
         lines.append(f"{'  Release' if i == 0 else '':<14}{fingerprint(key)}")
@@ -4817,21 +4822,24 @@ def anchor_set(folder):
             return EXIT_BLOCKED
         new = Anchor(new.release, new.root, revoked, new.series)
 
-    # Verglichen wird mit 1Password, nicht mit dem Bildschirm: Die Fingerabdrücke aus dem Ordner zeigt es erst nach der
+    # Verglichen wird mit einer vertrauenswürdigen Quelle (beim Besitzer der Schlüssel 1Password, sonst die
+    # veröffentlichten Fingerabdrücke), nicht mit dem Bildschirm: Die Fingerabdrücke aus dem Ordner zeigt es erst nach der
     # Eingabe (sonst tippte man ab, was dasteht, und ein untergeschobener Anker ginge durch)
     print(f"Neuer Vertrauensanker aus {folder}: Serie {new.series}, {len(new.release)} Release-Schlüssel, "
           f"{len(new.revoked)} widerrufen.")
     if old:
         print(f"Bisher: Serie {old.series}.")
-    typed = ask("Fingerabdruck der Wurzel aus 1Password («zenOS Wurzel», SHA256:…) eintippen: ").strip()
+    print("Die Fingerabdrücke kommen aus einer vertrauenswürdigen Quelle, nicht vom Bildschirm: beim Besitzer der "
+          "Schlüssel aus 1Password, sonst aus docs/image-und-releases.md («Signierte Releases») auf GitHub.")
+    typed = ask("Fingerabdruck der Wurzel («zenOS Wurzel», SHA256:…) eintippen: ").strip()
     if typed != fingerprint(new.root):
-        # Den richtigen Wert zeigt es auch jetzt nicht: Ein zweiter Versuch soll wieder aus 1Password kommen
+        # Den richtigen Wert zeigt es auch jetzt nicht: Ein zweiter Versuch soll wieder aus der Quelle kommen
         print(f"{NAME} anker: Der Fingerabdruck stimmt nicht mit der Wurzel in {folder} überein. Nichts geändert.",
               file=sys.stderr)
         return EXIT_BLOCKED
     expected = {fingerprint(k)[7:15] for k in new.release}
-    print(f"Jetzt die Release-Schlüssel ({len(expected)}): von jedem die ersten 8 Zeichen nach «SHA256:» aus 1Password "
-          "(«zenOS Release»).")
+    print(f"Jetzt die Release-Schlüssel ({len(expected)}): von jedem die ersten 8 Zeichen nach «SHA256:» («zenOS "
+          "Release»).")
     got = set()
     for i in range(len(expected)):
         got.add(ask(f"  Release-Schlüssel {i + 1} von {len(expected)}: ").strip())

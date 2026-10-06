@@ -102,6 +102,14 @@ signierte Tags, auf `dev` ein nicht durchgehend signierter Stand nur nach einem 
 Automatische Updates mit einstellbarem Zeitpunkt laufen über `zenos-kanal.timer` («Automatik»). Images entstehen nur
 aus gültig signierten Tags, folgen `stabil` bzw. `vorschau` und bringen den Anker mit («Vom Tag zum Image»).
 
+**Installiert per Skript** (`git clone` und `install.sh`, README): Der Kanal ist `dev` (aus `main`: `stabil`), der
+Anker bleibt leer, denn `install.sh` übernimmt ihn ausserhalb des Images nie von selbst (`12-vertrauen`). Auf `dev`
+installiert `zen update` nur nach «ja», auf `stabil` und `vorschau` gar nichts («Anker fehlt»). Den Anker setzt
+`sudo zen kanal anker /opt/zenos/system/vertrauen`: Es fragt den Fingerabdruck der Wurzel und die ersten 8 Zeichen
+jedes Release-Schlüssels ab, und die kommen aus einer Quelle ausserhalb des Geräts: beim Besitzer der Schlüssel aus
+1Password, sonst die Fingerabdrücke oben (diese Seite auf GitHub; den des Release-Schlüssels nennen auch die
+Versionshinweise). Danach wechselt `sudo zen kanal wechseln stabil` (oder `vorschau`) den Kanal.
+
 ### Schlüssel und Anker
 
 Zwei SSH-Schlüssel (Ed25519), beide nur in 1Password. Der private Teil verlässt 1Password nie, jede Signatur gibt
@@ -458,7 +466,7 @@ installiert den Stand des Kanals dann neu, auch wenn der Commit gleich ist.
 | 10 | wartet: Zustimmung (auch «nein»), Platz, kein Kontakt |
 | 75 | ein anderes `zen update`, eine Prüfung, ein `install.sh` von Hand oder eine andere Installation läuft (die Meldung nennt den Prozess) |
 
-Am Gerät nach dem Einrichten (je ein Befehl): `zen kanal status` (Fingerabdrücke mit 1Password vergleichen),
+Am Gerät nach dem Einrichten (je ein Befehl): `zen kanal status` (Fingerabdrücke mit einer vertrauenswürdigen Quelle vergleichen),
 `sudo zen kanal pruefen`. Solange der Anker leer ist, steht dort «Anker fehlt» und `v0.1.0-rc1` bis `rc3` als
 «unsigniert»; `zen update` geht dann nur auf dev und nur mit «ja».
 

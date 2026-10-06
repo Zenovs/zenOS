@@ -491,9 +491,9 @@ systemctl --user start zenos-shell.service
 - [ ] `zen doctor` zeigt unter «Signierter Kanal» die Installation und keinen Fehler.
 - [ ] `zen rollback v0.1.0-rc3` fragt (unsigniert) nach «ja» für das Tag-Objekt, geht danach auf den Tag zurück, und
   `zen version` zeigt ihn. `zen update` bringt dich wieder auf `dev` (aus `v0.1.0-rc3` noch auf dem alten Weg).
-- [ ] Signierter Kanal: `zen kanal status` zeigt «Anker fehlt», solange die Schlüssel fehlen. Kommen sie ins Repo,
-  übernimmt sie `zen update` nicht von selbst (ein ungeprüfter Stand könnte sonst einen fremden Anker bringen);
-  `install.sh` sagt dann einmal, wie es geht. Den Anker setzt du von Hand und tippst dabei den Fingerabdruck von
+- [ ] Signierter Kanal: `zen kanal status` zeigt «Anker fehlt» mit dem Weg von Hand. Die Schlüssel sind im Repo
+  (Serie 1), `install.sh` und `zen update` übernehmen sie aber nie von selbst (ein ungeprüfter Stand könnte sonst
+  einen fremden Anker bringen); nur das Image bringt den Anker mit. Den Anker setzt du von Hand und tippst dabei den Fingerabdruck von
   «zenOS Wurzel» und die ersten 8 Zeichen von «zenOS Release» aus 1Password ab (nicht vom Bildschirm, dort stehen sie
   erst danach): `sudo zen kanal anker /opt/zenos/system/vertrauen`. Danach zeigt `zen kanal status` die
   Fingerabdrücke.
