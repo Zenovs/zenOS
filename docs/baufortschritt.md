@@ -19,7 +19,7 @@ Status: `offen` · `in Arbeit` · `fertig` · `offener Punkt`
 | M11 · Sicherheit | fertig | unattended-upgrades, Chrome-Richtlinien, gitleaks-Hook + CI, ufw (seit `v0.1.0-rc3` standardmässig an). Details: `docs/module/m11.md` |
 | M12 · Erster Start | fertig | Einrichtung nach Entwurf 2, Zustimmung, zen apps (Chrome, VS Code, 1Password, CLI, coremail), Web-Apps. Nubix: kein ARM-Build. Details: `docs/module/m12.md` |
 | M13 · Argon ONE | fertig | zenos-argon (Lüfterkurve, Power-Button, Abschaltsignal beim Ausschalten), Temperatur in der Leiste. Details: `docs/module/m13.md` |
-| M14 · Image-Workflow | fertig | image.yml + image/bauen.sh; -rc-Tags nur Artefakt. Details: `docs/module/m14.md` |
+| M14 · Image-Workflow | fertig | image.yml + image/bauen.sh; Release für jeden gültigen Tag, -rc als Vorabversion (bis rc3 nur Artefakt). Details: `docs/module/m14.md` |
 | M15 · Abschluss | fertig | Integration (frische Installation von GitHub, `zen update`, voller Image-Bau, drei Abnahme-Touren, drei Reviews mit Gegenprüfung, 36 Befunde behoben), Doku, ANLEITUNG, CHANGELOG, Tag `v0.1.0-rc1` |
 | Bildmarke «Zwei Steine» | fertig | nach Zenos Spezifikation: Dateien in `assets/zeichen/` (erzeugt von `erzeugen.py`), Pfade in tokens.json, `ZenZeichen` statt `Zeichen` in Leiste, Login, Sperre, Befehlsfeld und Erstem Start, Wasserzeichen und Token `wasserzeichen` entfernt, App-Icon `zenos` (45-thema). Details: `docs/bildmarke.md` |
 | Bootsplash (Plymouth) | fertig, nicht aktiv | Theme `system/plymouth/zenos/` (Gleiten, Überblenden, atmender Spalt, Passwortfeld, 1x/2x), Modul 42-bootsplash legt es ab, `zen bootsplash` schaltet nach Rückfrage ein, `zen doctor` meldet den Stand. Details: `docs/module/bootsplash.md` |
@@ -35,8 +35,9 @@ I2C/GPIO des Argon ONE, Tastatur), ist pro Modul unter «am Pi prüfen» notiert
 
 **Oktober 2026:** Nach `v0.1.0-rc2` kamen der signierte Update-Kanal, Energie, die Systemkennung zenOS und das Image
 als eigenständige Distribution (Release-Seite, Quellcode) dazu; `v0.1.0-rc3` ist gebaut (unsigniert, nur Artefakt).
-Die Fensterübersicht ist in Arbeit. Nächster Schritt: der erste signierte Release-Kandidat `v0.1.0-rc4`, dann die
-Abnahme auf echter Hardware und `v0.1.0` (`ROADMAP.md`). Der Rest dieses Abschnitts beschreibt den Stand von rc1/rc2.
+Die Fensterübersicht ist in Arbeit. Nächster Schritt: der erste signierte Release-Kandidat `v0.1.0-rc4` (erstmals mit
+Release-Seite, als Vorabversion), dann die Abnahme auf echter Hardware und `v0.1.0` (`ROADMAP.md`). Der Rest dieses
+Abschnitts beschreibt den Stand von rc1/rc2.
 
 Alle Module sind gebaut und im Container getestet (Ubuntu 26.04 arm64 mit systemd, headless labwc, echte
 PAM-/logind-Sitzungen). Die Abnahme auf dem Pi steht aus: `ANLEITUNG.md`, Abschnitte C bis E. Pro Modul steht unter
@@ -131,7 +132,8 @@ Abnahme in einer echten VM (lima/Apple Virtualization, Ubuntu 26.04 arm64, virti
 - **Festplattenverschlüsselung und Backups** auf dem Pi sind Ziel, in 0.1 nicht umgesetzt.
 - **Name und Marke vor der ersten Weitergabe:** die Markenrecherche zu «zenOS» und bei Canonical schriftlich anfragen
   oder sich auf die Klausel der IPR-Policy zu den Open-Source-Lizenzen stützen (`docs/image-und-releases.md`, «Name
-  und Marke»).
+  und Marke»). Seit auch jedes `-rc` eine öffentliche Release-Seite bekommt (Entscheid vom 06.10.2026), ist das schon
+  `v0.1.0-rc4`, nicht erst `v0.1.0` (ANLEITUNG G6 bis G10).
 - **sudo ohne Passwort von cloud-init:** Hat der Imager den Benutzer angelegt (bis 2.0.10 oder mit
   «passwordlessSudo») oder kam der Benutzer `ubuntu` aus Ubuntus Vorgabe, gibt es eine Regel ohne Passwort
   (`/etc/sudoers.d/90-cloud-init-users`). `zen doctor` warnt dann («sudo geht ohne Passwort»); zenOS ändert sie nicht.

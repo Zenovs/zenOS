@@ -108,12 +108,16 @@ Updates (`docs/image-und-releases.md`, «Automatik»).
   dagegen helfen nur die Regeln auf GitHub (Tag-Rulesets, unveränderliche Releases, `docs/image-und-releases.md`).
   Ein frisch geflashtes Gerät übernimmt den Anker des Images; Geräte, die über das Netz aktualisieren, nicht.
 
-Ausgabe bei Exit 0 auf stdout: `tag`, `version`, `kanal`, `release`, `commit`, `objekt`, `schluessel`, `serie`,
-`wurzel` (je `schluessel=wert`, für `$GITHUB_OUTPUT`). Exit 1 heisst ungültig (Grund auf stderr), 2 falscher Aufruf.
+Ausgabe bei Exit 0 auf stdout: `tag`, `version`, `kanal`, `release`, `vorab`, `commit`, `objekt`, `schluessel`,
+`serie`, `wurzel` (je `schluessel=wert`, für `$GITHUB_OUTPUT`). `release` ist immer `true`: Jeder gültige Tag bekommt
+eine Release-Seite. `vorab` ist `true` bei `vX.Y.Z-rcN` (Vorabversion, Kanal `vorschau`) und `false` bei `vX.Y.Z`
+(«Latest», Kanal `stabil`); beides kommt allein aus dem geprüften Namen, nie aus der Nachricht des Tags. Exit 1 heisst
+ungültig (Grund auf stderr, dann gibt es keine Ausgabe und kein Release), 2 falscher Aufruf.
 
-Geprüft in `test/einheiten/image-signatur.test.py` mit Wegwerf-Schlüsseln: gültig (rc und final), anderer Commit,
-unsigniert, leichter Tag, fremder Schlüssel, Wurzel statt Release, widerrufen, falscher Name im Objekt, zwei
-Signaturen, keine Release-Version, Anker leer, unvollständig, mit Option oder nur im Arbeitsbaum, fremde config mit
+Geprüft in `test/einheiten/image-signatur.test.py` mit Wegwerf-Schlüsseln: gültig (rc als Vorabversion, final als
+«Latest»), Vorabversion nur aus dem Namen (nicht aus der Nachricht), anderer Commit, unsigniert, leichter Tag, fremder
+Schlüssel, Wurzel statt Release, widerrufen, falscher Name im Objekt, zwei Signaturen, keine Release-Version (auch
+`-rc0`, `-rc01`, `-RC1`, `-rc1-fix`), Anker leer, unvollständig, mit Option oder nur im Arbeitsbaum, fremde config mit
 eigenem Prüfprogramm, Schlüsselliste, Hooks und fsmonitor, Serie 2 mit und ohne `vertrauen/0002` (auch mit dem
 Release-Schlüssel signiert oder auf einem anderen Anker), der echte Anker im Format und als fester Anker im Skript,
 ein fremder Anker in Serie 1 und mit eigener Wurzel und eigenem `vertrauen/0002`, ein zusätzlicher Release-Schlüssel
@@ -121,8 +125,10 @@ ohne neue Serie, Serie 3 ohne `vertrauen/0002`, die ganze Kette bis Serie 3, ein
 widerrufener Schlüssel, der zurückkommt (die Tests laufen mit einer Kopie des Skripts, in der der Wegwerf-Anker als
 Serie 1 steht); dazu `bauen.sh --nur-pruefen` (unter Linux): Kanal und Version aus dem Tag, Abbruch ohne Tag,
 unsigniert, fremd signiert, fremder Anker, mit anderem Kanal oder anderer Version, Testbau sowie Testbau und
-`--nur-mechanik` in GitHub Actions. `zenos-kanal image` in `test/einheiten/kanal.test.py`
-(Klasse `Image`).
+`--nur-mechanik` in GitHub Actions. Aus `image.yml` laufen die Schritte «Signatur prüfen», «Versionshinweise»,
+«Manifest» (mit jq, unter Linux) und «Release erstellen» so, wie GitHub sie ausführt; «Release erstellen» mit einem
+nachgebauten `gh`, das nur mitschreibt (Klassen `Workflow` und `ReleaseSchritt`). `zenos-kanal image` in
+`test/einheiten/kanal.test.py` (Klasse `Image`).
 
 ## Lokal ausführen
 
@@ -180,8 +186,8 @@ die Rechte sind minimal (`contents: read` beim Bau, `contents: write` nur im Rel
 - **Tag und Signatur** (`ubuntu-24.04`, 10 min): auschecken mit ganzer Geschichte (so kommen alle Tags als
   Tag-Objekte, auch `vertrauen/NNNN` samt Commit; geprüft im Quelltext von `actions/checkout` v7.0.1), dann
   `image/tag-pruefen.sh --commit <github.sha> <tag>` («verify-tag gegen system/vertrauen»). Scheitert er, läuft kein
-  anderer Job ausser der Prüfung. Seine Ausgabe (Version, Kanal, Release ja/nein, Fingerabdruck, Serie) nutzen alle
-  folgenden Jobs.
+  anderer Job ausser der Prüfung. Seine Ausgabe (Version, Kanal, Release, Vorabversion ja/nein, Fingerabdruck,
+  Serie) nutzen alle folgenden Jobs; die Zusammenfassung nennt Kanal und Art des Releases.
 - **Prüfung** (`uses: ./.github/workflows/pruefen.yml`, derselbe Stand): `scripts/pruefen.sh` wie bei jedem Push.
   `pruefen.yml` läuft für den Tag ausserdem selbst (Auslöser `tags: v*`); die beiden Läufe brechen sich nicht ab
   (eigene concurrency-Gruppe je Workflow).
@@ -192,29 +198,40 @@ die Rechte sind minimal (`contents: read` beim Bau, `contents: write` nur im Rel
   für den Raspberry Pi Imager (mit `jq` aus `basis.txt`: Grösse und SHA-256 des entpackten Images; seine Prüfsumme
   kommt mit in `SHA256SUMS`), die Herkunftsbestätigung (`actions/attest-build-provenance` über `SHA256SUMS`, also
   Image, Paketliste und Manifest; dafür hat nur dieser Job `id-token: write` und `attestations: write`) und die
-  zweisprachigen Versionshinweise. Image,
+  zweisprachigen Versionshinweise. Die `url` im Manifest zeigt auf die Datei der Release-Seite, auch bei `-rc`; bei
+  `-rc` nennt die Beschreibung im Manifest den Release-Kandidaten, und die Versionshinweise beginnen in beiden
+  Sprachen mit «Release-Kandidat zum Testen, nicht für den Alltag» und dem Kanal `vorschau`. Image,
   Paketliste, `SHA256SUMS`, Manifest und Versionshinweise gehen als Artefakt `zenos-<version>-pi5-arm64` mit
-  (Release-Tags 3 Tage, `-rc` 14 Tage), die Paketliste zusätzlich als kleines Artefakt `zenos-<version>-pakete`
-  für den Quellen-Job, das Install-Log als eigenes Artefakt, auch wenn der Bau scheitert.
+  (3 Tage, bei `-rc` wie bei `vX.Y.Z`: Sie dienen nur den folgenden Jobs und einem Neustart, danach liegt alles auf
+  der Release-Seite), die Paketliste zusätzlich als kleines Artefakt `zenos-<version>-pakete`
+  für den Quellen-Job, das Install-Log (14 Tage) als eigenes Artefakt, auch wenn der Bau scheitert.
 - **Quellcode** (Job «quellen», `ubuntu-24.04-arm` im Container `ubuntu:26.04` mit festem Digest wie
   `pruefen.yml`, Timeout 240 min): `image/quellen.sh <paketliste> <ziel>` holt zu jedem Paar aus Quellpaket und
   Version die `.dsc` samt Dateien, zuerst mit `apt-get source --download-only --only-source` aus dem
   Ubuntu-Archiv (eigene apt-Konfiguration, apt prüft Signatur und Prüfsummen), sonst über die API von Launchpad
   (jede Datei gegen `Checksums-Sha256` der `.dsc` geprüft). Dazu Quickshell als `git archive` am Commit aus
   `25-quickshell.sh`. Gepackt in ganze Quellpakete je Teil unter 1900 MiB, mit `zenos-<version>-QUELLEN.txt` und
-  `SHA256SUMS-quellen`; Artefakt `zenos-<version>-quellen`. Fehlt eine Quelle, scheitert der Job.
+  `SHA256SUMS-quellen`; Artefakt `zenos-<version>-quellen` (3 Tage). Fehlt eine Quelle, scheitert der Job.
 - **Annotationen:** `bauen.sh` läuft mit `sudo --preserve-env=GITHUB_ACTIONS`. sudo setzt die Umgebung zurück
   (`env_reset`), ohne diese eine Variable stünden Warnungen und Fehler von `bauen.sh` nur im Log und nicht als
   `::warning::`/`::error::` im Lauf. Weitere Variablen reicht der Workflow nicht durch, der chroot bekommt
   ohnehin eine leere Umgebung.
-- **Tags mit `-rc`** (z. B. `v0.1.0-rc4`, Kanal `vorschau`): nur das Artefakt, kein Release.
-- **`vX.Y.Z`** (Kanal `stabil`): Job «Release» (`ubuntu-24.04`, braucht «Tag und Signatur», «Prüfung», «Image bauen»
-  und «Quellcode», läuft also nur, wenn alle grün sind) prüft beide Artefakte erneut und erstellt mit
-  `gh release create --verify-tag` das Release mit Image, Paketliste, `SHA256SUMS`, Manifest, allen Quellen-Teilen,
-  dem Quickshell-Archiv, `QUELLEN.txt` und `SHA256SUMS-quellen`. Die Versionshinweise nennen Kanal und Fingerabdruck
-  des Release-Schlüssels. Gibt es das Release schon (Workflow neu gestartet), werden die Dateien ersetzt; mit
-  Immutable Releases (ANLEITUNG G) geht das nur, solange es noch ein Entwurf ist.
-- Andere Tags `v*` (etwa `v0.2.0-beta1`) scheitern schon bei «Tag und Signatur».
+- **Release** (`ubuntu-24.04`, 60 min, nur dieser Job hat `contents: write`; braucht «Tag und Signatur», «Prüfung»,
+  «Image bauen» samt Herkunftsbestätigung und «Quellcode», läuft also nur, wenn alle grün sind): prüft beide
+  Artefakte erneut und erstellt mit `gh release create --verify-tag` das Release mit Image, Paketliste,
+  `SHA256SUMS`, Manifest, allen Quellen-Teilen, dem Quickshell-Archiv, `QUELLEN.txt` und `SHA256SUMS-quellen`. Die
+  Versionshinweise nennen Kanal und Fingerabdruck des Release-Schlüssels.
+  - **`vX.Y.Z`** (Kanal `stabil`): mit `--latest`.
+  - **Tags mit `-rc`** (z. B. `v0.1.0-rc4`, Kanal `vorschau`): als Vorabversion, `--prerelease --latest=false`, also
+    nie «Latest» (Entscheid Zeno, 06.10.2026: So läuft der Job schon vor `v0.1.0`, und Fehler darin fallen früh
+    auf). Bis `v0.1.0-rc3` gab es für `-rc` nur die Artefakte.
+  - Welche Art, sagt allein die Ausgabe `vorab` von «Tag und Signatur»; der Schritt prüft sie noch einmal gegen den
+    Tag und bricht ohne gültigen Wert ab.
+  - **Neustart:** Liegt das Release noch als Entwurf vor (ein früherer Lauf brach ab; `gh` legt es zuerst als Entwurf
+    an, lädt hoch und veröffentlicht dann), löscht der Job den Entwurf, der Tag bleibt, und legt das Release neu an.
+    Ein veröffentlichtes Release bleibt, wie es ist: Der Job prüft nur, ob alle Dateien da sind und die Markierung
+    stimmt, und ist dann grün. Mit Immutable Releases (ANLEITUNG G) liesse es sich ohnehin nicht mehr ändern.
+- Andere Tags `v*` (etwa `v0.2.0-beta1`) scheitern schon bei «Tag und Signatur», ohne Ausgabe und ohne Release.
 
 Die Grundlage (Ubuntu-Datei und SHA-256) steht in den Versionshinweisen und in `<arbeit>/basis.txt`.
 

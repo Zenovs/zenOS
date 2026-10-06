@@ -14,6 +14,7 @@ Bau im Einzelnen läuft (Optionen, lokal im Container, Aufräumen), steht in `im
      davon mit `ssh-keygen -Y verify` (Regeln in `image/README.md`, «Signatur des Tags»). Ab Serie 2 muss der Tag
      `vertrauen/NNNN` dazu passen. Scheitert das, wird nichts gebaut.
    - **Kanal je nach Tag:** `vX.Y.Z` → `stabil`, `vX.Y.Z-rcN` → `vorschau` (Entscheid Zeno). `dev` bekommt kein Image.
+     Ebenso aus dem Namen: `vorab` (`true` bei `-rcN`), ob das Release eine Vorabversion wird.
    - **Prüfung:** `scripts/pruefen.sh` läuft im selben Lauf für denselben Stand (`pruefen.yml` als aufgerufener
      Workflow). Ein Release gibt es nur, wenn sie grün ist.
 2. **Runner:** `ubuntu-24.04-arm`. Er läuft nativ auf arm64 und ist für öffentliche Repos kostenlos.
@@ -57,11 +58,17 @@ Bau im Einzelnen läuft (Optionen, lokal im Container, Aufräumen), steht in `im
    Quellpaket und Version der Paketliste die `.dsc` samt Dateien, zuerst aus dem Ubuntu-Archiv (apt prüft Signatur und
    Prüfsummen), sonst von Launchpad (geprüft gegen die Prüfsummen der `.dsc`), dazu Quickshell als `git archive` am
    gebauten Commit. Fehlt eine Quelle, scheitert der Job, und es gibt kein Release.
-9. **Veröffentlichen:**
-   - Tags mit `-rc` (z. B. `v0.1.0-rc4`, Kanal `vorschau`): nur Workflow-Artefakte (Image, Quellen), **kein Release**.
-   - `vX.Y.Z` (Kanal `stabil`): ein Release mit allen Dateien unter «Release-Dateien», nur wenn Signatur, Prüfung, Bau
-     und Quellen grün sind. Die Versionshinweise nennen Kanal und Fingerabdruck des Release-Schlüssels.
-   - Andere Tags `v*` (etwa `v0.2.0-beta1`) gehören zu keinem Kanal und scheitern schon bei der Signatur.
+9. **Veröffentlichen:** Jeder gültige Tag bekommt ein Release mit allen Dateien unter «Release-Dateien», nur wenn
+   Signatur, Prüfung, Bau mit Herkunftsbestätigung und Quellen grün sind. Die Versionshinweise nennen Kanal und
+   Fingerabdruck des Release-Schlüssels.
+   - `vX.Y.Z` (Kanal `stabil`): als «Latest».
+   - Tags mit `-rc` (z. B. `v0.1.0-rc4`, Kanal `vorschau`): als **Vorabversion** (Pre-release), nie «Latest». Die
+     Versionshinweise beginnen in beiden Sprachen mit «Release-Kandidat zum Testen, nicht für den Alltag». Entscheid
+     Zeno vom 06.10.2026, damit der Job «Release» schon vor `v0.1.0` läuft und Fehler darin früh auffallen; bis
+     `v0.1.0-rc3` gab es für `-rc` nur Workflow-Artefakte.
+   - Andere Tags `v*` (etwa `v0.2.0-beta1`) gehören zu keinem Kanal und scheitern schon bei der Signatur, ohne Release.
+   - Wird der Lauf neu gestartet, legt der Job ein Release, das noch Entwurf ist, neu an; ein veröffentlichtes bleibt,
+     wie es ist (`image/README.md`, «GitHub Actions»).
 
 ## Release-Dateien
 
@@ -189,7 +196,8 @@ Ein Release von Anfang bis Ende:
    Release-Schlüssel, der ohne neue Serie dazukam.
 4. **Image:** `bauen.sh` prüft noch einmal, baut mit dem Kanal des Tags (`stabil` oder `vorschau`), legt den Anker
    aus `system/vertrauen` nach `/etc/zenos/vertrauen` und den Zustand ab Werk an (`gut.json`, `hoechste`,
-   `gesehen.json` aus dem Tag). Für `vX.Y.Z` folgt das Release, wenn auch die Prüfung im selben Lauf grün ist.
+   `gesehen.json` aus dem Tag). Danach folgt das Release, wenn auch die Prüfung im selben Lauf grün ist: für `vX.Y.Z`
+   als «Latest», für `-rcN` als Vorabversion.
 5. **Geräte:** Wer `vorschau` folgt, bekommt `-rcN` ohne Wartezeit, wer `stabil` folgt, `vX.Y.Z` 24 h nach dem ersten
    Sehen, beide zum eingestellten Zeitpunkt. Jedes Gerät prüft den Tag selbst gegen seinen eigenen Anker; der Bau auf
    GitHub ist dafür nicht nötig.
@@ -815,8 +823,8 @@ Chrome, VS Code, 1Password und coremail sind nicht im Image; Chrome, VS Code und
   Wählt man das Image dagegen direkt als «eigenes Image» (`.img.xz`), bietet der Imager 2.x keine Einstellungen an,
   weil er nicht weiss, dass das Image cloud-init versteht; erst das Manifest sagt es ihm (`init_format: cloudinit`).
   Die Belegung gilt auch für das Passwortfeld im zenOS-Login, die Zeitzone für Uhr, Bündelung der Mitteilungen und
-  Uhrzeit-Auslöser. Bei einem `-rc`-Image ohne Release-Seite in der Manifest-Datei `url` auf die heruntergeladene
-  Datei ändern (`file:///…/zenos-<v>-pi5-arm64.img.xz`).
+  Uhrzeit-Auslöser. Die `url` im Manifest zeigt auf die Datei der Release-Seite, bei `-rc` wie bei `vX.Y.Z`; der
+  Imager lädt das Image von dort.
 - balenaEtcher geht auch, dann ohne Einstellungen: Beim ersten Start gilt `user`/`user`, Zeitzone UTC und die
   Vorgabe-Belegung des Images (siehe «Erster Start»).
 - **Argon ONE UP (Compute Module 5) mit NVMe:** Damit der Bootloader die SSD findet, muss im EEPROM `PCIE_PROBE=1`

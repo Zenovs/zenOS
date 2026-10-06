@@ -20,8 +20,8 @@ Fehler durchlief.
 Der Bau lief nicht auf dem Pi, sondern auf dem Mac: Claude Code hat dort gebaut und in Docker-Containern mit Ubuntu
 26.04 arm64 getestet, also mit derselben Architektur wie der Pi. Das Repo liegt auf GitHub: `main` enthält den
 Start-Commit, `dev` zenOS 0.1 mit den Release-Kandidaten `v0.1.0-rc1` bis `v0.1.0-rc3` (unsigniert, nur als
-Workflow-Artefakt). Als Nächstes kommt der erste signierte, `v0.1.0-rc4` (G). Die früheren Schritte A1 bis A14 fallen
-weg.
+Workflow-Artefakt). Als Nächstes kommt der erste signierte, `v0.1.0-rc4` (G), und mit ihm die erste Release-Seite, als
+Vorabversion markiert. Die früheren Schritte A1 bis A14 fallen weg.
 
 ---
 
@@ -945,8 +945,9 @@ ruleset»:
 - «Create».
 
 **G4.** Unveränderliche Releases: Settings › General › Abschnitt «Releases» › «Enable release immutability»
-anhaken. Das gilt für Releases, die danach erscheinen. Ein Release lässt sich weiter löschen (Notbremse), nur sein
-Name ist danach verbraucht.
+anhaken. Das gilt für Releases, die danach erscheinen, auch für die Vorabversionen der `-rc`. Ein Release lässt sich
+weiter löschen (Notbremse), nur sein Name ist danach verbraucht. Startest du einen Lauf «Image» neu, bleibt ein schon
+veröffentlichtes Release, wie es ist; nur ein Entwurf eines abgebrochenen Laufs wird neu angelegt.
 
 **G5.** Prüfen, auf dem Mac, dein GitHub-Konto statt `<konto>` (ausserhalb des Repo-Ordners findet `gh` es sonst
 nicht). Es zeigt beide Rulesets als aktiv:
@@ -959,8 +960,9 @@ gh ruleset list --repo <konto>/zenOS
 `CHANGELOG.md` einen Abschnitt mit Version und Datum ergänzen (was sich seit dem letzten Tag geändert hat; fehlt einem
 früheren Tag sein Abschnitt, etwa `v0.1.0-rc3`, zuerst diesen), committen und pushen. Die Prüfung `pruefen.yml` für
 diesen Stand muss grün sein: Läuft sie noch, wartet das Skript in G9 auf sie; ist sie rot oder fehlt sie, bricht es
-ab. Für jedes `-rc` gehst du genauso vor, nur mit dessen Namen (etwa `v0.1.0-rc4`). Vor `v0.1.0`, der ersten
-Weitergabe an andere, zuerst «Name und Marke» unten klären.
+ab. Für jedes `-rc` gehst du genauso vor, nur mit dessen Namen (etwa `v0.1.0-rc4`). Seit dem 06.10.2026 bekommt auch
+jedes `-rc` eine öffentliche Release-Seite, als Vorabversion markiert. Damit liegt schon `v0.1.0-rc4` für alle sichtbar
+auf GitHub: Ob du «Name und Marke» (unten) davor klärst oder wie bisher erst vor `v0.1.0`, entscheidest du.
 
 **G6.** Öffne einen eigenen Terminal-Tab, in dem Claude Code nicht läuft, und wechsle in den Ordner:
 
@@ -989,11 +991,15 @@ scripts/release-signieren.sh v0.1.0
 ```
 
 **G10.** Auf GitHub unter Actions den Lauf «Image» für `v0.1.0` ansehen: «Tag und Signatur» ist grün, und seine
-Zusammenfassung nennt Kanal `stabil` und den Release-Schlüssel `SHA256:6CAhnfU9…`. Ist er rot, wird nichts gebaut;
-der Grund steht im Lauf. «Prüfung» muss ebenfalls grün sein, sonst gibt es kein Release.
+Zusammenfassung nennt Kanal `stabil`, `Release: «Latest»` und den Release-Schlüssel `SHA256:6CAhnfU9…`. Bei einem
+`-rc` steht dort Kanal `vorschau` und `Release: Vorabversion`. Ist er rot, wird nichts gebaut; der Grund steht im Lauf.
+«Prüfung» muss ebenfalls grün sein, sonst gibt es kein Release.
 
 Nach dem Bau liegen unter Releases auf GitHub: `zenos-0.1.0-pi5-arm64.img.xz`, die Paketliste, `SHA256SUMS`, das
 Manifest für den Raspberry Pi Imager und der Quellcode aller Pakete (`docs/image-und-releases.md`, «Release-Dateien»).
+Ein `-rc` hat dieselben Dateien, ist als «Pre-release» markiert und wird nie «Latest»; seine Versionshinweise beginnen
+mit «Release-Kandidat zum Testen, nicht für den Alltag». Das Manifest zeigt in beiden Fällen auf die Datei der
+Release-Seite, du musst darin nichts ändern.
 Den Stand des Baus zeigt GitHub unter Actions; der Quellcode-Job braucht je nach Netz bis zu einigen Stunden. Ein
 Image aus `v0.1.0` folgt dem Kanal `stabil`, eines aus einem `-rc` dem Kanal `vorschau`; beide bringen den Anker mit
 und aktualisieren sich danach selbst.
@@ -1041,8 +1047,10 @@ git switch dev
 ```
 
 **Offene Entscheidungen für dich**
-- Name und Marke, vor `v0.1.0`: die Markenrecherche zu «zenOS» und bei Canonical schriftlich anfragen oder dich auf
-  die Klausel der IPR-Policy zu den Open-Source-Lizenzen stützen (`docs/image-und-releases.md`, «Name und Marke»).
+- Name und Marke, spätestens vor `v0.1.0` (seit auch jedes `-rc` eine öffentliche Release-Seite bekommt, liegt schon
+  `v0.1.0-rc4` öffentlich, G6 bis G10): die Markenrecherche zu «zenOS» und bei Canonical schriftlich anfragen oder
+  dich auf die Klausel der IPR-Policy zu den Open-Source-Lizenzen stützen (`docs/image-und-releases.md`, «Name und
+  Marke»).
 - Firewall: Sie ist jetzt standardmässig an (eingehend gesperrt, SSH nur aus lokalen Netzen, je Adresse höchstens
   fünf neue Verbindungen in 30 s). Wer SSH über ein VPN (z. B. Tailscale) braucht, sagt es; dafür fehlt heute
   eine Regel. Verbindet sich dein Mac über eine öffentliche IPv6-Adresse des Geräts (möglich, wenn das Heimnetz

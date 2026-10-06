@@ -407,7 +407,7 @@ Systemteile, dann alle Benutzerteile.
 ```
 Mac (Claude Code, Tests im Container) ── push ──▶ GitHub dev ──▶ Pi: zen update
                                                     │
-                                                    └─ Tag v* ──▶ Image-Workflow (-rc: nur Artefakt, sonst Release)
+                                                    └─ Tag v* ──▶ Image-Workflow (Release; -rc als Vorabversion)
                                                                   und Bürorechner (nur getestete Stände)
 ```
 
