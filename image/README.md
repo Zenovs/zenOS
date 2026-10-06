@@ -188,10 +188,11 @@ die Rechte sind minimal (`contents: read` beim Bau, `contents: write` nur im Rel
 - **Image bauen** (`ubuntu-24.04-arm`, nativ arm64, für öffentliche Repos kostenlos, Timeout 180 min, braucht «Tag
   und Signatur»): auschecken (ganze Geschichte, ohne gespeicherte Zugangsdaten),
   `bauen.sh --ref refs/tags/<tag> --version <v> --kanal <kanal>` (prüft die Signatur noch einmal),
-  `SHA256SUMS` (Image und Paketliste) und Grösse unter 2 GiB prüfen, Zusammenfassung im Lauf. Danach die
-  Herkunftsbestätigung (`actions/attest-build-provenance` über `SHA256SUMS`; dafür hat nur dieser Job
-  `id-token: write` und `attestations: write`), das Manifest für den Raspberry Pi Imager (mit `jq` aus
-  `basis.txt`: Grösse und SHA-256 des entpackten Images) und die zweisprachigen Versionshinweise. Image,
+  `SHA256SUMS` (Image und Paketliste) und Grösse unter 2 GiB prüfen, Zusammenfassung im Lauf. Danach das Manifest
+  für den Raspberry Pi Imager (mit `jq` aus `basis.txt`: Grösse und SHA-256 des entpackten Images; seine Prüfsumme
+  kommt mit in `SHA256SUMS`), die Herkunftsbestätigung (`actions/attest-build-provenance` über `SHA256SUMS`, also
+  Image, Paketliste und Manifest; dafür hat nur dieser Job `id-token: write` und `attestations: write`) und die
+  zweisprachigen Versionshinweise. Image,
   Paketliste, `SHA256SUMS`, Manifest und Versionshinweise gehen als Artefakt `zenos-<version>-pi5-arm64` mit
   (Release-Tags 3 Tage, `-rc` 14 Tage), die Paketliste zusätzlich als kleines Artefakt `zenos-<version>-pakete`
   für den Quellen-Job, das Install-Log als eigenes Artefakt, auch wenn der Bau scheitert.
@@ -226,8 +227,8 @@ Die Grundlage (Ubuntu-Datei und SHA-256) steht in den Versionshinweisen und in `
   ergibt etwa 1,5 GB. Was zenOS dazu bringt, zeigt `bauen.sh` unter «Grösste Ordner».
 - **Kein `apt upgrade` beim Bau.** flash-kernel läuft im chroot nicht, ein neuer Kernel käme nicht nach
   `/boot/firmware`. Sicherheitsupdates holt unattended-upgrades nach dem ersten Start.
-- **Signatur:** Der Tag ist mit dem Release-Schlüssel signiert, und nur ein solcher Tag wird gebaut. Image und
-  Paketliste haben eine Herkunftsbestätigung von GitHub (Sigstore, ohne eigenen Schlüssel), geprüft mit
+- **Signatur:** Der Tag ist mit dem Release-Schlüssel signiert, und nur ein solcher Tag wird gebaut. Image,
+  Paketliste und Manifest haben eine Herkunftsbestätigung von GitHub (Sigstore, ohne eigenen Schlüssel), geprüft mit
   `gh attestation verify`. Eine eigene Signatur der Image-Dateien (`SHA256SUMS.sig`) gibt es noch nicht.
 - **Vertrauen in die CI:** Den Workflow und `bauen.sh` liest GitHub aus dem Stand des Tags. Wer auf GitHub einen
   Tag mit eigenem Workflow schieben kann, kann auch die Prüfung darin ändern. Davor schützen die Regeln auf GitHub

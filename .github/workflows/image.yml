@@ -9,7 +9,8 @@
 # vX.Y.Z: dazu ein GitHub-Release mit Image, Paketliste, SHA256SUMS, Manifest für den Raspberry Pi Imager und dem
 # Quellcode aller enthaltenen Pakete (image/quellen.sh). Ohne vollständige Quellen kein Release (GPL), und ohne grüne
 # Prüfung (Job «Prüfung», scripts/pruefen.sh über pruefen.yml für genau diesen Stand) auch nicht.
-# Image, Paketliste und SHA256SUMS bekommen eine Herkunftsbestätigung von GitHub (Artifact Attestation, Sigstore).
+# Image, Paketliste und Manifest (alle in SHA256SUMS) bekommen eine Herkunftsbestätigung von GitHub (Artifact
+# Attestation, Sigstore).
 # Ablauf und Grenzen: image/README.md und docs/image-und-releases.md.
 name: Image
 
@@ -132,11 +133,6 @@ jobs:
               -e 's/^signatur=/- Tag signiert mit /p' "$RUNNER_TEMP/image/basis.txt"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Herkunft bestätigen
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-checksums: ${{ runner.temp }}/ausgabe/SHA256SUMS
-
       - name: Manifest für den Raspberry Pi Imager
         env:
           VERSION: ${{ needs.tag.outputs.version }}
@@ -168,6 +164,14 @@ jobs:
                 release_date: $datum, init_format: "cloudinit", devices: ["pi5-64bit"], capabilities: [] } ]
             }' > "$RUNNER_TEMP/hinweise/zenos-$VERSION.rpi-imager-manifest"
           jq . "$RUNNER_TEMP/hinweise/zenos-$VERSION.rpi-imager-manifest"
+          # Das Manifest entscheidet, was der Imager lädt und schreibt (url und Prüfsummen): Es kommt mit in SHA256SUMS
+          # und damit in die Herkunftsbestätigung (nächster Schritt). Name ohne Ordner, wie auf der Release-Seite.
+          (cd "$RUNNER_TEMP/hinweise" && sha256sum -- "zenos-$VERSION.rpi-imager-manifest") >> "$RUNNER_TEMP/ausgabe/SHA256SUMS"
+
+      - name: Herkunft bestätigen
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: ${{ runner.temp }}/ausgabe/SHA256SUMS
 
       - name: Versionshinweise
         env:
@@ -314,7 +318,9 @@ jobs:
           VERSION: ${{ needs.tag.outputs.version }}
         working-directory: artefakt/ausgabe
         run: |
-          sha256sum --check SHA256SUMS
+          # SHA256SUMS nennt auch das Manifest, das im Artefakt unter hinweise/ liegt
+          grep -v '\.rpi-imager-manifest$' SHA256SUMS | sha256sum --check
+          (cd ../hinweise && grep '  zenos-.*\.rpi-imager-manifest$' ../ausgabe/SHA256SUMS | sha256sum --check)
           (cd ../../quellen && sha256sum --check SHA256SUMS-quellen)
           ls ../../quellen/zenos-"$VERSION"-quellen-teil*.tar ../../quellen/zenos-"$VERSION"-QUELLEN.txt >/dev/null
           for teil in ../../quellen/*.tar; do

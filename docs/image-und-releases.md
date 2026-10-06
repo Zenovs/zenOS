@@ -50,8 +50,9 @@ Bau im Einzelnen läuft (Optionen, lokal im Container, Aufräumen), steht in `im
    - Paket-Cache und Logs löschen.
    - SSH-Hostschlüssel und `machine-id` entfernen; beide werden beim ersten Start neu erzeugt.
    - Das Dateisystem verkleinern (mit 256 MiB Luft); beim ersten Start wächst es auf die ganze Karte.
-7. **Packen:** `xz -T0 -9`, dazu `SHA256SUMS` über Image und Paketliste. Danach bestätigt GitHub die Herkunft
-   (Artifact Attestation, siehe «Prüfen»), und der Workflow schreibt das Manifest für den Raspberry Pi Imager.
+7. **Packen:** `xz -T0 -9`, dazu `SHA256SUMS` über Image und Paketliste. Danach schreibt der Workflow das Manifest
+   für den Raspberry Pi Imager, nimmt es in `SHA256SUMS` auf, und GitHub bestätigt die Herkunft aller drei (Artifact
+   Attestation, siehe «Prüfen»).
 8. **Quellcode** (eigener Job «quellen», Container `ubuntu:26.04`): `image/quellen.sh` holt zu jedem Paar aus
    Quellpaket und Version der Paketliste die `.dsc` samt Dateien, zuerst aus dem Ubuntu-Archiv (apt prüft Signatur und
    Prüfsummen), sonst von Launchpad (geprüft gegen die Prüfsummen der `.dsc`), dazu Quickshell als `git archive` am
@@ -68,7 +69,7 @@ Bau im Einzelnen läuft (Optionen, lokal im Container, Aufräumen), steht in `im
 |---|---|
 | `zenos-<v>-pi5-arm64.img.xz` | das Image |
 | `zenos-<v>-pi5-arm64.pakete.txt` | alle Pakete im Image mit Version und Quellpaket |
-| `SHA256SUMS` | Prüfsummen von Image und Paketliste |
+| `SHA256SUMS` | Prüfsummen von Image, Paketliste und Manifest |
 | `zenos-<v>.rpi-imager-manifest` | Manifest für den Raspberry Pi Imager 2.x (siehe «Flashen») |
 | `zenos-<v>-quellen-teil<NN>.tar` | Quellcode aller Ubuntu-Pakete im Image, je Teil unter 2 GiB |
 | `zenos-<v>-quickshell-<qv>.tar` | Quellcode von Quickshell am gebauten Commit |
