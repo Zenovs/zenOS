@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Einheitentests für die Automatik von scripts/bin/zenos-kanal: Zeitpunkt (sperre, fenster, jederzeit, hand), Uhr
-(«erstmals» nur synchronisiert, Wartezeit seit dem Start), «automatik lauf» und «gelegenheit», Notschalter,
-Rückstellung nach «zen rollback», Bestätigung nach dem Start und der Weg zurück, dazu Units und Modul.
+(«erstmals» nur synchronisiert, Wartezeit seit dem Start), «automatik lauf» und «gelegenheit», Notschalter (auch für
+die Timer der Basis-Updates), «automatik darf» (die Abfrage, die zenos-basis stellt; ihre Antwort liest
+zenos-basis mit parse_may_answer), Rückstellung nach «zen rollback», Bestätigung nach dem Start und der Weg zurück,
+dazu Units und Modul.
 
 Baut auf test/einheiten/kanal-installieren.test.py auf (Server, Gerät, Wegwerf-Schlüssel, install.sh als Attrappe, die
 Units laufen im Prozess). Sitzungen, Sperre, Uhr und Neustarts sind gestellt: Funktionen des Moduls ersetzt, dazu
@@ -21,6 +23,7 @@ import os
 import pwd
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -39,6 +42,11 @@ K = I.K
 WURZEL = I.WURZEL
 
 UNITS = os.path.join(WURZEL, "system", "systemd", "system")
+_basis_loader = importlib.machinery.SourceFileLoader("zenos_basis", os.path.join(WURZEL, "scripts", "bin",
+                                                                                   "zenos-basis"))
+_basis_spec = importlib.util.spec_from_loader("zenos_basis", _basis_loader)
+ZB = importlib.util.module_from_spec(_basis_spec)
+_basis_loader.exec_module(ZB)
 MODUL = os.path.join(WURZEL, "scripts", "module", "14-kanal.sh")
 DOCTOR = os.path.join(WURZEL, "scripts", "doctor.d", "15-kanal.sh")
 ZEN_KANAL = os.path.join(WURZEL, "scripts", "zen.d", "kanal.sh")
@@ -101,6 +109,10 @@ def schreiben(pfad, text, modus=0o644):
     os.chmod(pfad, modus)
 
 
+def subprocess_ergebnis(rc, aus):
+    return subprocess.CompletedProcess(["zenos-kanal"], rc, aus, "")
+
+
 class Fenster(unittest.TestCase):
     def test_im_fenster_auch_ueber_mitternacht(self):
         nacht = {"art": "fenster", "von": "22:00", "bis": "04:00"}
@@ -147,7 +159,10 @@ class Ruhe(unittest.TestCase):
                  "SYSTEMD_RUN_DIR": os.path.join(self.ordner, "run-systemd"), "PROC": self.proc,
                  "TIMESYNC_FLAG": os.path.join(self.ordner, "timesync-synchronized"),
                  "POWER_STATUS": os.path.join(self.ordner, "geraet.json"),
-                 "POWER_SUPPLY_DIR": os.path.join(self.ordner, "power_supply")}
+                 "POWER_SUPPLY_DIR": os.path.join(self.ordner, "power_supply"),
+                 "AUTOMATIC_OFF_FILE": os.path.join(self.ordner, "etc", "kanal-automatik-aus"),
+                 "SCHEDULE_FILE": os.path.join(self.ordner, "etc", "kanal-zeitpunkt"),
+                 "TRUSTED_UIDS": (0, self.uid)}
         for name, wert in werte.items():
             self.addCleanup(setattr, K, name, getattr(K, name))
             setattr(K, name, wert)
@@ -442,6 +457,135 @@ class Ruhe(unittest.TestCase):
         self.assertEqual(K.power_state(), (None, None))
         self.geraet({"vorhanden": False})
         self.assertIsNone(K.power_problem())
+
+    # -- automatik darf (für zenos-basis) --
+
+    def darf(self, *argumente):
+        aus = io.StringIO()
+        with contextlib.redirect_stdout(aus), contextlib.redirect_stderr(aus):
+            rc = K.cmd_automatic(["darf", *argumente])
+        return rc, aus.getvalue()
+
+    def test_darf_dieselben_regeln_wie_der_kanal(self):
+        """automatic_may ist die eine Quelle: Notschalter, Zeitpunkt, Akku; die Automatik des Kanals fragt dasselbe."""
+        auto = K.AutoRun(fetch=False)
+        self.assertEqual(K.automatic_may({"art": "jederzeit"}), (True, "Zeitpunkt «jederzeit»"))
+        self.assertEqual(auto.may_install({"art": "jederzeit"}), (True, "Zeitpunkt «jederzeit»"))
+        self.assertEqual(K.automatic_may({"art": "hand"})[0], False)
+        self.geraet({"vorhanden": True, "prozent": 20, "laedt": False, "zustand": "ok"})
+        for frage in (K.automatic_may, auto.may_install):
+            self.assertEqual(frage({"art": "jederzeit"}),
+                             (False, "im Akkubetrieb mit 20 % (automatisch erst am Netzteil oder ab 50 %)"))
+        self.geraet({"vorhanden": True, "prozent": 20, "laedt": True, "zustand": "ok"})
+        schreiben(K.AUTOMATIC_OFF_FILE, "seit=jetzt\n")
+        for frage in (K.automatic_may, auto.may_install):
+            ja, grund = frage({"art": "jederzeit"})
+            self.assertFalse(ja)
+            self.assertIn("Automatik aus", grund)
+
+    def test_darf_ohne_ssh_bei_jedem_zeitpunkt(self):
+        """Für die Basis-Updates (--ohne-ssh): Eine SSH-Sitzung hält die Automatik bei jedem Zeitpunkt auf, nicht nur
+        bei «sperre». Der Kanal bleibt, wie er ist."""
+        fern = self.sitzung(session="7", seat=None, tty="pts/0")
+        self.sitzungen([fern], {"7": "State=active\nType=tty\nRemote=yes\n"})
+        self.addCleanup(setattr, K, "local_now", K.local_now)
+        K.local_now = lambda: datetime.datetime(2026, 10, 5, 3, 0)
+        self.verhalten("timedatectl.show", "yes\n")
+        for zeitpunkt in ({"art": "jederzeit"}, {"art": "fenster", "von": "02:00", "bis": "05:00"}):
+            with self.subTest(zeitpunkt=zeitpunkt["art"]):
+                self.assertTrue(K.automatic_may(zeitpunkt)[0], "der Kanal: auch während jemand arbeitet")
+                self.assertEqual(K.automatic_may(zeitpunkt, no_remote=True),
+                                 (False, f"{self.name} ist per SSH angemeldet"))
+        self.assertEqual(K.automatic_may({"art": "sperre"}, no_remote=True),
+                         (False, f"{self.name} ist per SSH angemeldet"))
+        # Ohne SSH-Sitzung, aber am Gerät angemeldet: «jederzeit» heisst jederzeit
+        self.sitzungen([self.sitzung()], {"c1": "active"})
+        self.assertEqual(K.automatic_may({"art": "jederzeit"}, no_remote=True), (True, "Zeitpunkt «jederzeit»"))
+        # logind antwortet nicht: nie
+        self.verhalten("loginctl.list-sessions", "kein json\n")
+        self.assertEqual(K.automatic_may({"art": "jederzeit"}, no_remote=True),
+                         (False, "Sitzungen nicht prüfbar (loginctl)"))
+        self.assertTrue(K.automatic_may({"art": "jederzeit"})[0])
+
+    def test_darf_als_abfrage(self):
+        """«automatik darf»: nur lesend, ohne Sperre, Zeitpunkt aus der Datei; Exit 0 darf, 10 nicht."""
+        self.sitzungen([])
+        schreiben(K.SCHEDULE_FILE, "zeitpunkt=jederzeit\n")
+        rc, aus = self.darf("--ohne-ssh", "--json")
+        self.assertEqual((rc, json.loads(aus)), (0, {"darf": True, "grund": "Zeitpunkt «jederzeit»",
+                                                     "zeitpunkt": "jederzeit", "hinweis": None}))
+        rc, aus = self.darf()
+        self.assertEqual((rc, aus), (0, "ja: Zeitpunkt «jederzeit»\n"))
+        schreiben(K.SCHEDULE_FILE, "zeitpunkt=hand\n")
+        rc, aus = self.darf("--json")
+        antwort = json.loads(aus)
+        self.assertEqual((rc, antwort["darf"], antwort["zeitpunkt"]), (10, False, "hand"))
+        self.assertIn("von Hand", antwort["grund"])
+        schreiben(K.SCHEDULE_FILE, "zeitpunkt=nachts\n")
+        rc, aus = self.darf("--json")
+        antwort = json.loads(aus)
+        self.assertEqual(antwort["zeitpunkt"], "sperre", "ungültig heisst sperre")
+        self.assertIn("unbekannt", antwort["hinweis"])
+        # Die Sperre der Bedienung hält dabei zenos-basis: «darf» nimmt sie nicht
+        for name, wert in (("UI_LOCK_FILE", os.path.join(self.ordner, "sperre", "bedienung.lock")),
+                           ("PATH_CHECK_TOP", self.ordner)):
+            self.addCleanup(setattr, K, name, getattr(K, name))
+            setattr(K, name, wert)
+        os.makedirs(os.path.dirname(K.UI_LOCK_FILE), mode=0o700)
+        lauf = K.take_lock(K.UI_LOCK_FILE)
+        self.addCleanup(os.close, lauf)
+        schreiben(K.SCHEDULE_FILE, "zeitpunkt=jederzeit\n")
+        self.assertEqual(self.darf("--json")[0], 0)
+
+    def test_darf_antwort_passt_zu_zenos_basis(self):
+        """Was «automatik darf --ohne-ssh --json» ausgibt, liest zenos-basis (parse_may_answer) genau so."""
+        self.sitzungen([])
+        for zeitpunkt, erwartet in (("jederzeit", True), ("hand", False)):
+            with self.subTest(zeitpunkt=zeitpunkt):
+                schreiben(K.SCHEDULE_FILE, f"zeitpunkt={zeitpunkt}\n")
+                rc, aus = self.darf("--ohne-ssh", "--json")
+                darf, grund, art = ZB.parse_may_answer(subprocess_ergebnis(rc, aus))
+                self.assertEqual((darf, art), (erwartet, zeitpunkt))
+                self.assertEqual(grund, json.loads(aus)["grund"])
+        # Alles andere heisst nein
+        for rc, aus in ((0, '{"darf": false, "grund": "x"}'), (10, '{"darf": true, "grund": "x"}'), (0, "ja: x"),
+                        (2, ""), (0, '{"darf": "ja"}'), (0, "[]")):
+            with self.subTest(aus=aus):
+                self.assertFalse(ZB.parse_may_answer(subprocess_ergebnis(rc, aus))[0])
+
+    def test_notschalter_auch_fuer_die_basis(self):
+        """sudo zen kanal automatik an|aus schaltet auch die Timer der Basis-Updates, sobald 71-basis sie eingerichtet
+        hat; vorher nur die des Kanals (sonst scheiterte systemctl an fehlenden Units)."""
+        for name, wert in (("LOGGER", os.path.join(self.ordner, "gibt-es-nicht")),
+                           ("UNIT_DIR", os.path.join(self.ordner, "units")), ("PATH_CHECK_TOP", self.ordner)):
+            self.addCleanup(setattr, K, name, getattr(K, name))
+            setattr(K, name, wert)
+        aus = io.StringIO()
+        with contextlib.redirect_stdout(aus):
+            self.assertEqual(K.cmd_automatic(["aus"]), 0)
+        aufrufe = os.path.join(self.attrappen, "systemctl.aufrufe")
+        self.assertEqual(lesen(aufrufe).splitlines()[-1],
+                         "disable --now --quiet -- zenos-kanal.timer zenos-kanal-gelegenheit.timer")
+        self.assertIn("weder zenOS noch die Basis-Updates", aus.getvalue())
+        for timer in K.BASIS_TIMERS:
+            schreiben(os.path.join(K.UNIT_DIR, timer), "")
+        with contextlib.redirect_stdout(aus):
+            self.assertEqual(K.cmd_automatic(["an"]), 0)
+        self.assertEqual(lesen(aufrufe).splitlines()[-1],
+                         "enable --now --quiet -- zenos-kanal.timer zenos-kanal-gelegenheit.timer "
+                         "zenos-basis-automatik.timer zenos-basis-gelegenheit.timer")
+        self.assertFalse(os.path.exists(K.AUTOMATIC_OFF_FILE))
+        self.assertEqual(K.BASIS_TIMERS, tuple(sorted(n for n in os.listdir(UNITS)
+                                                      if n.startswith("zenos-basis-") and n.endswith(".timer"))))
+
+    def test_darf_falsche_aufrufe_und_nur_root(self):
+        for argumente in (("x",), ("--json", "--json"), ("--ohne-ssh", "lauf"), ("--SSH",)):
+            with self.subTest(argumente=argumente):
+                self.assertEqual(self.darf(*argumente)[0], 2)
+        K.TRUSTED_UIDS = (0,) if self.uid != 0 else (4242,)
+        rc, aus = self.darf("--json")
+        self.assertEqual(rc, 2)
+        self.assertIn("nur als root", aus)
 
     def test_akku_aus_sys(self):
         def eintrag(name, **werte):

@@ -42,7 +42,13 @@ Aufruf:
   zenos-kanal automatik                zeigt, ob die Automatik an ist, wann sie läuft und was sie zuletzt tat
   zenos-kanal automatik an|aus         Notschalter (root, sudo zen kanal automatik an|aus): schaltet die Timer ein bzw.
                                        aus und vermerkt das in /etc/xdg/zenos/kanal-automatik-aus (install.sh hält sich
-                                       daran). Die Signaturprüfung bleibt in jedem Fall
+                                       daran). Er gilt auch für die Basis-Updates (zenos-basis-automatik.timer,
+                                       zenos-basis-gelegenheit.timer). Die Signaturprüfung bleibt in jedem Fall
+  zenos-kanal automatik darf [--ohne-ssh] [--json]
+                                       nur lesend (root): Darf eine Automatik jetzt installieren? Notschalter,
+                                       Zeitpunkt, Akku, wie vor jeder Installation der Automatik; --ohne-ssh: auch bei
+                                       fenster und jederzeit keine SSH-Sitzung. Für zenos-basis (die Basis-Updates
+                                       folgen so denselben Regeln aus einer Quelle). Exit 0 darf, 10 nicht
   zenos-kanal automatik lauf           zenos-kanal-automatik.service (zenos-kanal.timer, alle 6 h): bis 2 Min. auf eine
                                        synchronisierte Uhr warten, holen, prüfen, und wenn der Zeitpunkt passt,
                                        installieren
@@ -190,7 +196,7 @@ CODE_DIR = "/opt/zenos"
 CHANNEL_FILE = "/etc/xdg/zenos/kanal"
 SCHEDULE_FILE = "/etc/xdg/zenos/kanal-zeitpunkt"
 # Notschalter der Automatik (sudo zen kanal automatik aus): Gibt es die Datei, laufen die Timer nicht, und install.sh
-# schaltet sie nicht wieder ein
+# schaltet sie nicht wieder ein. Gemeinsam für den Kanal und die Basis-Updates (zenos-basis)
 AUTOMATIC_OFF_FILE = "/etc/xdg/zenos/kanal-automatik-aus"
 ANCHOR_DIR = "/etc/zenos/vertrauen"
 STATE_DIR = "/var/lib/zenos/kanal"
@@ -277,6 +283,9 @@ MAX_UNCONFIRMED = 2
 # holt und prüft nur, solange ein Stand auf die Bestätigung wartet)
 CONFIRM_LOCK_WAIT = 1800
 TIMERS = ("zenos-kanal.timer", "zenos-kanal-gelegenheit.timer")
+# Timer der Basis-Updates (zenos-basis, Modul 71-basis): Der Notschalter gilt für beide
+BASIS_TIMERS = ("zenos-basis-automatik.timer", "zenos-basis-gelegenheit.timer")
+UNIT_DIR = "/etc/systemd/system"
 USER_PATH = "/usr/local/bin:/usr/bin:/bin"
 RUN_USER = "/run/user"
 # Sitzungsarten, die als grafischer Login zählen (logind Type). «tty» ist eine Textkonsole (Ctrl+Alt+F2).
@@ -3992,6 +4001,50 @@ def power_problem():
     return f"im Akkubetrieb mit {shown} (automatisch erst am Netzteil oder ab {MIN_BATTERY} %)"
 
 
+def automatic_may(schedule, no_remote=False):
+    """(ja, Grund): Darf eine Automatik jetzt installieren? Die eine Quelle für den Kanal und die Basis-Updates
+    (zenos-basis fragt über «automatik darf»): Notschalter, Zeitpunkt des Geräts (quiet_now) und Akku (power_problem).
+    no_remote (Basis-Updates): bei jedem Zeitpunkt keine SSH-Sitzung, nicht nur bei «sperre» (apt startet Dienste neu,
+    wer per SSH arbeitet, merkte das)."""
+    if automatic_off():
+        return False, f"Automatik aus ({AUTOMATIC_OFF_FILE}; einschalten: sudo zen kanal automatik an)"
+    quiet, why = quiet_now(schedule)
+    if not quiet:
+        return False, why
+    if no_remote:
+        sessions = logind_sessions()
+        if sessions is None:
+            return False, "Sitzungen nicht prüfbar (loginctl)"
+        remote = [s for s in sessions if s["fern"]]
+        if remote:
+            return False, f"{remote[0]['user']} ist per SSH angemeldet"
+    problem = power_problem()
+    if problem:
+        return False, problem
+    return True, why
+
+
+def automatic_may_answer(argv):
+    """«automatik darf [--ohne-ssh] [--json]»: nur lesend, nimmt keine Sperre (zenos-basis fragt, während es die Sperre
+    der Bedienung hält). Exit 0 darf, 10 darf nicht, 2 Aufruf."""
+    usage = f"{NAME} automatik darf [--ohne-ssh] [--json]"
+    if len(set(argv)) != len(argv) or any(a not in ("--ohne-ssh", "--json") for a in argv):
+        print(usage, file=sys.stderr)
+        return EXIT_USAGE
+    if os.geteuid() not in TRUSTED_UIDS:
+        # Die Sperre einer Sitzung bestätigt die Oberfläche nur als ihr Benutzer (setpriv)
+        print(f"{NAME} automatik darf: nur als root (zenos-basis-automatik.service)", file=sys.stderr)
+        return EXIT_USAGE
+    schedule, note = read_schedule()
+    ok, why = automatic_may(schedule, no_remote="--ohne-ssh" in argv)
+    if "--json" in argv:
+        print(json.dumps({"darf": ok, "grund": short(why, 300), "zeitpunkt": schedule.get("art"),
+                          "hinweis": short(note, 300) if note else None}, ensure_ascii=False))
+    else:
+        print(f"{'ja' if ok else 'nein'}: {why}" + (f" (Hinweis: {note})" if note else ""))
+    return EXIT_OK if ok else EXIT_WAIT
+
+
 def wait_for_clock():
     """Wartet bis CLOCK_WAIT Sekunden auf eine synchronisierte Uhr. True, wenn sie es ist."""
     end = time.monotonic() + CLOCK_WAIT
@@ -4029,14 +4082,9 @@ class AutoRun:
             start_unit("pruefen")
 
     def may_install(self, schedule):
-        """(ja, Grund): Zeitpunkt (quiet_now) und Akku. Wird unmittelbar vor dem Installieren wiederholt."""
-        quiet, why = quiet_now(schedule)
-        if not quiet:
-            return False, why
-        problem = power_problem()
-        if problem:
-            return False, problem
-        return True, why
+        """(ja, Grund): Notschalter, Zeitpunkt (quiet_now) und Akku, wie «automatik darf» (automatic_may). Wird
+        unmittelbar vor dem Installieren wiederholt."""
+        return automatic_may(schedule)
 
     def installed_result(self, code, begin):
         if code == EXIT_BLOCKED and hand_held_summary():
@@ -4176,7 +4224,10 @@ def automatic_switch(on):
                                          f"kanal automatik an\nseit={iso(now())}\n")
     code = EXIT_OK
     if os.path.isdir(SYSTEMD_RUN_DIR):
-        r = run([SYSTEMCTL, "enable" if on else "disable", "--now", "--quiet", "--", *TIMERS], env=systemd_env(),
+        # Der Notschalter gilt auch für die Basis-Updates (zenos-basis); deren Timer nur, wenn 71-basis sie
+        # eingerichtet hat
+        timers = [*TIMERS, *(t for t in BASIS_TIMERS if os.path.lexists(os.path.join(UNIT_DIR, t)))]
+        r = run([SYSTEMCTL, "enable" if on else "disable", "--now", "--quiet", "--", *timers], env=systemd_env(),
                 timeout=CHECK_TIMEOUT)
         if r.returncode != 0:
             print(f"{NAME} automatik: systemctl: {first_line(r.stderr) or r.returncode} (Timer fehlen? install.sh)",
@@ -4184,9 +4235,10 @@ def automatic_switch(on):
             code = EXIT_ERROR
     via = caller_text()
     journal(f"Automatik {'an' if on else 'aus'} ({via})")
-    print("Automatik an: holt alle 6 h, installiert nach dem Zeitpunkt (zen kanal zeitpunkt)." if on else
-          "Automatik aus: nichts wird mehr automatisch geholt oder installiert. zen update geht weiter; einschalten: "
-          "sudo zen kanal automatik an")
+    print("Automatik an: holt alle 6 h, installiert nach dem Zeitpunkt (zen kanal zeitpunkt); ebenso die Basis-Updates "
+          "von Ubuntu." if on else
+          "Automatik aus: nichts wird mehr automatisch geholt oder installiert, weder zenOS noch die Basis-Updates von "
+          "Ubuntu. zen update geht weiter; einschalten: sudo zen kanal automatik an")
     return code
 
 
@@ -4235,7 +4287,7 @@ def automatic_lines(with_pending=True):
 
 
 def cmd_automatic(argv):
-    usage = f"{NAME} automatik [an|aus|lauf|gelegenheit]"
+    usage = f"{NAME} automatik [an|aus|lauf|gelegenheit|darf [--ohne-ssh] [--json]]"
     if not argv:
         schedule, note = read_schedule()
         print("\n".join(automatic_lines()))
@@ -4243,6 +4295,8 @@ def cmd_automatic(argv):
         return EXIT_OK
     if argv in (["an"], ["aus"]):
         return automatic_switch(argv[0] == "an")
+    if argv[0] == "darf":
+        return automatic_may_answer(argv[1:])
     if argv not in (["lauf"], ["gelegenheit"]):
         print(usage, file=sys.stderr)
         return EXIT_USAGE
