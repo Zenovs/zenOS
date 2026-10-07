@@ -59,8 +59,11 @@ vertrauen scripts/zen.d/kanal.sh
 vertrauen scripts/module/10-code.sh
 vertrauen scripts/module/*-vertrauen.sh
 vertrauen scripts/module/*-kanal.sh
+vertrauen scripts/module/*-basis.sh
 vertrauen scripts/bin/zenos-kanal*
 vertrauen system/systemd/system/zenos-kanal*
+vertrauen system/basis
+vertrauen system/update-manager/
 vertrauen image/bauen.sh
 vertrauen image/tag-pruefen.sh
 vertrauen .github/workflows/
