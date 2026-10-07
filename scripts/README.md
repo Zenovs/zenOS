@@ -17,6 +17,7 @@
 | `release-signieren.sh` | signiert ein Release oder einen Tag `vertrauen/NNNN` mit 1Password (Mac, bash 3.2) |
 | `bin/zenos-kanal` | signierter Kanal auf dem Gerät: holen (ohne Rechte), prüfen und bereitstellen (root, ohne Netz), installieren mit Gesundheitsprüfung und Rückweg, nachstart, Status, Anker, Zeitpunkt, `jetzt` und `zustimmen` für die Einstellungen, `automatik` (Timer, Notschalter) und `bestaetigen` (nach dem Start); Kern von `zen update` und `zen rollback` |
 | `bin/zenos-gesten` | Wischen mit drei Fingern (Systemdienst `zenos-gesten.service`, Benutzer `zenos-gesten`): liest reine Touchpads nur lesend über libinput und meldet «oben» und «unten» an die Oberfläche; `--messen` misst die Schwelle ein, `--pruefen` für `zen doctor` (Modul und Prüfung `82-gesten`) |
+| `bin/zenos-basis` | Paket-Updates der Ubuntu-Basis: `pruefen` (apt-get update, Auswertung von `apt-get -s full-upgrade`), `installieren` (genau die geprüfte Liste, policy-rc.d nur gegen greetd, danach install.sh, Gesundheitsprüfung), `status`; root-eigene Kopie unter `/usr/local/libexec/zenos` (`71-basis`) |
 | `bin/zenos-kanal-bedienen` | Updates aus den Einstellungen (root über pkexec, polkit `org.zenos.kanal.*`): `pruefen`, `installieren ZIEL`, `zustimmen OBJEKT` starten die Units des Kanals (ZIEL und OBJEKT: der angezeigte Stand), `zeitpunkt …` setzt den Zeitpunkt; nur feste Wörter, Journal `-t zenos-kanal-bedienen` |
 
 ## install.sh
@@ -36,7 +37,8 @@
   `--ruhig` (`zen update`, `zen benutzer`) startet es die Oberfläche neu, wenn sich QML geändert hat.
 - `--nur-code`: nur als root, nur Modul 10-code (Code nach `/opt/zenos`), ohne Netz. Für
   `zenos-kanal-nachstart.service` nach einem Abbruch.
-- `ZENOS_KANAL_LAUF=1` setzt zenos-kanal, wenn es install.sh aus einer Bereitstellung startet. Ohne die Variable
+- `ZENOS_KANAL_LAUF=1` setzt zenos-kanal, wenn es install.sh aus einer Bereitstellung startet (ebenso zenos-basis
+  nach einem Basis-Update, aus `/opt/zenos`, mit eigenem `ZENOS_KANAL_ERGEBNIS`). Ohne die Variable
   gilt ein Lauf als «von Hand»: install.sh wartet über sudo auf die Kanal-Sperre und trägt darunter seine PID in
   `/run/zenos-sperre/hand` ein (nur root; solange der Prozess läuft, installiert der Kanal nichts; am Ende entfernt
   es den Vermerk). Aus einem anderen Checkout markiert 10-code den Stand als angehalten; jeder Lauf von Hand erledigt

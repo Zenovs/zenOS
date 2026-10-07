@@ -29,6 +29,8 @@ Verweis angelegt; was generiert wird, erzeugen die Programme unter `scripts/bin/
 | `systemd/system/zenos-kanal-gelegenheit.service` | `/etc/systemd/system/` (`14-kanal`, statisch) | wie die Automatik ohne Holen, nur wenn ein Stand bereit ist oder eine Installation unterbrochen wurde |
 | `systemd/system/zenos-kanal-bestaetigen.timer` | `/etc/systemd/system/` (`14-kanal`, aktiviert) | 2 Min. nach jedem Start: Bestätigung eines automatischen Updates |
 | `systemd/system/zenos-kanal-bestaetigen.service` | `/etc/systemd/system/` (`14-kanal`, statisch) | Login nach dem Neustart da? Dann gilt der Stand als gut; bei zwei Starts ohne Login zurück auf den guten Stand |
+| `systemd/system/zenos-basis-pruefen.service` | `/etc/systemd/system/` (`71-basis`, statisch) | Basis-Updates: `apt-get update` und Auswertung von `apt-get -s full-upgrade` als root mit Netz (ohne eigenen Mount-Namensraum, sonst liesse apt die Staffelung aus) |
+| `systemd/system/zenos-basis-installieren.service` | `/etc/systemd/system/` (`71-basis`, statisch) | Basis-Updates: genau die geprüfte Liste installieren (Inhibitor, `KillMode=mixed`, Laufzeitordner `/run/zenos-basis`), danach `install.sh` und Gesundheitsprüfung |
 | `modprobe/zenos-brcmfmac.conf` | `/etc/modprobe.d/` (von `zen netzwerk umstellen` bzw. im Image) | WPA3 im WLAN-Treiber des Raspberry Pi aus (`docs/module/netzwerk.md`) |
 | `cloud/99-zenos-netzwerk.cfg` | `/etc/cloud/cloud.cfg.d/` (von `zen netzwerk umstellen`, nie im Image) | cloud-init schreibt keine Netzwerk-Konfiguration mehr |
 | `doc/RECHTLICHES`, `doc/QUELLEN` | `/usr/local/share/doc/zenos/` (Modul `72-kennung`, neben `copyright` aus `LICENSE`) | Lizenzen, Markenhinweise und wo der Quellcode liegt; `/etc/legal` verweist darauf |

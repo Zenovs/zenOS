@@ -563,9 +563,10 @@ Mitteilungen (Absender zenOS, jede nur einmal je Zustand, gemerkt in `~/.local/s
 | Update bereit, nur beim Zeitpunkt «Von Hand» | normal | je Tag-Objekt einmal |
 | Zeitpunkt geändert, nicht aus den Einstellungen (etwa `sudo zen kanal zeitpunkt` oder pkexec aus einer anderen Anmeldung desselben Benutzers), mit dem Weg aus der Datei | normal | je Änderung einmal |
 
-Im System-Menü steht bei Neustart und Ausschalten «Update läuft», solange `/run/zenos-kanal/uebernahme` besteht
-(install.sh aus dem Kanal mit Block-Inhibitor; systemctl lehnte dann ab). Ein Klick sagt das als Hinweis, statt
-still nichts zu tun. Der Sperrbildschirm zeigt nichts davon.
+Im System-Menü steht bei Neustart und Ausschalten «Update läuft», solange `/run/zenos-kanal/uebernahme` oder
+`/run/zenos-basis/uebernahme` besteht (install.sh aus dem Kanal bzw. ein Basis-Update mit Block-Inhibitor; systemctl
+lehnte dann ab). Ein Klick sagt das als Hinweis, statt still nichts zu tun. Der Login-Bildschirm zeigt dann «zenOS wird
+aktualisiert», der Sperrbildschirm nichts davon.
 
 #### Automatik
 
@@ -676,7 +677,8 @@ Start bleibt an.
 **Ausschalten während eines Updates:** Während `install.sh` hält der Kanal einen Block-Hemmer (Ausschalten und
 Ruhezustand). Davor und danach (Bereitstellen, Gesundheitsprüfung, Rückweg) nicht, und die Sperren in
 `/run/zenos-sperre` sieht kein Benutzer. `zenos-energie` (Ausschalten nach langer Sperre, am Login-Bildschirm) fragt
-deshalb zusätzlich systemd: Solange eine Unit `zenos-kanal-*` läuft, schaltet es nicht aus («Update läuft (…)»).
+deshalb zusätzlich systemd: Solange eine Unit `zenos-kanal-*` oder `zenos-basis-*` (Basis-Updates) läuft, schaltet es
+nicht aus («Update läuft (…)»).
 
 Geprüft: Einheitentests in `test/einheiten/kanal-automatik.test.py` (Zeitpunkt, Fenster über Mitternacht, Sitzungen
 und Sperre mit Attrappen für loginctl, setpriv und zenos-ipc, Uhr und Sprung der Uhr, Wartezeit nach einem Neustart,
@@ -805,14 +807,107 @@ verschwinden. Im System stehen die Hinweise unter `/usr/local/share/doc/zenos/` 
 - Der Anker `/etc/zenos/vertrauen` kommt aus `system/vertrauen` des Tags, `/var/lib/zenos/kanal` hat den Zustand ab
   Werk (`gut.json`, `hoechste`, `gesehen.json`).
 
+## Basis-Updates: Pakete von Ubuntu (zenos-basis)
+
+Paket-Updates innerhalb von Ubuntu 26.04 LTS bringt `scripts/bin/zenos-basis` (Python, nur Standardbibliothek,
+`python3 -I`), root-eigene Kopie unter `/usr/local/libexec/zenos/zenos-basis` (Modul `71-basis`). Es installiert, was
+`apt full-upgrade` brächte: Fehlerkorrekturen aus `-updates`, Sicherheitsupdates, Pakete der Herstellerquellen (Chrome,
+VS Code, 1Password-CLI). Sicherheitsupdates spielt unattended-upgrades weiter täglich selbst ein; daran ändert sich
+nichts. Die Arbeit machen zwei statische Units als root mit Netz.
+
+| Befehl | Wer | Was |
+|---|---|---|
+| `zenos-basis pruefen` | root, `zenos-basis-pruefen.service` | `apt-get update`, dann `apt-get -s full-upgrade` auswerten; schreibt `stand.json`. Installiert nichts |
+| `zenos-basis installieren` | root, `zenos-basis-installieren.service` | installiert die Liste aus `auftrag.json` (Hash, Zustimmung ja/nein, von wem; höchstens eine Stunde alt), mit `--liste HASH [--zustimmung]` ohne Auftrag (Tests, von Hand) |
+| `zenos-basis status [--json\|--kurz\|--installation]` | alle | letzte Prüfung, letzte Installation, Neustart nötig; `--kurz` für `zen doctor` und die Zeile `Pakete` von `zen version` |
+
+**Prüfen.** Unter der Sperre des Kanals (`/run/zenos-sperre/kanal.lock`, nicht blockierend, sonst Exit 75; ebenso,
+solange ein `install.sh` von Hand läuft). Vorher wartet es höchstens 20 Minuten auf einen anderen Paketvorgang
+(apt-daily, apt-daily-upgrade mit unattended-upgrades, die Sperren von apt und dpkg; danach Exit 75). Ausgewertet werden
+die Zeilen `Inst` und `Remv` von `apt-get -s full-upgrade` (`LC_ALL=C`, ohne autoremove): je Paket Name, alt, neu,
+Tasche und Herkunft. Daraus:
+
+- **Sicherheit:** Pakete aus einer Tasche `…-security`.
+- **Heikel** (Kernel, Firmware, Bootloader): `linux-raspi`, `linux-image-*`, `linux-modules-*`,
+  `linux-headers-*-raspi`, `linux-generic*`, `linux-firmware*`, `flash-kernel`, `piboot-try`, `rpi-eeprom`, `u-boot*`,
+  sicherheitshalber `grub*` und `shim*`. Nur mit Zustimmung.
+- **Entfernungen:** nur mit Zustimmung. Ist ein geschütztes Paket dabei, gilt «gesperrt», auch mit Zustimmung
+  (Exit 3): die feste Liste aus `scripts/lib/aufraeumen.sh` (`_aufraeumen_geschuetzt`, ein Einheitentest hält beide
+  gleich), die zenOS-Pakete aus `scripts/pakete/*.txt` und alles, was als manuell installiert gilt.
+- **Neustart voraussichtlich:** heikel oder `libc6`, `systemd`, `dbus`, `greetd`. Eine Schätzung; gewiss ist erst
+  `/run/reboot-required` danach.
+- **Liste:** SHA-256 über die sortierten Einträge, die ersten 40 Zeichen. Installiert wird genau dieser Stand.
+
+Gehaltene Pakete (`apt-mark hold`), der Pin gegen snapd und gestaffelte Updates (Phasing) respektiert apt selbst; sie
+stehen nicht in der Liste. Darum laufen beide Units ohne Sandbox mit eigenem Mount-Namensraum (`PrivateTmp`,
+`ProtectSystem` …): apt hält das für ein chroot und lässt die Staffelung aus. Im Container geprüft: Mit `PrivateTmp`
+zählte die Auswertung 7 Updates, `apt-get full-upgrade` danach 3, und jede Installation endete mit «Liste geändert».
+
+**Installieren.** Dieselbe Sperre, dasselbe Warten. Nicht, solange eine Installation des Kanals unterbrochen ist
+(`laeuft.json`) oder der Kanal «kaputt» meldet (Exit 10): `install.sh` aus `/opt/zenos` liefe sonst auf einem halb
+übernommenen Stand. Der Hash des Auftrags muss der letzten Prüfung gleichen und einer Auswertung von jetzt (ohne neues
+`apt-get update`); sonst Exit 3, und `stand.json` zeigt die neue Liste. Heikle Pakete und Entfernungen ohne Zustimmung:
+Exit 10. Dann:
+
+1. Ein unterbrochenes dpkg (`/var/lib/dpkg/updates`) repariert es mit `dpkg --configure -a`; bleibt es unterbrochen,
+   Exit 1 ohne apt.
+2. Ausgangslage für die Gesundheitsprüfung: `quickshell --version`, greetd ausgefallen, ausgefallene Units (ohne die
+   von Kanal und Basis), Fehlerzahl von `zen doctor --kurz` als root.
+3. Unter einem Block-Inhibitor für Ausschalten und Ruhezustand («Ubuntu-Basis wird aktualisiert») und mit
+   `/run/zenos-basis/uebernahme`: Jede Oberfläche auf seat0 bekommt `zenos-ipc kanal uebernahme beginn|ende` wie beim
+   Kanal (lädt währenddessen nicht nach, richtet danach die Benutzerteile ein; System-Menü und Login zeigen «Update
+   läuft»).
+4. `apt-get -q -y full-upgrade` mit `DEBIAN_FRONTEND=noninteractive`, `NEEDRESTART_MODE=l`, `NEEDRESTART_SUSPEND=1`,
+   `--force-confdef`, `--force-confold`, ohne autoremove, `DPkg::Lock::Timeout=300`. Dienste starten wie bei Ubuntu
+   neu, nur greetd nicht (ein Neustart beendete die Sitzung): Eine eigene `policy-rc.d` gibt für `greetd` 101 zurück,
+   sonst 0; apt setzt sie per `DPkg::Pre-Invoke` vor jedem dpkg-Lauf ein und nimmt sie per `DPkg::Post-Invoke` weg.
+   Eine fremde `policy-rc.d` bleibt (Hinweis); einen Rest von zenOS (zenos-basis oder install.sh) entfernen beide.
+   Im Container geprüft: `invoke-rc.d: policy-rc.d denied execution of restart` für greetd, cron startete.
+5. Nur nach gelungenem apt: `/opt/zenos/scripts/install.sh --ruhig` als root mit `ZENOS_KANAL_LAUF=1` (die Sperre
+   hält zenos-basis schon) und eigenem Ergebnis `/var/lib/zenos/basis/install-ergebnis`. Es baut Quickshell neu, wenn
+   sich Qt geändert hat, und zieht die Kennung nach.
+6. Bringt das Update eine neue greetd-Version, trägt zenos-basis `greetd` in `/run/reboot-required(.pkgs)` ein.
+7. Gesundheit: Es zählt nur, was schlechter ist als vorher: dpkg unterbrochen, `install.sh` nicht Exit 0 oder ohne
+   «== Ende … ok», `quickshell --version` scheitert, greetd ausgefallen, neu ausgefallene Units, mehr Fehler in
+   `zen doctor`. Ergebnis `installiert` (Exit 0), `kaputt` (Exit 5) oder `fehler` (apt scheiterte, Exit 1). Zurückgerollt
+   wird nichts; `letzte.json` nennt, was kaputt ist, dazu das Journal (`journalctl -u zenos-basis-installieren`) und
+   das Log. Danach wertet es `stand.json` neu aus (ohne Netz).
+
+Ein Stopp (Ausschalten durch root) vor apt beginnt nichts mehr (Exit 10); während apt und `install.sh` laufen beide
+zu Ende (`KillMode=mixed`, `TimeoutStopSec=20min`, SIGHUP ignoriert, ein SSH-Abbruch schadet nicht). Ein harter Abbruch
+hinterlässt ein unterbrochenes dpkg; das nächste Basis-Update repariert es zuerst. zenos-energie schaltet nicht aus,
+solange eine Unit `zenos-basis-*` läuft, zenos-argon nicht, solange `/run/zenos-basis` besteht.
+
+| Datei | Inhalt |
+|---|---|
+| `/var/lib/zenos/basis/stand.json` | letzte Auswertung: `zeit`, `geprueft` (letztes gelungenes `apt-get update`), `ergebnis` (`aktuell`, `bereit`, `zustimmung`, `gesperrt`, `fehler`), `grund`, `liste`, `anzahl`, `sicherheit`, `heikel`, `entfernen`, `geschuetzt`, `neustart`, `neustart_wegen`, `pakete` (Name, Architektur, alt, neu, Tasche, Herkunft, Sicherheit, heikel) |
+| `/var/lib/zenos/basis/letzte.json` | letzte Installation, nur wenn apt lief (eine Ablehnung überschreibt kein `kaputt`): `ergebnis`, `grund`, `liste`, `von`, `zustimmung`, `anzahl`, `geaendert`, `mehr` (was apt über die Liste hinaus änderte), `neustart`, `probleme`, `hinweise` |
+| `/var/lib/zenos/basis/auftrag.json` | Auftrag für die Unit (root; das Installieren verbraucht ihn) |
+| `/var/log/zenos/basis.log` | root, 0640: je Lauf «== Beginn», Paketstand vorher (dpkg-query), Exit von apt und install.sh, die Änderungen, Probleme, «== Ende». Nur zum Nachsehen, kein Rückweg; über 2 MiB bleiben die letzten 512 KiB |
+
+| Exit | `zenos-basis` |
+|---|---|
+| 0 | geprüft; installiert und gesund; nichts zu tun |
+| 1 | Fehler: `apt-get update` oder `full-upgrade` scheiterte, dpkg bleibt unterbrochen |
+| 2 | Aufruf falsch (oder nicht root) |
+| 3 | abgelehnt: gesperrt (geschütztes Paket), Liste veraltet, kein oder ungültiger Auftrag |
+| 5 | kaputt: nach dem Update schlechter als vorher, nichts zurückgerollt |
+| 10 | wartet: Zustimmung nötig, Kanal unterbrochen oder kaputt, Stopp vor apt |
+| 75 | läuft schon: Sperre, `install.sh` von Hand, ein anderer Paketvorgang nach 20 Minuten |
+
+Geprüft mit `test/einheiten/basis-updates.test.py` (Fixtures ohne und mit Kernel, Entfernungen, Sicherheit, geschützte
+Pakete, Herstellerquelle; Attrappen für apt, dpkg und install.sh) und im Testcontainer über die echten Units:
+prüfen (7 bzw. 3 Updates, siehe Staffelung), installieren ohne Zustimmung (3 Pakete, `install.sh` Exit 0, gesund,
+danach «aktuell»), Inhibitor und Marker während des Laufs, `policy-rc.d` danach weg.
+
 ## Basiswechsel: neue Hauptversion, neues Image
 
 Ein Stand von zenOS ist für genau eine Ubuntu-Version gebaut; sie steht in `system/basis` (heute `26.04`). Innerhalb
 dieser Basis kommt alles als Update: die Stände von zenOS über den Kanal, die Pakete von Ubuntu über
-unattended-upgrades. Ein Wechsel der Basis (etwa auf 28.04) ist dagegen kein Update, sondern eine neue
-zenOS-Hauptversion mit neuem Image (Entscheid Zeno, Oktober 2026). Ein Release-Upgrade tauscht in einem Lauf fast
-jedes Paket, auch Kernel, Firmware, Qt (Quickshell muss neu gebaut werden), greetd und PAM, ohne Schnappschuss und ohne
-Rückweg. Ein neues Image ist vorher geprüft, und die alte Karte bleibt als Rückweg.
+unattended-upgrades (Sicherheit) und die Basis-Updates (oben). Ein Wechsel der Basis (etwa auf 28.04) ist dagegen kein
+Update, sondern eine neue zenOS-Hauptversion mit neuem Image (Entscheid Zeno, Oktober 2026). Ein Release-Upgrade
+tauscht in einem Lauf fast jedes Paket, auch Kernel, Firmware, Qt (Quickshell muss neu gebaut werden), greetd und PAM,
+ohne Schnappschuss und ohne Rückweg. Ein neues Image ist vorher geprüft, und die alte Karte bleibt als Rückweg.
 
 Gesperrt ist der Wechsel an zwei Stellen:
 

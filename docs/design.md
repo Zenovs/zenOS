@@ -190,7 +190,8 @@ Reichweite»; sonst bleibt sie reine Anzeige ohne Zusatz.
   ruhig als Hinweis (Warnung), die Wahl springt zurück. Kein Passwort (polkit, `docs/sicherheit.md`), während der
   Sperre nie.
 
-Läuft gerade ein Update aus dem Kanal (install.sh mit Block-Inhibitor), steht bei «Neustart» und «Ausschalten» rechts
+Läuft gerade ein Update aus dem Kanal oder der Ubuntu-Basis (install.sh bzw. apt mit Block-Inhibitor), steht bei
+«Neustart» und «Ausschalten» rechts
 in Mono «Update läuft»; beide fragen dann nicht nach, ein Klick schliesst das Menü und zeigt den Hinweis (Warnung)
 «Update läuft: Ausschalten geht erst danach (meist wenige Minuten)».
 

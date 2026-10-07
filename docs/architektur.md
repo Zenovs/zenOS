@@ -169,6 +169,7 @@ Die Tastenkürzel von labwc rufen dieselben Ziele auf (Liste in `docs/module/m9.
 | `zenos-gesten` | Wischen mit drei Fingern: Systemdienst `zenos-gesten.service` (eigener Benutzer, liest reine Touchpads nur lesend über libinput, meldet «oben» und «unten» auf `/run/zenos-gesten/gesten.sock`); dazu `--messen` (Schwelle einmessen) und `--pruefen` (für `zen doctor`) |
 | `zenos-luefter` | Lüfterwunsch schreiben («auto» oder Mindeststufe 1–4; root: über pkexec oder sudo, `zen luefter`) |
 | `zenos-kanal-bedienen` | Updates aus den Einstellungen (root über pkexec): prüfen, jetzt installieren und zustimmen starten Units des Kanals, Zeitpunkt setzen über `zenos-kanal zeitpunkt` |
+| `zenos-basis` | Paket-Updates der Ubuntu-Basis (root, ausgeführt wird die Kopie unter `/usr/local/libexec/zenos`): `pruefen` (apt-get update, Auswertung von `apt-get -s full-upgrade`), `installieren` (genau die geprüfte Liste, mit Inhibitor, danach `install.sh` und Gesundheitsprüfung), `status` (ohne root) |
 | `zenos-netzwerk` | Netz von netplan/systemd-networkd auf NetworkManager umstellen und zurück (`zen netzwerk`) |
 | `zenos-firewall` | Firewall ein- und ausschalten (root: über pkexec, sudo oder `install.sh`), bewussten Zustand merken |
 | `zenos-sicherheitsquelle` | prüft mit unattended-upgrades selbst, ob die Ubuntu-Sicherheitsquelle erlaubt ist (nur lesend, für `zen doctor` und die Vorab-Prüfung von `72-kennung`) |
@@ -335,6 +336,7 @@ Die Logik läuft in Quickshell selbst, ohne eigenen Hintergrunddienst.
 | Standard-Apps, ausgeblendete Starter | `/etc/xdg/labwc-mimeapps.list` (Ordner: Thunar), `/usr/local/share/applications/thunar-{bulk-rename,settings}.desktop` (`Hidden=true`) | ja (Kopien) |
 | Richtlinien | `/etc/opt/chrome/policies/managed/zenos.json`, `/etc/vscode/policy.json`, `/etc/apt/apt.conf.d/51zenos-ubuntu-quellen`, `52zenos-unattended` | ja (Kopien) |
 | Kein Basiswechsel | `/etc/update-manager/release-upgrades.d/zenos.cfg` (`Prompt=never`, `71-basis`); die Ubuntu-Version eines Stands steht in `system/basis` (liest `zenos-kanal` aus dem geprüften Stand) | ja (Kopie von `system/update-manager/zenos.cfg`) |
+| Basis-Updates | Programm `/usr/local/libexec/zenos/zenos-basis` (Kopie, root, 0755), Units `zenos-basis-pruefen` und `-installieren` (statisch); Zustand `/var/lib/zenos/basis/` (`stand.json`, `letzte.json`, `auftrag.json`, `install-ergebnis`; root, für alle lesbar); Übernahme-Marker `/run/zenos-basis/uebernahme` (Laufzeitordner der Unit); Log `/var/log/zenos/basis.log` (root, 0640, Paketstand vorher und Änderungen); Sperre gemeinsam mit dem Kanal (`/run/zenos-sperre/kanal.lock`) | Programm und Units ja (Kopien), Zustand nie |
 | Install-Log | `/var/log/zenos/install.log`, Rückfall `~/.local/state/zenos/install.log` | nie |
 | Einstellungen | `~/.config/zenos/einstellungen.json` | nie |
 | Modi | `~/.config/zenos/modi/*.json` | nie |
@@ -380,7 +382,7 @@ Systemteile, dann alle Benutzerteile.
 | `60-terminal` | kitty, fish, tldr-Seiten |
 | `65-oberflaeche` | automatische Sperre, Notfall-Sperre, Hilfsprogramme |
 | `70-sicherheit` | Sicherheitsupdates, Richtlinien, Ubuntu-Nachrichten aus (motd-news maskiert und stillgelegt), Firewall (standardmässig an) und polkit-Aktionen, gitleaks-Hook |
-| `71-basis` | Ubuntu-Basis: kein Wechsel der Hauptversion (`Prompt=never` per Drop-in in `/etc/update-manager/release-upgrades.d/`), keine Hinweise auf neue Ubuntu-Versionen |
+| `71-basis` | Ubuntu-Basis: Paket-Updates über `zenos-basis` (root-eigene Kopie, Units `zenos-basis-pruefen` und `-installieren`, `/var/lib/zenos/basis`; installiert selbst nichts), kein Wechsel der Hauptversion (`Prompt=never` per Drop-in in `/etc/update-manager/release-upgrades.d/`), keine Hinweise auf neue Ubuntu-Versionen |
 | `72-kennung` | Systemkennung zenOS (`zenos-kennung`, apt-Hook, Version, Logo), nur nach der Vorab-Prüfung der Ubuntu-Sicherheitsquelle |
 | `75-apps` | Werkzeuge für `zen apps`, Starter für Chrome und Web-Apps |
 | `80-argon` | Argon-Dienst (V3 und ONE UP) und Shutdown-Hook |
@@ -445,11 +447,22 @@ Mac (Claude Code, Tests im Container) ── push ──▶ GitHub dev ──▶
   auf die Kanal-Sperre und vermerkt sich in `/run/zenos-sperre/hand` (nur root); solange es läuft, installiert der
   Kanal nichts. Aus einem Arbeits-Checkout markiert es den Stand als «angehalten»; das nächste `zen update` kehrt zum
   Kanal zurück. Den Notweg ohne `zen` und ohne den neuen Code beschreibt `ANLEITUNG.md`, Abschnitt F.
+- **Basis-Updates** (Pakete innerhalb von Ubuntu 26.04 LTS, wie `apt full-upgrade`): `scripts/bin/zenos-basis`,
+  root-eigene Kopie unter `/usr/local/libexec/zenos`. `zenos-basis-pruefen.service` holt die Paketlisten und wertet
+  `apt-get -s full-upgrade` aus (Anzahl, Sicherheit, Kernel/Firmware/Bootloader, Entfernungen, Neustart
+  voraussichtlich, Hash der Liste); `zenos-basis-installieren.service` installiert genau diese Liste (ohne neues
+  `apt-get update`) unter derselben Sperre wie der Kanal, mit Block-Inhibitor und Übernahme-Marker
+  `/run/zenos-basis/uebernahme`. Dienste starten wie bei Ubuntu neu, nur greetd nicht (eigene `policy-rc.d` für
+  diesen Lauf; eine neue greetd-Version heisst «Neustart nötig»). Danach `install.sh` aus `/opt/zenos` (baut
+  Quickshell nach einem Qt-Update neu) und eine Gesundheitsprüfung, die nur wertet, was schlechter wurde; zurückgerollt
+  wird nichts. Kernel, Firmware, Bootloader und Entfernungen nur mit Zustimmung, ein geschütztes Paket nie.
+  Sicherheitsupdates bringt weiter unattended-upgrades. Einzelheiten: `docs/image-und-releases.md`, «Basis-Updates».
 - **`zen kanal`:** `zen kanal status` zeigt Kanal, Zustand, Fingerabdrücke, abgelehnte Tags, letzte Installation,
   guten und gesperrten Stand; `sudo zen kanal pruefen` holt und prüft, ohne zu installieren. Regeln, Zustände und
   Dateien: `docs/image-und-releases.md`, «Signierte Releases».
 - **`zen doctor`:** Prüfbericht ohne Geheimnisse und ohne Persönliches, Exit 1 bei Fehlern. `zen version` zeigt
-  zenOS-Version, die Basis (Ubuntu), Kanal, Commit, die letzte Installation über den Kanal, Quickshell und labwc.
+  zenOS-Version, die Basis (Ubuntu), Kanal, Commit, die letzte Installation über den Kanal, die ausstehenden
+  Basis-Updates samt «Neustart nötig» (Zeile `Pakete`, ohne Netz), Quickshell und labwc.
 - Systemänderungen laufen immer über `install.sh`. Das Skript darf beliebig oft laufen.
 
 ## Plattformen

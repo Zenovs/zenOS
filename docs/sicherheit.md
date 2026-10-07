@@ -46,7 +46,8 @@ Grundsatz 1: Sicherheit ist Standard und geht vor Design und Bequemlichkeit. Sie
     `sudo pro config set apt_news=true`. `install.sh`
     schaltet beides beim nächsten Lauf wieder ab; dauerhaft nur, wenn `_sicherheit_nachrichten` aus
     `modul_system` in `scripts/module/70-sicherheit.sh` entfernt wird.
-  - Es bleiben die Verbindungen, die Updates holen: der signierte Kanal von zenOS (unten), apt und `unattended-upgrades` und
+  - Es bleiben die Verbindungen, die Updates holen: der signierte Kanal von zenOS (unten), apt (auch die
+    Basis-Updates über `zenos-basis`, `docs/image-und-releases.md`) und `unattended-upgrades` und
     `esm-cache` von `ubuntu-pro-client` (snapd nur, solange eigene Snaps es halten, siehe unten). Dieser fragt bei `apt update` `contracts.canonical.com` nach verfügbaren
     Diensten (mit Architektur, Serie, Kernel und Virtualisierung, das Ergebnis wird zwischengespeichert) und lädt
     Paketlisten von `esm.ubuntu.com`. Ob er auch abgeschaltet werden soll, ist offen (`docs/module/m11.md`).
@@ -280,8 +281,8 @@ sparen darf die Sperre nie schwächen.
   60 s bis 5 Min. alt nach Laufzeit (ein Sprung der Uhr verkürzt nichts) und nur einmal gültig, verbraucht erst
   unmittelbar vor dem Ausschalten (eine Eingabe bricht bis zuletzt ab), gesperrt, keine Fern-Sitzung (logind
   `Remote=yes`) und keine SSH-Verbindung, kein tmux- oder screen-Server, keine Installation (Sperre von `install.sh`,
-  nur lesend geöffnet und kurz geteilt gesperrt; keine laufende Unit `zenos-kanal-*`, laut systemd, denn die Sperren
-  des Kanals sieht ein Benutzer nicht), kein apt oder dpkg, keine automatischen Updates, kein Block-Hemmer
+  nur lesend geöffnet und kurz geteilt gesperrt; keine laufende Unit `zenos-kanal-*` oder `zenos-basis-*`, laut
+  systemd, denn die Sperren des Kanals sieht ein Benutzer nicht), kein apt oder dpkg, keine automatischen Updates, kein Block-Hemmer
   «shutdown», logind erlaubt es ohne Passwort (`CanPowerOff`). Was sich nicht prüfen lässt, gilt als blockiert. Jeder
   Entscheid steht mit Grund im Journal (`journalctl -t zenos-energie`). Fällt die Oberfläche aus, wird nicht
   ausgeschaltet. Am Login-Bildschirm gilt dasselbe (fest nach 30 Min. im Akkubetrieb, `shell/greeter/Leerlauf.qml`),

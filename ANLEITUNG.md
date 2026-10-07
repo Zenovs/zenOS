@@ -682,6 +682,11 @@ systemctl --user start zenos-shell.service
   possible» (Exit 1), `zen doctor` zeigt im Abschnitt «Ubuntu-Basis» «Kein Wechsel der Ubuntu-Hauptversion:
   Prompt=never», und `sudo dpkg --verify ubuntu-release-upgrader-core` bleibt ohne Ausgabe (die Conffile
   `/etc/update-manager/release-upgrades` ist unverändert).
+- [ ] Basis-Updates prüfen: `sudo systemctl start zenos-basis-pruefen.service`, danach zeigt `zen version` die Zeile
+  «Pakete» (etwa «12 Updates (3 Sicherheit)» oder «aktuell», mit «· Neustart nötig», wenn einer ansteht), und
+  `zen doctor` im Abschnitt «Ubuntu-Basis» «Basis-Updates ausstehend: …» als Hinweis.
+  `/usr/local/libexec/zenos/zenos-basis status` nennt Sicherheit, Kernel/Firmware/Bootloader und Entfernungen; die Zahl
+  passt zu `apt list --upgradable` ohne die gestaffelten Pakete (Phasing).
 
 **Lüfter einstellen (Argon ONE UP, auch Argon ONE V3)**
 - [ ] System-Menü: Die Zeile «Lüfter» zeigt z. B. «aus · Auto» und rechts einen Pfeil. Ein Klick klappt darunter
