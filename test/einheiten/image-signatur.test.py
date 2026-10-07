@@ -603,9 +603,10 @@ class WorkflowBasis(Basis):
         self.image = workflow("image.yml")
         self.pruefen_yml = workflow("pruefen.yml")
 
-    def ausfuehren(self, job, name, werte, ort, pfad=SYSTEM_PFAD):
+    def ausfuehren(self, job, name, werte, ort, pfad=SYSTEM_PFAD, als=None):
         """Führt einen run:-Schritt aus wie GitHub (bash --noprofile --norc -eo pipefail) mit WERTE als env. Jeder Wert
-        muss im env des Schritts stehen: So prüft der Test auch, dass der Schritt ihn von dort bekommt."""
+        muss im env des Schritts stehen: So prüft der Test auch, dass der Schritt ihn von dort bekommt. ALS (uid, nur als
+        root): der Schritt läuft mit dieser uid und gid, wie die Schritte auf dem Runner ohne sudo."""
         s = schritt(self.image["jobs"][job], name)
         for schluessel in werte:
             self.assertIn(schluessel, s.get("env", {}), f"{name}: {schluessel} fehlt im env")
@@ -619,7 +620,12 @@ class WorkflowBasis(Basis):
         for datei in ("output", "summary"):
             open(os.path.join(lauf, datei), "w", encoding="utf-8").close()
         env["GITHUB_OUTPUT"], env["GITHUB_STEP_SUMMARY"] = os.path.join(lauf, "output"), os.path.join(lauf, "summary")
-        r = subprocess.run([BASH, "--noprofile", "--norc", "-eo", "pipefail", skript], cwd=ort, env=env,
+        vorne = []
+        if als is not None:
+            for datei in ("output", "summary", "schritt.sh"):
+                os.chown(os.path.join(lauf, datei), als, als)
+            vorne = ["/usr/bin/setpriv", f"--reuid={als}", f"--regid={als}", "--clear-groups"]
+        r = subprocess.run([*vorne, BASH, "--noprofile", "--norc", "-eo", "pipefail", skript], cwd=ort, env=env,
                            capture_output=True, text=True, check=False)
         return r.returncode, r.stdout + r.stderr, lauf
 
@@ -839,6 +845,55 @@ class Workflow(WorkflowBasis):
             "VERSION": "0.1.0", "VORAB": "", "TAG": "v0.1.0", "DOWNLOAD": "https://example.invalid"}, self.ordner)
         self.assertNotEqual(rc, 0)
         self.assertIn("::error::", aus)
+
+
+    def test_bau_gibt_die_ausgabe_dem_runner(self):
+        """Im Schritt «Image bauen» kommt nach bauen.sh (mit sudo) ein chown der Ausgabe auf den Benutzer des Runners."""
+        zeilen = schritt(self.image["jobs"]["bauen"], "Image bauen")["run"].splitlines()
+        bau = next(i for i, z in enumerate(zeilen) if "image/bauen.sh" in z)
+        chown = [i for i, z in enumerate(zeilen) if z.strip() == 'sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/ausgabe"']
+        self.assertEqual(len(chown), 1, "chown der Ausgabe fehlt")
+        self.assertGreater(chown[0], bau)
+
+    @unittest.skipUnless(LINUX and os.geteuid() == 0 and os.path.exists("/usr/bin/setpriv")
+                         and shutil.which("jq", path=SYSTEM_PFAD), "nur als root unter Linux mit jq (wie die CI)")
+    def test_manifest_als_runner_nach_bau_mit_sudo(self):
+        """Wie auf GitHub: bauen.sh läuft mit sudo, Ausgabe und Arbeitsordner gehören root, «Manifest» läuft ohne root.
+        Ohne das chown aus «Image bauen» scheitert es an SHA256SUMS (so bei v0.1.0-rc4), mit ihm läuft es durch."""
+        runner = 65534
+        os.chmod(self.ordner, 0o755)
+        lauf = os.path.join(self.ordner, "lauf")
+        os.makedirs(os.path.join(lauf, "image"))
+        os.makedirs(os.path.join(lauf, "ausgabe"))
+        os.chown(lauf, runner, runner)
+        with open(os.path.join(lauf, "image", "basis.txt"), "w", encoding="utf-8") as f:
+            f.write("image_groesse=4096\nimage_sha256=" + "b" * 64 + "\n")
+        with open(os.path.join(lauf, "ausgabe", "zenos-0.1.0-rc5-pi5-arm64.img.xz"), "wb") as f:
+            f.write(b"image")
+        with open(os.path.join(lauf, "ausgabe", "SHA256SUMS"), "w", encoding="utf-8") as f:
+            f.write("a" * 64 + "  zenos-0.1.0-rc5-pi5-arm64.img.xz\n")
+        werte = {"VERSION": "0.1.0-rc5", "VORAB": "true", "TAG": "v0.1.0-rc5",
+                 "DOWNLOAD": "https://github.com/besitzer/zenOS/releases/download"}
+        rc, aus, _ = self.ausfuehren("bauen", "Manifest für den Raspberry Pi Imager", werte, self.ordner, als=runner)
+        self.assertNotEqual(rc, 0, aus)
+        self.assertIn("Permission denied", aus)
+        # Die Zeile aus «Image bauen», mit sudo und id des Runners nachgebaut
+        zeile = next(z.strip() for z in schritt(self.image["jobs"]["bauen"], "Image bauen")["run"].splitlines()
+                     if "chown" in z)
+        werkzeug = os.path.join(self.ordner, "werkzeug")
+        os.makedirs(werkzeug)
+        for name, inhalt in (("sudo", 'exec "$@"'), ("id", f"echo {runner}")):
+            with open(os.path.join(werkzeug, name), "w", encoding="utf-8") as f:
+                f.write("#!/bin/sh\n" + inhalt + "\n")
+            os.chmod(os.path.join(werkzeug, name), 0o755)
+        r = subprocess.run([BASH, "--noprofile", "--norc", "-eo", "pipefail", "-c", zeile],
+                           env={"PATH": werkzeug + ":" + SYSTEM_PFAD, "RUNNER_TEMP": lauf},
+                           capture_output=True, text=True, check=False)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        rc, aus, _ = self.ausfuehren("bauen", "Manifest für den Raspberry Pi Imager", werte, self.ordner, als=runner)
+        self.assertEqual(rc, 0, aus)
+        with open(os.path.join(lauf, "ausgabe", "SHA256SUMS"), encoding="utf-8") as f:
+            self.assertIn("  zenos-0.1.0-rc5.rpi-imager-manifest\n", f.read())
 
 
 # Nachgebautes gh für «Release erstellen»: schreibt jeden Aufruf als JSON-Zeile mit (gh-protokoll) und spielt ein

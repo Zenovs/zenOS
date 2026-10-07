@@ -114,6 +114,9 @@ jobs:
           # bauen.sh prüft die Signatur selbst noch einmal und bricht ab, wenn Kanal oder Version nicht zum Tag passen.
           sudo --preserve-env=GITHUB_ACTIONS image/bauen.sh --ref "refs/tags/$TAG" --version "$VERSION" \
             --kanal "$KANAL" --origin "$ORIGIN" --arbeit "$RUNNER_TEMP/image" --ausgabe "$RUNNER_TEMP/ausgabe"
+          # Die Ausgabe gehört danach root. Die folgenden Schritte laufen als Benutzer des Runners und ergänzen etwa
+          # SHA256SUMS um das Manifest: Sie bekommen die Ausgabe (v0.1.0-rc4 scheiterte dort an «Permission denied»).
+          sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/ausgabe"
 
       - name: Ergebnis prüfen
         env:
