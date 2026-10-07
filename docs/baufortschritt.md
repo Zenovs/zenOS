@@ -35,8 +35,8 @@ I2C/GPIO des Argon ONE, Tastatur), ist pro Modul unter «am Pi prüfen» notiert
 
 **Oktober 2026:** Nach `v0.1.0-rc2` kamen der signierte Update-Kanal, Energie, die Systemkennung zenOS und das Image
 als eigenständige Distribution (Release-Seite, Quellcode) dazu; `v0.1.0-rc3` ist gebaut (unsigniert, nur Artefakt).
-Die Fensterübersicht ist in Arbeit. Nächster Schritt: der erste signierte Release-Kandidat `v0.1.0-rc4` (erstmals mit
-Release-Seite, als Vorabversion), dann die Abnahme auf echter Hardware und `v0.1.0` (`ROADMAP.md`). Der Rest dieses
+Die Fensterübersicht ist in Arbeit. `v0.1.0-rc4` ist der erste signierte Release-Kandidat (Image-Bau scheiterte, behoben). Nächster
+Schritt: `v0.1.0-rc5`, erstmals mit Release-Seite, als Vorabversion, dann die Abnahme auf echter Hardware und `v0.1.0` (`ROADMAP.md`). Der Rest dieses
 Abschnitts beschreibt den Stand von rc1/rc2.
 
 Alle Module sind gebaut und im Container getestet (Ubuntu 26.04 arm64 mit systemd, headless labwc, echte
@@ -138,7 +138,8 @@ Abnahme in einer echten VM (lima/Apple Virtualization, Ubuntu 26.04 arm64, virti
 - **Name und Marke vor der ersten Weitergabe:** die Markenrecherche zu «zenOS» und bei Canonical schriftlich anfragen
   oder sich auf die Klausel der IPR-Policy zu den Open-Source-Lizenzen stützen (`docs/image-und-releases.md`, «Name
   und Marke»). Seit auch jedes `-rc` eine öffentliche Release-Seite bekommt (Entscheid vom 06.10.2026), ist das schon
-  `v0.1.0-rc4`. Entscheid vom 07.10.2026: rc4 erscheint so, Name und Marke werden vor `v0.1.0` geklärt.
+  `v0.1.0-rc4`. Entscheid vom 07.10.2026: die Release-Kandidaten erscheinen so, Name und Marke werden vor
+  `v0.1.0` geklärt.
 - **sudo ohne Passwort von cloud-init:** Hat der Imager den Benutzer angelegt (bis 2.0.10 oder mit
   «passwordlessSudo») oder kam der Benutzer `ubuntu` aus Ubuntus Vorgabe, gibt es eine Regel ohne Passwort
   (`/etc/sudoers.d/90-cloud-init-users`). `zen doctor` warnt dann («sudo geht ohne Passwort»); zenOS ändert sie nicht.

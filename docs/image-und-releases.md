@@ -889,7 +889,7 @@ stehen auch in den Versionshinweisen und unter `/usr/local/share/doc/zenos/RECHT
 an andere (beides in `docs/baufortschritt.md`, «Offene Punkte für Zeno», und ANLEITUNG G): die schriftliche Anfrage bei
 Canonical oder der Entscheid, sich auf die Klausel zu den Open-Source-Lizenzen zu stützen, und eine
 Ähnlichkeitsrecherche zum Namen zenOS. Signieren, Prüfung auf den Geräten und Images nur aus signierten Tags sind
-eingerichtet («Signierte Releases»); das erste signierte Release (`v0.1.0-rc4`, als Vorabversion) steht noch aus. Weil
+eingerichtet («Signierte Releases»); der erste signierte Tag ist `v0.1.0-rc4` (Image-Bau gescheitert), das erste Release `v0.1.0-rc5` als Vorabversion. Weil
 auch jedes `-rc` eine öffentliche Release-Seite bekommt, liegt zenOS schon damit für alle sichtbar auf GitHub: Ob
 «Name und Marke» davor geklärt wird oder erst vor `v0.1.0`, entscheidet Zeno (ANLEITUNG, «G6 bis G10»).
 

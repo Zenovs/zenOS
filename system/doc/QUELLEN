@@ -15,7 +15,7 @@ Pakete aus Ubuntu
   genau den ausgelieferten Versionen auf derselben Release-Seite wie das Image
   (zenos-<version>-quellen-teil*.tar, Übersicht in zenos-<version>-QUELLEN.txt),
   so lange, wie das Image dort angeboten wird. Das gilt auch für einen
-  Release-Kandidaten (Version mit «-rc», ab 0.1.0-rc4): Seine Release-Seite
+  Release-Kandidaten (Version mit «-rc», ab 0.1.0-rc5): Seine Release-Seite
   ist als Vorabversion markiert. Welche Pakete in welcher Version im Image
   enthalten sind, steht in pakete.txt in diesem Ordner (nur bei einem Image).
   Auf einem laufenden System holt «apt source <paket>» die Quelle der

@@ -135,7 +135,8 @@ jobs:
             echo "### zenOS $VERSION"
             echo
             echo "- \`$datei\`: $(( groesse / 1048576 )) MiB"
-            echo "- SHA-256: \`$(cut -d ' ' -f 1 SHA256SUMS)\`"
+            # Nur die Zeile des Images (SHA256SUMS nennt auch die Paketliste)
+            echo "- SHA-256: \`$(awk -v d="$datei" '$2 == d { print $1 }' SHA256SUMS)\`"
             sed -n -e 's/^ubuntu_datei=/- Grundlage: /p' -e 's/^kanal=/- Kanal im Image: /p' \
               -e 's/^signatur=/- Tag signiert mit /p' "$RUNNER_TEMP/image/basis.txt"
           } >> "$GITHUB_STEP_SUMMARY"

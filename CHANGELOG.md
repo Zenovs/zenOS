@@ -3,13 +3,33 @@
 Was sich an zenOS ändert, pro Version. Das Format lehnt sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/)
 an; eine Version entspricht einem Tag `v…` im Repo.
 
+## 0.1.0-rc5 – 2026-10-07
+
+Wie `v0.1.0-rc4`, dazu die Behebung im Bau des Images. `v0.1.0-rc5` ist der erste Release-Kandidat mit Image und
+Release-Seite, dort als Vorabversion (Pre-release): zum Testen, nicht für den Alltag. Geräte im Kanal `vorschau`
+installieren ihn automatisch zum eingestellten Zeitpunkt.
+
+### Behoben
+
+- **Image-Bau (Workflow «Image»):** `bauen.sh` läuft mit sudo, Image, Paketliste und `SHA256SUMS` gehörten danach
+  root. Der Schritt «Manifest für den Raspberry Pi Imager» läuft ohne root und hängt die Prüfsumme des Manifests an
+  `SHA256SUMS` an: «Permission denied», der Lauf zu `v0.1.0-rc4` brach dort ab. «Image bauen» gibt die Ausgabe jetzt
+  dem Benutzer des Runners. Ein Test stellt die Rechte wie auf GitHub nach (als root, der Schritt mit uid 65534).
+  Alle Schritte danach, die auf GitHub noch nie liefen (Upload und Download der Artefakte, Job «Release»), sind gegen
+  die Logs von rc3 und rc4 und den Quelltext der Actions und von `gh` geprüft.
+- **Zusammenfassung des Laufs:** zeigt unter «SHA-256» nur noch die Prüfsumme des Images, nicht zusätzlich die der
+  Paketliste.
+- **Signier-Skript:** `scripts/release-signieren.sh` zeigt die Commits seit dem letzten Release direkt im Terminal,
+  nicht mehr in less (dort unter `LC_ALL=C` mit `<C3><BC>` statt Umlauten und Warten auf «q»).
+
 ## 0.1.0-rc4 – 2026-10-07
 
 Alles seit `v0.1.0-rc3`: der signierte Update-Kanal mit Automatik, Energie (Bildschirm aus, Ausschalten bei leerem
 Akku), die Fensterübersicht mit `Super + Tab`, `Super + H` und Wischen mit drei Fingern, der Bildschirm geht auch am
 Login-Bildschirm aus, und die Behebungen aus dem Lückencheck vor `v0.1.0`. `v0.1.0-rc4` ist der erste mit dem
-Release-Schlüssel signierte Tag und der erste mit einer Release-Seite, dort als Vorabversion (Pre-release): zum Testen,
-nicht für den Alltag. Name und Marke werden vor `v0.1.0` geklärt (Entscheid vom 07.10.2026).
+Release-Schlüssel signierte Tag. Sein Lauf «Image» scheiterte vor dem Release an einer Dateiberechtigung im Workflow:
+kein Image, keine Release-Seite (siehe `0.1.0-rc5`). Name und Marke werden vor `v0.1.0` geklärt (Entscheid vom
+07.10.2026).
 
 ### Neu
 

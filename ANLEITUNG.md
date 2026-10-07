@@ -20,8 +20,8 @@ Fehler durchlief.
 Der Bau lief nicht auf dem Pi, sondern auf dem Mac: Claude Code hat dort gebaut und in Docker-Containern mit Ubuntu
 26.04 arm64 getestet, also mit derselben Architektur wie der Pi. Das Repo liegt auf GitHub: `main` enthält den
 Start-Commit, `dev` zenOS 0.1 mit den Release-Kandidaten `v0.1.0-rc1` bis `v0.1.0-rc3` (unsigniert, nur als
-Workflow-Artefakt). Als Nächstes kommt der erste signierte, `v0.1.0-rc4` (G), und mit ihm die erste Release-Seite, als
-Vorabversion markiert. Die früheren Schritte A1 bis A14 fallen weg.
+Workflow-Artefakt). `v0.1.0-rc4` ist der erste signierte (G); sein Image-Bau scheiterte, die erste Release-Seite, als
+Vorabversion markiert, kommt mit `v0.1.0-rc5`. Die früheren Schritte A1 bis A14 fallen weg.
 
 ---
 
@@ -975,8 +975,8 @@ gh ruleset list --repo <konto>/zenOS
 früheren Tag sein Abschnitt, etwa `v0.1.0-rc3`, zuerst diesen), committen und pushen. Die Prüfung `pruefen.yml` für
 diesen Stand muss grün sein: Läuft sie noch, wartet das Skript in G9 auf sie; ist sie rot oder fehlt sie, bricht es
 ab. Für jedes `-rc` gehst du genauso vor, nur mit dessen Namen (etwa `v0.1.0-rc4`). Seit dem 06.10.2026 bekommt auch
-jedes `-rc` eine öffentliche Release-Seite, als Vorabversion markiert. Damit liegt schon `v0.1.0-rc4` für alle sichtbar
-auf GitHub. Entschieden am 07.10.2026: `v0.1.0-rc4` erscheint so, «Name und Marke» (unten) wird vor `v0.1.0`
+jedes `-rc` eine öffentliche Release-Seite, als Vorabversion markiert. Damit liegt schon ein Release-Kandidat für alle
+sichtbar auf GitHub. Entschieden am 07.10.2026: Die Release-Kandidaten erscheinen so, «Name und Marke» (unten) wird vor `v0.1.0`
 geklärt.
 
 **G6.** Öffne einen eigenen Terminal-Tab, in dem Claude Code nicht läuft, und wechsle in den Ordner:
@@ -1062,8 +1062,8 @@ git switch dev
 ```
 
 **Offene Entscheidungen für dich**
-- Name und Marke vor `v0.1.0` (entschieden am 07.10.2026: `v0.1.0-rc4` erscheint schon vorher öffentlich als
-  Vorabversion, G6 bis G10): die Markenrecherche zu «zenOS» und bei Canonical schriftlich anfragen oder
+- Name und Marke vor `v0.1.0` (entschieden am 07.10.2026: die Release-Kandidaten erscheinen schon vorher
+  öffentlich als Vorabversion, G6 bis G10): die Markenrecherche zu «zenOS» und bei Canonical schriftlich anfragen oder
   dich auf die Klausel der IPR-Policy zu den Open-Source-Lizenzen stützen (`docs/image-und-releases.md`, «Name und
   Marke»).
 - Firewall: Sie ist jetzt standardmässig an (eingehend gesperrt, SSH nur aus lokalen Netzen, je Adresse höchstens
