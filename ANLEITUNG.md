@@ -976,7 +976,8 @@ früheren Tag sein Abschnitt, etwa `v0.1.0-rc3`, zuerst diesen), committen und p
 diesen Stand muss grün sein: Läuft sie noch, wartet das Skript in G9 auf sie; ist sie rot oder fehlt sie, bricht es
 ab. Für jedes `-rc` gehst du genauso vor, nur mit dessen Namen (etwa `v0.1.0-rc4`). Seit dem 06.10.2026 bekommt auch
 jedes `-rc` eine öffentliche Release-Seite, als Vorabversion markiert. Damit liegt schon `v0.1.0-rc4` für alle sichtbar
-auf GitHub: Ob du «Name und Marke» (unten) davor klärst oder wie bisher erst vor `v0.1.0`, entscheidest du.
+auf GitHub. Entschieden am 07.10.2026: `v0.1.0-rc4` erscheint so, «Name und Marke» (unten) wird vor `v0.1.0`
+geklärt.
 
 **G6.** Öffne einen eigenen Terminal-Tab, in dem Claude Code nicht läuft, und wechsle in den Ordner:
 
@@ -1061,8 +1062,8 @@ git switch dev
 ```
 
 **Offene Entscheidungen für dich**
-- Name und Marke, spätestens vor `v0.1.0` (seit auch jedes `-rc` eine öffentliche Release-Seite bekommt, liegt schon
-  `v0.1.0-rc4` öffentlich, G6 bis G10): die Markenrecherche zu «zenOS» und bei Canonical schriftlich anfragen oder
+- Name und Marke vor `v0.1.0` (entschieden am 07.10.2026: `v0.1.0-rc4` erscheint schon vorher öffentlich als
+  Vorabversion, G6 bis G10): die Markenrecherche zu «zenOS» und bei Canonical schriftlich anfragen oder
   dich auf die Klausel der IPR-Policy zu den Open-Source-Lizenzen stützen (`docs/image-und-releases.md`, «Name und
   Marke»).
 - Firewall: Sie ist jetzt standardmässig an (eingehend gesperrt, SSH nur aus lokalen Netzen, je Adresse höchstens

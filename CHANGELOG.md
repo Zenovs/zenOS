@@ -3,10 +3,24 @@
 Was sich an zenOS ändert, pro Version. Das Format lehnt sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/)
 an; eine Version entspricht einem Tag `v…` im Repo.
 
-## Unveröffentlicht
+## 0.1.0-rc4 – 2026-10-07
+
+Alles seit `v0.1.0-rc3`: der signierte Update-Kanal mit Automatik, Energie (Bildschirm aus, Ausschalten bei leerem
+Akku), die Fensterübersicht mit `Super + Tab`, `Super + H` und Wischen mit drei Fingern, der Bildschirm geht auch am
+Login-Bildschirm aus, und die Behebungen aus dem Lückencheck vor `v0.1.0`. `v0.1.0-rc4` ist der erste mit dem
+Release-Schlüssel signierte Tag und der erste mit einer Release-Seite, dort als Vorabversion (Pre-release): zum Testen,
+nicht für den Alltag. Name und Marke werden vor `v0.1.0` geklärt (Entscheid vom 07.10.2026).
 
 ### Neu
 
+- **Bildschirm aus am Login-Bildschirm:** Nach 1 Minute ohne Eingabe geht der Bildschirm am Login aus, am Netzteil wie
+  am Akku (`wlopm` in der Login-Sitzung, ausfallsicher: scheitert etwas, bleibt er an). Die erste Taste, der erste
+  Klick oder die erste Berührung weckt ihn nur und wird verworfen; sie landet nie im Passwortfeld und löst keinen
+  Knopf aus. Hält man die Wecktaste fest, verwirft das Formular auch ihre Wiederholungen, bis sie losgelassen ist (sonst
+  kämen sie ins Passwortfeld, ein gehaltenes Return hätte mit dem halben Passwort angemeldet). Deckel auf, Vorwarnung
+  oder ein neu angesteckter Bildschirm wecken ohne verworfene Taste, danach bleibt er mindestens 1 Minute an. Der
+  Anmeldeablauf über greetd und PAM ist unverändert. Seite «Energie» und `zen doctor` nennen den Login-Bildschirm,
+  Ende-zu-Ende-Test `test/container/login-e2e.sh`. Am Gerät zu prüfen: ANLEITUNG E.
 - **Fensterübersicht, Schreibtisch und Wischen mit drei Fingern:** `Super + Tab` öffnet eine Übersicht aller offenen
   Fenster als Karten mit App-Symbol, App-Name und Titel, ohne Vorschaubilder (labwc 0.9.3 gibt einzelne Fenster nicht
   heraus). Sie bleibt offen, ohne dass eine Taste gehalten wird, und das vorige Fenster ist vorgewählt (`Super + Tab`,
@@ -152,6 +166,13 @@ an; eine Version entspricht einem Tag `v…` im Repo.
 
 ### Geändert
 
+- **Release-Seite auch für Release-Kandidaten:** Ein gültig signierter Tag `vX.Y.Z-rcN` bekommt jetzt ebenfalls eine
+  Release-Seite auf GitHub, als Vorabversion (Pre-release, nie «Latest»), mit Image, Manifest für den Imager, Quellcode
+  und Herkunftsbestätigung; `vX.Y.Z` wird «Latest». Bis `v0.1.0-rc3` gab es für `-rc` nur ein Workflow-Artefakt, der
+  Job «Release» lief so vor `v0.1.0` nie. Die Versionshinweise eines `-rc` sagen oben «Release-Kandidat zum Testen,
+  nicht für den Alltag» und dass ein Gerät daraus im Kanal `vorschau` bleibt (zurück mit
+  `sudo zen kanal wechseln stabil`). Die README verweist für den Download auf das Release mit der Marke «Latest». Ein
+  Neustart des Laufs legt einen Entwurf neu an und lässt ein veröffentlichtes Release unverändert.
 - **Leerer Akku (Argon ONE UP):** Bei 3 % schaltet zenOS kontrolliert aus (siehe «Energie»); bis `v0.1.0-rc3` fuhr es
   nicht selbst herunter.
 
@@ -166,9 +187,9 @@ an; eine Version entspricht einem Tag `v…` im Repo.
   je Update, kein Anker; das Image ist der empfohlene Weg.
 - **Lizenzhinweise:** `RECHTLICHES` nennt jetzt auch die Schriften Geist, Geist Mono und Instrument Serif (SIL Open Font
   License 1.1, Lizenztexte unter `/usr/local/share/fonts/zenos`). `QUELLEN` und der copyright-Text von Quickshell
-  verwiesen auch bei einem Release-Kandidaten auf eine Release-Seite, die es dafür nicht gibt: Image und Quellen eines
-  `-rc` gibt es nur als Workflow-Artefakte des Laufs «Image» (14 Tage). Dazu der richtige Name
-  `zenos-<version>-QUELLEN.txt`.
+  nennen den Weg zu den Quellen auch für einen Release-Kandidaten: bis `v0.1.0-rc3` die Workflow-Artefakte des Laufs
+  «Image», ab `v0.1.0-rc4` seine Release-Seite (siehe «Release-Seite auch für Release-Kandidaten»). Dazu der richtige
+  Name `zenos-<version>-QUELLEN.txt`.
 - **Prüfung der Automatik und der Updates-Seite (Teil B):**
   - Die Automatik installiert nicht mehr über einen Stand von Hand («angehalten»), auch nicht, wenn ein `install.sh`
     von Hand genau zwischen Prüfen und Installieren fertig wird.

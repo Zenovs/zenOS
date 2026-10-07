@@ -138,7 +138,7 @@ Abnahme in einer echten VM (lima/Apple Virtualization, Ubuntu 26.04 arm64, virti
 - **Name und Marke vor der ersten Weitergabe:** die Markenrecherche zu «zenOS» und bei Canonical schriftlich anfragen
   oder sich auf die Klausel der IPR-Policy zu den Open-Source-Lizenzen stützen (`docs/image-und-releases.md`, «Name
   und Marke»). Seit auch jedes `-rc` eine öffentliche Release-Seite bekommt (Entscheid vom 06.10.2026), ist das schon
-  `v0.1.0-rc4`, nicht erst `v0.1.0` (ANLEITUNG G6 bis G10).
+  `v0.1.0-rc4`. Entscheid vom 07.10.2026: rc4 erscheint so, Name und Marke werden vor `v0.1.0` geklärt.
 - **sudo ohne Passwort von cloud-init:** Hat der Imager den Benutzer angelegt (bis 2.0.10 oder mit
   «passwordlessSudo») oder kam der Benutzer `ubuntu` aus Ubuntus Vorgabe, gibt es eine Regel ohne Passwort
   (`/etc/sudoers.d/90-cloud-init-users`). `zen doctor` warnt dann («sudo geht ohne Passwort»); zenOS ändert sie nicht.
