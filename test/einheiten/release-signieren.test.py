@@ -286,6 +286,14 @@ class Release(Basis):
         rc, _ = self.verify("v0.1.0-rc4", self.signers("rel.signers", ["rel"], "zenos-release"), widerrufen)
         self.assertNotEqual(rc, 0)
 
+    def test_git_ohne_pager(self):
+        # Im Terminal schickte git die Liste der Commits in less (unter LC_ALL=C mit <C3><BC> statt Umlauten), das auf
+        # «q» wartete. Ohne Terminal pagt git nie, deshalb prüft der Test die Definition.
+        with open(SKRIPT, encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn('g() { git --no-pager -C "$WURZEL" "$@"; }', text)
+        self.assertNotRegex(text, r"(?m)^\s*git (log|show|diff)\b")
+
     def test_nicht_pushen(self):
         ergebnis = self.lauf("v0.1.0-rc4", eingabe="ja\nnein\n")
         self.assertEqual(ergebnis.returncode, 0, ergebnis.ausgabe)

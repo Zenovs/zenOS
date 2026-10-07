@@ -77,7 +77,9 @@ frage() {
   return 0
 }
 
-g() { git -C "$WURZEL" "$@"; }
+# Ohne Pager: Die Liste der Commits soll im Terminal stehen, nicht in less, das unter LC_ALL=C Umlaute als <C3><BC>
+# zeigt und auf «q» wartet
+g() { git --no-pager -C "$WURZEL" "$@"; }
 
 # Git zum Prüfen von Signaturen: nur SSH mit ssh-keygen, OpenPGP und X.509 schlagen immer fehl (sonst nähme
 # verify-tag auch eine PGP-Signatur aus einem fremden Schlüsselbund an)
