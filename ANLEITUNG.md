@@ -714,6 +714,29 @@ systemctl --user start zenos-shell.service
   «Neustart · nötig», in den Einstellungen die Zeile «Neustart». Während einer Bildschirmfreigabe und in einem Zustand
   mit reduzierter Leiste ist beides weg. Nach dem Neustart ist es fort (zum Ausprobieren:
   `sudo rm /run/reboot-required`).
+- [ ] Basis-Update in einer offenen Sitzung (am Gerät angemeldet, «Jetzt installieren» oder `zen update` per SSH):
+  Die Sitzung bleibt, du wirst nicht abgemeldet, Leiste und Fenster bleiben. Ist greetd in der Liste, steht danach
+  «Neustart nötig» (`cat /run/reboot-required.pkgs` nennt greetd), und `journalctl -u zenos-basis-installieren`
+  zeigt «policy-rc.d denied execution of restart» für greetd. Lag ein Qt-Update dabei, baut `install.sh` Quickshell
+  danach neu (dauert; `zen doctor` meldet danach keinen Fehler zu Qt), und die Oberfläche startet einmal neu
+  (gesperrt: nach dem Entsperren).
+- [ ] Ausschalten nach langer Sperre wartet auch auf ein Basis-Update: Solange `zenos-basis-installieren.service`
+  läuft, sagt `/opt/zenos/scripts/bin/zenos-energie status` «nein: Update läuft (zenos-basis-…)».
+- [ ] Basis-Update **mit Kernel** (sobald `zen version` bei «Pakete» «Kernel/Firmware/Bootloader» zeigt; sonst beim
+  nächsten Kernel von Ubuntu nachholen). Vorher `uname -r` notieren. Die Automatik installiert nichts
+  (`/usr/local/libexec/zenos/zenos-basis automatik`: «zustimmung»), in der Sitzung kommt einmal «Basis-Updates warten
+  auf dich», die Einstellungen zeigen «… warten auf dich» und nur den Knopf «Mit Passwort installieren». Dann im
+  Terminal `zen update --nur-basis`: «Kernel, Firmware, Bootloader:» nennt die Pakete (etwa `linux-raspi`), dazu
+  «Neustart voraussichtlich nötig» und «danach ist ein Neustart nötig; zenOS startet nie selbst neu». Nach «ja»:
+  «Ubuntu-Basis: gelungen.», kein Neustart von selbst, in der Leiste das Neustart-Symbol.
+- [ ] Neustart nach dem Kernel-Update: Der Pi **startet zweimal** (piboot-try: zuerst normal, dann gleich noch einmal
+  im Testmodus mit den neuen Startdateien aus `/boot/firmware/new/`). Danach erscheint der Login wie immer, `uname -r`
+  zeigt den neuen Kernel, das Neustart-Symbol ist weg, `zen doctor` ohne Fehler. Läuft danach noch der alte Kernel
+  (`uname -r` wie vorher), hat piboot-try den neuen verworfen, und das System läuft mit `current/` weiter; dann
+  Claude die Ausgabe von `journalctl -b -1 | grep -i piboot` schicken.
+- [ ] Nur lesend, für die Doku (Ergebnis an Claude): `dpkg -l needrestart rpi-eeprom flash-kernel piboot-try
+  linux-firmware-raspi` und `systemctl is-enabled rpi-eeprom-update.service` (spielt Ubuntu ein neues EEPROM von
+  selbst ein?).
 
 **Lüfter einstellen (Argon ONE UP, auch Argon ONE V3)**
 - [ ] System-Menü: Die Zeile «Lüfter» zeigt z. B. «aus · Auto» und rechts einen Pfeil. Ein Klick klappt darunter
@@ -786,11 +809,25 @@ noch; die Meldung nennt den Prozess (vergessene tmux-Sitzung? `tmux ls`). Wer di
 sudo fuser -v /run/zenos-sperre/kanal.lock /run/zenos-sperre/install.lock /run/lock/zenos-install.lock
 ```
 
-Was ein `zen update` gerade tut, zeigt auch nach einem Abbruch der SSH-Verbindung:
+Was ein `zen update` gerade tut, zeigt auch nach einem Abbruch der SSH-Verbindung (beim Schritt «Ubuntu-Basis»
+`zenos-basis-installieren.service`):
 
 ```
 journalctl -fu zenos-kanal-installieren.service
 ```
+
+`zen update` endet bei «Ubuntu-Basis» mit «kaputt» (auch `zen doctor`: «Letztes Basis-Update kaputt»): Nach dem
+Paket-Update ist etwas schlechter als vorher, die Meldung nennt was. Zurückgerollt wird nichts. Schick Claude die
+Meldung, dazu `/usr/local/libexec/zenos/zenos-basis status` und das Ende von `sudo tail -n 80
+/var/log/zenos/basis.log` (Paketstand vorher und Änderungen). Oft hilft schon ein zweiter Lauf von `install.sh`
+oder ein Neustart.
+
+`zen update` meldet bei «Ubuntu-Basis» «gesperrt»: apt würde ein Paket entfernen, das zenOS braucht. zenOS
+installiert das nie, auch nicht mit «ja». Nichts tun und Claude die Ausgabe von `zen update` schicken; meist löst
+sich das mit dem nächsten Update von Ubuntu.
+
+`zen update` meldet bei «Ubuntu-Basis» «übersprungen» oder «zuerst den zenOS-Kanal»: Eine Installation von zenOS ist
+unterbrochen oder kaputt. Zuerst den Kanal reparieren (oben), dann `zen update` noch einmal.
 
 **Kaputt.** `zen update` endet mit «Kaputt»: Auch der Rückweg scheiterte. Zuerst den Grund in der Meldung lesen
 (`zen kanal status` zeigt ihn noch einmal) und ihn beheben, dann `zen update` noch einmal:
@@ -943,7 +980,8 @@ Pi per SSH:
 zen update
 ```
 
-Wiederhole dann die Punkte aus E, die nicht gingen.
+Es bringt zuerst den neuen Stand von zenOS und zeigt dann die Paket-Updates der Ubuntu-Basis; willst du die gerade
+nicht, nimm `zen update --nur-zenos`. Wiederhole dann die Punkte aus E, die nicht gingen.
 
 **F3.** Nacharbeit direkt auf dem Pi, wenn es die echte Hardware braucht (Grafik, Tastatur, Argon ONE). Dafür braucht
 es B8 und B12 bis B16. Per SSH in die tmux-Sitzung:
@@ -1117,6 +1155,9 @@ git switch dev
   Release): Für Dritte wäre das die einzige Bindung der Image-Dateien an dich, die Attestation von GitHub bestätigt
   nur den Bau. Heute gibt es sie nicht.
 - fish als Login-Shell, damit auch SSH-Sitzungen Eingabezeile, `?` und die Warnung haben: `chsh -s /usr/bin/fish`.
+- esm-cache von Ubuntu Pro: Die Basis-Automatik ruft `apt-get update` alle 6 Stunden statt einmal täglich, esm-cache
+  fragt dabei jedes Mal `contracts.canonical.com` (Architektur, Serie, Kernel). Lassen oder abschalten (Maskieren von
+  `esm-cache.service`), siehe «Offen» in `docs/module/m11.md`.
 - Bootsplash einschalten: per SSH `zen bootsplash aktivieren`. Es zeigt jeden Schritt vorher (Pakete, Standard-Theme,
   «quiet splash» in der Boot-Kommandozeile, neues initramfs) und fragt nach. Danach startet der Pi zweimal. Zurück mit
   `zen bootsplash deaktivieren`. Was du danach prüfst: `docs/module/bootsplash.md`, «Am Pi prüfen».

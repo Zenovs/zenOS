@@ -533,8 +533,10 @@ mit denselben Bausteinen (Lage, Satz, Werte, Knöpfe 38 px):
 - Lage: «Aktuell» (Haken im Akzent), «3 Updates bereit» (Info im Akzent), «4 Updates warten auf dich» (Schloss im
   Akzent; Kernel, Firmware, Bootloader oder Entfernungen), «Gesperrt» (Warnung in `warnung`: apt würde ein
   geschütztes Paket entfernen), «Kein Kontakt zu den Paketquellen» (Wolke, `gedaempft`), «Prüfung gescheitert»
-  (Warnung in `warnung`), «Noch nie geprüft» (Info, `gedaempft`). Vor allem: «Update läuft» (Info im Akzent) und
-  «Basis-Update kaputt» (Warnung in `warnung`, bis eine spätere Installation es ablöst).
+  (Warnung in `warnung`), «Noch nie geprüft» und «Seit der letzten Prüfung installiert» (Info, `gedaempft`; etwa nach
+  unattended-upgrades, bis zur nächsten Prüfung), «Entfernungen warten auf dich» (Schloss im Akzent, nur
+  Entfernungen). Vor allem: «Update läuft» (Info im Akzent) und «Basis-Update kaputt» (Warnung in `warnung`, bis eine
+  spätere Installation es ablöst).
 - Satz: bei «bereit» was ansteht und wann es automatisch kommt («Kommt automatisch bei der nächsten Sperre, nicht
   während einer SSH-Sitzung.», «… zwischen 02:00 und 05:00 Uhr …», «… innert 15 Minuten …», «Automatisch kommt nichts
   (Zeitpunkt «Von Hand»).»), bei «warten auf dich» was dabei ist und dass es nie automatisch kommt.

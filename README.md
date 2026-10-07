@@ -42,7 +42,7 @@ sudo reboot
 
 `install.sh` fragt einmal nach dem sudo-Passwort und baut beim ersten Mal Quickshell aus dem Quellcode. Ein zweiter Lauf meldet `0 Änderungen`, `zen doctor` prüft das Ergebnis. Nach dem Neustart erscheint der zenOS-Login. Alle Schritte, Voraussetzungen (Imager-Einstellungen, aktueller Bootloader) und die Testliste stehen in [ANLEITUNG.md](ANLEITUNG.md).
 
-So installiert, folgt zenOS dem Kanal `dev`: `zen update` zeigt die neuen Commits und installiert sie nur nach deinem «ja», automatisch kommt auf `dev` kein neuer Code. Danach zeigt `zen update` die Paket-Updates der Ubuntu-Basis und installiert sie nach einem zweiten «ja»; solche ohne Kernel, Firmware, Bootloader und Entfernungen kommen auch automatisch zum eingestellten Zeitpunkt (`sudo zen kanal automatik aus` schaltet beides aus). Signierte Versionen (Kanäle `stabil` und `vorschau`, `sudo zen kanal wechseln …`) brauchen den Vertrauensanker, den nur das Image mitbringt. Von Hand setzt ihn `sudo zen kanal anker /opt/zenos/system/vertrauen`; die Fingerabdrücke zum Eintippen stehen in [docs/image-und-releases.md](docs/image-und-releases.md) unter «Signierte Releases». Empfohlen ist deshalb das Image.
+So installiert, folgt zenOS dem Kanal `dev`: `zen update` zeigt die neuen Commits und installiert sie nur nach deinem «ja», automatisch kommt auf `dev` kein neuer Code (die Pakete der Ubuntu-Basis schon, siehe [Updates](#updates)). Signierte Versionen (Kanäle `stabil` und `vorschau`, `sudo zen kanal wechseln …`) brauchen den Vertrauensanker, den nur das Image mitbringt. Von Hand setzt ihn `sudo zen kanal anker /opt/zenos/system/vertrauen`; die Fingerabdrücke zum Eintippen stehen in [docs/image-und-releases.md](docs/image-und-releases.md) unter «Signierte Releases». Empfohlen ist deshalb das Image.
 
 Chrome, VS Code, 1Password (mit CLI) und coremail installiert zenOS beim ersten Start, erst nach deiner ausdrücklichen Zustimmung. Sie kommen aus den offiziellen Quellen der Hersteller und nie ins Image; das hat Lizenzgründe, und die Updates kommen so direkt vom Hersteller. Nubix hat noch keinen ARM-Build und wird angeboten, sobald es einen gibt.
 
@@ -58,6 +58,26 @@ Bis das erste Release mit der Marke «Latest» (`v0.1.0`) erscheint, wird zenOS 
 
 Ubuntu 26.04 braucht auf dem Pi 5 einen Bootloader (EEPROM) vom 11.02.2025 oder neuer, sonst startet es nicht. Wie du ihn prüfst und aktualisierst, steht in [ANLEITUNG.md](ANLEITUNG.md) und in [docs/image-und-releases.md](docs/image-und-releases.md).
 
+## Updates
+
+`zen update` hat zwei Schritte, und jeder meldet für sich, ob er gelungen ist:
+
+1. **zenOS** über den signierten Kanal (`stabil`, `vorschau` oder `dev`): holen, Signatur prüfen, installieren, danach eine Gesundheitsprüfung; scheitert sie, geht es von selbst auf den Stand davor zurück.
+2. **Ubuntu-Basis:** die Paket-Updates innerhalb von Ubuntu 26.04 LTS, so wie `apt full-upgrade` sie bringt (auch Chrome, VS Code und die 1Password-CLI aus den Quellen der Hersteller). `zen update` zeigt, wie viele es sind, davon Sicherheitsupdates, ob Kernel, Firmware oder Bootloader dabei sind, was entfernt würde und ob danach ein Neustart nötig ist, und installiert genau diese Liste nach deinem «ja».
+
+`zen update --nur-zenos` nimmt nur den ersten Schritt, `zen update --nur-basis` nur den zweiten; `--ja` spart die Rückfrage der Basis (nie die des Kanals). Exit 0 heisst: Jeder Schritt, der lief, ist gelungen.
+
+Automatisch, zum Zeitpunkt, den du in Einstellungen › System › Updates wählst (Standard: wenn zenOS seit 5 Minuten gesperrt ist), nur am Netzteil oder ab 50 % Akku:
+
+- signierte zenOS-Versionen auf `stabil` (nach 24 Stunden) und `vorschau` (nie auf `dev`);
+- Basis-Updates ohne Kernel, Firmware, Bootloader und Entfernungen, auch auf `dev`, aber nie, solange jemand per SSH angemeldet ist.
+
+Sicherheitsupdates spielt Ubuntu wie gewohnt jeden Tag selbst ein (unattended-upgrades). zenOS startet nie selbst neu: Steht ein Neustart an, zeigt die Leiste still ein Symbol im System-Knopf, das System-Menü «Neustart · nötig». `sudo zen kanal automatik aus` schaltet die Automatik von zenOS und der Basis ab (die Sicherheitsupdates von Ubuntu nicht).
+
+In den Einstellungen stehen beide Teile getrennt, mit «Jetzt prüfen» und «Jetzt installieren»; Kernel, Firmware, Bootloader und Entfernungen nur mit deinem Passwort. `zen version` zeigt in der Zeile «Pakete», was ansteht.
+
+Eine neue Ubuntu-Version (etwa 28.04) kommt nie als Update: `do-release-upgrade` ist gesperrt, und der Kanal nimmt keinen Stand für eine andere Ubuntu-Version an. Ein Wechsel der Basis ist eine neue zenOS-Hauptversion mit neuem Image; deine Daten nimmst du per Backup von Hand mit. Einzelheiten: [docs/image-und-releases.md](docs/image-und-releases.md) («Basis-Updates», «Basiswechsel»).
+
 ## Hardware
 
 - Raspberry Pi 5, entwickelt und getestet im Argon ONE Gehäuse
@@ -69,7 +89,7 @@ Ubuntu 26.04 braucht auf dem Pi 5 einen Bootloader (EEPROM) vom 11.02.2025 oder 
 - [docs/konfiguration.md](docs/konfiguration.md): Modi, Zustände, Raster, Bildschirme, Einstellungen
 - [docs/design.md](docs/design.md): Design-Tokens und Komponenten
 - [docs/sicherheit.md](docs/sicherheit.md): Sicherheit und Datenschutz
-- [docs/image-und-releases.md](docs/image-und-releases.md): Image, Releases, erster Start
+- [docs/image-und-releases.md](docs/image-und-releases.md): Image, Releases, Updates (Kanal und Ubuntu-Basis), Basiswechsel, erster Start
 - [docs/module/](docs/module/): ausführliche Notizen zu jedem Baustein
 
 ## Gebaut mit Claude
