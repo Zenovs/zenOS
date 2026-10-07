@@ -1,0 +1,17 @@
+# zenOS: Gelegenheit für die Automatik der Basis-Updates. Alle 15 Minuten (7, 22, 37, 52; versetzt zur Gelegenheit des
+# Kanals) schaut zenos-basis-gelegenheit.service, ob eine bereite Liste jetzt installiert werden darf (gesperrt, im
+# Zeitfenster), ohne apt-get update. Die Unit startet nur, wenn eine Liste bereit ist
+# (/var/lib/zenos/basis/automatik-bereit); sonst nur ein Eintrag im Journal. Geprüft wird nur von
+# zenos-basis-automatik.timer (alle 6 h). Ein- und ausschalten mit sudo zen kanal automatik an|aus.
+[Unit]
+Description=zenOS: Ubuntu-Basis-Automatik, Gelegenheit zum Installieren (alle 15 Min.)
+Documentation=file:///opt/zenos/docs/image-und-releases.md
+
+[Timer]
+OnCalendar=*:07/15
+RandomizedDelaySec=1min
+AccuracySec=1min
+Unit=zenos-basis-gelegenheit.service
+
+[Install]
+WantedBy=timers.target

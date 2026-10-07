@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Einheitentests für scripts/module/71-basis.sh (Sperre des Ubuntu-Basiswechsels: Prompt=never per Drop-in, alter
-Hinweis auf eine neue Version geleert; Programm und Units der Basis-Updates) und die Prüfungen in zen doctor
-(scripts/doctor.d/71-ubuntu.sh: Prompt=never, Basis-Updates). Das Programm zenos-basis selbst prüft
-test/einheiten/basis-updates.test.py.
+Hinweis auf eine neue Version geleert; Programm, Units und Timer der Basis-Updates mit dem gemeinsamen Notschalter) und
+die Prüfungen in zen doctor (scripts/doctor.d/71-ubuntu.sh: Prompt=never, Basis-Updates, Timer). Das Programm
+zenos-basis selbst prüfen test/einheiten/basis-updates.test.py und basis-automatik.test.py.
 
 Modul und Prüfung laufen in bash mit Attrappen für die Hilfsfunktionen von install.sh bzw. zen doctor, gegen Ordner im
 Temp-Ordner. Die Reihenfolge, in der der Release-Upgrader liest (release-upgrades, danach release-upgrades.d/*.cfg in
@@ -25,6 +25,9 @@ MODUL = os.path.join(WURZEL, "scripts", "module", "71-basis.sh")
 DOCTOR = os.path.join(WURZEL, "scripts", "doctor.d", "71-ubuntu.sh")
 DROPIN = os.path.join(WURZEL, "system", "update-manager", "zenos.cfg")
 BASH = shutil.which("bash")
+EINHEITEN = ("zenos-basis-pruefen.service", "zenos-basis-installieren.service", "zenos-basis-automatik.service",
+             "zenos-basis-automatik.timer", "zenos-basis-gelegenheit.service", "zenos-basis-gelegenheit.timer")
+TIMER = ("zenos-basis-automatik.timer", "zenos-basis-gelegenheit.timer")
 
 MODUL_RAHMEN = r'''
 set -u
@@ -43,12 +46,31 @@ ordner_sicherstellen() {
 aenderung() { printf 'aenderung: %s\n' "$*"; }
 log_info() { printf 'info: %s\n' "$*"; }
 log_warnung() { printf 'warnung: %s\n' "$*"; }
+# systemd zum Schein: aktivierte Einheiten als Dateien in $ZIEL/aktiviert, ohne laufendes systemd (wie im Image)
+ZENOS_SYSTEMD=0
+ZENOS_IMAGE=0
+SUDO=""
+systemctl() {
+  case "$1" in
+    is-enabled) if [[ -e "$ZIEL/aktiviert/$2" ]]; then echo enabled; else echo disabled; return 1; fi ;;
+    disable) rm -f -- "$ZIEL/aktiviert/$3" ;;
+    *) return 1 ;;
+  esac
+}
+dienst_aktivieren() {
+  [[ -e "$ZIEL/aktiviert/$1" ]] && return 0
+  mkdir -p -- "$ZIEL/aktiviert"
+  : > "$ZIEL/aktiviert/$1"
+  aenderung "Dienst aktiviert: $1"
+}
+systemd_neu_laden() { :; }
 source "$MODUL"
 _BASIS_DROPIN=$ZIEL/etc/update-manager/release-upgrades.d/zenos.cfg
 _BASIS_HINWEIS=$ZIEL/var/lib/ubuntu-release-upgrader/release-upgrade-available
 _BASIS_LIBEXEC=$ZIEL/usr/local/libexec
 _BASIS_UNITS=$ZIEL/etc/systemd/system
 _BASIS_ZUSTAND=$ZIEL/var/lib/zenos
+_BASIS_AUS=$ZIEL/etc/xdg/zenos/kanal-automatik-aus
 # Der Temp-Ordner gehört nicht root: die Prüfung des Wegs nur, wenn der Test sie verlangt
 if [[ "${PFAD_PRUEFEN:-0}" != 1 ]]; then _basis_pfad_sicher() { return 0; }; fi
 modul_system
@@ -67,7 +89,19 @@ _UBUNTU_PROGRAMM=$ZIEL/libexec/zenos-basis
 _UBUNTU_QUELLE=$ZIEL/opt/zenos-basis
 _UBUNTU_UNITS=$ZIEL/units
 _UBUNTU_PYTHON=$ZIEL/python3
+_UBUNTU_AUS=$ZIEL/aus
+_UBUNTU_SYSTEMD=$ZIEL/run-systemd
 _ubuntu_nur_root() { [[ ! -e "$ZIEL/nicht-root" ]]; }
+# Zustand der Timer aus $ZIEL/timer.<name> («enabled active», «enabled», «disabled»), ohne Datei: aktiviert und aktiv
+systemctl() {
+  local zustand="enabled active" timer=${*: -1}
+  [[ ! -f "$ZIEL/timer.$timer" ]] || zustand=$(cat "$ZIEL/timer.$timer")
+  case "$1" in
+    is-enabled) echo "${zustand%% *}"; [[ "${zustand%% *}" == enabled ]] ;;
+    --quiet) [[ "$zustand" == *active* ]] ;;
+    *) return 1 ;;
+  esac
+}
 "${FUNKTION:-pruefe_ubuntu}"
 '''
 
@@ -128,9 +162,8 @@ class Modul(unittest.TestCase):
         """Programm, Units und Zustandsordner, wie das Modul sie anlegt."""
         z = self.ziel
         return [f"{z}/usr/local/libexec/zenos", f"{z}/usr/local/libexec/zenos/zenos-basis",
-                f"{z}/etc/systemd/system/zenos-basis-pruefen.service",
-                f"{z}/etc/systemd/system/zenos-basis-installieren.service", f"{z}/var/lib/zenos",
-                f"{z}/var/lib/zenos/basis"]
+                *(f"{z}/etc/systemd/system/{e}" for e in EINHEITEN), f"{z}/var/lib/zenos", f"{z}/var/lib/zenos/basis",
+                "Dienst aktiviert: zenos-basis-automatik.timer", "Dienst aktiviert: zenos-basis-gelegenheit.timer"]
 
     def test_dropin_einmal(self):
         self.assertEqual(self.lauf(), [f"aenderung: {self.dropin}"] + [f"aenderung: {p}" for p in self.basis_teile()])
@@ -141,14 +174,26 @@ class Modul(unittest.TestCase):
 
     def test_programm_und_units(self):
         self.lauf()
-        for quelle, ziel in (("scripts/bin/zenos-basis", "usr/local/libexec/zenos/zenos-basis"),
-                             ("system/systemd/system/zenos-basis-pruefen.service",
-                              "etc/systemd/system/zenos-basis-pruefen.service"),
-                             ("system/systemd/system/zenos-basis-installieren.service",
-                              "etc/systemd/system/zenos-basis-installieren.service")):
+        paare = [("scripts/bin/zenos-basis", "usr/local/libexec/zenos/zenos-basis")]
+        paare += [(f"system/systemd/system/{e}", f"etc/systemd/system/{e}") for e in EINHEITEN]
+        for quelle, ziel in paare:
             with open(os.path.join(WURZEL, quelle), "rb") as a, open(os.path.join(self.ziel, ziel), "rb") as b:
                 self.assertEqual(a.read(), b.read(), ziel)
         self.assertTrue(os.path.isdir(os.path.join(self.ziel, "var", "lib", "zenos", "basis")))
+        self.assertEqual(sorted(os.listdir(os.path.join(self.ziel, "aktiviert"))),
+                         ["zenos-basis-automatik.timer", "zenos-basis-gelegenheit.timer"], "nur die Timer, ab Werk an")
+
+    def test_notschalter_schaltet_die_timer_aus(self):
+        """Der gemeinsame Notschalter (sudo zen kanal automatik aus): install.sh schaltet die Timer nicht ein, sondern
+        aus; danach 0 Änderungen. Ohne ihn wieder an."""
+        self.lauf()
+        schreiben(os.path.join(self.ziel, "etc", "xdg", "zenos", "kanal-automatik-aus"), "seit=jetzt\n")
+        self.assertEqual(self.lauf(), [f"aenderung: Timer ausgeschaltet (Notschalter {self.ziel}/etc/xdg/zenos/"
+                                       f"kanal-automatik-aus): {t}" for t in TIMER])
+        self.assertEqual(os.listdir(os.path.join(self.ziel, "aktiviert")), [])
+        self.assertEqual(self.lauf(), [], "zweiter Lauf: 0 Änderungen")
+        os.unlink(os.path.join(self.ziel, "etc", "xdg", "zenos", "kanal-automatik-aus"))
+        self.assertEqual(self.lauf(), [f"aenderung: Dienst aktiviert: {t}" for t in TIMER])
 
     def test_unsicherer_weg(self):
         """Ein Ordner auf dem Weg gehört nicht root (hier: der Temp-Ordner): Programm und Units bleiben weg."""
@@ -191,6 +236,48 @@ class Modul(unittest.TestCase):
                           dienst["TimeoutStopSec"]), ("zenos-basis", "mixed", "3h", "20min"))
         self.assertTrue(dienst["ExecStart"].endswith("/usr/local/libexec/zenos/zenos-basis installieren"))
         self.assertIn("apt-daily-upgrade.service", parser.get("Unit", "After"))
+
+    @staticmethod
+    def unit(name):
+        with open(os.path.join(WURZEL, "system", "systemd", "system", name), encoding="utf-8") as f:
+            return [z.strip() for z in f.read().splitlines()]
+
+    def test_automatik_units(self):
+        """Wie die Automatik des Kanals: ohne Netz und in derselben Sandbox (zenos-kanal automatik darf liest Sitzungen
+        und fragt die Oberfläche als Benutzer), Exit 10 und 75 kein Ausfall, gemeinsamer Notschalter; statisch, nur
+        über die Timer."""
+        programm = "/usr/bin/python3 -I /usr/local/libexec/zenos/zenos-basis"
+        kanal = self.unit("zenos-kanal-automatik.service")
+        sandbox = [z for z in kanal if z.split("=", 1)[0] in (
+            "PrivateNetwork", "ProtectSystem", "ProtectHome", "PrivateTmp", "PrivateDevices", "RestrictSUIDSGID",
+            "RuntimeDirectory", "RuntimeDirectoryMode", "RuntimeDirectoryPreserve", "SuccessExitStatus", "UMask")]
+        self.assertEqual(len(sandbox), 11)
+        for name, befehl in (("zenos-basis-automatik.service", "automatik lauf"),
+                             ("zenos-basis-gelegenheit.service", "automatik gelegenheit")):
+            with self.subTest(name):
+                zeilen = self.unit(name)
+                self.assertIn(f"ExecStart={programm} {befehl}", zeilen)
+                self.assertIn("Type=oneshot", zeilen)
+                self.assertIn("StateDirectory=zenos/basis", zeilen)
+                self.assertIn("ConditionPathExists=!/etc/xdg/zenos/kanal-automatik-aus", zeilen)
+                self.assertNotIn("NoNewPrivileges=yes", zeilen, "setpriv zum Benutzer für die Sperre")
+                for zeile in sandbox:
+                    self.assertIn(zeile, zeilen)
+                self.assertFalse(any(z.startswith("[Install]") for z in zeilen), "nur über den Timer")
+        self.assertIn("ConditionPathExists=/var/lib/zenos/basis/automatik-bereit",
+                      self.unit("zenos-basis-gelegenheit.service"))
+
+    def test_timer(self):
+        timer = self.unit("zenos-basis-automatik.timer")
+        for zeile in ("OnBootSec=30min", "OnCalendar=*-*-* 03/6:00:00", "RandomizedDelaySec=10min", "Persistent=true",
+                      "Unit=zenos-basis-automatik.service", "WantedBy=timers.target"):
+            self.assertIn(zeile, timer)
+        self.assertIn("OnCalendar=*-*-* 00/6:00:00", self.unit("zenos-kanal.timer"), "versetzt zum Kanal")
+        gelegenheit = self.unit("zenos-basis-gelegenheit.timer")
+        for zeile in ("OnCalendar=*:07/15", "Unit=zenos-basis-gelegenheit.service", "WantedBy=timers.target"):
+            self.assertIn(zeile, gelegenheit)
+        self.assertIn("OnCalendar=*:0/15", self.unit("zenos-kanal-gelegenheit.timer"), "versetzt zum Kanal")
+        self.assertFalse(any(z.startswith("OnUnitActiveSec") for z in gelegenheit))
 
     def test_dropin_gewinnt_wie_metarelease(self):
         ordner = os.path.join(self.ziel, "etc", "update-manager")
@@ -294,8 +381,9 @@ class DoctorUpdates(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.ziel, True)
         schreiben(os.path.join(self.ziel, "libexec", "zenos-basis"), "programm\n")
         schreiben(os.path.join(self.ziel, "opt", "zenos-basis"), "programm\n")
-        for name in ("zenos-basis-pruefen.service", "zenos-basis-installieren.service"):
+        for name in EINHEITEN:
             schreiben(os.path.join(self.ziel, "units", name), "")
+        os.makedirs(os.path.join(self.ziel, "run-systemd"))
         python = os.path.join(self.ziel, "python3")
         schreiben(python, '#!/bin/sh\ncase "$4" in --kurz) cat "$(dirname "$0")/kurz" ;; '
                           '--installation) cat "$(dirname "$0")/installation" ;; esac\n')
@@ -355,6 +443,24 @@ class DoctorUpdates(unittest.TestCase):
         shutil.rmtree(os.path.join(self.ziel, "libexec"))
         self.assertEqual(self.doctor(), [f"hinweis: Basis-Updates noch nicht eingerichtet "
                                          f"({self.ziel}/libexec/zenos-basis fehlt; install.sh richtet es ein)"])
+
+    def test_timer(self):
+        self.zeilen("aktuell aktuell", "keine noch kein Basis-Update über zenOS")
+        self.assertEqual(self.doctor(), ["ok: Basis-Updates: keine ausstehend"], "aktiviert und aktiv: still")
+        schreiben(os.path.join(self.ziel, "timer.zenos-basis-gelegenheit.timer"), "disabled")
+        schreiben(os.path.join(self.ziel, "timer.zenos-basis-automatik.timer"), "enabled")
+        self.assertEqual(self.doctor()[:2], [
+            "warnung: zenos-basis-automatik.timer ist aktiviert, läuft aber nicht (sudo systemctl start "
+            "zenos-basis-automatik.timer)",
+            "warnung: zenos-basis-gelegenheit.timer ist nicht aktiviert (disabled): Basis-Updates kommen nicht "
+            "automatisch (install.sh)"])
+        schreiben(os.path.join(self.ziel, "aus"), "")
+        self.assertEqual(self.doctor()[0], f"hinweis: Basis-Updates nur von Hand: Automatik aus (Notschalter "
+                                           f"{self.ziel}/aus, gilt auch für den Kanal)")
+        os.unlink(os.path.join(self.ziel, "units", "zenos-basis-automatik.timer"))
+        os.unlink(os.path.join(self.ziel, "aus"))
+        self.assertEqual(self.doctor()[:2], ["warnung: zenos-basis-automatik.timer fehlt (install.sh)",
+                                             "ok: Basis-Updates: keine ausstehend"], "ohne Timer-Datei keine Prüfung")
 
     def test_ganzer_abschnitt(self):
         r = subprocess.run([BASH, "-c", DOCTOR_RAHMEN], capture_output=True, text=True, check=False,

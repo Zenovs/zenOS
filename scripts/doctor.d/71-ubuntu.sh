@@ -4,8 +4,9 @@
 #
 # Ein Wechsel der Ubuntu-Basis ist eine neue zenOS-Hauptversion mit neuem Image, kein Update (scripts/module/71-basis.sh,
 # docs/image-und-releases.md, «Basiswechsel»). Ob die Basis selbst Ubuntu 26.04 ist, prüft 00-basis, ob ein Neustart
-# ansteht 70-sicherheit. Paket-Updates innerhalb von 26.04 bringt zenos-basis: Programm, Units, ausstehende Updates
-# (Hinweis) und die letzte Installation. Ohne root, nur lesend.
+# ansteht 70-sicherheit. Paket-Updates innerhalb von 26.04 bringt zenos-basis: Programm, Units, Timer der Automatik
+# (gemeinsamer Notschalter mit dem Kanal), ausstehende Updates (Hinweis) und die letzte Installation. Ohne root, nur
+# lesend.
 
 # Ordner des Release-Upgraders, Programm und Units (die Einheitentests setzen andere)
 _UBUNTU_ORDNER=/etc/update-manager
@@ -13,6 +14,10 @@ _UBUNTU_PROGRAMM=/usr/local/libexec/zenos/zenos-basis
 _UBUNTU_QUELLE=/opt/zenos/scripts/bin/zenos-basis
 _UBUNTU_UNITS=/etc/systemd/system
 _UBUNTU_PYTHON=/usr/bin/python3
+_UBUNTU_AUS=/etc/xdg/zenos/kanal-automatik-aus
+_UBUNTU_SYSTEMD=/run/systemd/system
+_UBUNTU_EINHEITEN=(zenos-basis-pruefen.service zenos-basis-installieren.service zenos-basis-automatik.service
+  zenos-basis-automatik.timer zenos-basis-gelegenheit.service zenos-basis-gelegenheit.timer)
 
 pruefe_ubuntu() {
   abschnitt "Ubuntu-Basis"
@@ -74,9 +79,10 @@ _ubuntu_updates() {
   elif [[ -r "$_UBUNTU_QUELLE" ]] && ! cmp -s "$_UBUNTU_PROGRAMM" "$_UBUNTU_QUELLE"; then
     warnung "$_UBUNTU_PROGRAMM weicht vom Stand in /opt/zenos ab (install.sh stellt ihn wieder her)"
   fi
-  for einheit in zenos-basis-pruefen.service zenos-basis-installieren.service; do
+  for einheit in "${_UBUNTU_EINHEITEN[@]}"; do
     [[ -f "$_UBUNTU_UNITS/$einheit" ]] || warnung "$einheit fehlt (install.sh)"
   done
+  _ubuntu_automatik
 
   zeile=$("$_UBUNTU_PYTHON" -I "$_UBUNTU_PROGRAMM" status --kurz 2>/dev/null | head -n 1) || zeile=""
   zustand=${zeile%% *}
@@ -101,6 +107,24 @@ _ubuntu_updates() {
     fehler) warnung "Letztes Basis-Update brach ab $text" ;;
     *) warnung "Letztes Basis-Update: unbekanntes Ergebnis «$zustand»" ;;
   esac
+}
+
+# Timer der Automatik: aktiviert und aktiv, ausser der gemeinsame Notschalter ist gesetzt (wie 15-kanal)
+_ubuntu_automatik() {
+  local timer zustand
+  [[ -f "$_UBUNTU_UNITS/zenos-basis-automatik.timer" ]] || return 0
+  if [[ -e "$_UBUNTU_AUS" ]]; then
+    hinweis "Basis-Updates nur von Hand: Automatik aus (Notschalter $_UBUNTU_AUS, gilt auch für den Kanal)"
+    return 0
+  fi
+  for timer in zenos-basis-automatik.timer zenos-basis-gelegenheit.timer; do
+    zustand=$(systemctl is-enabled "$timer" 2>/dev/null) || true
+    if [[ "$zustand" != enabled ]]; then
+      warnung "$timer ist nicht aktiviert (${zustand:-unbekannt}): Basis-Updates kommen nicht automatisch (install.sh)"
+    elif [[ -d "$_UBUNTU_SYSTEMD" ]] && ! systemctl --quiet is-active "$timer" 2>/dev/null; then
+      warnung "$timer ist aktiviert, läuft aber nicht (sudo systemctl start $timer)"
+    fi
+  done
 }
 
 # Gehört PFAD und jeder Ordner darüber root, und ist nichts davon für andere schreibbar?

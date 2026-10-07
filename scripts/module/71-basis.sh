@@ -9,8 +9,13 @@
 #   das (root führt die Datei aus).
 # - Units nach /etc/systemd/system, statisch: zenos-basis-pruefen.service (apt-get update und Auswertung) und
 #   zenos-basis-installieren.service (apt-get full-upgrade mit Inhibitor, danach install.sh). «zen update», die
-#   Einstellungen und die Automatik starten sie.
-# - /var/lib/zenos/basis (root, 0755) für Stand, letzte Installation und Auftrag.
+#   Einstellungen (zenos-kanal-bedienen, polkit-Aktionen in org.zenos.kanal.policy aus 14-kanal) und die Automatik
+#   starten sie.
+# - Automatik: zenos-basis-automatik.timer (alle 6 h prüfen, nach dem Zeitpunkt installieren) und
+#   zenos-basis-gelegenheit.timer (alle 15 Min., nur wenn eine Liste bereit ist) sind ab Werk an (Entscheid Zeno),
+#   ausser der gemeinsame Notschalter /etc/xdg/zenos/kanal-automatik-aus ist gesetzt (sudo zen kanal automatik aus):
+#   dann schaltet install.sh sie nicht ein, sondern aus, wie 14-kanal die Timer des Kanals.
+# - /var/lib/zenos/basis (root, 0755) für Stand, letzte Installation, Auftrag und den letzten Lauf der Automatik.
 #
 # Ein Wechsel der Ubuntu-Basis (etwa 26.04 auf 28.04) ist eine neue zenOS-Hauptversion mit neuem Image, kein Update
 # (docs/image-und-releases.md, «Basiswechsel»). Zwei Stellen halten das:
@@ -34,7 +39,10 @@ _BASIS_HINWEIS=/var/lib/ubuntu-release-upgrader/release-upgrade-available
 _BASIS_LIBEXEC=/usr/local/libexec
 _BASIS_UNITS=/etc/systemd/system
 _BASIS_ZUSTAND=/var/lib/zenos
-_BASIS_EINHEITEN=(zenos-basis-pruefen.service zenos-basis-installieren.service)
+_BASIS_EINHEITEN=(zenos-basis-pruefen.service zenos-basis-installieren.service zenos-basis-automatik.service
+  zenos-basis-automatik.timer zenos-basis-gelegenheit.service zenos-basis-gelegenheit.timer)
+_BASIS_AUTOMATIK=(zenos-basis-automatik.timer zenos-basis-gelegenheit.timer)
+_BASIS_AUS=/etc/xdg/zenos/kanal-automatik-aus
 
 modul_system() {
   datei_installieren "$ZENOS_CODE/system/update-manager/zenos.cfg" "$_BASIS_DROPIN" 0644 root:root
@@ -60,6 +68,41 @@ _basis_programm() {
   done
   ordner_sicherstellen "$_BASIS_ZUSTAND" 0755 root:root
   ordner_sicherstellen "$_BASIS_ZUSTAND/basis" 0755 root:root
+  for einheit in "${_BASIS_AUTOMATIK[@]}"; do
+    if [[ -e "$_BASIS_AUS" ]]; then
+      _basis_timer_aus "$einheit"
+    else
+      _basis_timer_an "$einheit"
+    fi
+  done
+}
+
+# Timer aktivieren und, wenn systemd läuft (nicht im Image), gleich starten (wie _kanal_timer_an in 14-kanal)
+_basis_timer_an() {
+  local timer=$1
+  dienst_aktivieren "$timer"
+  [[ "$ZENOS_SYSTEMD" == 1 && "$ZENOS_IMAGE" != 1 ]] || return 0
+  systemctl --quiet is-active "$timer" 2>/dev/null && return 0
+  systemd_neu_laden
+  if $SUDO systemctl start "$timer"; then
+    aenderung "Timer gestartet: $timer"
+  else
+    log_warnung "$timer liess sich nicht starten (systemctl status $timer)"
+  fi
+}
+
+# Notschalter gesetzt: Timer aus und gestoppt (ein laufender Lauf endet von selbst)
+_basis_timer_aus() {
+  local timer=$1 zustand
+  zustand=$(systemctl is-enabled "$timer" 2>/dev/null) || true
+  if [[ "$zustand" == enabled ]]; then
+    $SUDO systemctl disable --quiet "$timer"
+    aenderung "Timer ausgeschaltet (Notschalter $_BASIS_AUS): $timer"
+  fi
+  if [[ "$ZENOS_SYSTEMD" == 1 && "$ZENOS_IMAGE" != 1 ]] && systemctl --quiet is-active "$timer" 2>/dev/null; then
+    $SUDO systemctl stop "$timer"
+    aenderung "Timer gestoppt (Notschalter): $timer"
+  fi
 }
 
 # Gehört jeder vorhandene Ordner auf dem Weg root, und ist keiner für andere schreibbar? (wie 14-kanal)

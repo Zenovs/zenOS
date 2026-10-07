@@ -14,8 +14,24 @@ Aufruf:
                                        dasselbe ohne Auftrag, für Tests und von Hand (läuft im aufrufenden Prozess; ein
                                        Abbruch der Verbindung ist dann nicht abgefangen, darum sonst über die Unit)
   zenos-basis status [--json|--kurz|--installation]
-                                       letzte Prüfung, letzte Installation, Neustart nötig (ohne root). --kurz: eine
-                                       Zeile «Zustand Text» (zen doctor, zen version), --installation: «Ergebnis Text»
+                                       letzte Prüfung, letzte Installation, Neustart nötig, Automatik (ohne root).
+                                       --kurz: eine Zeile «Zustand Text» (zen doctor, zen version), --installation:
+                                       «Ergebnis Text»
+  zenos-basis update [--ja]            zen update, Schritt 2 (root, im Terminal): prüfen (Unit), Zusammenfassung, ein
+                                       getipptes «ja» (--ja: ohne Rückfrage), dann genau diese Liste über die Unit
+                                       installieren, ihr Journal läuft mit. Das «ja» ist die Zustimmung, auch für
+                                       Kernel, Firmware, Bootloader und Entfernungen. Nicht, solange der Kanal einen
+                                       unterbrochenen oder kaputten Stand hinterliess (Exit 10)
+  zenos-basis jetzt HASH               «Jetzt installieren» in den Einstellungen (zenos-kanal-bedienen basis-installieren
+                                       über polkit ohne Passwort): genau die angezeigte Liste, ohne Zustimmung (Kernel,
+                                       Firmware, Bootloader, Entfernungen: Exit 10), ohne neues apt-get update
+  zenos-basis zustimmen HASH           «Mit Passwort installieren» (basis-installieren-zustimmen, polkit auth_admin bei
+                                       jedem Aufruf): dasselbe mit Zustimmung
+  zenos-basis automatik [lauf|gelegenheit]
+                                       ohne Argument: an oder aus, letzter Lauf. lauf: zenos-basis-automatik.service
+                                       (Timer alle 6 h), prüfen und, wenn erlaubt, installieren; gelegenheit:
+                                       zenos-basis-gelegenheit.service (alle 15 Min., nur mit automatik-bereit), ohne
+                                       Netz
 
 Prüfen: Auf einen anderen Paketvorgang (apt-daily, apt-daily-upgrade mit unattended-upgrades, eine Sperre von apt oder
 dpkg) wartet es höchstens 20 Minuten, sonst Exit 75. Ausgewertet werden die Zeilen «Inst» und «Remv» von apt-get -s
@@ -52,14 +68,26 @@ Gesundheit: Es zählt nur, was schlechter ist als vor apt: dpkg unterbrochen, in
 root). Scheitert sie, steht in letzte.json, was kaputt ist; zurückgerollt wird nichts. Das Log /var/log/zenos/basis.log
 (root) hält den Paketstand vorher und die Änderungen fest, nur zur Diagnose.
 
-Dateien: /var/lib/zenos/basis/{stand.json, letzte.json, auftrag.json, install-ergebnis} (root, 0755, Dateien 0644, für
-alle lesbar), /run/zenos-basis/uebernahme (Laufzeitordner von zenos-basis-installieren.service), /var/log/zenos/basis.log
-(root, 0640).
+zen update: zenos-basis update hält die Sperre der Bedienung wie zenos-kanal (/run/zenos-sperre/bedienung.lock; zen
+update, die Automatik und die Knöpfe der Einstellungen laufen nie gleichzeitig). Das «ja» des Kanals ersetzt es nie.
+
+Automatik (Entscheid Zeno, Oktober 2026): automatisch nur eine Liste ohne Kernel, Firmware, Bootloader und
+Entfernungen (sonst wartet sie auf «ja» von Hand; die Oberfläche meldet «Basis-Updates warten auf dich» einmal je
+Liste, aus automatik.json), auch auf dem Kanal dev, ohne Wartezeit (Ubuntu staffelt selbst), nie ein Neustart. Ob
+jetzt, sagt «zenos-kanal automatik darf --ohne-ssh» aus derselben Quelle wie beim Kanal: gemeinsamer Notschalter
+/etc/xdg/zenos/kanal-automatik-aus, Zeitpunkt aus /etc/xdg/zenos/kanal-zeitpunkt (sperre, fenster, jederzeit, hand),
+Akku (Netzteil oder ab 50 %); dazu bei jedem Zeitpunkt keine SSH-Sitzung (strenger als der Kanal). Sicherheitsupdates
+bringt weiter unattended-upgrades.
+
+Dateien: /var/lib/zenos/basis/{stand.json, letzte.json, auftrag.json, install-ergebnis, automatik.json,
+automatik-bereit} (root, 0755, Dateien 0644, für alle lesbar), /run/zenos-basis/uebernahme (Laufzeitordner von
+zenos-basis-installieren.service), /var/log/zenos/basis.log (root, 0640).
 
 Exit: 0 in Ordnung (geprüft, aktuell, installiert und gesund) · 1 Fehler (apt-get update oder full-upgrade scheiterte) ·
 2 Aufruf · 3 abgelehnt (gesperrt durch ein geschütztes Paket, Liste veraltet, kein Auftrag) · 5 kaputt (nach dem
-Update schlechter als vorher, nichts zurückgerollt) · 10 wartet (Zustimmung nötig, Kanal unterbrochen oder kaputt,
-Stopp) · 75 läuft schon (Sperre, install.sh von Hand, ein anderer Paketvorgang nach 20 Minuten).
+Update schlechter als vorher, nichts zurückgerollt) · 10 wartet (Zustimmung nötig oder «nein», Kanal unterbrochen
+oder kaputt, Stopp) · 75 läuft schon (Sperre, install.sh von Hand, ein anderer Paketvorgang nach 20 Minuten) · 130
+abgebrochen (Ctrl+C in zen update; eine laufende Installation läuft zu Ende).
 """
 
 import contextlib
@@ -96,6 +124,13 @@ RUNTIME_DIR = "/run/zenos-basis"
 # Gemeinsame Sperre mit dem Kanal (nur root, /run/zenos-sperre 0700) und Vermerk eines install.sh von Hand
 LOCK_FILE = "/run/zenos-sperre/kanal.lock"
 HAND_MARK = "/run/zenos-sperre/hand"
+# Sperre der Bedienung, gemeinsam mit zenos-kanal: zen update, die Automatik und die Knöpfe der Einstellungen laufen nie
+# gleichzeitig (der Kanal-Schritt von zen update gibt sie frei, bevor der Basis-Schritt sie nimmt)
+UI_LOCK_FILE = "/run/zenos-sperre/bedienung.lock"
+# Gemeinsamer Notschalter der Automatik (sudo zen kanal automatik aus) und das Programm des Kanals, das sagt, ob die
+# Automatik jetzt installieren darf (Zeitpunkt, Akku; eine Quelle für beide)
+AUTOMATIC_OFF_FILE = "/etc/xdg/zenos/kanal-automatik-aus"
+CHANNEL_PROGRAM = "/usr/local/libexec/zenos/zenos-kanal"
 LOG_FILE = "/var/log/zenos/basis.log"
 REBOOT_FILE = "/run/reboot-required"
 REBOOT_PKGS = "/run/reboot-required.pkgs"
@@ -114,11 +149,13 @@ RUN_USER = "/run/user"
 TRUSTED_UIDS = (0,)
 PATH_CHECK_TOP = "/"
 
+PYTHON = "/usr/bin/python3"
 APT_GET = "/usr/bin/apt-get"
 APT_MARK = "/usr/bin/apt-mark"
 DPKG = "/usr/bin/dpkg"
 DPKG_QUERY = "/usr/bin/dpkg-query"
 SYSTEMCTL = "/usr/bin/systemctl"
+JOURNALCTL = "/usr/bin/journalctl"
 LOGINCTL = "/usr/bin/loginctl"
 LOGGER = "/usr/bin/logger"
 SYSTEMD_INHIBIT = "/usr/bin/systemd-inhibit"
@@ -134,6 +171,8 @@ SIMULATE_TIMEOUT = 600
 DPKG_TIMEOUT = 3600
 CHECK_TIMEOUT = 120
 DOCTOR_TIMEOUT = 600
+# «zenos-kanal automatik darf» fragt logind und je Sitzung die Oberfläche (höchstens 30 s)
+MAY_TIMEOUT = 300
 MAX_AGE = datetime.timedelta(hours=1)
 MAX_LOG = 2 << 20
 KEEP_LOG = 512 << 10
@@ -152,6 +191,13 @@ LAST = "letzte.json"
 ORDER = "auftrag.json"
 INSTALL_RESULT = "install-ergebnis"
 TAKEOVER = "uebernahme"
+# Ein bereiter Stand (ohne Zustimmung installierbar): Bedingung für zenos-basis-gelegenheit.service
+READY_MARK = "automatik-bereit"
+# Letzter Lauf der Automatik (Art, Ergebnis, Grund, Zeitpunkt, Liste)
+AUTO_LOG = "automatik.json"
+
+UNITS = {"pruefen": "zenos-basis-pruefen.service", "installieren": "zenos-basis-installieren.service"}
+SCHEDULES = ("sperre", "fenster", "jederzeit", "hand")
 
 # Kernel, Firmware und Bootloader: nie automatisch, nur mit Zustimmung (fnmatch auf den Paketnamen ohne Architektur).
 # grub* und shim* sicherheitshalber (Bürorechner); linux-libc-dev (Header zum Kompilieren) zählt nicht.
@@ -179,6 +225,8 @@ REMV_RE = re.compile(r"(?:Remv|Purg) (?P<name>[a-z0-9][a-z0-9+.-]*(?::[a-z0-9]+)
 DOCTOR_RE = re.compile(r"^([0-9]{1,6}) Fehler · ", re.M)
 
 ORIGINS = ("zen update", "einstellungen", "automatik", "hand")
+# Exit des Installierens, nach dem die Unit nicht «failed» bleibt: Zustände der Basis-Updates, keine Ausfälle
+CALM_EXITS = (0, 3, 10, 75)
 
 # policy-rc.d für die Dauer von apt-get full-upgrade (Markierung in der zweiten Zeile). Aufruf durch invoke-rc.d und
 # deb-systemd-invoke: policy-rc.d [--quiet] DIENST "AKTION …" [RUNLEVEL] → 0 erlaubt, 101 verboten.
@@ -776,6 +824,19 @@ def evaluate_now(checked=None, error=None):
     return evaluate(simulate(), protected_packages(), checked, error)
 
 
+def write_stand(stand):
+    """stand.json schreiben und den Marker automatik-bereit danach richten: Es gibt ihn genau dann, wenn die Liste ohne
+    Zustimmung installierbar ist («bereit»); nur dann prüft zenos-basis-gelegenheit.service alle 15 Minuten, ob die
+    Automatik jetzt darf."""
+    write_json(state_path(STAND), stand)
+    mark = state_path(READY_MARK)
+    if stand.get("ergebnis") == "bereit":
+        write_atomic(mark, f"{stand.get('liste')}\n")
+    else:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(mark)
+
+
 def stand_lines(stand):
     """Zusammenfassung für Terminal und Journal."""
     lines = [f"Ubuntu-Basis: {stand.get('grund') or count_text(stand)}"]
@@ -832,7 +893,7 @@ def cmd_check(argv):
             stand = evaluate_now(checked, error)
         except Failure as e:
             stand = failed_stand(str(e) if not error else f"{error}; {e}", checked)
-        write_json(state_path(STAND), stand)
+        write_stand(stand)
     finally:
         lock.release()
     for line in stand_lines(stand):
@@ -1240,7 +1301,7 @@ class Installation:
         current = evaluate_now(stand.get("geprueft"))
         self.current = current
         if current["liste"] != liste:
-            write_json(state_path(STAND), current)
+            write_stand(current)
             return self.finish("abgelehnt", f"Seit der Prüfung hat sich die Liste geändert (jetzt "
                                f"{count_text(current)}). Noch einmal ansehen und bestätigen.", EXIT_REFUSED)
         if current["geschuetzt"]:
@@ -1335,7 +1396,7 @@ def refresh_stand(previous):
         stand = evaluate_now((previous or {}).get("geprueft"))
     except Failure as e:
         stand = failed_stand(f"Auswertung nach dem Update: {e}", (previous or {}).get("geprueft"))
-    write_json(state_path(STAND), stand)
+    write_stand(stand)
 
 
 def cmd_install(argv):
@@ -1415,6 +1476,369 @@ def run_installation(order):
     return code
 
 
+# --- Units starten (zen update, Einstellungen, Automatik) ---------------------------------------------------------
+
+
+def start_unit(key, follow=False):
+    """Startet eine der Units und wartet, bis sie fertig ist (follow: ihr Journal läuft im Terminal mit). Exit des
+    Programms (ExecMainStatus); lief die Unit gar nicht (fehlt, Bedingung), 1."""
+    unit = UNITS[key]
+    env = systemd_env()
+    follower = None
+    sys.stdout.flush()
+    sys.stderr.flush()
+    if follow and os.access(JOURNALCTL, os.X_OK):
+        follower = subprocess.Popen([JOURNALCTL, "--follow", "--output=cat", "--no-pager",
+                                     f"--since=@{int(time.time())}", f"--unit={unit}"], stdin=subprocess.DEVNULL,
+                                    env=env)
+    try:
+        r = run([SYSTEMCTL, "start", unit], env=env, timeout=None)
+    finally:
+        if follower:
+            time.sleep(1)
+            follower.terminate()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                follower.wait(5)
+    status = run([SYSTEMCTL, "show", "--property=ExecMainStatus", "--value", unit], env=env).stdout.strip()
+    if r.returncode != 0 and (not status.isdigit() or int(status) == 0):
+        # Die Unit lief gar nicht: ExecMainStatus wäre der eines früheren Laufs
+        print(f"{NAME}: {unit}: {first_line(r.stderr) or 'Start gescheitert'}", file=sys.stderr)
+        return EXIT_ERROR
+    if status.isdigit():
+        return int(status)
+    return EXIT_OK if r.returncode == 0 else EXIT_ERROR
+
+
+def reset_failed(*units):
+    """«gesperrt», «wartet» oder «läuft schon» lassen eine Unit mit Exit ungleich 0 enden: Zustände der Basis-Updates
+    (stand.json, letzte.json), keine Ausfälle des Systems. Ohne systemd nichts."""
+    if os.path.isdir(SYSTEMD_RUN_DIR):
+        run([SYSTEMCTL, "reset-failed", "--", *units], env=systemd_env())
+
+
+def ui_lock():
+    """Sperre der Bedienung (gemeinsam mit zenos-kanal): Locked, sonst der Exit mit Meldung (75 belegt, 1 unsicher)."""
+    try:
+        fd = take_lock(UI_LOCK_FILE)
+    except Failure as e:
+        print(f"{NAME}: {e}", file=sys.stderr)
+        return EXIT_ERROR
+    if fd is None:
+        print(f"{NAME}: Ein zen update, eine Automatik oder ein Knopf der Einstellungen läuft gerade. Später noch "
+              "einmal.", file=sys.stderr)
+        return EXIT_BUSY
+    return Locked(fd)
+
+
+def since(data, key, begin):
+    """Stammt DATA (stand.json bzw. letzte.json) nach seinem Zeitstempel KEY aus einem Lauf ab BEGIN?"""
+    t = parse_iso((data or {}).get(key))
+    return bool(t) and t >= begin - datetime.timedelta(seconds=2)
+
+
+def check_now():
+    """zenos-basis-pruefen.service starten (apt-get update und Auswertung): (stand.json, Exit) oder (None, Exit), wenn
+    die Prüfung nicht antwortete (75: gerade läuft etwas anderes)."""
+    print("Prüfe die Ubuntu-Basis (apt-get update, dann Auswertung) …")
+    begin = now()
+    code = start_unit("pruefen")
+    reset_failed(UNITS["pruefen"])
+    stand = load_json(state_path(STAND))
+    if not since(stand, "zeit", begin):
+        if code == EXIT_BUSY:
+            print(f"{NAME}: Ein Update oder eine Prüfung läuft gerade (zenOS-Kanal oder Ubuntu-Basis), oder ein "
+                  "install.sh von Hand. Später noch einmal.", file=sys.stderr)
+            return None, EXIT_BUSY
+        print(f"{NAME}: Die Prüfung hat nicht geantwortet (Exit {code}; journalctl -u {UNITS['pruefen']}).",
+              file=sys.stderr)
+        return None, EXIT_ERROR
+    return stand, code
+
+
+def install_now(follow):
+    """Den Auftrag (auftrag.json, eben geschrieben) über zenos-basis-installieren.service ausführen. follow: das Journal
+    der Unit läuft im Terminal mit (zen update). Exit der Unit. Ein Auftrag, den die Unit nicht nahm (sie lief nicht),
+    bleibt nicht liegen."""
+    if follow:
+        print(f"Installiere als {UNITS['installieren']} (läuft auch ohne dieses Terminal zu Ende) …")
+    code = start_unit("installieren", follow=follow)
+    with contextlib.suppress(FileNotFoundError):
+        os.unlink(state_path(ORDER))
+    if code in CALM_EXITS:
+        # Eine gescheiterte oder kaputte Installation bleibt «failed» (systemctl --failed)
+        reset_failed(UNITS["installieren"])
+    return code
+
+
+def interactive():
+    return sys.stdin.isatty()
+
+
+def ask(prompt):
+    try:
+        return input(prompt)
+    except EOFError:
+        return ""
+
+
+def update_steps(consent):
+    """Der Basis-Schritt von zen update: prüfen, zeigen, nach einem getippten «ja» (oder mit --ja) genau diese Liste
+    installieren. Das «ja» ist die Zustimmung, auch für Kernel, Firmware, Bootloader und Entfernungen."""
+    pid = hand_run()
+    if pid:
+        print(f"{NAME}: Ein install.sh von Hand läuft gerade (PID {pid}); danach noch einmal.", file=sys.stderr)
+        return EXIT_BUSY
+    problem = channel_problem()
+    if problem:
+        print(f"Basis-Updates übersprungen: {problem}")
+        return EXIT_WAIT
+    stand, code = check_now()
+    if stand is None:
+        return code
+    for line in stand_lines(stand):
+        print(line)
+    result = stand.get("ergebnis")
+    if result == "fehler":
+        return EXIT_ERROR
+    if result == "gesperrt":
+        return EXIT_REFUSED
+    if result == "aktuell":
+        return EXIT_OK
+    if result not in ("bereit", "zustimmung") or not LIST_RE.fullmatch(str(stand.get("liste"))):
+        print(f"{NAME}: stand.json unbrauchbar.", file=sys.stderr)
+        return EXIT_ERROR
+    if stand.get("heikel"):
+        print("  Kernel, Firmware oder Bootloader: danach ist ein Neustart nötig; zenOS startet nie selbst neu.")
+    if not consent:
+        if not interactive():
+            print("Bestätigen geht nur im Terminal (zen update) oder mit «zen update --ja». Nichts geändert.")
+            return EXIT_WAIT
+        typed = ask(f"Genau diese Liste ({stand['liste'][:12]}) installieren? Tippe «ja»: ").strip()
+        if typed != "ja":
+            print("Nichts geändert.")
+            return EXIT_WAIT
+    write_order(stand["liste"], True, "zen update")
+    begin = now()
+    code = install_now(follow=True)
+    last = load_json(state_path(LAST)) or {}
+    if since(last, "ende", begin):
+        print(f"\nUbuntu-Basis: {RESULT_TEXT.get(last.get('ergebnis'), last.get('ergebnis'))} – {last.get('grund')}")
+    return code
+
+
+def cmd_update(argv):
+    """zen update, Schritt 2 (root, im Terminal; den Schritt 1, den Kanal, macht zenos-kanal update davor)."""
+    if argv not in ([], ["--ja"]):
+        print(f"{NAME} update [--ja]", file=sys.stderr)
+        return EXIT_USAGE
+    if not is_root():
+        print(f"{NAME} update: nur als root (zen update)", file=sys.stderr)
+        return EXIT_USAGE
+    os.umask(0o022)
+    try:
+        prepare_state()
+    except Failure as e:
+        print(f"{NAME}: {e}", file=sys.stderr)
+        return EXIT_ERROR
+    lock = ui_lock()
+    if not isinstance(lock, Locked):
+        return lock
+    try:
+        return update_steps(argv == ["--ja"])
+    except KeyboardInterrupt:
+        print(f"\nAbgebrochen. Eine laufende Installation läuft im Hintergrund weiter (journalctl -fu "
+              f"{UNITS['installieren']}).", file=sys.stderr)
+        return 130
+    finally:
+        lock.release()
+
+
+def cmd_now(argv, consent):
+    """«Jetzt installieren» bzw. «Mit Passwort installieren» in den Einstellungen (zenos-kanal-bedienen über pkexec):
+    genau die angezeigte Liste HASH, ohne neues apt-get update. Ohne Zustimmung lehnt die Unit Kernel, Firmware,
+    Bootloader und Entfernungen ab (Exit 10); passt der Hash nicht zur letzten Prüfung und zu einer Auswertung von
+    jetzt, Exit 3."""
+    command = "zustimmen" if consent else "jetzt"
+    if len(argv) != 1 or not LIST_RE.fullmatch(argv[0]):
+        print(f"{NAME} {command} HASH (40 Zeichen 0-9a-f, die Liste aus stand.json)", file=sys.stderr)
+        return EXIT_USAGE
+    if not is_root():
+        print(f"{NAME} {command}: nur als root (Einstellungen › System › Updates)", file=sys.stderr)
+        return EXIT_USAGE
+    os.umask(0o022)
+    try:
+        prepare_state()
+    except Failure as e:
+        print(f"{NAME}: {e}", file=sys.stderr)
+        return EXIT_ERROR
+    lock = ui_lock()
+    if not isinstance(lock, Locked):
+        return lock
+    try:
+        pid = hand_run()
+        if pid:
+            print(f"{NAME}: Ein install.sh von Hand läuft gerade (PID {pid}); danach noch einmal.", file=sys.stderr)
+            return EXIT_BUSY
+        write_order(argv[0], consent, "einstellungen")
+        journal(f"{'Mit Passwort installieren' if consent else 'Jetzt installieren'}: Liste {argv[0]}")
+        return install_now(follow=False)
+    finally:
+        lock.release()
+
+
+# --- Automatik -------------------------------------------------------------------------------------------------
+
+
+def parse_may_answer(r):
+    """(darf, Grund, Zeitpunkt) aus der Antwort von «zenos-kanal automatik darf --ohne-ssh --json» (CompletedProcess).
+    Eine Antwort, die nicht genau so aussieht (Exit 0 heisst darf, 10 heisst nicht): nein."""
+    lines = [z for z in r.stdout.split("\n") if z.strip()]
+    try:
+        answer = json.loads(lines[-1]) if lines else None
+    except ValueError:
+        answer = None
+    if not isinstance(answer, dict) or not isinstance(answer.get("darf"), bool) \
+            or r.returncode != (EXIT_OK if answer["darf"] else EXIT_WAIT):
+        return False, (f"zenos-kanal automatik darf antwortete nicht (Exit {r.returncode}"
+                       f"{': ' + first_line(r.stderr) if first_line(r.stderr) else ''})"), None
+    schedule = answer.get("zeitpunkt") if answer.get("zeitpunkt") in SCHEDULES else None
+    return answer["darf"], short(answer.get("grund") or "", 300), schedule
+
+
+def may_install():
+    """(darf, Grund, Zeitpunkt): Darf die Automatik jetzt installieren? Dieselben Regeln wie die Automatik des Kanals aus
+    derselben Quelle («zenos-kanal automatik darf»: Notschalter, Zeitpunkt sperre/fenster/jederzeit/hand, Akku), dazu
+    bei jedem Zeitpunkt keine SSH-Sitzung (--ohne-ssh). Fehlt zenos-kanal oder antwortet es nicht: nein."""
+    problem = path_problem(CHANNEL_PROGRAM)
+    if problem:
+        return False, f"zenos-kanal nicht nutzbar ({problem})", None
+    r = run([PYTHON, "-I", CHANNEL_PROGRAM, "automatik", "darf", "--ohne-ssh", "--json"],
+            env={"PATH": SYSTEM_PATH, "LANG": "C.UTF-8"}, timeout=MAY_TIMEOUT)
+    return parse_may_answer(r)
+
+
+class AutoRun:
+    """Ein Lauf der Automatik der Basis-Updates: «lauf» (zenos-basis-automatik.timer, alle 6 h, mit apt-get update)
+    oder «gelegenheit» (alle 15 Min., nur wenn eine Liste bereit ist, ohne Netz). Installiert nur eine Liste ohne
+    Kernel, Firmware, Bootloader und Entfernungen und nur, wenn «zenos-kanal automatik darf --ohne-ssh» ja sagt. Hält
+    die Sperre der Bedienung; die Arbeit machen die Units."""
+
+    def __init__(self, check):
+        self.check = check
+        self.log = {"version": 1, "art": "lauf" if check else "gelegenheit", "beginn": iso(now()), "ende": None,
+                    "ergebnis": None, "grund": "", "zeitpunkt": None, "liste": None}
+
+    def done(self, result, reason, code):
+        self.log.update(ergebnis=result, grund=short(reason, 300), ende=iso(now()))
+        print(f"Automatik: {reason}")
+        return code
+
+    def run(self):
+        if os.path.lexists(AUTOMATIC_OFF_FILE):
+            return self.done("aus", f"aus ({AUTOMATIC_OFF_FILE}; einschalten: sudo zen kanal automatik an)", EXIT_OK)
+        pid = hand_run()
+        if pid:
+            return self.done("wartet", f"Ein install.sh von Hand läuft gerade (PID {pid}); beim nächsten Mal.",
+                             EXIT_BUSY)
+        problem = channel_problem()
+        if problem:
+            return self.done("wartet", problem, EXIT_OK)
+        if self.check:
+            stand, code = check_now()
+            if stand is None:
+                if code == EXIT_BUSY:
+                    return self.done("wartet", "Eine Prüfung oder Installation lief gerade; beim nächsten Mal.",
+                                     EXIT_BUSY)
+                return self.done("fehler", f"Die Prüfung hat nicht geantwortet (Exit {code}; journalctl -u "
+                                 f"{UNITS['pruefen']}).", EXIT_ERROR)
+        else:
+            stand = load_json(state_path(STAND))
+            if stand is None:
+                return self.done("nichts", "Noch keine Prüfung.", EXIT_OK)
+        self.log["liste"] = stand.get("liste") if LIST_RE.fullmatch(str(stand.get("liste"))) else None
+        result = stand.get("ergebnis")
+        if result == "fehler":
+            # Meist ohne Netz: kein Ausfall der Unit (Exit 10), stand.json und zen doctor nennen den Grund
+            return self.done("fehler", stand.get("grund") or "Prüfung gescheitert.", EXIT_WAIT)
+        if result == "aktuell":
+            return self.done("aktuell", "Die Ubuntu-Basis ist aktuell.", EXIT_OK)
+        if result in ("zustimmung", "gesperrt"):
+            # Automatisch nie: Die Oberfläche meldet «Basis-Updates warten auf dich» einmal je Liste
+            return self.done(result, f"Basis-Updates warten auf dich: {stand.get('grund')}", EXIT_OK)
+        if result != "bereit" or not self.log["liste"]:
+            return self.done("fehler", "stand.json unbrauchbar.", EXIT_ERROR)
+        ok, why, schedule = may_install()
+        self.log["zeitpunkt"] = schedule
+        if not ok:
+            return self.done("wartet", f"{count_text(stand)} bereit, nicht jetzt: {why}.", EXIT_OK)
+        print(f"Installiere {count_text(stand)} ({why}) …")
+        write_order(stand["liste"], False, "automatik")
+        begin = now()
+        code = install_now(follow=False)
+        last = load_json(state_path(LAST)) or {}
+        if since(last, "ende", begin):
+            return self.done(last.get("ergebnis") or "fehler", last.get("grund") or f"Exit {code}", code)
+        if code == EXIT_OK:
+            return self.done("aktuell", "Nichts zu installieren: Die Ubuntu-Basis ist aktuell.", EXIT_OK)
+        if code == EXIT_REFUSED:
+            # Etwa unattended-upgrades dazwischen: stand.json zeigt schon die neue Liste
+            return self.done("wartet", "Die Liste hat sich seit der Prüfung geändert; beim nächsten Mal.", EXIT_OK)
+        if code in (EXIT_WAIT, EXIT_BUSY):
+            return self.done("wartet", f"Das Installieren wartet (Exit {code}; journalctl -u "
+                             f"{UNITS['installieren']}); beim nächsten Mal.", code)
+        return self.done("fehler", f"Installieren endete mit Exit {code} (journalctl -u {UNITS['installieren']}).",
+                         code)
+
+
+def automatic_lines():
+    """Zeilen zur Automatik für status: an oder aus (gemeinsamer Notschalter), letzter Lauf."""
+    lines = [("Automatik", "aus (Notschalter; sudo zen kanal automatik an)" if os.path.lexists(AUTOMATIC_OFF_FILE)
+              else "an (Zeitpunkt wie der Kanal: zen kanal zeitpunkt; nie Kernel, Firmware, Bootloader, Entfernungen)")]
+    log = load_json(state_path(AUTO_LOG)) or {}
+    if parse_iso(log.get("ende")):
+        lines.append(("", f"zuletzt {local_time(log['ende'])} ({log.get('art')}): {short(log.get('grund') or '', 160)}"))
+    return lines
+
+
+def cmd_automatic(argv):
+    if not argv:
+        for title, value in automatic_lines():
+            print(f"{title:<12} {value}")
+        return EXIT_OK
+    if argv not in (["lauf"], ["gelegenheit"]):
+        print(f"{NAME} automatik [lauf|gelegenheit]", file=sys.stderr)
+        return EXIT_USAGE
+    if not is_root():
+        print(f"{NAME} automatik {argv[0]}: nur als root (zenos-basis-automatik.timer)", file=sys.stderr)
+        return EXIT_USAGE
+    os.umask(0o022)
+    try:
+        prepare_state()
+    except Failure as e:
+        print(f"{NAME}: {e}", file=sys.stderr)
+        return EXIT_ERROR
+    try:
+        fd = take_lock(UI_LOCK_FILE)
+    except Failure as e:
+        print(f"{NAME}: {e}", file=sys.stderr)
+        return EXIT_ERROR
+    if fd is None:
+        print("Automatik: Ein zen update, eine Automatik oder ein Knopf der Einstellungen läuft gerade; beim nächsten "
+              "Mal.")
+        return EXIT_BUSY
+    auto = AutoRun(check=argv[0] == "lauf")
+    try:
+        try:
+            code = auto.run()
+        except Failure as e:
+            code = auto.done("fehler", str(e), EXIT_ERROR)
+    finally:
+        os.close(fd)
+    with contextlib.suppress(OSError):
+        write_json(state_path(AUTO_LOG), auto.log)
+    return code
+
+
 # --- Status ----------------------------------------------------------------------------------------------------
 
 
@@ -1474,7 +1898,9 @@ def cmd_status(argv):
         return EXIT_OK
     if mode == "--json":
         print(json.dumps({"zustand": state, "text": text, "stand": stand, "letzte": last, "laeuft": running,
-                          "neustart": {"noetig": reboot, "pakete": wegen}}, ensure_ascii=False, indent=1))
+                          "neustart": {"noetig": reboot, "pakete": wegen},
+                          "automatik": {"an": not os.path.lexists(AUTOMATIC_OFF_FILE),
+                                        "zuletzt": load_json(state_path(AUTO_LOG))}}, ensure_ascii=False, indent=1))
         return EXIT_OK
     rows = [("Zustand", text)]
     if stand:
@@ -1488,6 +1914,7 @@ def cmd_status(argv):
     result, line = installation_line(last)
     rows.append(("Installation", f"{RESULT_TEXT.get(result, result)} {line}" if last else line))
     rows.append(("Neustart", f"nötig ({names_text(wegen)})" if reboot and wegen else "nötig" if reboot else "nein"))
+    rows += automatic_lines()
     for title, value in rows:
         print(f"{title:<12} {value}")
     return EXIT_OK
@@ -1498,7 +1925,9 @@ def main(argv):
     if not argv or argv[0] in ("-h", "--hilfe", "--help"):
         print(__doc__.strip())
         return EXIT_OK if argv else EXIT_USAGE
-    commands = {"pruefen": cmd_check, "installieren": cmd_install, "status": cmd_status}
+    commands = {"pruefen": cmd_check, "installieren": cmd_install, "status": cmd_status, "update": cmd_update,
+                "jetzt": lambda a: cmd_now(a, False), "zustimmen": lambda a: cmd_now(a, True),
+                "automatik": cmd_automatic}
     command = commands.get(argv[0])
     if not command:
         print(f"{NAME}: unbekannter Befehl «{short(argv[0], 30)}» (--hilfe)", file=sys.stderr)

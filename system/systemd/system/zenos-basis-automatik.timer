@@ -1,0 +1,20 @@
+# zenOS: Automatik der Basis-Updates. 30 bis 40 Minuten nach dem Start, danach alle 6 Stunden (03, 09, 15, 21 Uhr plus
+# bis zu 10 Minuten Zufall; versetzt zu zenos-kanal.timer, damit sich die beiden nicht um die Sperre der Bedienung
+# streiten), verpasste Läufe holt Persistent nach. Startet zenos-basis-automatik.service: prüfen (apt-get update) und,
+# wenn der Zeitpunkt des Geräts passt, installieren (nie Kernel, Firmware, Bootloader oder Entfernungen).
+# Ein- und ausschalten: sudo zen kanal automatik an|aus (gemeinsamer Notschalter /etc/xdg/zenos/kanal-automatik-aus,
+# install.sh hält sich daran).
+[Unit]
+Description=zenOS: Ubuntu-Basis automatisch prüfen und installieren (alle 6 h)
+Documentation=file:///opt/zenos/docs/image-und-releases.md
+
+[Timer]
+OnBootSec=30min
+OnCalendar=*-*-* 03/6:00:00
+RandomizedDelaySec=10min
+AccuracySec=1min
+Persistent=true
+Unit=zenos-basis-automatik.service
+
+[Install]
+WantedBy=timers.target

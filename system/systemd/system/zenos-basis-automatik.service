@@ -1,0 +1,46 @@
+# zenOS: ein Lauf der Automatik der Basis-Updates (zenos-basis automatik lauf), gestartet von
+# zenos-basis-automatik.timer. Prüft über zenos-basis-pruefen.service (apt-get update, Auswertung) und installiert über
+# zenos-basis-installieren.service, aber nur eine Liste ohne Kernel, Firmware, Bootloader und Entfernungen (die warten
+# auf «ja» von Hand) und nur, wenn «zenos-kanal automatik darf --ohne-ssh» ja sagt: gemeinsamer Notschalter, Zeitpunkt
+# aus /etc/xdg/zenos/kanal-zeitpunkt (sperre, fenster, jederzeit; hand nie), Akku, und bei jedem Zeitpunkt keine
+# SSH-Sitzung. Auch auf dem Kanal dev; nie ein Neustart.
+#
+# Sandbox wie zenos-kanal-automatik.service: Für «sperre» liest zenos-kanal die Sitzungen auf seat0 (loginctl), den
+# Marker der Oberfläche in /run/user/<uid>/zenos und fragt die Oberfläche als dieser Benutzer (setpriv, zenos-ipc
+# sperre status). Das Programm selbst braucht kein Netz; apt läuft in den eigenen Units.
+# Exit 10 (wartet, auch: Prüfung ohne Netz gescheitert) und 75 (ein zen update läuft) sind kein Ausfall.
+[Unit]
+Description=zenOS: Ubuntu-Basis automatisch (prüfen, installieren ohne Kernel und Entfernungen)
+Documentation=file:///opt/zenos/docs/image-und-releases.md
+ConditionPathExists=/usr/local/libexec/zenos/zenos-basis
+ConditionPathExists=!/etc/xdg/zenos/kanal-automatik-aus
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/zenos/zenos-basis automatik lauf
+Environment=LANG=C.UTF-8
+StateDirectory=zenos/basis
+StateDirectoryMode=0755
+RuntimeDirectory=zenos-sperre
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+UMask=0022
+SuccessExitStatus=10 75
+TimeoutStartSec=4h
+Nice=10
+SyslogIdentifier=zenos-basis
+
+PrivateNetwork=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
