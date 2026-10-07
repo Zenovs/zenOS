@@ -105,6 +105,17 @@ zen_als_tester() { # ANTWORT BEFEHL…
   return "$rc"
 }
 
+# zen update für den Kanal allein: Ab dem Bau der Basis-Updates prüft zen update danach auch die Ubuntu-Basis (apt-get
+# update, Netz, eigene Rückfrage). Die Schritte hier testen nur den Kanal; ältere Stände (der alte Weg, Rollbacks bis
+# vor die Basis-Updates) kennen --nur-zenos nicht und rufen zen update ohne.
+zen_update() { # ANTWORT
+  if grep -q -- '--nur-zenos' /opt/zenos/scripts/zen.d/update.sh 2>/dev/null; then
+    zen_als_tester "$1" zen update --nur-zenos
+  else
+    zen_als_tester "$1" zen update
+  fi
+}
+
 pushen() { # REF…
   ga push -q --force "$REMOTE" "$@"
   g -C "$REMOTE" update-server-info
@@ -233,7 +244,7 @@ s_migration() {
     [[ -e "/repo/$datei" || -L "/repo/$datei" ]] && printf '%s\0' "$datei"
   done | tar -C /repo --null -T - -cf - | tar -C "$ARBEIT" -xf -
   neu=$(neuer_commit "kanal: Stand aus /repo (e2e)")
-  zen_als_tester "" zen update || rc=$?
+  zen_update "" || rc=$?
   erwarte_rc "$rc" 0 "altes zen update"
   erwarte_kopf "$neu" "neuer Stand"
   grep -q 'def cmd_install' /usr/local/libexec/zenos/zenos-kanal || fehler "neuer zenos-kanal fehlt"
@@ -253,14 +264,14 @@ s_dev() {
   anker_leeren
   kanal dev
   neu=$(neuer_commit "e2e: dev unsigniert" e2e/dev "1")
-  zen_als_tester "nein" zen update || rc=$?
+  zen_update "nein" || rc=$?
   erwarte_rc "$rc" 10 "zen update mit «nein»"
   erwarte_text "Anker fehlt" "Hinweis «Anker fehlt»"
   erwarte_text "? ${neu:0:12} e2e: dev unsigniert" "neuer Commit gezeigt"
   [[ "$(kopf)" != "$neu" ]] || fehler "ohne «ja» installiert"
   ok "ohne «ja» nichts installiert"
   rc=0
-  zen_als_tester "ja" zen update || rc=$?
+  zen_update "ja" || rc=$?
   erwarte_rc "$rc" 0 "zen update mit «ja»"
   erwarte_kopf "$neu" "dev installiert"
   [[ "$(json "$STAND/gut.json" .commit)" == "$neu" ]] || fehler "gut.json"
@@ -299,7 +310,7 @@ s_signiert() {
   chmod 0755 "$E2E/kuerzen.sh"
   runuser -u "$TESTER" -- "$E2E/kuerzen.sh" &
   local kuerzer=$!
-  zen_als_tester "" zen update || rc=$?
+  zen_update "" || rc=$?
   : > "$E2E/kuerzen.stopp"
   wait "$kuerzer" || true
   erwarte_rc "$rc" 0 "zen update, während ein Benutzerprozess install.log laufend kürzt"
@@ -324,7 +335,7 @@ s_basis() {
   vorher=$(kopf)
   neuer_commit "e2e: für Ubuntu 28.04" system/basis $'28.04\n' > /dev/null
   signieren v0.9.0-rc1
-  zen_als_tester "" zen update || rc=$?
+  zen_update "" || rc=$?
   erwarte_rc "$rc" 0 "zen update mit einem Stand für 28.04"
   erwarte_text "v0.9.0-rc1 ist kein Ziel: gebaut für Ubuntu 28.04, dieses Gerät läuft auf Ubuntu 26.04" \
     "Hinweis: kein Ziel"
@@ -360,7 +371,7 @@ s_kaputt() {
   neuer_commit "e2e: kaputt" scripts/module/99-e2e-kaputt.sh \
     $'#!/usr/bin/env bash\n# 99-e2e-kaputt: nur im Ende-zu-Ende-Test\n# shellcheck shell=bash\nmodul_system() { abbruch "e2e: absichtlich kaputt"; }\n' > /dev/null
   signieren v0.1.1-rc2
-  zen_als_tester "" zen update || rc=$?
+  zen_update "" || rc=$?
   erwarte_rc "$rc" 4 "zen update"
   erwarte_text "zurück auf dem Stand davor" "Ergebnis «zurueck»"
   erwarte_kopf "$gut" "zurück auf v0.1.1-rc1"
@@ -369,7 +380,7 @@ s_kaputt() {
   ok "v0.1.1-rc2 gesperrt, Modul weg"
   # Seit Teil B ist eine gesperrte Version kein Ziel von zen update mehr; noch einmal nur mit zen rollback und «ja»
   rc=0
-  zen_als_tester "" zen update || rc=$?
+  zen_update "" || rc=$?
   erwarte_rc "$rc" 0 "nochmals zen update: gesperrt ist kein Ziel"
   erwarte_text "v0.1.1-rc2 ist gesperrt .* und kein Ziel" "Hinweis «gesperrt»"
   erwarte_kopf "$gut" "nichts geändert"
@@ -387,7 +398,7 @@ s_gesundheit() {
   ga rm -q scripts/module/99-e2e-kaputt.sh
   neuer_commit "e2e: zen leer" scripts/zen "" > /dev/null
   signieren v0.1.1-rc3
-  zen_als_tester "" zen update || rc=$?
+  zen_update "" || rc=$?
   erwarte_rc "$rc" 4 "zen update"
   [[ "$(json "$STAND/letzte.json" .grund)" == *"scripts/zen fehlt oder ist leer"* ]] || fehler "Grund"
   erwarte_kopf "$gut" "zurück"
@@ -403,7 +414,7 @@ s_platz() {
   neuer_commit "e2e: platz" e2e/platz "1" > /dev/null
   signieren v0.1.1-rc4
   mount -t tmpfs -o size=20m tmpfs "$STAND/bereit"
-  zen_als_tester "" zen update || rc=$?
+  zen_update "" || rc=$?
   umount "$STAND/bereit"
   erwarte_rc "$rc" 10 "zen update"
   erwarte_text "MB frei" "Grund «Platz»"
@@ -417,14 +428,14 @@ s_rueckfrage() {
   printf '\n# e2e\n' >> "$ARBEIT/scripts/module/35-netzwerk.sh"
   neuer_commit "e2e: netz" > /dev/null
   signieren v0.1.1-rc5
-  zen_als_tester "nein" zen update || rc=$?
+  zen_update "nein" || rc=$?
   erwarte_rc "$rc" 10 "zen update mit «nein»"
   erwarte_text "Betrifft Firewall, Netz oder Boot: scripts/module/35-netzwerk.sh" "Rückfrage-Pfad genannt"
   erwarte_kopf "$gut" "nichts geändert"
   /usr/bin/python3 -I /usr/local/libexec/zenos/zenos-kanal status --kurz > "$E2E/zen.txt"
   erwarte_text "^zustimmung " "Status «zustimmung»"
   rc=0
-  zen_als_tester "ja" zen update || rc=$?
+  zen_update "ja" || rc=$?
   erwarte_rc "$rc" 0 "zen update mit «ja»"
 }
 
@@ -435,7 +446,7 @@ s_abbruch() {
     $'#!/usr/bin/env bash\n# 11-e2e-warten: nur im Ende-zu-Ende-Test: wartet, solange /srv/kanal-e2e/warten da ist\n# shellcheck shell=bash\nmodul_system() {\n  local i=0\n  log_info "e2e: warte"\n  while [[ -e /srv/kanal-e2e/warten ]] && (( i < 600 )); do sleep 1; i=$((i + 1)); done\n}\n')
   signieren v0.1.2-rc1
   touch "$E2E/warten"
-  (zen_als_tester "" zen update || true) &
+  (zen_update "" || true) &
   for i in $(seq 1 120); do
     grep -q "e2e: warte" /var/log/zenos/install.log 2>/dev/null && [[ "$(kopf)" == "$neu" ]] && break
     sleep 1
@@ -476,7 +487,7 @@ s_nach_abbruch() {
   erwarte_kopf "$neu" "Code nach dem Start vollständig"
   [[ -f "$STAND/laeuft.json" ]] || fehler "laeuft.json fehlt"
   rm -f "$E2E/warten"
-  zen_als_tester "" zen update || rc=$?
+  zen_update "" || rc=$?
   erwarte_rc "$rc" 0 "zen update setzt fort"
   erwarte_text "unterbrochen" "Hinweis «unterbrochen»"
   [[ "$(json "$STAND/letzte.json" .versuche.ziel)" == 2 ]] || fehler "Versuch 2"
@@ -492,7 +503,7 @@ s_zweimal() {
   touch "$E2E/warten"
   vorher=$(grep -c 'e2e: warte' /var/log/zenos/install.log || true)
   for n in 1 2; do
-    (zen_als_tester "" zen update || true) &
+    (zen_update "" || true) &
     for i in $(seq 1 120); do
       [[ "$(json "$STAND/laeuft.json" .versuche.ziel)" == "$n" ]] &&
         (( $(grep -c 'e2e: warte' /var/log/zenos/install.log || true) >= vorher + n )) && break
@@ -517,7 +528,7 @@ s_nach_zweimal() {
   erwarte_text "gesperrt, Rückweg" "nachstart: gesperrt, Rückweg"
   erwarte_kopf "$gut" "Code des Rückwegs vor dem Login"
   [[ -f "$STAND/gesperrt/v0.1.2-rc2" ]] || fehler "nicht gesperrt"
-  zen_als_tester "" zen update || rc=$?
+  zen_update "" || rc=$?
   erwarte_rc "$rc" 4 "zen update vollendet den Rückweg"
   [[ "$(json "$STAND/letzte.json" .ergebnis)" == zurueck ]] || fehler "letzte.json"
   erwarte_kopf "$gut" "Rückweg fertig"
@@ -546,7 +557,7 @@ s_rollback() {
   # Der alte zen update kennt nur Branches als Kanal
   kanal dev
   rc=0
-  zen_als_tester "" zen update || rc=$?
+  zen_update "" || rc=$?
   erwarte_rc "$rc" 0 "zen update (alter Weg aus v0.1.0-rc3) zurück auf dev"
 }
 
@@ -557,7 +568,7 @@ s_notweg() {
   ziel=$(g -C "$REMOTE" rev-parse "$tag^{commit}")
   spitze=$(neuer_commit "e2e: vor dem notweg" e2e/vor-notweg "1")
   rm -f /usr/local/libexec/zenos/zenos-kanal
-  zen_als_tester "" zen update || rc=$?
+  zen_update "" || rc=$?
   erwarte_rc "$rc" 1 "zen update ohne zenos-kanal"
   erwarte_text "ANLEITUNG.md, Abschnitt F" "Verweis auf den Notweg"
   # Mit Anker: ein signierter Tag, mit den Befehlen aus ANLEITUNG F gegen den Anker des Geräts geprüft
@@ -593,7 +604,7 @@ s_notweg() {
   rc=0
   kanal dev
   neuer_commit "e2e: nach dem notweg" e2e/notweg "1" > /dev/null
-  zen_als_tester "ja" zen update || rc=$?
+  zen_update "ja" || rc=$?
   erwarte_rc "$rc" 0 "zen update danach"
 }
 
@@ -644,7 +655,7 @@ s_sperren() {
   ok "Vermerk /run/zenos-sperre/hand ($(cat /run/zenos-sperre/hand))"
   neu=$(neuer_commit "e2e: während der Hand" e2e/hand "1")
   rc=0
-  zen_als_tester "ja" zen update || rc=$?
+  zen_update "ja" || rc=$?
   erwarte_rc "$rc" 75 "zen update während eines Laufs von Hand"
   erwarte_text "install.sh von Hand läuft gerade" "Grund: Lauf von Hand"
   rm -f "$E2E/warten"
@@ -652,7 +663,7 @@ s_sperren() {
   [[ ! -e /run/zenos-sperre/hand ]] || fehler "Vermerk bleibt nach dem Lauf von Hand"
   ok "Vermerk nach dem Lauf von Hand weg"
   rc=0
-  zen_als_tester "ja" zen update || rc=$?
+  zen_update "ja" || rc=$?
   erwarte_rc "$rc" 0 "zen update danach"
   erwarte_kopf "$neu" "installiert"
 }
@@ -664,7 +675,7 @@ s_gitsperre() {
   kanal dev
   neu=$(neuer_commit "e2e: gitsperre" e2e/gitsperre "1")
   touch /opt/zenos/.git/index.lock /opt/zenos/.git/HEAD.lock
-  zen_als_tester "ja" zen update || rc=$?
+  zen_update "ja" || rc=$?
   erwarte_rc "$rc" 0 "zen update mit index.lock und HEAD.lock"
   erwarte_kopf "$neu" "installiert"
   [[ ! -e /opt/zenos/.git/index.lock && ! -e /opt/zenos/.git/HEAD.lock ]] || fehler "Sperren von git bleiben liegen"
@@ -714,7 +725,7 @@ s_werkbank() {
     kanal dev
     rc=0
   fi
-  zen_als_tester "ja" zen update || rc=$?
+  zen_update "ja" || rc=$?
   erwarte_rc "$rc" 0 "zen update"
   erwarte_text "liegt nicht in origin/dev" "Grund: Stand nicht auf origin (aus /opt/zenos verglichen)"
   erwarte_kopf "$spitze" "zurück auf dem Kanal"
@@ -730,7 +741,7 @@ s_stopp() {
   [[ -f "$ARBEIT/scripts/module/11-e2e-warten.sh" ]] || fehler "zuerst «abbruch» (Modul 11-e2e-warten)"
   neu=$(neuer_commit "e2e: stopp" e2e/stopp "1")
   touch "$E2E/warten"
-  (zen_als_tester "ja" zen update || true) &
+  (zen_update "ja" || true) &
   for i in $(seq 1 120); do
     [[ "$(kopf)" == "$neu" ]] && enthaelt "e2e: warte" tail -n 5 /var/log/zenos/install.log && break
     sleep 1
@@ -762,7 +773,7 @@ s_probelauf() {
   kanal dev
   printf '\n# e2e: geändert\n' >> "$ARBEIT/scripts/bin/zenos-kanal"
   neu=$(neuer_commit "e2e: zenos-kanal geändert")
-  zen_als_tester "ja" zen update || rc=$?
+  zen_update "ja" || rc=$?
   erwarte_rc "$rc" 0 "zen update mit geändertem zenos-kanal"
   erwarte_kopf "$neu" "installiert"
   enthaelt "Selbsttest mit Probelauf" json "$STAND/letzte.json" '.hinweise[]' || fehler "kein Probelauf"
@@ -775,7 +786,7 @@ s_probelauf() {
   grep -q 'e2e: Laufzeitfehler' "$ARBEIT/scripts/bin/zenos-kanal" || fehler "Laufzeitfehler nicht eingebaut"
   neuer_commit "e2e: zenos-kanal mit Laufzeitfehler" > /dev/null
   rc=0
-  zen_als_tester "ja" zen update || rc=$?
+  zen_update "ja" || rc=$?
   erwarte_rc "$rc" 4 "zen update mit kaputtem zenos-kanal"
   erwarte_text "Probelauf «update»: RuntimeError" "Grund: Probelauf"
   erwarte_kopf "$neu" "zurück auf dem Stand davor"
@@ -784,7 +795,7 @@ s_probelauf() {
   sed -i '/e2e: Laufzeitfehler/d' "$ARBEIT/scripts/bin/zenos-kanal"
   neu=$(neuer_commit "e2e: zenos-kanal repariert")
   rc=0
-  zen_als_tester "ja" zen update || rc=$?
+  zen_update "ja" || rc=$?
   erwarte_rc "$rc" 0 "zen update danach"
   erwarte_kopf "$neu" "installiert"
 }
@@ -1064,7 +1075,7 @@ s_automatik() {
     fehler "unbestaetigt.json bzw. gut.json"
   ok "wartet auf die Bestätigung nach dem Neustart, gut.json bleibt"
   [[ ! -e "$STAND/automatik-bereit" ]] || fehler "automatik-bereit nach der Installation"
-  zen_als_tester "" zen update || fehler "zen update danach"
+  zen_update "" || fehler "zen update danach"
   erwarte_text "Schon installiert" "zen update: schon installiert"
   zen_als_tester "" zen kanal status || true
   erwarte_text "gilt als gut nach einem Neustart mit Login" "zen kanal status: unbestätigt"
@@ -1155,7 +1166,7 @@ s_automatik() {
   erwarte_kopf "$gut" "die Automatik bringt $v-rc3 nicht wieder"
   [[ "$(json "$STAND/stand.json" .grund)" == *"zurückgestellt"* ]] || fehler "stand.json nennt die Rückstellung nicht"
   ok "stand.json: zurückgestellt"
-  zen_als_tester "" zen update || fehler "zen update von Hand"
+  zen_update "" || fehler "zen update von Hand"
   erwarte_kopf "$neu" "zen update von Hand: wieder $v-rc3"
   [[ ! -e "$STAND/zurueckgestellt.json" ]] || fehler "Rückstellung bleibt nach zen update"
   ok "zen update hebt die Rückstellung auf"
