@@ -14,8 +14,10 @@ Unattended-Upgrade::Origins-Pattern {
 	"origin=. stable,label=. stable,site=downloads.1password.com";
 };
 
-// Keine automatischen Neustarts. Ob und wann neu gestartet wird, entscheidet der Benutzer;
-// zen doctor zeigt an, wenn nach einem Update ein Neustart ansteht.
+// Keine automatischen Neustarts. Ob und wann neu gestartet wird, entscheidet der Benutzer.
+// Steht nach einem Update ein Neustart an (/run/reboot-required), zeigen es die Leiste (still, im
+// System-Knopf), das System-Menü, zen version und zen doctor. Dasselbe gilt für die übrigen
+// Paket-Updates, die zen update als Schritt 2 bringt (zenos-basis); auch sie starten nie neu.
 Unattended-Upgrade::Automatic-Reboot "false";
 
 // Berichte bleiben auf dem Gerät: keine Mail. Protokoll unter /var/log/unattended-upgrades/.

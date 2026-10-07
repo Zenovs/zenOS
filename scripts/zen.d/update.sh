@@ -25,6 +25,11 @@
 # Exit: 0, wenn jeder gelaufene Schritt gelang (aktuell oder installiert); sonst der Exit des Schritts mit dem
 # schwereren Ergebnis: 5 kaputt, 4 gescheitert und zurück (Kanal), 1 Fehler, 3 abgelehnt oder gesperrt, 10 wartet
 # (auch «nein», übersprungen), 75 läuft schon. 2 falscher Aufruf, 130 abgebrochen.
+# Automatisch (zum Zeitpunkt aus Einstellungen › System › Updates, zen kanal zeitpunkt): signierte Versionen auf
+# stabil und vorschau, Basis-Updates ohne Kernel, Firmware, Bootloader und Entfernungen (auch auf dev, nie während
+# einer SSH-Sitzung, nie ein Neustart). Gemeinsamer Notschalter: sudo zen kanal automatik aus. Sicherheitsupdates
+# bringt weiter unattended-upgrades. Stand ohne Netz: zen version (Zeile «Pakete»), zen kanal status.
+# Eine neue Ubuntu-Version kommt nie als Update (Basiswechsel: docs/image-und-releases.md).
 # Notweg, falls zen update selbst nicht mehr geht: ANLEITUNG.md, Abschnitt F.
 # shellcheck shell=bash
 

@@ -47,12 +47,12 @@ Verweis angelegt; was generiert wird, erzeugen die Programme unter `scripts/bin/
 | `pam/zenos-sperre` | direkt aus `/opt/zenos` (`configDirectory`) | PAM-Dienst des Sperrbildschirms |
 | `polkit/org.zenos.firewall.policy` | `/usr/share/polkit-1/actions/` | polkit-Aktionen für den Schalter «Firewall» (pkexec mit `zenos-firewall`, Ausschalten nur mit Passwort) |
 | `polkit/org.zenos.luefter.policy` | `/usr/share/polkit-1/actions/` (`80-argon`) | polkit-Aktion für die Zeile «Lüfter» im System-Menü (pkexec mit `zenos-luefter`, ohne Passwort, nur in der aktiven Sitzung am Gerät) |
-| `polkit/org.zenos.kanal.policy` | `/usr/share/polkit-1/actions/` (`14-kanal`) | polkit-Aktionen für Einstellungen › System › Updates (pkexec mit `zenos-kanal-bedienen`): prüfen, jetzt installieren und Zeitpunkt ohne Passwort, zustimmen jedes Mal mit Passwort; nur in der aktiven Sitzung am Gerät |
+| `polkit/org.zenos.kanal.policy` | `/usr/share/polkit-1/actions/` (`14-kanal`) | polkit-Aktionen für Einstellungen › System › Updates (pkexec mit `zenos-kanal-bedienen`): prüfen, jetzt installieren und Zeitpunkt ohne Passwort, zustimmen jedes Mal mit Passwort; für die Ubuntu-Basis `basis-pruefen` und `basis-installieren` ohne Passwort, `basis-installieren-zustimmen` (Kernel, Firmware, Bootloader, Entfernungen) jedes Mal mit Passwort; nur in der aktiven Sitzung am Gerät |
 | `kitty/kitty.conf` | `~/.config/kitty/kitty.conf` (Verweis) | Terminal, schlaues Ctrl+C, Super-Kürzel |
 | `fish/zenos.fish`, `fish/functions/` | `~/.config/fish/conf.d/zenos.fish` (Verweis) | Shell: Eingabezeile, Statuszeile, `?`, Warnung vor gefährlichen Befehlen |
 | `chrome/policies/zenos.json` | `/etc/opt/chrome/policies/managed/` | Chrome-Richtlinien (`docs/sicherheit.md`) |
 | `vscode/policy.json` | `/etc/vscode/policy.json` | VS Code ohne Telemetrie |
-| `apt/20auto-upgrades`, `apt/52zenos-unattended` | `/etc/apt/apt.conf.d/` | automatische Sicherheitsupdates |
+| `apt/20auto-upgrades`, `apt/52zenos-unattended` | `/etc/apt/apt.conf.d/` | automatische Sicherheitsupdates (unattended-upgrades; die übrigen Paket-Updates bringt `zenos-basis`) |
 | `update-manager/zenos.cfg` | `/etc/update-manager/release-upgrades.d/` (`71-basis`) | `Prompt=never`: kein Wechsel der Ubuntu-Hauptversion, keine Abfrage neuer Versionen (die Conffile `release-upgrades` bleibt unberührt; nur ASCII) |
 | `basis` | wird nicht installiert, `zenos-kanal` liest es aus dem geprüften Stand | Ubuntu-Version, für die der Stand gebaut ist (`26.04`); ein Stand für eine andere Version kommt nie als Update (`docs/image-und-releases.md`, «Basiswechsel») |
 | `apt/zenos-ohne-snapd` | `/etc/apt/preferences.d/` (`22-aufraeumen`, nur solange snapd fehlt) | apt-Pin: snapd nie wieder installieren |

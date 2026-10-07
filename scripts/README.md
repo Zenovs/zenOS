@@ -107,9 +107,9 @@ modul_benutzer() {  # optional; als Benutzer, ohne sudo, nie im --image-Modus
 |---|---|---|
 | `zen update [--ja] [--nur-zenos\|--nur-basis]` | M1 | Schritt 1: über den Kanal holen, prüfen, bei Bedarf «ja», installieren, Gesundheit prüfen, sonst zurück; Schritt 2: Pakete der Ubuntu-Basis prüfen, zeigen, nach «ja» (oder `--ja`) installieren |
 | `zen rollback <tag>` | M1 | über den Kanal zu einem Tag zurück (signiert, sonst nur mit «ja») |
-| `zen kanal [status\|pruefen\|anker\|zeitpunkt\|automatik]` | Kanal | signierter Kanal: Stand mit Fingerabdrücken, letzte Installation; `sudo zen kanal pruefen` holt und prüft (installiert nichts); `sudo zen kanal anker ORDNER` setzt den Anker von Hand; `zen kanal zeitpunkt` zeigt, `sudo zen kanal zeitpunkt sperre\|fenster VON BIS\|jederzeit\|hand` setzt, wann geprüfte Updates automatisch kommen (dasselbe in Einstellungen › System › Updates); `zen kanal automatik` zeigt die Automatik, `sudo zen kanal automatik an\|aus` ist ihr Notschalter |
+| `zen kanal [status\|pruefen\|anker\|zeitpunkt\|automatik]` | Kanal | signierter Kanal: Stand mit Fingerabdrücken, letzte Installation; `sudo zen kanal pruefen` holt und prüft (installiert nichts); `sudo zen kanal anker ORDNER` setzt den Anker von Hand; `zen kanal zeitpunkt` zeigt, `sudo zen kanal zeitpunkt sperre\|fenster VON BIS\|jederzeit\|hand` setzt, wann geprüfte Updates automatisch kommen (dasselbe in Einstellungen › System › Updates); `zen kanal automatik` zeigt die Automatik, `sudo zen kanal automatik an\|aus` ist ihr Notschalter (gilt auch für die Basis-Updates) |
 | `zen doctor [--kurz]` | M1 | Prüfbericht ohne Geheimnisse, Exit 1 bei Fehlern |
-| `zen version` | M1 | zenOS-Version, Basis (Ubuntu), Kanal, Commit, letzte Installation über den Kanal, Quickshell, labwc, Architektur |
+| `zen version` | M1 | zenOS-Version, Basis (Ubuntu), Kanal, Commit, letzte Installation über den Kanal, ausstehende Basis-Updates und «Neustart nötig» (Zeile `Pakete`, ohne Netz), Quickshell, labwc, Architektur |
 | `zen benutzer [--ruhig]` | M1 | nur die Benutzerteile einrichten (`install.sh --nur-benutzer`) |
 | `zen hilfe [befehl]` | M1 | Übersicht oder Hilfe zu einem Befehl |
 | `zen lock` | M7 | Sitzung sperren, auch per SSH (Notfall-Sperre, falls die Oberfläche nicht antwortet) |
@@ -132,10 +132,11 @@ modul_benutzer() {  # optional; als Benutzer, ohne sudo, nie im --image-Modus
   <tag>` (`zen update` danach als Schritt 2 `sudo …/zenos-basis update [--ja]`, ausser mit `--nur-zenos`). Das schreibt einen Wunsch, startet `zenos-kanal-holen` und `zenos-kanal-pruefen`, fragt bei Bedarf nach «ja»
   (gebunden an die gezeigte Commit- bzw. Objekt-ID), startet dann `zenos-kanal-installieren` und zeigt dessen Journal,
   danach prüft es den Stand neu. Eine eigene Sperre (`/run/zenos-sperre/bedienung.lock`, nur root) verhindert zwei
-  gleichzeitige Aufrufe. Nach einer Installation oder einem Rückweg richtet zen die Benutzerteile ein (`install.sh
-  --nur-benutzer`). Exit: 0 installiert oder aktuell, 3 abgelehnt, 4 gescheitert und zurück, 5 kaputt, 10 wartet
-  (Zustimmung, Platz, Netz), 75 läuft schon (auch ein `install.sh` von Hand). Fehlt zenos-kanal, verweist zen auf den
-  Notweg (ANLEITUNG F).
+  gleichzeitige Aufrufe. Nach einer Installation oder einem Rückweg (oder einem gelungenen Basis-Schritt) richtet zen
+  die Benutzerteile ein (`install.sh --nur-benutzer`). Exit je Schritt: 0 installiert oder aktuell, 1 Fehler,
+  3 abgelehnt, 4 gescheitert und zurück (Kanal), 5 kaputt, 10 wartet (Zustimmung, «nein», Platz, Netz), 75 läuft schon
+  (auch ein `install.sh` von Hand). `zen update` endet mit 0 nur, wenn jeder gelaufene Schritt gelang, sonst mit dem
+  schwereren (5, 4, 1, 3, 10, 75); 2 Aufruf, 130 Ctrl+C. Fehlt zenos-kanal, verweist zen auf den Notweg (ANLEITUNG F).
 
 ## zen doctor
 
@@ -176,6 +177,20 @@ Prozesse nur mit Argumentlisten, jedes git mit leerer Umgebung und gehärteten E
 Exit-Codes: `docs/image-und-releases.md`, «Auf dem Gerät: zenos-kanal». Tests: `test/einheiten/kanal.test.py`,
 `test/einheiten/kanal-installieren.test.py`, `test/einheiten/kanal-automatik.test.py`, Ende-zu-Ende
 `test/container/kanal-e2e.sh`.
+
+## zenos-basis
+
+`bin/zenos-basis` (Python 3, nur Standardbibliothek, `python3 -I`) läuft als root-eigene Kopie
+`/usr/local/libexec/zenos/zenos-basis` (Modul `71-basis`): `pruefen` in `zenos-basis-pruefen.service` (ein
+unterbrochenes dpkg nachholen, `apt-get update`, Auswertung von `apt-get -s full-upgrade`), `installieren` in
+`zenos-basis-installieren.service` (genau die Liste des Auftrags mit Block-Inhibitor, `policy-rc.d` nur gegen greetd,
+danach `install.sh --ruhig` als root mit `ZENOS_KANAL_LAUF=1`, Gesundheitsprüfung ohne Rückweg), `update [--ja]` als
+Schritt 2 von `zen update`, `jetzt` und `zustimmen` für die Einstellungen (über `zenos-kanal-bedienen`),
+`automatik lauf|gelegenheit` in den Units der Timer (fragt `zenos-kanal automatik darf --ohne-ssh`), `status` für
+alle (`--kurz` für `zen doctor` und `zen version`). Sperre gemeinsam mit dem Kanal (`/run/zenos-sperre/kanal.lock`,
+Bedienung `bedienung.lock`). Prozesse nur mit Argumentlisten. Ablauf, Dateien und Exit-Codes:
+`docs/image-und-releases.md`, «Basis-Updates». Tests: `test/einheiten/basis-updates.test.py`,
+`basis-automatik.test.py`, `basis.test.py`, `zen-update.test.py`, Ende zu Ende `test/container/basis-e2e.sh`.
 
 ## zenos-gesten
 
