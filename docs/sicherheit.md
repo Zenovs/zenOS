@@ -52,6 +52,12 @@ Grundsatz 1: Sicherheit ist Standard und geht vor Design und Bequemlichkeit. Sie
     Paketlisten von `esm.ubuntu.com`. Ob er auch abgeschaltet werden soll, ist offen (`docs/module/m11.md`).
   - `apport` sammelt Absturzberichte nur lokal; gesendet wird erst mit `ubuntu-bug` (whoopsie gehört nicht zu
     Ubuntu Server).
+  - **Neue Ubuntu-Versionen:** Die Begrüssung (`91-release-upgrade`, auch `update-notifier-motd.timer`) und
+    `do-release-upgrade` fragten `changelogs.ubuntu.com` nach einer neuen Version. zenOS setzt `Prompt=never` über den
+    Drop-in `/etc/update-manager/release-upgrades.d/zenos.cfg` (`scripts/module/71-basis.sh`, die Conffile
+    `/etc/update-manager/release-upgrades` bleibt unberührt); danach fragt keiner mehr, und `do-release-upgrade` lehnt
+    ab. Ein Wechsel der Ubuntu-Basis ist eine neue zenOS-Hauptversion mit neuem Image (`docs/image-und-releases.md`,
+    «Basiswechsel»). Rückgängig: die Datei löschen; install.sh legt sie beim nächsten Lauf wieder an.
 - **Automatische Verbindung des Kanals (Regel 8, Entscheid Zeno: ab Werk an):** `zenos-kanal.timer` holt 10–20
   Minuten nach dem Start und danach alle 6 Stunden über `zenos-kanal-holen.service` (flüchtiger Systembenutzer ohne
   Rechte, Sandbox) die Tags `v*` und den Branch `dev` von origin, also `github.com` (die https-Adresse aus

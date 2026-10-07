@@ -47,6 +47,8 @@ Verweis angelegt; was generiert wird, erzeugen die Programme unter `scripts/bin/
 | `chrome/policies/zenos.json` | `/etc/opt/chrome/policies/managed/` | Chrome-Richtlinien (`docs/sicherheit.md`) |
 | `vscode/policy.json` | `/etc/vscode/policy.json` | VS Code ohne Telemetrie |
 | `apt/20auto-upgrades`, `apt/52zenos-unattended` | `/etc/apt/apt.conf.d/` | automatische Sicherheitsupdates |
+| `update-manager/zenos.cfg` | `/etc/update-manager/release-upgrades.d/` (`71-basis`) | `Prompt=never`: kein Wechsel der Ubuntu-Hauptversion, keine Abfrage neuer Versionen (die Conffile `release-upgrades` bleibt unberührt; nur ASCII) |
+| `basis` | wird nicht installiert, `zenos-kanal` liest es aus dem geprüften Stand | Ubuntu-Version, für die der Stand gebaut ist (`26.04`); ein Stand für eine andere Version kommt nie als Update (`docs/image-und-releases.md`, «Basiswechsel») |
 | `apt/zenos-ohne-snapd` | `/etc/apt/preferences.d/` (`22-aufraeumen`, nur solange snapd fehlt) | apt-Pin: snapd nie wieder installieren |
 | `plymouth/zenos/` | `/usr/share/plymouth/themes/zenos/` (`42-bootsplash`, nur `*.plymouth`, `*.script`, `bilder/`) | Bootsplash-Theme, abgelegt, nicht eingeschaltet (`docs/module/bootsplash.md`); `erzeugen.py` und `vorschau.sh` bleiben im Repo |
 | `vertrauen/release`, `wurzel`, `widerrufen`, `serie` | `/etc/zenos/vertrauen/` (`12-vertrauen`, nur wenn es fehlt oder leer ist; im Image) | Vertrauensanker: öffentliche Prüfschlüssel für signierte Releases, Prinzipale `zenos-release` und `zenos-wurzel`; noch ohne Schlüssel (`docs/image-und-releases.md`, «Signierte Releases») |

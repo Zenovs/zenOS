@@ -66,7 +66,8 @@ lautlos ab.
   base-files liegen, nichts verweist mehr auf sie.
 - **apt-Hook** `system/apt/60zenos-kennung` → `/etc/apt/apt.conf.d/`: `DPkg::Post-Invoke` ruft
   `zenos-kennung erneuern` nach jedem dpkg-Lauf von apt und unattended-upgrades, mit `|| true` und nur, wenn das
-  Programm da ist. So folgt die Kennung einer neuen Punktversion oder einem Release-Upgrade von Ubuntu.
+  Programm da ist. So folgt die Kennung einer neuen Punktversion von Ubuntu (ein Release-Upgrade ist gesperrt,
+  siehe «Kein Release-Upgrade»).
 - **Modul `scripts/module/72-kennung.sh`** (nach 70-sicherheit, damit `51zenos-ubuntu-quellen` schon liegt; auch im
   Image-Modus):
   1. Programm und Hook installieren, aber nur, wenn `/usr/local/sbin` und alle Ordner darüber root gehören und nur
@@ -173,17 +174,37 @@ dabei die des letzten Stands mit Kennung (der alte Stand schreibt `/usr/local/sh
 version` zeigt den echten Stand. Wer mit dem alten Stand ganz bei Ubuntu sein will: vorher
 `sudo zenos-kennung ubuntu`.
 
-## Release-Upgrade (26.04 → 28.04)
+## Kein Release-Upgrade (26.04 → 28.04)
 
-Noch nicht getestet. Bis dahin:
+Ein Wechsel der Ubuntu-Basis ist eine neue zenOS-Hauptversion mit neuem Image, kein Update (Entscheid Zeno, Oktober
+2026; Ablauf und Backup in `docs/image-und-releases.md`, «Basiswechsel»). `do-release-upgrade` ist darum gesperrt:
+`scripts/module/71-basis.sh` legt `/etc/update-manager/release-upgrades.d/zenos.cfg` mit `Prompt=never` ab, die
+Conffile `/etc/update-manager/release-upgrades` bleibt unberührt. Mit `Prompt=never` meldet `91-release-upgrade` auch
+mit der Kennung Ubuntu keine neue Version und fragt changelogs.ubuntu.com nicht; mit der Kennung zenOS ist es
+zusätzlich per statoverride stillgelegt. `zen doctor` warnt, wenn `Prompt` nicht `never` ist (Abschnitt
+«Ubuntu-Basis»).
 
-1. `sudo zenos-kennung ubuntu`
-2. `sudo do-release-upgrade`
-3. `sudo zenos-kennung einrichten`, dann `zen update` (install.sh prüft die Sicherheitsquelle mit dem neuen Codenamen)
+Der Hook zieht `VERSION_CODENAME` weiter nach, sobald base-files ein neues Release bringt (etwa ein Punkt-Release
+26.04.2); `zen doctor` (Codename wie Ubuntu) fängt einen stehengebliebenen Codenamen ab.
 
-Der Hook zieht `VERSION_CODENAME` nach, sobald base-files von 28.04 installiert ist; bliebe er stehen, erlaubte
-unattended-upgrades weiter nur «resolute-security», und die Updates blieben lautlos aus. `zen doctor` (Codename wie
-Ubuntu) fängt das ab. `91-release-upgrade` ist stillgelegt; eine neue LTS meldet zenOS heute nicht selbst.
+Im Container geprüft (07.10.2026, `zenos-test:installiert` mit ubuntu-release-upgrader-core und
+update-notifier-common 1:26.04.25 bzw. 3.207.2 wie auf dem Pi, Verbindungen mit `strace -f -e trace=connect`):
+
+- **Drop-in statt Conffile:** `MetaRelease.py` (in `UpdateManager/Core/` und `DistUpgrade/` gleich) liest
+  `release-upgrades`, danach `release-upgrades.d/*.cfg` sortiert, der letzte Wert zählt. Dort liegt ab Werk schon
+  `ubuntu-advantage-upgrades.cfg` (ubuntu-pro-client, ohne `Prompt`); `zenos.cfg` sortiert danach. Die Datei ist
+  reines ASCII: `configparser.read` liest ohne Angabe der Kodierung.
+- **Vorher** (`Prompt=lts` der Conffile): `do-release-upgrade -c` verband sich zweimal mit changelogs.ubuntu.com und
+  meldete «There is no development version of an LTS available», Exit 1.
+- **Mit dem Drop-in:** `do-release-upgrade -c`, `do-release-upgrade -d -c`, `do-release-upgrade` selbst und
+  `check-new-release` melden «Prompt is set to never so upgrading is not possible», Exit 1, ohne eine einzige
+  Verbindung. `91-release-upgrade` (direkt aufgerufen, wie mit der Kennung Ubuntu) und
+  `update-notifier-motd.service` verbinden sich nicht und hinterlassen einen leeren Zwischenspeicher
+  `/var/lib/ubuntu-release-upgrader/release-upgrade-available`; die ganze Begrüssung verbindet sich nur mit dem
+  lokalen nscd.
+- **install.sh zweimal** (als `tester`): erster Lauf in 71-basis den Drop-in und den geleerten alten Hinweis
+  («New release '28.04 LTS' available.» von Hand hineingeschrieben), zweiter Lauf `0 Änderungen`, ohne Warnung; kein
+  Hin und Her mit 72-kennung. `dpkg --verify ubuntu-release-upgrader-core` ohne Befund.
 
 ## Im Container geprüft (Oktober 2026)
 

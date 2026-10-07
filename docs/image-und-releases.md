@@ -321,9 +321,18 @@ Ablauf:
      `stabil` nimmt nur `vX.Y.Z` und gibt sie erst 24 h nach dem ersten Sehen für die Automatik frei (`frei_ab`,
      `frei`), `vorschau` auch `vX.Y.Z-rcN` sofort. Die nach `zen rollback` verlassene Version liegt nie über
      `hoechste` (das sinkt nicht) und ist deshalb kein Ziel der Prüfung; `zen update` von Hand nimmt sie.
+   - Ubuntu-Basis: `system/basis` im Stand nennt die Ubuntu-Version, für die er gebaut ist (eine Zeile wie `26.04`;
+     Stände ohne die Datei gelten als 26.04). Passt sie nicht zur `VERSION_ID` des Geräts (mit der Kennung zenOS aus
+     `/usr/lib/os-release.ubuntu`), ist der Stand nie ein Ziel: nicht für die Automatik, nicht für `zen update`, auch
+     nicht mit «ja», über dev oder `zen rollback`, und `zenos-kanal image` legt mit ihm keinen Zustand ab Werk an.
+     Das Ziel ist dann die höchste Version für die eigene Basis; die übrigen stehen in `stand.json` unter
+     `basis.fremd` und als Hinweis. Installieren prüft die Basis in der Bereitstellung noch einmal. Ohne diese Grenze
+     holte ein Gerät auf 26.04 eine künftige Hauptversion für 28.04 von selbst, weil sie die höchste gültige Version
+     ist. Ein Basiswechsel ist eine neue Hauptversion mit neuem Image (siehe «Basiswechsel» unten).
    - `dev`: Neuer Stand von `origin/dev`, ob der installierte Stand darin liegt und ob jeder Commit
      dazwischen gültig mit einem Release-Schlüssel signiert ist (`%G?` gleich `G`; ein unsignierter Commit unter
-     einer signierten Spitze zählt). Sonst nur von Hand mit «ja». Automatisch kommt auf dev nie etwas.
+     einer signierten Spitze zählt). Sonst nur von Hand mit «ja». Automatisch kommt auf dev nie etwas. Ist
+     `origin/dev` für eine andere Ubuntu-Basis gebaut, steht das in `dev.basis_problem`, und nichts geht.
    - Rückfrage-Pfade: Trifft der Weg vom installierten Stand zum Ziel Firewall, Netz oder Boot, heisst der Zustand
      `zustimmung`. Die Liste steht fest im Code (`CONSENT_PATHS`, gleich den Gruppen `firewall`, `netz` und `boot`
      in `scripts/lib/sensible-pfade`, ein Test hält beide gleich); die Liste im neuen Stand kann nur Pfade
@@ -331,7 +340,8 @@ Ablauf:
 4. **Stand:** `/var/lib/zenos/kanal/stand.json` (0644, atomar): `kanal`, `zustand`, `grund`, `geprueft`,
    `letzter_kontakt`, `holen_fehler`, `anker` (Serie und Fingerabdrücke), `anker_problem`, `installiert`,
    `hoechste`, `bereit` (Version, Commit, Objekt, `erstmals`, `frei_ab`, `frei`, `rueckfrage`), `dev`, `gueltig`,
-   `abgelehnt`, `hinweise`, `uhr_synchron`, `automatik` (`an`), `unbestaetigt` (automatisch installierter Stand vor
+   `abgelehnt`, `hinweise`, `uhr_synchron`, `automatik` (`an`), `basis` (`geraet`: Ubuntu-Version des Geräts,
+   `fremd`: gültige Versionen für eine andere Basis), `unbestaetigt` (automatisch installierter Stand vor
    der Bestätigung), `zurueckgestellt` (Version nach `zen rollback`), `angehalten` (Stand von Hand: Commit, seit),
    `installation_lage` (wie `zen kanal status --installation`: `schluessel` und `text`, etwa `kaputt` oder
    `unterbrochen`; so zeigt die Oberfläche das auch dann, wenn die Prüfung danach jünger ist als `letzte.json`),
@@ -784,6 +794,52 @@ verschwinden. Im System stehen die Hinweise unter `/usr/local/share/doc/zenos/` 
   Image ausser im Testbau); ein alter Wert `main` gilt als `stabil`.
 - Der Anker `/etc/zenos/vertrauen` kommt aus `system/vertrauen` des Tags, `/var/lib/zenos/kanal` hat den Zustand ab
   Werk (`gut.json`, `hoechste`, `gesehen.json`).
+
+## Basiswechsel: neue Hauptversion, neues Image
+
+Ein Stand von zenOS ist für genau eine Ubuntu-Version gebaut; sie steht in `system/basis` (heute `26.04`). Innerhalb
+dieser Basis kommt alles als Update: die Stände von zenOS über den Kanal, die Pakete von Ubuntu über
+unattended-upgrades. Ein Wechsel der Basis (etwa auf 28.04) ist dagegen kein Update, sondern eine neue
+zenOS-Hauptversion mit neuem Image (Entscheid Zeno, Oktober 2026). Ein Release-Upgrade tauscht in einem Lauf fast
+jedes Paket, auch Kernel, Firmware, Qt (Quickshell muss neu gebaut werden), greetd und PAM, ohne Schnappschuss und ohne
+Rückweg. Ein neues Image ist vorher geprüft, und die alte Karte bleibt als Rückweg.
+
+Gesperrt ist der Wechsel an zwei Stellen:
+
+- **Release-Upgrader:** `scripts/module/71-basis.sh` legt `/etc/update-manager/release-upgrades.d/zenos.cfg` mit
+  `Prompt=never` ab (aus `system/update-manager/zenos.cfg`). ubuntu-release-upgrader liest nach
+  `/etc/update-manager/release-upgrades` jede `*.cfg` in diesem Ordner in Namensreihenfolge, der letzte Wert zählt.
+  Die Conffile des Pakets bleibt unberührt, sonst hielte unattended-upgrades bei einem Update des Pakets an. Danach
+  lehnt `do-release-upgrade` ab (auch `-d`: «Prompt is set to never so upgrading is not possible», Exit 1), und
+  `check-new-release`, die Begrüssung `91-release-upgrade` und `update-notifier-motd.timer` bleiben still, ohne
+  changelogs.ubuntu.com zu fragen (im Container mit strace geprüft, siehe `docs/module/kennung.md`). Einen Hinweis auf
+  eine neue Version, den die Begrüssung vorher zwischengespeichert hatte, leert das Modul.
+- **Kanal:** `zenos-kanal` installiert nie einen Stand, dessen `system/basis` nicht zur `VERSION_ID` des Geräts passt
+  (Regel «Ubuntu-Basis» oben). Ein Gerät auf 26.04 bleibt so auf der höchsten Version für 26.04, auch wenn es auf
+  origin schon eine Hauptversion für 28.04 gibt.
+
+`zen doctor` warnt, wenn die Basis nicht Ubuntu 26.04 ist (Abschnitt «System») und wenn `Prompt` nicht `never` ist
+(Abschnitt «Ubuntu-Basis»). Wer die Paketquellen von Hand auf eine neue Version umstellt, kommt an beiden Sperren
+vorbei (root kann alles); danach nimmt der Kanal keinen Stand für 26.04 mehr an.
+
+**Umstieg auf eine neue Hauptversion** (von Hand, wenn es sie gibt):
+
+1. Persönliche Daten sichern, von Hand auf einen eigenen Datenträger, nie auf ein Ziel im Netz (Manifest 0, harte
+   Regel 8):
+   - `~/.config/zenos/` (Einstellungen, Modi, Zustände, Raster, Bildschirm-Profile, Web-Apps)
+   - `~/Ablage/` (dorthin zeigen Schreibtisch, Downloads, Dokumente, Bilder, Musik, Videos)
+   - `~/.local/state/zenos/` (Laufzeitzustand, Thema)
+   - die Starter der Web-Apps `~/.local/share/applications/zenos-webapp-*.desktop` (sie entstehen aus
+     `~/.config/zenos/webapps.json` neu, gesichert ist sicherer)
+   - `/etc/xdg/zenos/` (Kanal, Zeitpunkt und Notschalter der Updates, Lüfterkurve, Freigabe des Akkuprofils,
+     WLAN-Land; für alle lesbar)
+   - nach Wunsch `~/.local/share/zenos/` (Nutzungsstatistik des Befehlsfelds)
+
+   Geheimnisse liegen in 1Password und gehören nicht in diese Sicherung. Ein Werkzeug für das Backup gibt es noch
+   nicht.
+2. Das Image der neuen Hauptversion auf eine zweite Karte flashen (siehe «Flashen»); die alte Karte bleibt liegen.
+3. Erster Start und Einrichtung, dann die Ordner aus Schritt 1 zurückkopieren (`/etc/xdg/zenos/` mit sudo, Datei für
+   Datei vergleichen: Die neue Hauptversion kann Werte ändern), danach `zen update`.
 
 ## Grösse und Dauer
 

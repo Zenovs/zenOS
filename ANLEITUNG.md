@@ -678,6 +678,10 @@ systemctl --user start zenos-shell.service
   unattended-upgrades: …».
 - [ ] Bootsplash: `zen doctor` zeigt «Bootsplash vorbereitet, nicht aktiv», beim Start erscheint noch keiner. Er bleibt
   aus, bis du entscheidest (siehe G).
+- [ ] Kein Wechsel der Ubuntu-Hauptversion: `do-release-upgrade -c` meldet «Prompt is set to never so upgrading is not
+  possible» (Exit 1), `zen doctor` zeigt im Abschnitt «Ubuntu-Basis» «Kein Wechsel der Ubuntu-Hauptversion:
+  Prompt=never», und `sudo dpkg --verify ubuntu-release-upgrader-core` bleibt ohne Ausgabe (die Conffile
+  `/etc/update-manager/release-upgrades` ist unverändert).
 
 **Lüfter einstellen (Argon ONE UP, auch Argon ONE V3)**
 - [ ] System-Menü: Die Zeile «Lüfter» zeigt z. B. «aus · Auto» und rechts einen Pfeil. Ein Klick klappt darunter

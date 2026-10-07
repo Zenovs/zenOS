@@ -334,6 +334,7 @@ Die Logik läuft in Quickshell selbst, ohne eigenen Hintergrunddienst.
 | Login, Portale | `/etc/greetd/config.toml`, `/etc/xdg/xdg-desktop-portal/labwc-portals.conf`, `/etc/xdg/xdg-desktop-portal-wlr/config` | ja (Kopien) |
 | Standard-Apps, ausgeblendete Starter | `/etc/xdg/labwc-mimeapps.list` (Ordner: Thunar), `/usr/local/share/applications/thunar-{bulk-rename,settings}.desktop` (`Hidden=true`) | ja (Kopien) |
 | Richtlinien | `/etc/opt/chrome/policies/managed/zenos.json`, `/etc/vscode/policy.json`, `/etc/apt/apt.conf.d/51zenos-ubuntu-quellen`, `52zenos-unattended` | ja (Kopien) |
+| Kein Basiswechsel | `/etc/update-manager/release-upgrades.d/zenos.cfg` (`Prompt=never`, `71-basis`); die Ubuntu-Version eines Stands steht in `system/basis` (liest `zenos-kanal` aus dem geprüften Stand) | ja (Kopie von `system/update-manager/zenos.cfg`) |
 | Install-Log | `/var/log/zenos/install.log`, Rückfall `~/.local/state/zenos/install.log` | nie |
 | Einstellungen | `~/.config/zenos/einstellungen.json` | nie |
 | Modi | `~/.config/zenos/modi/*.json` | nie |
@@ -379,6 +380,7 @@ Systemteile, dann alle Benutzerteile.
 | `60-terminal` | kitty, fish, tldr-Seiten |
 | `65-oberflaeche` | automatische Sperre, Notfall-Sperre, Hilfsprogramme |
 | `70-sicherheit` | Sicherheitsupdates, Richtlinien, Ubuntu-Nachrichten aus (motd-news maskiert und stillgelegt), Firewall (standardmässig an) und polkit-Aktionen, gitleaks-Hook |
+| `71-basis` | Ubuntu-Basis: kein Wechsel der Hauptversion (`Prompt=never` per Drop-in in `/etc/update-manager/release-upgrades.d/`), keine Hinweise auf neue Ubuntu-Versionen |
 | `72-kennung` | Systemkennung zenOS (`zenos-kennung`, apt-Hook, Version, Logo), nur nach der Vorab-Prüfung der Ubuntu-Sicherheitsquelle |
 | `75-apps` | Werkzeuge für `zen apps`, Starter für Chrome und Web-Apps |
 | `80-argon` | Argon-Dienst (V3 und ONE UP) und Shutdown-Hook |
