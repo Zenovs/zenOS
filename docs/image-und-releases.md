@@ -1076,8 +1076,9 @@ eine zweite Basis-Installation mit 75, ein `install.sh` von Hand wartet; hält d
   alte Liste ab (Exit 3).
 - **Neustart voraussichtlich** ist eine Schätzung aus den Paketnamen. Andere Dienste (etwa ssh, wenn sein Paket dabei
   ist) startet apt wie bei Ubuntu neu; eine laufende SSH-Sitzung bleibt dabei bestehen.
-- **Herstellerquellen:** Chrome, VS Code und die 1Password-CLI kommen mit, sobald `zen apps` ihre Quellen eingerichtet
-  hat. Ihre Pakete prüft apt gegen den Schlüssel des Herstellers; mehr Vertrauen als in diese Quelle gibt es nicht.
+- **Herstellerquellen:** Pakete wie Chrome, VS Code und die 1Password-CLI kommen mit, sobald `zen apps` ihre Quellen
+  eingerichtet hat. Ihre Pakete prüft apt gegen den Schlüssel des Herstellers; mehr Vertrauen als in diese Quelle gibt
+  es nicht.
 - **Geänderte Konfigurationsdateien** behält dpkg (`--force-confold`), die neue Fassung des Pakets liegt daneben als
   `.dpkg-dist`. Wer eine Datei unter `/etc` von Hand geändert hat, bekommt die neue Vorgabe also nicht von selbst.
 - **Häufiger `apt-get update`:** Die Automatik fragt die Paketquellen alle 6 Stunden statt einmal täglich, über
