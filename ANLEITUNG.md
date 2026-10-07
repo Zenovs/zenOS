@@ -421,8 +421,12 @@ systemctl --user start zenos-shell.service
   steht kein Punkt, und nichts wird ausgelöst (kein «Anmelden», kein «Jetzt neu starten»).
 - [ ] Am Login-Bildschirm drei Zeichen des Passworts tippen, eine Minute warten (dunkel), mit einer Taste wecken, den
   Rest tippen und Enter: Die Anmeldung klappt beim ersten Versuch, danach ist der Bildschirm an.
+- [ ] Dasselbe, aber die Taste zum Wecken 2 s halten, bis der Bildschirm hell ist: kein Punkt dazu, die Anmeldung
+  klappt beim ersten Versuch. Mit gehaltenem Enter wecken: Es meldet nicht an.
 - [ ] Dasselbe am Netzteil und am Akku (Argon ONE UP). Mit Deckel: zuklappen, eine Minute warten, aufklappen. Der
-  Bildschirm wird von selbst hell, das erste Zeichen landet im Feld.
+  Bildschirm wird von selbst hell, das erste Zeichen landet im Feld. Kurz nach einer Eingabe zuklappen und nach
+  50 s aufklappen: Er bleibt danach eine Minute hell.
+- [ ] Am dunklen Login den Monitor aus- und wieder anstecken: Er wird hell, das erste Zeichen landet im Feld.
 - [ ] `journalctl -b -t zenos-greeter` zeigt «Bildschirm aus» und «Wecktaste verworfen», keine Zeile «gescheitert».
 - [ ] Login-Bildschirm im Akkubetrieb (nur Argon ONE UP): Abmelden, Netzteil ab, 30 Minuten nichts tun. Die Zeile
   «zenOS schaltet um HH:MM aus · Eine Taste bricht ab» erscheint, eine Taste bricht ab. Ohne Eingabe schaltet das

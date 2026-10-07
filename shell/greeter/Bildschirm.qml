@@ -17,9 +17,11 @@ import "bildschirm.js" as BildschirmLogik
 //   geht nicht mehr an, beendet sich der Login, und greetd startet ihn neu (neues labwc, alle Bildschirme an).
 // - Wecktaste: Ab dem Ausschalten steht sie aus. Die erste Taste, der erste Klick oder die erste Berührung weckt nur
 //   und wird verworfen, genau eine (Anmeldefenster: Wecker mit dem Tastaturfokus, Klickfang über allem). Bis
-//   WECKEN_SCHONFRIST_MS nach dem Einschalten gilt das noch; weckte die Maus, kommt danach alles an.
-// - Vorwarnung vor dem Ausschalten (Leerlauf): an, solange sie läuft, ohne Wecktaste (wer tippt, tippt ins Feld).
-//   Deckel aufgeklappt: ebenso. Kommt danach keine Eingabe, geht er nach einer Minute wieder aus.
+//   WECKEN_SCHONFRIST_MS nach dem Einschalten gilt das noch; weckte die Maus, kommt danach alles an. Wird die Taste
+//   gehalten, verwirft das Anmeldefenster auch ihre Wiederholungen, bis sie losgelassen wird.
+// - Ohne Eingabe wecken (_wecken): Vorwarnung vor dem Ausschalten (Leerlauf, an, solange sie läuft), ihr Ende, Deckel
+//   aufgeklappt, ein neuer Bildschirm. An, ohne Wecktaste (wer tippt, tippt ins Feld), und mindestens eine Minute an,
+//   auch wenn der Compositor seine Minute früher beendet. Kommt keine Eingabe, geht er danach wieder aus.
 // - Zeichen im Passwortfeld bleiben, wie sie sind; das Passwort fasst dieser Teil nie an. Prozesse nur mit
 //   Argumentlisten.
 Scope {
@@ -36,6 +38,8 @@ Scope {
     property var _z: BildschirmLogik.zustand()
     property bool _aufgegebenGemeldet: false
     property bool _endet: false
+    // Die Bildschirme beim letzten Wechsel (neue wecken)
+    property var _bildschirme: []
 
     // Die Wecktaste kam (Taste, Klick oder Berührung) und ist verworfen. Weckt den Bildschirm.
     function verworfen(was: string): void {
@@ -62,12 +66,12 @@ Scope {
         root._weiter();
     }
 
-    // Ohne Eingabe wecken (Vorwarnung, Deckel): an, ohne Wecktaste. Ohne Eingabe danach beginnt die Minute neu.
+    // Ohne Eingabe wecken (Vorwarnung, Deckel, neuer Bildschirm): an, ohne Wecktaste, und eine Minute lang an. Kommt
+    // keine Eingabe, geht er danach aus (nachWecken). Ein «idle» des Compositors in dieser Minute ändert nichts.
     function _wecken(grund: string): void {
         console.info("Login: Bildschirm an (" + grund + ")");
         root._z = BildschirmLogik.wecken(root._z);
-        if (BildschirmLogik.minuteNeu(root._z, ausMonitor.isIdle, root.leerlauf.vorwarnungLaeuft))
-            nachWecken.restart();
+        nachWecken.restart();
         root._weiter();
     }
 
@@ -117,14 +121,25 @@ Scope {
         target: root.leerlauf
 
         function onVorwarnungLaeuftChanged(): void {
-            if (root.leerlauf.vorwarnungLaeuft)
-                root._wecken("Vorwarnung");
-            else if (BildschirmLogik.minuteNeu(root._z, ausMonitor.isIdle, false))
-                nachWecken.restart();
+            root._wecken(root.leerlauf.vorwarnungLaeuft ? "Vorwarnung" : "Vorwarnung vorbei");
         }
 
         function onAufgeklappt(): void {
             root._wecken("Deckel offen");
+        }
+    }
+
+    // Ein neuer Bildschirm (angesteckt, oder nach dem Ausstecken wieder da): labwc schaltet ihn ein, sein
+    // Anmeldefenster wartete sonst noch auf die Wecktaste. Wecken wie beim Deckel; Ausstecken ändert nichts.
+    Connections {
+        target: Quickshell
+
+        function onScreensChanged(): void {
+            const jetzt = BildschirmLogik.liste(Quickshell.screens);
+            const dazu = BildschirmLogik.bildschirmDazu(root._bildschirme, jetzt);
+            root._bildschirme = jetzt;
+            if (dazu)
+                root._wecken("Bildschirm neu");
         }
     }
 
@@ -142,12 +157,14 @@ Scope {
         }
     }
 
-    // Nach einem Wecken ohne Eingabe: Die Minute beginnt neu (der Compositor meldet ohne Eingabe kein neues «idle»)
+    // Die Minute nach einem Wecken ohne Eingabe. Ist danach weiter keine Eingabe gekommen, geht er aus (der Compositor
+    // meldet ohne Eingabe kein neues «idle», und eines in dieser Minute galt nicht).
     Timer {
         id: nachWecken
 
         interval: root._minuten * 60000
         onTriggered: {
+            root._z = BildschirmLogik.wachVorbei(root._z);
             if (ausMonitor.isIdle)
                 root._leerlauf();
         }
@@ -184,4 +201,6 @@ Scope {
                 Qt.callLater(() => root._fertig(wlopm.befehl, wlopm.code, wlopmAusgabe.text));
         }
     }
+
+    Component.onCompleted: root._bildschirme = BildschirmLogik.liste(Quickshell.screens)
 }

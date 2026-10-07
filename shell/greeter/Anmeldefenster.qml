@@ -5,12 +5,14 @@ import Quickshell
 import Quickshell.Wayland
 import qs.theme
 import qs.komponenten
+import "../dienste/energie.js" as EnergieLogik
 
 // Ein Bildschirm des Logins, gestaltet wie der Sperrbildschirm in Entwurf 2: grosse Uhrzeit, Datum, Konto,
 // Formular, unten die Bildmarke. Formular, Knöpfe und Tastaturfokus nur auf einem Bildschirm.
 // Ist der Bildschirm aus (Bildschirm.qml), weckt die erste Taste, der erste Klick oder die erste Berührung nur: Solange
 // die Wecktaste aussteht, hat der Wecker den Tastaturfokus und der Klickfang liegt über allem. Beide verwerfen genau
-// eine Eingabe, dann geht der Fokus dorthin zurück, wo er war. Was im Formular steht, bleibt unverändert.
+// eine Eingabe, dann geht der Fokus dorthin zurück, wo er war. Wird die Wecktaste gehalten, verwirft das Formular
+// ihre Wiederholungen, bis sie losgelassen wird (_gehalten). Was im Formular steht, bleibt unverändert.
 PanelWindow {
     id: root
 
@@ -50,6 +52,16 @@ PanelWindow {
             ziel.forceActiveFocus();
         else
             formular.fokussieren();
+    }
+
+    // Vor jeder Taste in einem Feld des Formulars (Drücken und Loslassen): Hält man die Wecktaste fest, wiederholt der
+    // Client sie, und die Wiederholungen kämen ins Feld (der Fokus ist schon zurück). Sie werden verworfen, bis die
+    // Taste losgelassen wird. Nie eine andere Taste (energie.js, wecktasteGehalten).
+    function _gehalten(event: KeyEvent, druck: bool): void {
+        const r = EnergieLogik.wecktasteGehalten(wecker.gehalten, druck, event.nativeScanCode, event.isAutoRepeat);
+        wecker.gehalten = r.gehalten;
+        if (r.verwerfen)
+            event.accepted = true;
     }
 
     anchors.top: true
@@ -237,6 +249,7 @@ PanelWindow {
                 width: 380
                 konten: root.konten
                 ablauf: root.ablauf
+                onVorTaste: (event, druck) => root._gehalten(event, druck)
             }
         }
     }
@@ -259,15 +272,18 @@ PanelWindow {
     }
 
     // Hält den Tastaturfokus, solange die Wecktaste aussteht, und verwirft die erste Taste (auch Return, Escape, Tab).
-    // Ihr Loslassen landet danach im Formular und bewirkt dort nichts.
+    // Ihr Loslassen landet danach im Formular und bewirkt dort nichts, ihre Wiederholungen verwirft es (_gehalten).
     Item {
         id: wecker
 
         // Wo der Fokus vorher war (zurück nach der Wecktaste)
         property Item vorher: null
+        // Code der verworfenen Wecktaste, bis sie losgelassen ist (-1: keine)
+        property int gehalten: -1
 
         Keys.onPressed: event => {
             event.accepted = true;
+            wecker.gehalten = event.nativeScanCode;
             root.bildschirm.verworfen("Taste");
             // Spätestens jetzt zurück: nie mehr als eine Taste
             root._weckerZurueck();

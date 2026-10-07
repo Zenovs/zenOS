@@ -251,16 +251,20 @@ sparen darf die Sperre nie schwächen.
 - **Wecktaste:** Die Taste, die einen dunklen Bildschirm weckt, landet nicht im Passwortfeld (vorher ergab sie einen
   Fehlversuch bei PAM). Verworfen wird genau eine Taste, nie mehr, damit ein hängender Zustand nie die
   Passworteingabe blockiert, und nur bis 300 ms nach dem Wecken (weckt die Maus, kommt das Passwort ganz an). Während
-  der sichtbaren Vorwarnung wird nichts verworfen. Es entsteht kein neuer Weg zu PAM.
+  der sichtbaren Vorwarnung wird nichts verworfen. Es entsteht kein neuer Weg zu PAM. Offen: Wird die Wecktaste in
+  der Sperre gehalten (über 600 ms), landen ihre Wiederholungen im Feld; das gibt höchstens einen Fehlversuch. Am
+  Login ist das behoben (`docs/module/energie.md`, «Offen»).
 - **Login-Bildschirm dunkel nach 1 Minute** (Zenos Entscheid vom 06.10.2026, `shell/greeter/Bildschirm.qml`): Dort
   ist niemand angemeldet, deshalb geht der Bildschirm ohne Sperre aus. Das ist die einzige Ausnahme von «dunkel heisst
   gesperrt», und sie steht nur in der Oberfläche des Logins (Benutzer `_greetd`, eigenes labwc), nicht in
   `zenos-bildschirm`, IPC oder `zen energie`. Keine neuen Rechte: `_greetd` schaltet mit wlopm nur die Ausgänge
   seines eigenen labwc (Argumentliste mit Zeitlimit, keine Shell). Die erste Taste, der erste Klick oder die erste
   Berührung weckt nur und wird verworfen (genau eine Eingabe), sie erreicht weder das Passwortfeld noch einen Knopf.
-  Das Passwort geht weiter nur über greetd an PAM. Was scheitert, lässt den Bildschirm an; geht ein sicher dunkler
-  Bildschirm nicht mehr an, startet der Login neu (greetd). Ein kurzer Druck auf die Ein/Aus-Taste schaltet dort wie
-  bisher aus (logind), auch wenn es dunkel ist.
+  Wird sie gehalten, verwirft das Formular auch ihre Wiederholungen, bis sie losgelassen wird; jede andere Taste
+  kommt an. Ein neuer Bildschirm (angesteckt) weckt ohne Wecktaste, damit auf einem hellen Bildschirm kein Zeichen
+  verloren geht. Das Passwort geht weiter nur über greetd an PAM. Was scheitert, lässt den Bildschirm an; geht ein
+  sicher dunkler Bildschirm nicht mehr an, startet der Login neu (greetd). Ein kurzer Druck auf die Ein/Aus-Taste
+  schaltet dort wie bisher aus (logind), auch wenn es dunkel ist.
 - **Keine Shell:** Helfer und Aufrufe aus der Oberfläche nutzen Argumentlisten, IPC und Helfer nehmen nur feste
   Wörter an. swayidle führt seine Befehle über `sh -c` aus; zenos-idle gibt ihm deshalb nur feste, per Muster
   geprüfte Pfade mit festen Wörtern (`sperrbefehl`, `bildschirmbefehl`).

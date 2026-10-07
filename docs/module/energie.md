@@ -175,14 +175,30 @@ lesbar.
   Eingabe, nie mehr: Der Wecker gibt den Fokus nach der ersten Taste in jedem Fall zurück, und er prüft dafür
   `focus`, nicht `activeFocus`. Weckt die Maus oder das Touchpad (Bewegung), gilt die Wecktaste noch 300 ms
   (`WECKEN_SCHONFRIST_MS`, wie in der Sperre), danach kommt alles an.
+- **Gehaltene Wecktaste:** Wer die Taste festhält, bis der Bildschirm hell ist (ein HDMI-Monitor braucht dafür oft
+  1–3 s), bekommt sie unter Wayland vom Client wiederholt (QtWayland, nach 600 ms 25 je Sekunde, labwc-Vorgabe).
+  Die Wiederholungen gingen an das Feld, das den Fokus zurückbekam. Der Wecker merkt sich deshalb den Code der Taste
+  (`nativeScanCode`), und das Formular verwirft im Namens- und Passwortfeld jede Wiederholung dieser Taste, bis sie
+  losgelassen wird (`wecktasteGehalten` in `shell/dienste/energie.js`). Nie eine andere Taste: Jeder echte Druck,
+  auch derselben Taste, und das Loslassen beenden es. Ein gehaltenes Return meldet also nicht mit dem halben
+  Passwort an, eine gehaltene Rücktaste oder Escape löscht nichts.
 - **Zeichen im Feld:** Was schon im Passwortfeld stand, bleibt unverändert; die Wecktaste kommt nicht dazu. Das
   Passwort reicht weiterhin nur greetd an PAM weiter (`Ablauf.qml`), der Anmeldeablauf ist unverändert.
 - **Vorwarnung vor dem Ausschalten** (30 Min. im Akkubetrieb, `Leerlauf.qml`): Sie schaltet den Bildschirm an und hält
   ihn an, ohne Wecktaste (wer tippt, tippt ins Feld und bricht ab). Endet sie ohne Eingabe (Netzteil, Wächter,
   logind lehnt ab), geht er eine Minute später wieder aus.
 - **Deckel** (Argon ONE UP): Aufklappen schaltet den Bildschirm an (ohne Wecktaste), ohne Eingabe danach ist er eine
-  Minute später wieder aus. Zuklappen ändert am Login-Bildschirm nichts (angemeldet ist niemand, gesperrt werden muss
-  nichts); dunkel wird er nach der Minute.
+  Minute nach dem Aufklappen wieder aus, auch wenn es innerhalb der Minute nach der letzten Eingabe war. Für labwc
+  ist das Aufklappen keine Eingabe (der Deckel kommt über GPIO27), sein Zähler liefe weiter. Deshalb gilt nach jedem
+  Wecken ohne Eingabe (Deckel, Vorwarnung und ihr Ende, neuer Bildschirm) eine eigene Minute (`wach`, Timer
+  `nachWecken`): Ein «idle» des Compositors in dieser Minute ändert nichts, danach geht er ohne Eingabe aus. Jede
+  Eingabe beendet sie, dann zählt wieder der Compositor. Zuklappen ändert am Login-Bildschirm nichts (angemeldet ist
+  niemand, gesperrt werden muss nichts); dunkel wird er nach der Minute.
+- **Neuer Bildschirm** (angesteckt, oder nach dem Ausstecken wieder da, etwa über einen KVM-Umschalter oder einen
+  Monitor, der im Standby die Verbindung trennt): labwc schaltet einen neuen Ausgang ein, `wlopm --off` erfasste nur
+  die alten. `Bildschirm.qml` weckt dann wie beim Deckel: alle an, keine Wecktaste (sonst verwürfe das Formular auf
+  einem hellen Bildschirm das erste Zeichen des Passworts), ohne Eingabe eine Minute später alle aus. Ausstecken
+  ändert nichts.
 - **Leerer Akku** (3 %, `zenos-argon`): unverändert. Die Zeile steht auch auf dem dunklen Login; wie auf der Sperre
   schaltet sie den Bildschirm nicht an.
 - **Nach der Anmeldung:** Die Anmeldung braucht Eingaben, der Bildschirm ist dann an. Die Sitzung startet ihr eigenes
@@ -353,13 +369,16 @@ hergeleitet und am Gerät zu prüfen («Am Gerät prüfen», Punkt 5).
     neuerem Code und hellem Bildschirm, ein zweiter Lauf startet nichts neu; `zen doctor`, Abschnitt «Energie» (Zeiten,
     Ausschalten mit und ohne Akku, Login-Bildschirm, Stand von zenos-idle, Hemmer der Ein/Aus-Taste, nur lesend).
   - `test/einheiten/raster.test.py`: Super+Shift+L und `XF86PowerOff` ohne Shell, Programme vorhanden.
-  - `test/einheiten/login-bildschirm.test.mjs` (12 Tests): Bildschirm am Login-Bildschirm (`greeter/bildschirm.js`):
+  - `test/einheiten/login-bildschirm.test.mjs` (15 Tests): Bildschirm am Login-Bildschirm (`greeter/bildschirm.js`):
     Ablauf aus und an, die Wecktaste steht schon vor dem Abschalten aus, genau eine Eingabe wird verworfen,
     Schonfrist, jede Eingabe beginnt die Minute neu (auch während des Ausschaltens), nach einem Wecken ohne Eingabe
-    beginnt sie neu, Fehlerfall bleibt an (Ausschalten gescheitert: sofort wieder an, nach drei Fehlschlägen nie mehr;
-    wlopm unbrauchbar: aufgeben ohne Neustart; sicher dunkel und geht nicht an: Neustart des Logins), Vorwarnung und
-    Deckel ohne Wecktaste, Antworten von wlopm, Argumentliste ohne Shell, Verdrahtung in `Bildschirm.qml`,
-    `Anmeldefenster.qml` (Wecker, Klickfang) und `greeter.qml`, Notfall-Login ohne Ausschalten.
+    eine eigene Minute (Deckel 2 s vor dem Ende der alten Minute aufgeklappt: erst eine Minute später aus), neuer
+    Bildschirm weckt ohne Wecktaste (auch während des Ausschaltens), gehaltene Wecktaste (Wiederholungen verworfen bis
+    zum Loslassen, nie eine andere Taste), Fehlerfall bleibt an (Ausschalten gescheitert: sofort wieder an, nach drei
+    Fehlschlägen nie mehr; wlopm unbrauchbar: aufgeben ohne Neustart; sicher dunkel und geht nicht an: Neustart des
+    Logins), Vorwarnung und Deckel ohne Wecktaste, Antworten von wlopm, Argumentliste ohne Shell, Verdrahtung in
+    `Bildschirm.qml` (Wachminute, neue Bildschirme), `Anmeldefenster.qml` (Wecker, Klickfang, Wiederholungen),
+    `Formular.qml`, `Eingabe.qml` und `greeter.qml`, Notfall-Login ohne Ausschalten.
   - Deckel und leerer Akku: `argon.test.py` und `geraet.test.mjs` (`docs/module/m13.md`).
 - **Start-Test** (`pruefen.sh start`): Rundgang mit `einstellungen oeffnen energie`, `energie status`,
   `sperre bildschirm aus → an` und `sperre bildschirm an → an` (ungesperrt bleibt es hell), `energie vorwarnung →
@@ -404,8 +423,12 @@ hergeleitet und am Gerät zu prüfen («Am Gerät prüfen», Punkt 5).
    Berührung des Bildschirms wecken: Er geht an, im Passwortfeld steht kein Punkt, nichts wird ausgelöst. Vorher drei
    Zeichen tippen, dunkel werden lassen, mit einer Taste wecken, den Rest tippen: Die Anmeldung klappt beim ersten
    Versuch. Tippen in Abständen unter einer Minute hält ihn an. Am Netzteil und am Akku gleich. Deckel zu, eine
-   Minute warten, aufklappen: hell, das erste Zeichen landet im Feld. `journalctl -b -t zenos-greeter` zeigt «Bildschirm
-   aus» und «Wecktaste verworfen», keine Zeile «gescheitert».
+   Minute warten, aufklappen: hell, das erste Zeichen landet im Feld. Deckel kurz nach einer Eingabe zu und gegen Ende
+   der Minute auf: Er bleibt danach eine Minute hell. Drei Zeichen tippen, dunkel werden lassen, eine Buchstabentaste
+   2 s halten, bis er hell ist, den Rest tippen: Die Anmeldung klappt beim ersten Versuch; ebenso mit gehaltenem
+   Return (es meldet nicht an). Am dunklen Login den Monitor aus- und wieder anstecken: Er wird hell, das erste
+   Zeichen landet im Feld, eine Minute ohne Eingabe später ist er wieder dunkel. `journalctl -b -t zenos-greeter`
+   zeigt «Bildschirm aus» und «Wecktaste verworfen», keine Zeile «gescheitert».
 10. **Login-Bildschirm im Akkubetrieb:** Abmelden, Netzteil ab, 30 Min. nichts tun. Die Zeile «zenOS schaltet um …
    aus» steht da, eine Taste bricht ab; ohne Eingabe schaltet es nach 60 s aus. Mit SSH, tmux oder einer Anmeldung auf
    einer Textkonsole schaltet es nicht aus (`journalctl -t zenos-energie`: «(Login-Bildschirm)»).
@@ -455,6 +478,10 @@ Bildschirm mit `system/greeter/labwc`, `shell/greeter.qml`, dazu eine Attrappe v
   (Protokoll «1 Min. ohne Eingabe, Bildschirm aus»). Die Maus weckt.
 - **taste:** «tes» getippt, nach 60 s aus. «q» weckt, greetd hat nichts bekommen. «ter» und Return: greetd bekommt
   genau «tester», danach `start_session`, der Bildschirm ist an. Protokoll «Wecktaste verworfen (Taste)».
+- **halten:** «tes», dunkel, «q» 1,5 s gehalten (`wtype -P q -s 1500 -p q`): greetd hat nichts bekommen, nach «ter»
+  und Return genau «tester». Dann «tes», dunkel, Return 1,5 s gehalten: greetd hat nichts bekommen, «ter» und Return
+  melden mit «tester» an. Gegenprobe auf dem Stand vor der Behebung: greetd bekommt «tes», 20 Mal «q» und «ter»;
+  mit gehaltenem Return meldet es mit «tes» an (Fehlversuch, dann `cancel_session`).
 - **klick:** «tester» getippt, Zeiger auf «Anmelden», nach 60 s aus. Der erste Klick weckt, greetd hat nichts
   bekommen; der zweite meldet an.
 - **fehler:** wlopm (Attrappe) schaltet ab, meldet aber einen Fehler: gleich wieder an, 20 s später weiter an, kein
@@ -464,10 +491,28 @@ Bildschirm mit `system/greeter/labwc`, `shell/greeter.qml`, dazu eine Attrappe v
   an, starte den Login neu», kein Notfall-Login. Unter greetd folgt ein neuer Login mit allen Bildschirmen an.
 - **Gegenprobe:** Ohne Wecker und Klickfang (nur in der Kopie im Container) scheitern «taste» (greetd bekommt
   «tesqter») und «klick» (der erste Klick meldet an).
-- Nicht prüfbar im Container: Touchpad, Berührung, der Deckel, ein echtes Panel und ein echter greetd mit PAM.
+- **Deckel innerhalb der Minute** (Probe von Hand, nicht in `login-e2e.sh`: `/run/zenos/geraet.json` als root wie
+  `zenos-argon` geschrieben): letzte Eingabe bei 0 s, Deckel zu bei 5 s, auf bei 50 s. Danach an bei 56, 64, 75, 95
+  und 105 s, aus bei 111 s. Gegenprobe auf dem Stand vor der Behebung: bei 56 s an, bei 64 s schon aus (am Ende der
+  alten Minute, rund 10 s nach dem Aufklappen).
+- **Neuer Bildschirm** (Probe von Hand): am dunklen Login den einzigen Ausgang mit `wlr-randr --output HEADLESS-1
+  --off` und `--on` ab- und wieder angesteckt. Hell, 60 s später ohne Eingabe wieder dunkel. Nochmals angesteckt,
+  dann ein Klick ins Passwortfeld, «tester» und Return: greetd bekommt genau «tester», keine Zeile «Wecktaste
+  verworfen». Ohne Ausgang legt Qt einen Platzhalter-Bildschirm an; deshalb steht «Bildschirm an (Bildschirm neu)»
+  je Anstecken zweimal im Protokoll (harmlos). Die Tastatur erreicht den Login im Container nach dem Wiederanstecken
+  erst nach einem Klick, auch auf dem Stand vor der Behebung (dort kam nach dem Anstecken gar keine Eingabe an).
+  `wlopm --json --on '*'` und `--off '*'` ohne Ausgang enden mit 0 und leerer Fehlerliste: Das Wecken in der Lücke
+  zählt nicht als Fehlschlag und führt nie zum Neustart des Logins.
+- Nicht prüfbar im Container: Touchpad, Berührung, der echte Deckel (GPIO27), ein zweiter, neu angesteckter
+  Bildschirm (labwc ohne Bildschirm legt zur Laufzeit keinen neuen Ausgang an), ein echtes Panel und ein echter greetd
+  mit PAM.
 
 ## Offen
 
+- **Gehaltene Wecktaste in der Sperre:** `Sperre.qml` verwirft wie früher der Login nur das erste Ereignis
+  (`_wecktaste` über `onVorTaste`). Hält man die Taste über 600 ms, landen ihre Wiederholungen im Passwortfeld, ein
+  gehaltenes Return prüft das halbe Passwort (ein Fehlversuch, die Sperre bleibt). Vorgemerkt: dieselbe Behebung wie
+  am Login (`wecktasteGehalten` in `energie.js`, über `Eingabe.vorTaste` und `vorLoslassen`), als eigener Schritt.
 - **Ein/Aus-Taste am dunklen Login-Bildschirm:** Dort gilt weiter logind, ein kurzer Druck schaltet sofort aus. Wer
   einen dunklen Login mit der Ein/Aus-Taste wecken will, schaltet aus (verloren geht nichts, angemeldet ist niemand,
   aber es folgt ein Kaltstart). Ein Hemmer «handle-power-key» im Greeter hielte das auf; das berührt logind und polkit

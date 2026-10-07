@@ -23,6 +23,8 @@ Item {
     // verworfen: Nichts wird getippt, auch Return und Rücktaste wirken nicht. Die Sperre verwirft so die Taste, die
     // einen dunklen Bildschirm weckt.
     signal vorTaste(var event)
+    // Ebenso bei jedem Loslassen einer Taste (der Login erkennt so, dass die gehaltene Wecktaste los ist)
+    signal vorLoslassen(var event)
 
     // Über text = "": Das leert auch den Rückgängig-Verlauf von TextInput, in dem clear() die getippten Zeichen
     // (auch im Passwortmodus) weiter im Speicher liesse. clear() danach bricht nur noch eine Vorschau (preedit) ab.
@@ -103,6 +105,7 @@ Item {
             if (event.modifiers & Qt.MetaModifier)
                 event.accepted = true;
         }
+        Keys.onReleased: event => root.vorLoslassen(event)
     }
 
     MouseArea {

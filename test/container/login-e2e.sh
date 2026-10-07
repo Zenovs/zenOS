@@ -10,12 +10,15 @@
 #   docker exec zenos-login-e2e bash -c 'apt-get update -qq && apt-get install -y -qq wlopm wtype wlrctl'
 #   docker exec zenos-login-e2e loginctl enable-linger tester
 # Dann: docker exec -u tester -w /home/tester/zenOS zenos-login-e2e test/container/login-e2e.sh [schritt …]
-# Ohne Angabe laufen alle (rund 9 Minuten: Jede Minute ohne Eingabe wird abgewartet). Exit 0 nur, wenn alles stimmt.
+# Ohne Angabe laufen alle (rund 12 Minuten: Jede Minute ohne Eingabe wird abgewartet). Exit 0 nur, wenn alles stimmt.
 #
 #   minute   nach dem Start an; ein Zeichen im Passwortfeld nach 40 s beginnt die Minute neu (nach 80 s noch an),
 #            danach aus, frühestens 55 s nach dieser Eingabe. Die Maus weckt.
 #   taste    «tes» getippt, dunkel; «q» weckt und ist verworfen; «ter» und Return: greetd bekommt genau «tester»
 #            (was im Feld stand, blieb, die Wecktaste kam nicht dazu). Nach der Anmeldung ist der Bildschirm an.
+#   halten   die Wecktaste gehalten (1,5 s, der Client wiederholt sie nach 600 ms): «tes», dunkel, «q» gehalten,
+#            «ter» und Return: greetd bekommt genau «tester». Dann «tes», dunkel, Return gehalten: greetd hört nichts
+#            (kein halbes Passwort an PAM), «ter» und Return melden mit «tester» an.
 #   klick    «tester» getippt, Zeiger auf «Anmelden», dunkel: Der erste Klick weckt nur (greetd hört nichts), der
 #            zweite meldet an
 #   fehler   wlopm (Attrappe vorn im PATH) schaltet ab, meldet aber einen Fehler: Der Login schaltet sofort wieder an
@@ -103,6 +106,12 @@ for zeile in sys.stdin:
 
 zeiger() { WAYLAND_DISPLAY=$(cat "$ZUSTAND/wayland") wlrctl pointer "$@"; }
 
+# Hält TASTE MS Millisekunden gedrückt (wtype drückt und lässt los; wiederholt wird sie im Client, wie bei einer
+# echten Tastatur unter Wayland)
+halte() { # TASTE MS
+  WAYLAND_DISPLAY=$(cat "$ZUSTAND/wayland") wtype -P "$1" -s "$2" -p "$1"
+}
+
 login_stoppen() {
   "$O" stopp > /dev/null 2>&1 || true
   if [[ -n "$ATTRAPPE" ]]; then
@@ -189,6 +198,44 @@ schritt_taste() {
   pruefe "nach der Anmeldung ist der Bildschirm an" "nach der Anmeldung nicht an" ist_bildschirm an
   pruefe "Protokoll: «Wecktaste verworfen (Taste)»" "keine Zeile «Wecktaste verworfen (Taste)» im Protokoll" \
     im_protokoll "Wecktaste verworfen (Taste)"
+}
+
+schritt_halten() {
+  echo "Schritt halten: die gehaltene Wecktaste wiederholt sich nicht ins Feld"
+  login_starten || { schlecht "Login startet nicht"; return; }
+  "$O" tippe tes
+  if warte_bildschirm aus 75; then gut "mit «tes» im Feld nach $((SECONDS - START)) s aus"; else schlecht "nicht aus ($(bildschirm))"; return; fi
+  halte q 1500
+  pruefe "«q» (1,5 s gehalten) weckt" "«q» weckt nicht" warte_bildschirm an 5
+  sleep 1
+  pruefe "greetd hat nichts bekommen" "greetd hat schon etwas bekommen" keine_anfragen
+  "$O" tippe ter
+  "$O" taste Return
+  local antwort
+  if antwort=$(warte_antwort 10); then
+    if [[ "$antwort" == tester ]]; then
+      gut "greetd bekommt genau «tester»: keine Wiederholung von «q» im Feld"
+    else
+      schlecht "greetd bekommt «$antwort» statt «tester»"
+    fi
+  else
+    schlecht "keine Antwort an greetd nach Return"
+  fi
+
+  login_starten || { schlecht "Login startet nicht"; return; }
+  "$O" tippe tes
+  if warte_bildschirm aus 75; then gut "mit «tes» im Feld nach $((SECONDS - START)) s aus"; else schlecht "nicht aus ($(bildschirm))"; return; fi
+  halte Return 1500
+  pruefe "Return (1,5 s gehalten) weckt" "Return weckt nicht" warte_bildschirm an 5
+  sleep 1.5
+  pruefe "greetd hat nichts bekommen (kein halbes Passwort an PAM)" "gehaltenes Return hat angemeldet: $(anfragen | tr '\n' ' ')" keine_anfragen
+  "$O" tippe ter
+  "$O" taste Return
+  if antwort=$(warte_antwort 10) && [[ "$antwort" == tester ]]; then
+    gut "danach meldet Return an, greetd bekommt genau «tester»"
+  else
+    schlecht "greetd bekommt «${antwort:-nichts}» statt «tester»"
+  fi
 }
 
 schritt_klick() {
@@ -320,11 +367,11 @@ mkdir -p -- "$E2E" || exit 1
 trap login_stoppen EXIT
 
 schritte=("$@")
-(( ${#schritte[@]} > 0 )) || schritte=(minute taste klick fehler neustart)
+(( ${#schritte[@]} > 0 )) || schritte=(minute taste halten klick fehler neustart)
 for s in "${schritte[@]}"; do
   case "$s" in
-    minute | taste | klick | fehler | neustart) "schritt_$s" ;;
-    *) meldung "unbekannter Schritt «$s» (minute, taste, klick, fehler, neustart)"; exit 2 ;;
+    minute | taste | halten | klick | fehler | neustart) "schritt_$s" ;;
+    *) meldung "unbekannter Schritt «$s» (minute, taste, halten, klick, fehler, neustart)"; exit 2 ;;
   esac
 done
 login_stoppen

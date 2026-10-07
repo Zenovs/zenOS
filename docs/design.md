@@ -569,7 +569,8 @@ Passwort (`shell/polkit/Polkit.qml`).
   der Anmeldung bitte warten, bis das fertig ist.» Sie verschwindet von selbst (Takt 3 s), nichts blinkt.
 - Login nach 1 Minute ohne Eingabe: Der Bildschirm wird wie auf der Sperre ohne Übergang dunkel und beim Wecken ohne
   Übergang hell, ohne Hinweis und ohne Animation. Die erste Taste, der erste Klick oder die erste Berührung weckt nur:
-  kein Punkt im Passwortfeld, kein gedrückter Knopf, der Fokus bleibt, wo er war. Was im Feld stand, bleibt stehen.
+  kein Punkt im Passwortfeld (auch wenn die Taste gehalten wird), kein gedrückter Knopf, der Fokus bleibt, wo er war.
+  Was im Feld stand, bleibt stehen.
 
 ### Erster Start
 

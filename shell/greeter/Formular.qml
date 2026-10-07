@@ -18,6 +18,10 @@ Item {
     readonly property bool mitAuswahl: konten.liste.length > 1
     readonly property bool mitNamensfeld: konten.liste.length === 0
 
+    // Vor jeder Taste im Namens- oder Passwortfeld, beim Drücken (druck) und Loslassen. event.accepted = true verwirft
+    // sie (Anmeldefenster: Wiederholungen der gehaltenen Wecktaste).
+    signal vorTaste(var event, bool druck)
+
     function fokussieren(): void {
         if (mitNamensfeld && namensfeld.text.length === 0)
             namensfeld.fokussieren();
@@ -118,6 +122,8 @@ Item {
             platzhalter: "Benutzername"
             nurLesen: root.ablauf.beschaeftigt || root.ablauf.wartetAufEingabe
             onAccepted: passwortfeld.fokussieren()
+            onVorTaste: event => root.vorTaste(event, true)
+            onVorLoslassen: event => root.vorTaste(event, false)
         }
 
         Text {
@@ -142,6 +148,8 @@ Item {
                 nurLesen: root.ablauf.beschaeftigt
                 fehler: root.ablauf.meldungFehler && root.ablauf.meldung.length > 0 && text.length === 0
                 onAccepted: root.absenden()
+                onVorTaste: event => root.vorTaste(event, true)
+                onVorLoslassen: event => root.vorTaste(event, false)
                 onTextChanged: {
                     if (root.ablauf.meldungFehler && text.length > 0)
                         root.ablauf.meldung = "";

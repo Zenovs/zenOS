@@ -27,6 +27,7 @@ var WLOPM_SEKUNDEN = 5;
 //   dunkelSicher: wlopm hat das Ausschalten bestätigt, seither kein bestätigtes Einschalten
 //   ausFehler, anFehler: gescheiterte Aufrufe in Folge
 //   wiederUm: frühester nächster Versuch, einzuschalten (ms, Date.now())
+//   wach:    ohne Eingabe geweckt (wecken), die Minute danach läuft noch (Timer nachWecken in Bildschirm.qml)
 //   weck:    Wecktaste { dunkel, gewecktUm, offen } (energie.js)
 function zustand() {
     return {
@@ -37,6 +38,7 @@ function zustand() {
         ausFehler: 0,
         anFehler: 0,
         wiederUm: 0,
+        wach: false,
         weck: EnergieLogik.weckzustand()
     };
 }
@@ -52,23 +54,30 @@ function _mit(z, aenderung) {
 }
 
 // Die Minute ohne Eingabe ist um. Während der Vorwarnung vor dem Ausschalten bleibt er an (sie muss zu sehen sein),
-// ebenso nach AUS_VERSUCHE gescheiterten Versuchen.
+// ebenso in der Minute nach einem Wecken ohne Eingabe (wach) und nach AUS_VERSUCHE gescheiterten Versuchen.
 function leerlauf(z, vorwarnung) {
-    if (vorwarnung === true || z.ausFehler >= AUS_VERSUCHE)
+    if (vorwarnung === true || z.wach === true || z.ausFehler >= AUS_VERSUCHE)
         return z;
     return _mit(z, { soll: "aus" });
 }
 
 // Eine Eingabe (Taste, Maus, Touchpad, Berührung): an. Ausgeschaltet wird erst wieder nach einer neuen Minute ohne
-// Eingabe (leerlauf).
+// Eingabe (leerlauf); ab jetzt zählt der Compositor.
 function eingabe(z) {
-    return _mit(z, { soll: "an" });
+    return _mit(z, { soll: "an", wach: false });
 }
 
-// Ohne Eingabe wecken (Vorwarnung vor dem Ausschalten, Deckel aufgeklappt): an, und keine Wecktaste. Wer dann tippt,
-// tippt ins Feld (es ist zu sehen).
+// Ohne Eingabe wecken (Vorwarnung vor dem Ausschalten und ihr Ende, Deckel aufgeklappt, neuer Bildschirm): an, und
+// keine Wecktaste. Wer dann tippt, tippt ins Feld (es ist zu sehen). Er bleibt mindestens eine Minute an (wach), auch
+// wenn der Compositor seine Minute ohne Eingabe früher beendet: Für ihn ist das Aufklappen keine Eingabe (der Deckel
+// kommt über GPIO27, nicht über labwc). Danach ohne Eingabe aus (wachVorbei, dann leerlauf).
 function wecken(z) {
-    return _mit(z, { soll: "an", weck: EnergieLogik.weckzustand() });
+    return _mit(z, { soll: "an", wach: true, weck: EnergieLogik.weckzustand() });
+}
+
+// Die Minute nach einem Wecken ohne Eingabe ist um (Timer nachWecken). Ist der Compositor dann «idle», folgt leerlauf.
+function wachVorbei(z) {
+    return _mit(z, { wach: false });
 }
 
 // Steht die Wecktaste aus? Dann wird die nächste Taste, der nächste Klick oder die nächste Berührung verworfen.
@@ -76,9 +85,10 @@ function wecktasteOffen(z) {
     return !!z && !!z.weck && z.weck.offen === true;
 }
 
-// Die Wecktaste ist verworfen (genau eine): Ab jetzt landet alles im Formular. Weckt den Bildschirm.
+// Die Wecktaste ist verworfen (genau eine): Ab jetzt landet alles im Formular. Weckt den Bildschirm; sie ist eine
+// Eingabe, ab jetzt zählt der Compositor.
 function verworfen(z) {
-    return _mit(z, { soll: "an", weck: EnergieLogik.wecktasteGesehen(z.weck) });
+    return _mit(z, { soll: "an", wach: false, weck: EnergieLogik.wecktasteGesehen(z.weck) });
 }
 
 // Der Bildschirm ist wieder an, und die Schonfrist danach ist um (energie.js, WECKEN_SCHONFRIST_MS): Kam bis jetzt
@@ -159,10 +169,36 @@ function aufgegeben(z) {
     return !!z && z.laeuft === "" && z.soll === "an" && z.dunkelSicher !== true && z.ist !== "an" && z.anFehler >= AN_VERSUCHE;
 }
 
-// Bleibt der Bildschirm nach einem Wecken ohne Eingabe (Vorwarnung vorbei, Deckel auf) an, beginnt die Minute neu:
-// Ohne Eingabe meldet der Leerlauf-Zähler des Compositors kein neues «idle».
-function minuteNeu(z, idle, vorwarnung) {
-    return !!z && idle === true && vorwarnung !== true && z.soll === "an" && z.ausFehler < AUS_VERSUCHE;
+// Ist ein Bildschirm dazugekommen (angesteckt, oder nach dem Ausstecken wieder da)? vorher, jetzt: Listen der
+// Bildschirme (Quickshell.screens), verglichen wird jeder Eintrag für sich. labwc schaltet einen neuen Ausgang ein;
+// Bildschirm.qml weckt dann wie beim Deckel (alle an, keine Wecktaste, ohne Eingabe eine Minute später aus). Sonst
+// wartete das Formular auf einem hellen Bildschirm noch auf die Wecktaste und verwürfe das erste Zeichen.
+function bildschirmDazu(vorher, jetzt) {
+    if (!jetzt || typeof jetzt.length !== "number")
+        return false;
+    var alt = vorher && typeof vorher.length === "number" ? vorher : [];
+    for (var i = 0; i < jetzt.length; i++) {
+        var gefunden = false;
+        for (var k = 0; k < alt.length; k++) {
+            if (alt[k] === jetzt[i]) {
+                gefunden = true;
+                break;
+            }
+        }
+        if (!gefunden)
+            return true;
+    }
+    return false;
+}
+
+// Kopie einer Liste (Quickshell.screens) als Array, für den Vergleich beim nächsten Wechsel
+function liste(x) {
+    var neu = [];
+    if (x && typeof x.length === "number") {
+        for (var i = 0; i < x.length; i++)
+            neu.push(x[i]);
+    }
+    return neu;
 }
 
 // Argumentliste für wlopm (nie über eine Shell): alle Bildschirme aus oder an, mit Zeitlimit

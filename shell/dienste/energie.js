@@ -283,6 +283,30 @@ function wecktasteGesehen(z) {
     return { dunkel: d, gewecktUm: z && typeof z.gewecktUm === "number" ? z.gewecktUm : -1, offen: false };
 }
 
+// Gehaltene Wecktaste: Wer die Taste, die weckt, festhält, bekommt sie vom Client wiederholt (Wayland: QtWayland nach
+// der Verzögerung des Compositors, bei labwc 600 ms, dann 25 je Sekunde, mit isAutoRepeat). Die Wiederholungen gehen
+// an das Feld, das dann den Fokus hat. Sie werden verworfen, bis die Taste losgelassen wird; sonst landeten Zeichen
+// im Passwortfeld, und ein gehaltenes Return meldete mit dem halben Passwort an. Nie eine andere Taste: Jeder echte
+// Druck (auch derselben Taste), das echte Loslassen der gehaltenen Taste und die Wiederholung einer anderen beenden
+// es. Gebraucht im Login (greeter/Anmeldefenster.qml); für die Sperre vorgemerkt (docs/module/energie.md, «Offen»).
+//   gehalten:   Code der verworfenen Wecktaste (nativeScanCode), -1: keine
+//   druck:      true beim Drücken, false beim Loslassen
+//   code:       nativeScanCode dieser Taste
+//   wiederholt: isAutoRepeat
+// Ergebnis: { verwerfen, gehalten } (gehalten: der neue Stand)
+function wecktasteGehalten(gehalten, druck, code, wiederholt) {
+    if (typeof gehalten !== "number" || gehalten < 0)
+        return { verwerfen: false, gehalten: -1 };
+    if (wiederholt === true) {
+        if (code === gehalten)
+            return { verwerfen: true, gehalten: gehalten };
+        return { verwerfen: false, gehalten: -1 };
+    }
+    if (druck === true || code === gehalten)
+        return { verwerfen: false, gehalten: -1 };
+    return { verwerfen: false, gehalten: gehalten };
+}
+
 // --- Ein/Aus-Taste, gesperrt ----------------------------------------------------
 // Ein kurzer Druck schaltet den Bildschirm an oder aus: «an», solange er dunkel ist oder eben (2 s) geweckt wurde
 // (der Druck selbst weckt ihn schon als Eingabe), sonst «aus».
