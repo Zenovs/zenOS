@@ -8,14 +8,98 @@ import qs.einstellungen.teile
 import qs.dienste as Dienste
 
 // Seite «System»: Schalter «Firewall» (Dienst Firewall: Einschalten ohne, Ausschalten nur mit Passwort über
-// polkit), «Updates» (Dienst Kanal: Lage des signierten Kanals, «Jetzt prüfen», «Jetzt installieren», bei Firewall,
-// Netz oder Boot «Zustimmen …» mit Passwort) und «Automatisch installieren» (Zeitpunkt: Bei Sperre · Zeitfenster ·
-// Jederzeit · Von Hand, gilt für das ganze Gerät), Ausgabe von «zen version», Kurzprüfung mit «zen doctor --kurz» auf
-// Knopfdruck und Hinweise aufs Terminal. unterauswahl «updates» scrollt zu den Updates.
+// polkit), «Updates · zenOS» (Dienst Kanal: Lage des signierten Kanals, «Jetzt prüfen», «Jetzt installieren», bei
+// Firewall, Netz oder Boot «Zustimmen …» mit Passwort), «Updates · Ubuntu-Basis» (Dienst Basis: Pakete von Ubuntu und
+// den Herstellerquellen, «Jetzt prüfen», «Jetzt installieren», bei Kernel, Firmware, Bootloader oder Entfernungen «Mit
+// Passwort installieren», Neustart nötig) und «Automatisch installieren» (Zeitpunkt: Bei Sperre · Zeitfenster ·
+// Jederzeit · Von Hand, gilt für das ganze Gerät und beide), Ausgabe von «zen version», Kurzprüfung mit «zen doctor
+// --kurz» auf Knopfdruck und Hinweise aufs Terminal. unterauswahl «updates» scrollt zu den Updates.
 Item {
     id: root
 
     property string unterauswahl
+
+    // Lage eines Updates-Abschnitts: Symbol (16 px) und Titel
+    component Lagezeile: Row {
+        id: lagezeile
+
+        property var symbol: ({
+                symbol: "info",
+                ton: "gedaempft"
+            })
+        property string titel
+
+        spacing: 10
+
+        Symbol {
+            anchors.verticalCenter: parent.verticalCenter
+            name: lagezeile.symbol.symbol
+            groesse: 16
+            farbe: lagezeile.symbol.ton === "akzent" ? Theme.akzent : lagezeile.symbol.ton === "warnung" ? Theme.warnung : Theme.gedaempft
+        }
+
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: lagezeile.titel
+            textFormat: Text.PlainText
+            color: Theme.text
+            font.family: Theme.schriftText
+            font.pixelSize: Theme.groesseText
+        }
+    }
+
+    // Ruhiger Satz in gedaempft (13 px, Zeilenhöhe 1,45), reiner Text
+    component Satz: Text {
+        visible: text !== ""
+        textFormat: Text.PlainText
+        wrapMode: Text.Wrap
+        lineHeightMode: Text.FixedHeight
+        lineHeight: Math.round(font.pixelSize * 1.45)
+        color: Theme.gedaempft
+        font.family: Theme.schriftText
+        font.pixelSize: Theme.groesseLabel
+    }
+
+    // Werte zweispaltig: Titel 96 px in gedaempft, Werte in Geist Mono 13 (zu lang: am Ende gekürzt)
+    component Wertezeilen: Column {
+        id: werte
+
+        property var zeilen: []
+
+        spacing: 4
+        visible: zeilen.length > 0
+
+        Repeater {
+            model: werte.zeilen
+
+            Row {
+                id: zeile
+
+                required property var modelData
+
+                spacing: 12
+
+                Text {
+                    width: 96
+                    text: zeile.modelData.titel
+                    textFormat: Text.PlainText
+                    color: Theme.gedaempft
+                    font.family: Theme.schriftText
+                    font.pixelSize: Theme.groesseLabel
+                }
+
+                Text {
+                    width: werte.width - 108
+                    text: zeile.modelData.wert
+                    textFormat: Text.PlainText
+                    elide: Text.ElideRight
+                    color: Theme.text
+                    font.family: Theme.schriftMono
+                    font.pixelSize: Theme.groesseLabel
+                }
+            }
+        }
+    }
 
     // Zeitpunkt, wie ihn die Segmente zeigen: während des Setzens die neue Wahl, sonst die Datei
     readonly property string _zeitpunktArt: Dienste.Kanal.zeitpunktZiel !== "" ? Dienste.Kanal.zeitpunktZiel : Dienste.Kanal.zeitpunkt.art
@@ -64,6 +148,9 @@ Item {
 
     onUnterauswahlChanged: scrollen.restart()
 
+    // Knöpfe der Updates: eine Bedienung zur Zeit (Kanal oder Basis), nicht während ein Update läuft
+    readonly property bool _bedienbar: Dienste.Kanal.laeuft === "" && Dienste.Basis.laeuft === "" && !Dienste.Kanal.updateLaeuft
+
     readonly property string _zen: Dienste.Pfade.code + "/scripts/zen"
     property string versionText: ""
     property string pruefText: ""
@@ -100,6 +187,7 @@ Item {
     Component.onCompleted: {
         Dienste.Firewall.aktualisieren();
         Dienste.Kanal.aktualisieren();
+        Dienste.Basis.aktualisieren();
     }
 
     // Erst nach dem Aufbau der Seite (die Spalte setzt die Positionen verzögert)
@@ -211,80 +299,26 @@ Item {
             id: updatesFeld
 
             width: parent.width
-            beschriftung: "Updates"
+            beschriftung: "Updates · zenOS"
 
             Column {
                 width: parent.width
                 spacing: 12
 
-                Row {
-                    spacing: 10
-
-                    Symbol {
-                        anchors.verticalCenter: parent.verticalCenter
-                        name: Dienste.Kanal.zustandSymbol.symbol
-                        groesse: 16
-                        farbe: Dienste.Kanal.zustandSymbol.ton === "akzent" ? Theme.akzent : Dienste.Kanal.zustandSymbol.ton === "warnung" ? Theme.warnung : Theme.gedaempft
-                    }
-
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: Dienste.Kanal.zustandTitel
-                        textFormat: Text.PlainText
-                        color: Theme.text
-                        font.family: Theme.schriftText
-                        font.pixelSize: Theme.groesseText
-                    }
+                Lagezeile {
+                    symbol: Dienste.Kanal.zustandSymbol
+                    titel: Dienste.Kanal.zustandTitel
                 }
 
-                Text {
+                Satz {
                     width: parent.width
                     text: Dienste.Kanal.grundText
-                    textFormat: Text.PlainText
-                    wrapMode: Text.Wrap
-                    lineHeightMode: Text.FixedHeight
-                    lineHeight: Math.round(font.pixelSize * 1.45)
-                    color: Theme.gedaempft
-                    font.family: Theme.schriftText
-                    font.pixelSize: Theme.groesseLabel
                 }
 
                 // Kanal, installierte und bereite Version, letzte Prüfung, Kontakt, Anker mit kurzen Fingerabdrücken
-                Column {
+                Wertezeilen {
                     width: parent.width
-                    spacing: 4
-                    visible: Dienste.Kanal.zeilen.length > 0
-
-                    Repeater {
-                        model: Dienste.Kanal.zeilen
-
-                        Row {
-                            id: zeile
-
-                            required property var modelData
-
-                            spacing: 12
-
-                            Text {
-                                width: 96
-                                text: zeile.modelData.titel
-                                textFormat: Text.PlainText
-                                color: Theme.gedaempft
-                                font.family: Theme.schriftText
-                                font.pixelSize: Theme.groesseLabel
-                            }
-
-                            Text {
-                                width: updatesFeld.width - 108
-                                text: zeile.modelData.wert
-                                textFormat: Text.PlainText
-                                elide: Text.ElideRight
-                                color: Theme.text
-                                font.family: Theme.schriftMono
-                                font.pixelSize: Theme.groesseLabel
-                            }
-                        }
-                    }
+                    zeilen: Dienste.Kanal.zeilen
                 }
 
                 Row {
@@ -294,7 +328,7 @@ Item {
                         implicitHeight: 38
                         variante: "sekundaer"
                         text: Dienste.Kanal.laeuft === "pruefen" ? "Prüft …" : "Jetzt prüfen"
-                        enabled: Dienste.Kanal.laeuft === "" && !Dienste.Kanal.updateLaeuft
+                        enabled: root._bedienbar
                         onClicked: Dienste.Kanal.pruefen()
                     }
 
@@ -303,7 +337,7 @@ Item {
                         implicitHeight: 38
                         variante: "primaer"
                         text: Dienste.Kanal.laeuft === "installieren" ? "Wird installiert …" : "Jetzt installieren"
-                        enabled: Dienste.Kanal.laeuft === "" && !Dienste.Kanal.updateLaeuft
+                        enabled: root._bedienbar
                         onClicked: Dienste.Kanal.installieren()
                     }
 
@@ -313,23 +347,79 @@ Item {
                         variante: "sekundaer"
                         symbol: "schloss"
                         text: Dienste.Kanal.laeuft === "zustimmen" ? "Läuft …" : "Zustimmen …"
-                        enabled: Dienste.Kanal.laeuft === "" && !Dienste.Kanal.updateLaeuft
+                        enabled: root._bedienbar
                         onClicked: Dienste.Kanal.zustimmen(Dienste.Kanal.zustimmungObjekt)
                     }
                 }
 
-                Text {
-                    visible: text !== ""
+                Satz {
                     width: parent.width
                     // Läuft ein Update, sagen es Titel und Erklärung oben schon
                     text: Dienste.Kanal.updateLaeuft ? "" : Dienste.Kanal.zustimmungText !== "" ? Dienste.Kanal.zustimmungText : Dienste.Kanal.installierenHinweis
-                    textFormat: Text.PlainText
-                    wrapMode: Text.Wrap
-                    lineHeightMode: Text.FixedHeight
-                    lineHeight: Math.round(font.pixelSize * 1.45)
-                    color: Theme.gedaempft
-                    font.family: Theme.schriftText
-                    font.pixelSize: Theme.groesseLabel
+                }
+            }
+        }
+
+        // Pakete der Ubuntu-Basis (zenos-basis): getrennt vom Kanal, dieselben Bausteine
+        Feld {
+            width: parent.width
+            beschriftung: "Updates · Ubuntu-Basis"
+
+            Column {
+                width: parent.width
+                spacing: 12
+
+                Lagezeile {
+                    symbol: Dienste.Basis.zustandSymbol
+                    titel: Dienste.Basis.zustandTitel
+                }
+
+                Satz {
+                    width: parent.width
+                    text: Dienste.Basis.grundText
+                }
+
+                // Ausstehend, Kernel/Boot, Entfernen, Hersteller, Neustart, letztes Update, Automatik, Geprüft, Liste
+                Wertezeilen {
+                    width: parent.width
+                    zeilen: Dienste.Basis.zeilen
+                }
+
+                Row {
+                    spacing: 12
+
+                    Knopf {
+                        implicitHeight: 38
+                        variante: "sekundaer"
+                        text: Dienste.Basis.laeuft === "pruefen" ? "Prüft …" : "Jetzt prüfen"
+                        enabled: root._bedienbar
+                        onClicked: Dienste.Basis.pruefen()
+                    }
+
+                    Knopf {
+                        visible: Dienste.Basis.installierenListe !== "" || Dienste.Basis.laeuft === "installieren"
+                        implicitHeight: 38
+                        variante: "primaer"
+                        text: Dienste.Basis.laeuft === "installieren" ? "Wird installiert …" : "Jetzt installieren"
+                        enabled: root._bedienbar
+                        onClicked: Dienste.Basis.installieren(Dienste.Basis.installierenListe)
+                    }
+
+                    // Kernel, Firmware, Bootloader oder Entfernungen: polkit fragt jedes Mal nach dem Passwort
+                    Knopf {
+                        visible: Dienste.Basis.zustimmungListe !== "" || Dienste.Basis.laeuft === "zustimmen"
+                        implicitHeight: 38
+                        variante: "sekundaer"
+                        symbol: "schloss"
+                        text: Dienste.Basis.laeuft === "zustimmen" ? "Läuft …" : "Mit Passwort installieren"
+                        enabled: root._bedienbar
+                        onClicked: Dienste.Basis.zustimmen(Dienste.Basis.zustimmungListe)
+                    }
+                }
+
+                Satz {
+                    width: parent.width
+                    text: Dienste.Kanal.updateLaeuft ? "" : Dienste.Basis.knopfHinweis
                 }
             }
         }
@@ -427,7 +517,7 @@ Item {
 
                 Text {
                     width: parent.width
-                    text: Dienste.Kanal.zeitpunktErklaerung(root._zeitpunktArt, Dienste.Kanal.zeitpunkt.von, Dienste.Kanal.zeitpunkt.bis) + " " + Dienste.Kanal.zeitpunktImmer
+                    text: Dienste.Kanal.zeitpunktErklaerung(root._zeitpunktArt, Dienste.Kanal.zeitpunkt.von, Dienste.Kanal.zeitpunkt.bis) + " " + Dienste.Kanal.zeitpunktImmer + " " + Dienste.Basis.automatikImmer
                     wrapMode: Text.Wrap
                     lineHeightMode: Text.FixedHeight
                     lineHeight: Math.round(font.pixelSize * 1.45)
@@ -520,7 +610,7 @@ Item {
 
                 Text {
                     width: parent.width
-                    text: "«zen kanal» zeigt den ganzen Stand mit allen Fingerabdrücken. «zen update» installiert sofort, auch was dein «ja» braucht (etwa auf dev); «zen rollback <tag>» geht zu einem früheren Stand zurück."
+                    text: "«zen kanal» zeigt den ganzen Stand mit allen Fingerabdrücken. «zen update» bringt zuerst zenOS, dann die Pakete der Ubuntu-Basis, auch was dein «ja» braucht (etwa auf dev oder ein neuer Kernel); «zen rollback <tag>» geht zu einem früheren Stand von zenOS zurück."
                     wrapMode: Text.WordWrap
                     lineHeightMode: Text.FixedHeight
                     lineHeight: Math.round(font.pixelSize * 1.4)

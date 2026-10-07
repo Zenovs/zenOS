@@ -578,14 +578,14 @@ function zeitpunktText(z) {
     case "jederzeit":
         return "Kommt, sobald es bereit ist, auch während du arbeitest; die Oberfläche lädt dabei kurz neu.";
     case "hand":
-        return "Nie automatisch. Ist ein Update bereit, kommt eine Mitteilung; installiert wird mit «Jetzt installieren» oder zen update.";
+        return "Nie automatisch. Ist ein Update von zenOS bereit, kommt eine Mitteilung; installiert wird mit «Jetzt installieren» oder zen update.";
     default:
         return "Kommt, wenn zenOS seit 5 Minuten gesperrt ist oder der Login-Bildschirm seit 5 Minuten wartet, nicht während jemand per SSH angemeldet ist (Standard).";
     }
 }
 
-// Was für jeden Zeitpunkt gilt (unter der Erklärung)
-var ZEITPUNKT_IMMER = "Gilt für das ganze Gerät. Installiert wird immer nur, was gültig signiert ist. Was Firewall, Netz oder Boot ändert, wartet auf deine Zustimmung. Im Akkubetrieb kommt es erst ab " + AKKU_MIN_PROZENT + " % Ladung. Auf dev kommt nie etwas automatisch.";
+// Was für jeden Zeitpunkt gilt (unter der Erklärung; danach steht, was für die Basis-Updates gilt: basis.js)
+var ZEITPUNKT_IMMER = "Gilt für das ganze Gerät, für zenOS und die Ubuntu-Basis. Im Akkubetrieb kommt es erst ab " + AKKU_MIN_PROZENT + " % Ladung. Von zenOS kommt nur, was gültig signiert ist; was Firewall, Netz oder Boot ändert, wartet auf deine Zustimmung, und auf dev kommt nie etwas automatisch.";
 
 // Kurz für die Mitteilung: «Bei Sperre», «Zeitfenster 02:00–05:00», «Jederzeit», «Von Hand»
 function zeitpunktKurz(z) {

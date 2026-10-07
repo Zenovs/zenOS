@@ -346,7 +346,7 @@ test("zeitpunktText: knapp und ehrlich je Wahl", () => {
   assert.equal(L.zeitpunktText(L.zeitpunktLesen("zeitpunkt=fenster\nvon=22:00\nbis=06:00\n")), "Kommt zwischen 22:00 und 06:00 Uhr, auch wenn du gerade arbeitest. Das Gerät muss dann laufen.");
   assert.equal(L.zeitpunktText({ art: "jederzeit" }), "Kommt, sobald es bereit ist, auch während du arbeitest; die Oberfläche lädt dabei kurz neu.");
   assert.match(L.zeitpunktText({ art: "hand" }), /^Nie automatisch\./);
-  assert.equal(L.ZEITPUNKT_IMMER, "Gilt für das ganze Gerät. Installiert wird immer nur, was gültig signiert ist. Was Firewall, Netz oder Boot ändert, wartet auf deine Zustimmung. Im Akkubetrieb kommt es erst ab 50 % Ladung. Auf dev kommt nie etwas automatisch.");
+  assert.equal(L.ZEITPUNKT_IMMER, "Gilt für das ganze Gerät, für zenOS und die Ubuntu-Basis. Im Akkubetrieb kommt es erst ab 50 % Ladung. Von zenOS kommt nur, was gültig signiert ist; was Firewall, Netz oder Boot ändert, wartet auf deine Zustimmung, und auf dev kommt nie etwas automatisch.");
   // Die Grenzen im Text sind die aus zenos-kanal
   const kanal = lesen("scripts", "bin", "zenos-kanal");
   assert.match(kanal, /^MIN_BATTERY = 50$/m);

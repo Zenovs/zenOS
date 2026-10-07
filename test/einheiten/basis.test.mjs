@@ -442,3 +442,13 @@ test("Abgleich mit der Oberfläche: Startliste, IPC, Rundgang", () => {
   assert.match(pruefen, /^  "basis hinweis → nein"$/m);
   assert.doesNotMatch(pruefen, /^  "basis pruefen/m);
 });
+
+test("Abgleich mit den Einstellungen: zwei Abschnitte, Knöpfe, Automatik", () => {
+  const seite = lesen("shell", "einstellungen", "SeiteSystem.qml");
+  assert.match(seite, /beschriftung: "Updates · zenOS"/);
+  assert.match(seite, /beschriftung: "Updates · Ubuntu-Basis"/);
+  assert.match(seite, /"Mit Passwort installieren"/);
+  assert.match(seite, /onClicked: Dienste\.Basis\.installieren\(Dienste\.Basis\.installierenListe\)/);
+  assert.match(seite, /onClicked: Dienste\.Basis\.zustimmen\(Dienste\.Basis\.zustimmungListe\)/);
+  assert.match(seite, /Dienste\.Basis\.automatikImmer/);
+});
