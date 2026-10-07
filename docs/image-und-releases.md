@@ -1028,6 +1028,19 @@ Gelegenheit ohne Netz, Liste dazwischen geändert, Notschalter), `test/einheiten
 Optionen, Exit, Benutzerteile), `test/einheiten/kanal-automatik.test.py` («automatik darf», SSH bei jedem Zeitpunkt,
 Notschalter auch für die Basis-Timer) und `test/einheiten/kanal-bedienung.test.py` (Helfer und polkit).
 
+### Ende zu Ende im Container
+
+`test/container/basis-e2e.sh` (Ablauf und Grenzen in `test/container/README.md`) prüft mit echtem apt, dpkg und
+systemd gegen eine lokale Paketquelle mit Attrappen: Die Automatik wartet bei «von Hand» und installiert bei
+«jederzeit» über die Gelegenheit; dabei startet greetd nicht neu (die `policy-rc.d` lehnt ab), ein anderer Dienst
+schon, und eine neue greetd-Version heisst «Neustart nötig». `zen update --nur-basis --ja` installiert ohne Frage
+und zählt Sicherheitsupdates, `install.sh` danach zweimal mit 0 Änderungen. Eine Kernel-Attrappe installiert die
+Automatik nie, ohne Passwort Exit 10, `zen update` nur nach «ja», danach «Neustart nötig». Würde full-upgrade ein
+geschütztes Paket entfernen, bleibt alles stehen (Exit 3, auch mit Zustimmung). Nach einem `kill -9` der Unit mitten
+in dpkg holt das nächste `zen update` `dpkg --configure -a` nach. Während eine Basis-Installation läuft, enden Kanal und
+eine zweite Basis-Installation mit 75, ein `install.sh` von Hand wartet; hält der Kanal die Sperre oder läuft ein
+`install.sh` von Hand, endet die Basis mit 75.
+
 ## Basiswechsel: neue Hauptversion, neues Image
 
 Ein Stand von zenOS ist für genau eine Ubuntu-Version gebaut; sie steht in `system/basis` (heute `26.04`). Innerhalb

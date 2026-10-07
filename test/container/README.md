@@ -21,6 +21,7 @@ erzeugt; auf dem Pi läuft sie nur während einer Anmeldung (Login oder SSH).
 | `gesten-e2e.sh [schritt …]` | Container (root) | Ende-zu-Ende-Test des Wischens mit drei Fingern: virtuelles Touchpad, Tastatur und Touchpad mit Tasten über uinput (`gesten/touchpad_uinput.py`, python3-libevdev), udev von Hand, `install.sh` zweimal, Rechte der Knoten, Dienst `zenos-gesten` (Socket, Erkennung, Hotplug), labwc über logind in einer Sitzung auf seat0 (`gesten/beobachter.qml`), die Oberfläche (Übersicht auf und zu, polkit-Dialog und Menü der Leiste gehen vor, Sperre) und der Rückweg über den Notschalter (auch mit laufendem Messmodus); Schritte im Kopf der Datei |
 | `login-e2e.sh [schritt …]` | Container (tester) | Ende-zu-Ende-Test des Bildschirms am Login-Bildschirm: labwc ohne Bildschirm mit `shell/greeter.qml`, Attrappe von greetd (`login/greetd_attrappe.py`), wtype und wlrctl; eine Minute ohne Eingabe, Tippen beginnt sie neu, die erste Taste und der erste Klick wecken nur, eine gehaltene Wecktaste wiederholt sich nicht ins Feld, Fehler von wlopm lassen den Bildschirm an (Schritte im Kopf der Datei) |
 | `kanal-e2e.sh <schritt>` | Container (root) | Ende-zu-Ende-Test des signierten Kanals: eigenes origin über https mit Wegwerf-CA und Wegwerf-Schlüsseln, `zen update`, `zen rollback`, Rückweg, Abbruch mit Neustart, Notweg, Automatik (Timer, Zeitpunkt, gestellte Sitzung auf seat0 mit echter Sperre, Bestätigung nach Neustarts; Schritte im Kopf der Datei) |
+| `basis-e2e.sh <schritt>…` | Container (root) | Ende-zu-Ende-Test der Basis-Updates (`zenos-basis`): lokale Paketquelle mit Attrappen-Paketen, Automatik, `zen update --nur-basis`, Kernel-Attrappe, geschütztes Paket, Abbruch mitten in dpkg, Sperren gegen Kanal und `install.sh`, greetd startet nicht neu (siehe «Basis-Updates Ende zu Ende») |
 
 ## Basis-Image bauen
 
@@ -214,6 +215,58 @@ Prüfen: `busctl --system get-property org.freedesktop.RealtimeKit1 /org/freedes
 org.freedesktop.RealtimeKit1 MaxRealtimePriority` antwortet sofort mit `i 20`; ein hängender rtkit meldet
 nach 25 s «Connection timed out». Der Start-Test von `pruefen.sh` hängt davon nicht mehr ab (PipeWire-Client
 ohne `module-rt`).
+
+## Basis-Updates Ende zu Ende
+
+`basis-e2e.sh` prüft `zenos-basis` mit echtem apt, dpkg, systemd, `zen`, `zenos-kanal` und `install.sh`, aber ohne die
+Paketquellen von Ubuntu: Die Pakete kommen aus einer eigenen Quelle im Container, und jeder Lauf ist ohne Netz gleich.
+
+```
+ZENOS_TESTBILD=zenos-test:installiert test/container/starten.sh zenos-basis-e2e
+docker exec -u tester -w /home/tester/zenOS zenos-basis-e2e ./scripts/install.sh   # Arbeitsstand nach /opt/zenos
+docker exec zenos-basis-e2e bash /repo/test/container/basis-e2e.sh alle               # rund 2 Minuten
+docker rm -f zenos-basis-e2e
+```
+
+Einzelne Schritte gehen auch (`einrichten` zuerst, danach in beliebiger Reihenfolge und wiederholbar: Jeder Schritt
+bietet neue Versionen an). Langes `docker exec` am besten im Hintergrund starten und das Protokoll lesen.
+
+- **Paketquelle:** `file:/srv/basis-e2e/repo` mit den Taschen `e2e` und `e2e-security` (Release-Dateien wie bei
+  Ubuntu, Herkunft `zenos-e2e`, gebaut mit `dpkg-scanpackages`). Sie ist nicht signiert: `Trusted: yes` steht nur in
+  `/etc/apt/sources.list.d/zenos-e2e.sources` dieses Wegwerf-Containers, nie im Repo-Code für Geräte. Die Quellen von
+  Ubuntu liegen während des Tests unter `/srv/basis-e2e/beiseite`; `aufraeumen` legt sie zurück (die Listen holt erst
+  ein `apt-get update` mit Netz wieder). Solange sie fehlen, meldet `72-kennung` in `install.sh` «Sicherheitsquelle
+  nicht prüfbar»; das ist der Test, nicht das Gerät.
+- **Attrappen** (Architektur `all`, mit `dpkg-deb` gebaut): `zenos-e2e-auto`, `-werkzeug`, `-sicher` (kommt aus
+  `e2e-security`), `-dienst` (ein Dienst, den das postinst wie `dh_installsystemd` über `deb-systemd-invoke` neu
+  startet), `linux-image-e2e-raspi` (heikel; das postinst schreibt `/run/reboot-required` wie
+  `notify-reboot-required`), `zenos-e2e-halten` (das postinst wartet, solange `/srv/basis-e2e/halten` besteht: so
+  steht dpkg fest mitten im Lauf), `zenos-e2e-konflikt` und `zenos-e2e-frei`. Dazu `lxd-installer` als Attrappe
+  (automatisch installiert): Der Name steht auf der Schutzliste (`_aufraeumen_geschuetzt`), das Paket fehlt im Testbild.
+  Ein echtes `lxd-installer` lässt der Test in Ruhe und bricht ab.
+- **greetd:** das echte Paket aus `/var/cache/apt/archives` mit neuer Version `…+e2eN` (gleicher Inhalt, echte
+  Maintainer-Skripte). Es bleibt nach `aufraeumen` in dieser Version installiert.
+- **Timer:** Laufzeit-Drop-ins in `/run/systemd/system/<timer>.d/e2e.conf` halten die Timer von Basis, Kanal und
+  apt-daily an; der Test startet die Units selbst. Zeitpunkt «jederzeit», ohne Notschalter (beides vorher gesichert).
+
+Was die Schritte zeigen:
+
+| Schritt | Ergebnis |
+|---|---|
+| `automatik` | Zeitpunkt «von Hand»: `automatik.json` «wartet», Liste «bereit», Marker `automatik-bereit`. «jederzeit»: `zenos-basis-gelegenheit.service` installiert die drei Pakete. greetd behält InvocationID und Zustand, im Journal steht `invoke-rc.d: policy-rc.d denied execution of restart`, der Dienst der Attrappe startet neu; `greetd` in `/run/reboot-required.pkgs` |
+| `zen-update` | `zen update --nur-basis --ja`: Zusammenfassung «Updates: 2, davon Sicherheit: 1», keine Rückfrage, «Ubuntu-Basis: gelungen.»; ohne Updates «aktuell»; danach `install.sh` zweimal als root mit 0 Änderungen |
+| `kernel` | Automatik: «zustimmung», nichts installiert, kein Marker; «Jetzt installieren» ohne Passwort Exit 10; `zen update` fragt, «nein» Exit 10, «ja» installiert; `zenos-basis status` und `zen version` sagen «Neustart nötig» |
+| `schutz` | full-upgrade würde `lxd-installer` entfernen: «gesperrt», `zen update --ja` Exit 3, `zenos-basis zustimmen` und `installieren --zustimmung` Exit 3, Automatik «gesperrt», nichts geändert. Danach eine Entfernung von `zenos-e2e-frei`: Automatik wartet, ohne Passwort Exit 10, mit «ja» entfernt |
+| `abbruch` | `systemctl kill --signal=KILL` der Unit, während dpkg im postinst steht (vorher: Marker, Inhibitor, `policy-rc.d` der Basis da): dpkg unterbrochen, `policy-rc.d` bleibt liegen, Marker weg, Sperre frei. `apt-get -s` zeigt dann nur `Conf …` (hiesse «aktuell»); das nächste `zen update` holt in der Prüfung `dpkg --configure -a` nach, danach `dpkg --audit` leer, keine `policy-rc.d` |
+| `sperre` | Während eine Basis-Installation läuft: `zenos-kanal pruefen`, `zen update --nur-zenos` und ein zweites `zenos-basis installieren` Exit 75; ein `install.sh` von Hand (als tester) wartet und beginnt erst danach (sein Vermerk taucht nie während der Basis auf). `flock` auf `kanal.lock` wie ein Lauf des Kanals: Basis Exit 75. Der Vermerk eines `install.sh` von Hand (Attrappe namens `install.sh`, die wartet): Exit 75 mit «install.sh von Hand läuft gerade» |
+
+Grenzen: greetd läuft im Container nicht (kein VT); geprüft wird, dass es nicht gestartet wird und die
+`policy-rc.d` den Neustart ablehnt. Der Kanal hält seine Sperre im Test über `flock` auf dieselbe Datei, nicht mit
+einem echten Lauf. Ein `install.sh` von Hand **als root** (`sudo -i`) während eines Laufs von Kanal oder Basis wartet
+bis zu 15 Minuten und endet dann mit Exit 75: Es nimmt zuerst `/run/zenos-sperre/install.lock` und wartet dann auf
+`kanal.lock`, das `install.sh` des Laufs wartet umgekehrt (im Test gesehen; ein Lauf als Benutzer, wie dokumentiert,
+nimmt eine andere Sperre und wartet nur auf `kanal.lock`). Ein harter Abbruch hinterlässt keine `letzte.json`; die Oberfläche zeigt bis zum nächsten Lauf das
+vorige Ergebnis.
 
 ## Bootsplash ansehen
 
