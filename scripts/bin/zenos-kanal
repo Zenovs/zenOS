@@ -53,8 +53,8 @@ Aufruf:
                                        der Stand als gut; fehlt er bei zwei Starts, geht es auf den guten Stand zurück
   zenos-kanal holen-intern             nur für zenos-kanal-holen.service: holt ohne Rechte von origin
   zenos-kanal image vX.Y.Z[-rcN]       nur für image/bauen.sh (im chroot, nach install.sh --image): prüft den Tag wie
-                                       das Gerät und legt den Zustand ab Werk an (gut.json, hoechste, gesehen.json);
-                                       nur in einem neuen Zustand
+                                       das Gerät (auch die Ubuntu-Basis) und legt den Zustand ab Werk an (gut.json,
+                                       hoechste, gesehen.json); nur in einem neuen Zustand
 
 Holen (zenos-kanal-holen.service, DynamicUser, nur mit Netz und in einer Sandbox): «git fetch» von der https-Adresse
 von origin (aus /opt/zenos/.git/config) in einen eigenen Spiegel, nur die Tags v* (Versionen und vertrauen/NNNN) und
@@ -91,11 +91,16 @@ und abgeschaltetem OpenPGP und X.509. Regeln:
      (Rückfrage-Pfade, fest im Code), heisst der Zustand «zustimmung».
   7. Kanal dev: neuer Stand von origin/dev, ob der installierte Stand darin liegt und ob alle Commits dazwischen mit
      einem Release-Schlüssel signiert sind. Automatisch kommt auf dev nie etwas.
+  8. Ubuntu-Basis: Ein Stand nennt in system/basis die Ubuntu-Version, für die er gebaut ist (ohne die Datei: 26.04).
+     Passt sie nicht zur VERSION_ID des Geräts, ist er nie ein Ziel, auch nicht mit «ja», über dev oder zen rollback;
+     installieren prüft das in der Bereitstellung noch einmal. Ein Basiswechsel ist eine neue zenOS-Hauptversion mit
+     neuem Image, kein Update.
 
 Wunsch (zen update, zen rollback): Das Ziel braucht ein getipptes «ja», gebunden an genau diese Commit- bzw. Objekt-ID,
 wenn es nicht gültig signiert ist (dev: nicht jeder Commit seit dem installierten Stand; Anker fehlt), dev umgeschrieben
 wurde, es gesperrt ist, ein Rückschritt wäre oder Firewall, Netz oder Boot trifft. Stabil und vorschau nehmen nur
-Signiertes. Bereitgestellt wird in /var/lib/zenos/kanal/bereit/<commit> (eigenes Repo, ausgecheckt, geprüft).
+Signiertes. Ein Ziel für eine andere Ubuntu-Basis (Regel 8) wird abgelehnt, auch mit «ja». Bereitgestellt wird in
+/var/lib/zenos/kanal/bereit/<commit> (eigenes Repo, ausgecheckt, geprüft).
 
 Installieren (root, mit Netz, unter einem Block-Inhibitor für Ausschalten und Ruhezustand): Läuft ein install.sh von
 Hand (Vermerk /run/zenos-sperre/hand), wartet es (Exit 75). Vorher: zurückgebliebene Sperrdateien von git in
@@ -337,6 +342,20 @@ CONSENT_GROUPS = ("firewall", "netz", "boot")
 PATTERN_RE = re.compile(r"[A-Za-z0-9._][A-Za-z0-9._*/-]{0,199}")
 # Schlüsselfiles, die nach einer Installation nicht leer sein dürfen (eine volle Platte schrieb früher 0 Byte)
 KEY_FILES = ("scripts/zen", "scripts/install.sh", "scripts/bin/zenos-greeter", "scripts/bin/zenos-sitzung")
+
+# Ubuntu-Basis (Entscheid Zeno, Oktober 2026): system/basis nennt die Ubuntu-Version, für die ein Stand gebaut ist (eine
+# Zeile wie «26.04», Kommentare mit #). Installiert wird nie ein Stand für eine andere Version als die des Geräts: Ein
+# Basiswechsel ist eine neue zenOS-Hauptversion mit neuem Image. Ohne diese Grenze holte ein Gerät auf 26.04 eine
+# künftige Hauptversion für 28.04 von selbst, weil sie die höchste gültige Version ist. Stände ohne die Datei (von vor
+# ihrer Einführung) sind alle für 26.04 gebaut.
+BASIS_FILE = "system/basis"
+BASIS_DEFAULT = "26.04"
+BASIS_RE = re.compile(r"[0-9]{2}\.[0-9]{2}")
+MAX_BASIS_FILE = 4096
+# VERSION_ID des Geräts wie basis_os_release in scripts/lib/gemeinsam.sh: mit der Kennung zenOS (ID nicht ubuntu) aus
+# der Ubuntu-Fassung, sonst aus /etc/os-release (zenos-kennung übernimmt VERSION_ID ohnehin unverändert)
+OS_RELEASE = "/etc/os-release"
+OS_RELEASE_UBUNTU = "/usr/lib/os-release.ubuntu"
 
 CHANNELS = ("stabil", "vorschau", "dev")
 ANCHOR_FILES = ("release", "wurzel", "widerrufen", "serie")
@@ -1608,6 +1627,64 @@ def code_history_usable():
     return git(CODE_DIR, "config", "--get", "extensions.partialclone").stdout.strip() == ""
 
 
+# --- Ubuntu-Basis ----------------------------------------------------------------------------------------------
+
+
+def os_release_values(path):
+    """Schlüssel → Wert (ohne Anführungszeichen) aus einer os-release; {} wenn sie fehlt oder unlesbar ist. Folgt dem
+    Verweis /etc/os-release → ../usr/lib/os-release."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read(MAX_SMALL_FILE)
+    except OSError:
+        return {}
+    values = {}
+    for line in text.split("\n"):
+        key, sep, value = line.partition("=")
+        if sep and re.fullmatch(r"[A-Z][A-Z0-9_]*", key):
+            values[key] = value.strip().strip("\"'")
+    return values
+
+
+def device_basis():
+    """Ubuntu-Version des Geräts (VERSION_ID wie «26.04»); None, wenn sie fehlt oder ungewöhnlich ist."""
+    values = os_release_values(OS_RELEASE)
+    if values.get("ID") != "ubuntu" and os.path.isfile(OS_RELEASE_UBUNTU):
+        values = os_release_values(OS_RELEASE_UBUNTU)
+    version = values.get("VERSION_ID", "")
+    return version if BASIS_RE.fullmatch(version) else None
+
+
+def commit_basis(repo, commit):
+    """Ubuntu-Version, für die COMMIT gebaut ist: die eine Zeile in system/basis; fehlt die Datei, BASIS_DEFAULT. None,
+    wenn sie sich nicht lesen lässt oder ungültig ist (das zählt wie eine fremde Basis)."""
+    r = git(repo, "ls-tree", "-z", "--full-tree", commit, "--", BASIS_FILE)
+    if r.returncode != 0:
+        return None
+    if not r.stdout:
+        return BASIS_DEFAULT
+    meta = r.stdout.split("\t", 1)[0].split(" ")
+    if len(meta) != 3 or meta[1] != "blob" or not OID_RE.fullmatch(meta[2]):
+        return None
+    r = git(repo, "cat-file", "blob", meta[2])
+    if r.returncode != 0 or len(r.stdout) > MAX_BASIS_FILE:
+        return None
+    lines = [z.strip() for z in content_lines(r.stdout)]
+    return lines[0] if len(lines) == 1 and BASIS_RE.fullmatch(lines[0]) else None
+
+
+def basis_problem(built, device):
+    """Text, wenn ein Stand für BUILT (system/basis) nicht auf ein Gerät mit DEVICE (VERSION_ID) gehört, sonst None."""
+    if device is None:
+        return f"Die Ubuntu-Version dieses Geräts ist unbekannt (VERSION_ID in {OS_RELEASE})"
+    if built is None:
+        return f"{BASIS_FILE} ist unlesbar oder ungültig"
+    if built != device:
+        return (f"gebaut für Ubuntu {built}, dieses Gerät läuft auf Ubuntu {device}. Ein Wechsel der Basis ist eine neue "
+                "zenOS-Hauptversion mit neuem Image, kein Update")
+    return None
+
+
 class Waiting(Exception):
     """Es fehlt etwas, das sich von selbst geben kann (Platz): Exit 10, nichts geändert."""
 
@@ -1813,6 +1890,8 @@ class Check:
         self.ledger = {}
         self.floor_value = None
         self.channel = None
+        # Ubuntu-Basis je Commit (system/basis), einmal je Lauf gelesen
+        self.basis_cache = {}
         # Uhr synchronisiert? (einmal je Lauf; «erstmals» entsteht nur so)
         self.synced = None
         self.stand = {
@@ -1843,6 +1922,8 @@ class Check:
             # gescheitert, fehler, unbestaetigt, gut, keine): Die Oberfläche zeigt «kaputt» und Co. auch dann noch,
             # wenn diese Prüfung jünger ist als letzte.json
             "installation_lage": installation_state(),
+            # Ubuntu-Version des Geräts und gültige Versionen im Kanal, die für eine andere gebaut sind (nie ein Ziel)
+            "basis": {"geraet": device_basis(), "fremd": []},
         }
 
     # -- Zustand auf der Platte --
@@ -2128,12 +2209,16 @@ class Check:
             # hoechste verloren ging. Dann hält die Rückstellung sie von der Automatik fern (zen update holt sie)
             candidates.remove(held)
             self.notes.append(f"{held} ist nach «zen rollback» für die Automatik zurückgestellt; zen update holt es")
+        foreign = self.foreign(candidates)
+        candidates = [n for n in candidates if n not in foreign]
         target = highest(candidates)
         if not target:
             text = f"Keine neuere gültig signierte Version im Kanal {channel}."
             if held:
                 text += (f" {held} ist zurückgestellt: Nach «zen rollback» läuft der ältere Stand; automatisch kommt "
                          f"{held} nicht wieder, zurück dorthin: zen update.")
+            if foreign:
+                text += f" {self.foreign_text(foreign)}"
             return self.finish("aktuell", text, EXIT_OK)
         wait = WAIT_STABLE if channel == "stabil" else datetime.timedelta(0)
         first = parse_iso(ledger[target].get("erstmals"))
@@ -2274,13 +2359,45 @@ class Check:
         return None, (f"hoechste fehlt, und der installierte Stand {self.installed[:12]} gehört zu keiner signierten "
                       "Version. Ohne ihn lässt sich ein Downgrade nicht ausschliessen.")
 
+    def basis_of(self, commit):
+        """Ubuntu-Version, für die COMMIT gebaut ist (commit_basis, einmal je Lauf und Commit)."""
+        if commit not in self.basis_cache:
+            self.basis_cache[commit] = commit_basis(self.repo, commit)
+        return self.basis_cache[commit]
+
+    def foreign(self, names):
+        """Die gültigen Versionen unter NAMES, die nicht für die Ubuntu-Basis dieses Geräts gebaut sind, als {Name:
+        Grund}. Sie sind nie ein Ziel; stand.json führt sie unter basis.fremd, die höchsten drei als Hinweis."""
+        device = self.stand["basis"]["geraet"]
+        found = {}
+        for name in names:
+            problem = basis_problem(self.basis_of(self.valid[name]), device)
+            if problem:
+                found[name] = problem
+        if found:
+            known = self.stand["basis"]["fremd"]
+            for name in sorted(found, key=version_key)[-3:]:
+                if name not in known:
+                    self.notes.append(f"{name} ist kein Ziel: {found[name]}")
+            self.stand["basis"]["fremd"] = sorted(set(known) | set(found), key=version_key)[-MAX_SHOWN:]
+        return found
+
+    @staticmethod
+    def foreign_text(found):
+        name = highest(found)
+        more = len(found) - 1
+        text = f"{name} ist kein Ziel: {found[name]}."
+        if more:
+            text += f" Auch {more} {'weitere Version ist' if more == 1 else 'weitere Versionen sind'} kein Ziel."
+        return text
+
     def dev_info(self, refs, anchor, files):
         tip = refs["heads"].get("dev")
         if not tip or tip[1] != "commit":
             return
         tip = tip[0]
         info = {"commit": tip, "neu": tip != self.installed, "vorfahre": None, "commits": None,
-                "signiert": False, "braucht_ja": True}
+                "signiert": False, "braucht_ja": True, "basis_problem": None}
         if self.installed and has_commit(self.repo, self.installed):
             info["vorfahre"] = is_ancestor(self.repo, self.installed, tip)
             if info["vorfahre"]:
@@ -2296,6 +2413,12 @@ class Check:
                 marks = [z.split(" ")[1] for z in r.stdout.split("\n") if " " in z]
                 info["signiert"] = r.returncode == 0 and len(marks) == info["commits"] and all(m == "G" for m in marks)
         info["braucht_ja"] = not (info["vorfahre"] and info["signiert"])
+        if info["neu"]:
+            # Ein Stand für eine andere Ubuntu-Basis ist nie zu installieren, auch nicht mit «ja»: dann auch kein
+            # «Jetzt installieren» in den Einstellungen (das gibt es nur ohne «ja»)
+            info["basis_problem"] = basis_problem(self.basis_of(tip), self.stand["basis"]["geraet"])
+            if info["basis_problem"]:
+                info["braucht_ja"] = True
         self.stand["dev"] = info
 
     def dev_text(self):
@@ -2307,6 +2430,8 @@ class Check:
         what = f"{info['commits']} Commits" if info["commits"] is not None else "Abstand unbekannt"
         sign = "alle signiert" if info["signiert"] else "nicht alle signiert"
         text = f"Kanal dev: neuer Stand {info['commit'][:12]} ({what}, {sign})."
+        if info.get("basis_problem"):
+            return text + f" Nicht zu installieren: {info['basis_problem']}."
         if info["braucht_ja"]:
             text += " Nur von Hand mit «ja»; automatisch kommt auf dev nichts."
         return text
@@ -2364,6 +2489,10 @@ class Check:
                                "Nichts installiert; bitte noch einmal ansehen.", EXIT_WAIT)
         if self.is_current(target):
             return self.answer("aktuell", f"Schon installiert: {target_label(target)}.", EXIT_OK)
+        problem = basis_problem(self.basis_of(target["commit"]), self.stand["basis"]["geraet"])
+        if problem:
+            # Nie, auch nicht mit «ja» (dev, zen rollback): Ein Basiswechsel ist kein Update
+            return self.answer("abgelehnt", f"{target_label(target)}: {problem}. Nichts installiert.", EXIT_BLOCKED)
         if self.wish.get("nur_signiert") and not target.get("signiert"):
             # «Zustimmen …» in den Einstellungen ersetzt das getippte «ja» nur für gültig signierte Versionen (Firewall,
             # Netz oder Boot); Unsigniertes, dev und Rollbacks bleiben beim Terminal
@@ -2502,11 +2631,14 @@ class Check:
         locked = self.locked_versions()
         candidates = [n for n in self.valid if in_channel(n, self.channel) and n not in locked
                       and (floor is None or version_key(n) >= version_key(floor))]
+        foreign = self.foreign(candidates)
+        candidates = [n for n in candidates if n not in foreign]
         if not candidates:
             skipped = sorted((n for n in locked if n in self.valid and in_channel(n, self.channel)), key=version_key)
             raise Current(f"Keine gültig signierte Version im Kanal {self.channel}"
                           + (f" (gesperrt: {', '.join(skipped[-3:])}; noch einmal versuchen: zen rollback "
-                             f"{skipped[-1]})." if skipped else "."))
+                             f"{skipped[-1]})." if skipped else ".")
+                          + (f" {self.foreign_text(foreign)}" if foreign else ""))
         name = highest(candidates)
         commit, oid = self.valid[name], self.refs["tags"][name][0]
         reasons = []
@@ -3170,6 +3302,9 @@ class Installation:
             if gut.get("commit") != entry["commit"]:
                 raise Failure("der gute Stand hat sich geändert")
             return
+        problem = basis_problem(commit_basis(folder, entry["commit"]), device_basis())
+        if problem:
+            raise Failure(problem)
         if entry.get("signiert"):
             try:
                 anchor = load_device_anchor()
@@ -4926,6 +5061,10 @@ def cmd_image(argv):
     r = git(CODE_DIR, "status", "--porcelain")
     if r.returncode != 0 or r.stdout.strip():
         print(f"{NAME} image: {CODE_DIR} ist nicht sauber", file=sys.stderr)
+        return EXIT_BLOCKED
+    problem = basis_problem(commit_basis(CODE_DIR, result.commit), device_basis())
+    if problem:
+        print(f"{NAME} image: {name}: {problem}", file=sys.stderr)
         return EXIT_BLOCKED
     lock = lock_or_exit()
     if not isinstance(lock, Locked):

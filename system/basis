@@ -1,0 +1,5 @@
+# Ubuntu-Version, für die dieser Stand von zenOS gebaut ist (VERSION_ID aus /etc/os-release).
+# zenos-kanal installiert einen Stand nur auf einem Gerät mit genau dieser Version, nie über das Update: Ein Wechsel
+# der Ubuntu-Basis ist eine neue zenOS-Hauptversion mit neuem Image (docs/image-und-releases.md, «Basiswechsel»).
+# Fehlt die Datei (Stände von vor ihrer Einführung), gilt 26.04.
+26.04

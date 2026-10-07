@@ -17,6 +17,8 @@
 #                zweimal als root aus der Bereitstellung (zweiter Lauf 0 Änderungen)
 #   signiert     Anker aus Wegwerf-Schlüsseln, Kanal vorschau, signierter Tag ohne Frage installiert, auch während ein
 #                Benutzerprozess install.log laufend kürzt (Gesundheit aus dem root-eigenen install-ergebnis)
+#   basis        signierter Stand für Ubuntu 28.04 (system/basis): zen update lässt ihn liegen, zen rollback auch mit
+#                «ja» nicht; Prompt=never liegt als Drop-in, zen doctor sagt es; danach dev wieder für 26.04
 #   kaputt       signierter Stand mit Modul, das abbricht: Rückweg, gesperrt
 #   gesundheit   signierter Stand mit leerem scripts/zen: Rückweg
 #   platz        kleines tmpfs auf bereit/: wartet (Exit 10), nichts geändert
@@ -312,6 +314,43 @@ s_signiert() {
   erwarte_text "^Update  *v0.1.1-rc1" "zen version zeigt den Stand"
   runuser -u "$TESTER" -- zen doctor > "$E2E/zen.txt" 2>&1 || true
   erwarte_text "Installation: v0.1.1-rc1" "zen doctor: Installation"
+}
+
+s_basis() {
+  schritt "basis: ein Stand für eine andere Ubuntu-Version kommt nie"
+  local vorher rc=0
+  anker_schreiben
+  kanal vorschau
+  vorher=$(kopf)
+  neuer_commit "e2e: für Ubuntu 28.04" system/basis $'28.04\n' > /dev/null
+  signieren v0.9.0-rc1
+  zen_als_tester "" zen update || rc=$?
+  erwarte_rc "$rc" 0 "zen update mit einem Stand für 28.04"
+  erwarte_text "v0.9.0-rc1 ist kein Ziel: gebaut für Ubuntu 28.04, dieses Gerät läuft auf Ubuntu 26.04" \
+    "Hinweis: kein Ziel"
+  erwarte_kopf "$vorher" "nichts installiert"
+  [[ "$(json "$STAND/stand.json" .basis.geraet)" == 26.04 ]] || fehler "stand.json: basis.geraet"
+  [[ "$(json "$STAND/stand.json" '.basis.fremd | index("v0.9.0-rc1") != null')" == true ]] ||
+    fehler "stand.json: basis.fremd"
+  [[ "$(json "$STAND/stand.json" .zustand)" == aktuell ]] || fehler "stand.json: zustand"
+  ok "stand.json: aktuell, v0.9.0-rc1 unter basis.fremd"
+  rc=0
+  zen_als_tester "ja" zen rollback v0.9.0-rc1 || rc=$?
+  erwarte_rc "$rc" 3 "zen rollback v0.9.0-rc1 mit «ja»"
+  erwarte_text "gebaut für Ubuntu 28.04" "abgelehnt: andere Basis"
+  if grep -q "Tippe «ja»" "$E2E/zen.txt"; then fehler "fragte nach «ja»"; fi
+  erwarte_kopf "$vorher" "auch mit «ja» nichts installiert"
+  neuer_commit "e2e: wieder für Ubuntu 26.04" system/basis $'26.04\n' > /dev/null
+  ok "dev wieder für 26.04 (die Schritte danach)"
+
+  schritt "basis: Prompt=never"
+  cmp -s /etc/update-manager/release-upgrades.d/zenos.cfg /opt/zenos/system/update-manager/zenos.cfg ||
+    fehler "Drop-in /etc/update-manager/release-upgrades.d/zenos.cfg fehlt oder weicht ab"
+  [[ "$(stat -c '%U %a' /etc/update-manager/release-upgrades.d/zenos.cfg)" == "root 644" ]] ||
+    fehler "Drop-in nicht root 0644"
+  ok "Drop-in Prompt=never (root, 0644)"
+  runuser -u "$TESTER" -- zen doctor > "$E2E/zen.txt" 2>&1 || true
+  erwarte_text "Kein Wechsel der Ubuntu-Hauptversion: Prompt=never" "zen doctor: Prompt=never"
 }
 
 s_kaputt() {
@@ -1271,6 +1310,7 @@ case "${1:-}" in
   zweimal) s_zweimal ;;
   nach-zweimal) s_nach_zweimal ;;
   rollback) s_rollback ;;
+  basis) s_basis ;;
   notweg) s_notweg ;;
   stopp) s_stopp ;;
   werkbank) s_werkbank ;;
@@ -1283,5 +1323,5 @@ case "${1:-}" in
   nach-automatik-2) s_nach_automatik_2 ;;
   nach-automatik-3) s_nach_automatik_3 ;;
   automatik-uhr) s_automatik_uhr ;;
-  *) sed -n '2,62p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,64p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

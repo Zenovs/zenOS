@@ -111,10 +111,15 @@ class Basis(unittest.TestCase):
             "POWER_STATUS": self.pfad("run", "zenos", "geraet.json"),
             "POWER_SUPPLY_DIR": self.pfad("gibt-es-nicht", "power_supply"),
             "TIMESYNC_FLAG": self.pfad("gibt-es-nicht", "synchronized"),
+            # Ubuntu-Basis des Geräts: 26.04 wie die Stände ohne system/basis (os_release setzt sie anders)
+            "OS_RELEASE": self.pfad("etc", "os-release"),
+            "OS_RELEASE_UBUNTU": self.pfad("usr", "lib", "os-release.ubuntu"),
         }
         for name, wert in werte.items():
             self.addCleanup(setattr, K, name, getattr(K, name))
             setattr(K, name, wert)
+        os.makedirs(self.pfad("etc"), mode=0o755, exist_ok=True)
+        self.os_release("26.04")
         # Die Uhr gilt als synchronisiert (timedatectl gibt es hier nicht); Tests zur Uhr setzen das selbst
         self.addCleanup(setattr, K, "clock_synced", K.clock_synced)
         K.clock_synced = lambda: True
@@ -173,6 +178,20 @@ class Basis(unittest.TestCase):
     def kanal(self, name):
         with open(K.CHANNEL_FILE, "w", encoding="utf-8") as f:
             f.write(name + "\n")
+
+    def os_release(self, version, ident="ubuntu", ubuntu=None):
+        """os-release des Geräts: ID IDENT, VERSION_ID VERSION (None: ohne). UBUNTU: VERSION_ID der Ubuntu-Fassung
+        /usr/lib/os-release.ubuntu (Kennung zenOS), None: ohne die Datei."""
+        zeilen = [f"ID={ident}", 'NAME="Test"'] + ([f'VERSION_ID="{version}"'] if version is not None else [])
+        with open(K.OS_RELEASE, "w", encoding="utf-8") as f:
+            f.write("\n".join(zeilen) + "\n")
+        if ubuntu is None:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(K.OS_RELEASE_UBUNTU)
+        else:
+            os.makedirs(os.path.dirname(K.OS_RELEASE_UBUNTU), exist_ok=True)
+            with open(K.OS_RELEASE_UBUNTU, "w", encoding="utf-8") as f:
+                f.write(f'ID=ubuntu\nVERSION_ID="{ubuntu}"\n')
 
     def anker(self, **art):
         self.anker_dateien(anker_texte(**art))
@@ -1228,6 +1247,131 @@ class Dev(Basis):
         self.assertIn("installiert ist der Stand von origin/dev", stand["grund"])
 
 
+class UbuntuBasis(Basis):
+    """Grenze der Ubuntu-Basis (system/basis gegen VERSION_ID des Geräts): Ein Gerät auf 26.04 holt nie einen Stand,
+    der für 28.04 gebaut ist, auch wenn er die höchste gültige Version ist. Ein Basiswechsel ist ein neues Image."""
+
+    def test_hoehere_version_fuer_andere_basis_kein_ziel(self):
+        self.commit("eins-eins")
+        self.signieren("v0.1.0")
+        self.commit("zwei", {"system/basis": "# für 28.04\n28.04\n"})
+        self.signieren("v1.0.0")
+        rc, stand = self.lauf()
+        self.assertEqual((rc, stand["zustand"]), (0, "bereit"), stand["grund"])
+        self.assertEqual(stand["bereit"]["version"], "v0.1.0", "die höchste Version für 26.04")
+        self.assertEqual(stand["basis"], {"geraet": "26.04", "fremd": ["v1.0.0"]})
+        self.assertIn("v1.0.0 ist kein Ziel: gebaut für Ubuntu 28.04, dieses Gerät läuft auf Ubuntu 26.04",
+                      " ".join(stand["hinweise"]))
+        self.assertEqual(stand["gueltig"], ["v0.1.0", "v1.0.0"], "gültig signiert bleibt sie")
+
+    def test_nur_andere_basis_aktuell(self):
+        self.commit("zwei", {"system/basis": "28.04\n"})
+        self.signieren("v1.0.0")
+        rc, stand = self.lauf()
+        self.assertEqual((rc, stand["zustand"]), (0, "aktuell"), stand["grund"])
+        self.assertIsNone(stand["bereit"])
+        self.assertIn("v1.0.0 ist kein Ziel: gebaut für Ubuntu 28.04", stand["grund"])
+        self.assertIn("neuem Image", stand["grund"])
+        self.assertFalse(os.path.exists(os.path.join(K.STATE_DIR, K.READY_MARK)), "nichts für die Automatik")
+
+    def test_spaetere_version_fuer_dieselbe_basis_kommt(self):
+        """Nach der Hauptversion für 28.04 kommt noch ein Update für 26.04: Das ist das Ziel."""
+        self.commit("zwei", {"system/basis": "28.04\n"})
+        self.signieren("v1.0.0")
+        self.git("checkout", "-q", "--detach", self.eins)
+        self.commit("pflege", {"system/basis": "# Kommentar\n\n  26.04  \n"})
+        self.signieren("v0.9.1")
+        _, stand = self.lauf()
+        self.assertEqual((stand["zustand"], stand["bereit"]["version"]), ("bereit", "v0.9.1"), stand["grund"])
+
+    def test_datei_ungueltig(self):
+        for inhalt in ("26.04\n28.04\n", "sechsundzwanzig\n", "26.4\n", "", "# nur Kommentar\n", "x" * 5000):
+            with self.subTest(inhalt=inhalt[:20]):
+                self.commit(f"basis {inhalt[:10]!r}", {"system/basis": inhalt})
+                name = f"v0.{len(self.git('tag', '-l').split()) + 1}.0"
+                self.signieren(name)
+                _, stand = self.lauf()
+                self.assertEqual(stand["zustand"], "aktuell", stand["grund"])
+                self.assertIn(f"{name} ist kein Ziel: system/basis ist unlesbar oder ungültig", stand["grund"])
+
+    def test_basis_als_ordner_ungueltig(self):
+        self.commit("zwei", {"system/basis/x": "26.04\n"})
+        self.signieren("v0.2.0")
+        _, stand = self.lauf()
+        self.assertEqual(stand["zustand"], "aktuell")
+        self.assertIn("unlesbar oder ungültig", stand["grund"])
+
+    def test_geraet_unbekannt(self):
+        self.os_release(None)
+        self.commit("zwei")
+        self.signieren("v0.2.0")
+        _, stand = self.lauf()
+        self.assertEqual(stand["zustand"], "aktuell")
+        self.assertIsNone(stand["basis"]["geraet"])
+        self.assertIn("Ubuntu-Version dieses Geräts ist unbekannt", stand["grund"])
+
+    def test_geraet_auf_anderer_basis(self):
+        """Von Hand mit do-release-upgrade auf 28.04 gewechselt (trotz Prompt=never): Stände für 26.04 kommen nicht."""
+        self.os_release("28.04")
+        self.commit("zwei")
+        self.signieren("v0.2.0")
+        _, stand = self.lauf()
+        self.assertEqual(stand["zustand"], "aktuell")
+        self.assertIn("gebaut für Ubuntu 26.04, dieses Gerät läuft auf Ubuntu 28.04", stand["grund"])
+
+    def test_geraet_basis_lesen(self):
+        self.os_release("26.04")
+        self.assertEqual(K.device_basis(), "26.04")
+        # Kennung zenOS: VERSION_ID aus der Ubuntu-Fassung
+        self.os_release("26.04", ident="zenos", ubuntu="28.04")
+        self.assertEqual(K.device_basis(), "28.04")
+        # Kennung zenOS ohne Ubuntu-Fassung: os-release selbst
+        self.os_release("26.04", ident="zenos")
+        self.assertEqual(K.device_basis(), "26.04")
+        # Kennung Ubuntu: die Ubuntu-Fassung zählt nicht (sie kann von früher liegen)
+        self.os_release("26.04", ubuntu="24.04")
+        self.assertEqual(K.device_basis(), "26.04")
+        for wert in ("26.04.1", "26", "", "26.04; rm"):
+            self.os_release(wert)
+            self.assertIsNone(K.device_basis(), wert)
+        os.unlink(K.OS_RELEASE)
+        self.assertIsNone(K.device_basis())
+
+    def test_dev_fremde_basis_nicht_zu_installieren(self):
+        self.kanal("dev")
+        self.commit("a", {"system/basis": "28.04\n"}, signiert_mit="rel")
+        rc, stand = self.lauf()
+        self.assertEqual((rc, stand["zustand"]), (0, "dev"))
+        self.assertTrue(stand["dev"]["signiert"])
+        self.assertTrue(stand["dev"]["braucht_ja"], "kein «Jetzt installieren» ohne «ja»")
+        self.assertIn("gebaut für Ubuntu 28.04", stand["dev"]["basis_problem"])
+        self.assertIn("Nicht zu installieren: gebaut für Ubuntu 28.04", stand["grund"])
+
+    def test_dev_gleiche_basis(self):
+        self.kanal("dev")
+        self.commit("a", {"system/basis": "26.04\n"}, signiert_mit="rel")
+        _, stand = self.lauf()
+        self.assertIsNone(stand["dev"]["basis_problem"])
+        self.assertFalse(stand["dev"]["braucht_ja"])
+
+
+class BasisImRepo(unittest.TestCase):
+    """system/basis dieses Repos: gültig und dieselbe Version wie die Regel in scripts/lib/gemeinsam.sh
+    (system_unterstuetzt, zen doctor und 00-vorbereitung). Stände ohne die Datei gelten für immer als 26.04."""
+
+    def test_basis_datei(self):
+        with open(os.path.join(WURZEL, K.BASIS_FILE), encoding="utf-8") as f:
+            zeilen = [z.strip() for z in K.content_lines(f.read())]
+        self.assertEqual(len(zeilen), 1, zeilen)
+        self.assertRegex(zeilen[0], K.BASIS_RE)
+        with open(os.path.join(WURZEL, "scripts", "lib", "gemeinsam.sh"), encoding="utf-8") as f:
+            gemeinsam = f.read()
+        self.assertIn(f'"$(os_release_wert VERSION_ID "$basis")" == {zeilen[0]} ]]', gemeinsam)
+
+    def test_standard_ohne_datei(self):
+        self.assertEqual(K.BASIS_DEFAULT, "26.04", "die Stände ohne system/basis sind alle für 26.04 gebaut")
+
+
 class Image(Basis):
     """zenos-kanal image: der Zustand ab Werk, den image/bauen.sh im chroot nach install.sh --image anlegt."""
 
@@ -1368,6 +1512,17 @@ class Image(Basis):
         _, stand = self.lauf()
         self.assertEqual(stand["zustand"], "aktuell")
         self.assertIsNone(stand["bereit"])
+
+    def test_andere_ubuntu_basis(self):
+        self.commit("zwei", {"system/basis": "28.04\n"})
+        self.signieren("v1.0.0-rc1")
+        self.geraet_auf("v1.0.0-rc1")
+        self.assertEqual(self.image("v1.0.0-rc1"), 3)
+        self.assertIn("gebaut für Ubuntu 28.04, dieses Gerät läuft auf Ubuntu 26.04", self.ausgabe)
+        self.assertEqual(self.zustand(), [])
+        # Im Image für 28.04 passt es
+        self.os_release("28.04")
+        self.assertEqual(self.image("v1.0.0-rc1"), 0, self.ausgabe)
 
     def test_aufruf(self):
         for argv in ([], ["v0.2"], ["vertrauen/0002"], ["v0.2.0", "v0.2.1"]):

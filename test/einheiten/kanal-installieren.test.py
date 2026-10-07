@@ -1112,5 +1112,80 @@ class Ergebnis(Geraet):
         self.assertEqual(self.zustand("letzte.json")["ergebnis"], "installiert")
 
 
+
+@unittest.skipUnless(B.HAT_WERKZEUGE, "git oder ssh-keygen fehlt unter /usr/bin")
+class UbuntuBasis(Geraet):
+    """Grenze der Ubuntu-Basis bei zen update, zen rollback, dev und installieren: Ein Stand für eine andere Ubuntu-
+    Version (system/basis) kommt nie auf das Gerät, auch nicht mit «ja»."""
+
+    def andere_basis(self, name=None, signiert=True):
+        """Commit für Ubuntu 28.04 auf dev, mit Tag NAME (signiert oder nicht); gibt den Commit zurück."""
+        commit = self.commit(f"für 28.04 {name or ''}", {"system/basis": "28.04\n", "datei": f"28.04 {name}\n"})
+        if name and signiert:
+            self.signieren(name)
+        elif name:
+            self.unsigniert(name)
+        return commit
+
+    def test_update_nimmt_die_hoechste_version_fuer_die_basis(self):
+        pflege = self.commit("pflege")
+        self.signieren("v0.2.0")
+        self.andere_basis("v1.0.0")
+        self.assertEqual(self.zen(), 0, self.ausgabe)
+        self.assertEqual(self.kopf(), pflege)
+        self.assertEqual(self.zustand("gut.json")["tag"], "v0.2.0")
+        self.assertIn("v1.0.0 ist kein Ziel: gebaut für Ubuntu 28.04", self.ausgabe)
+        # Danach bleibt es dabei
+        self.assertEqual(self.zen(), 0, self.ausgabe)
+        self.assertEqual((self.kopf(), len(self.laeufe())), (pflege, 1))
+
+    def test_rollback_auf_andere_basis_nie(self):
+        self.andere_basis("v1.0.0")
+        self.andere_basis("v1.0.1", signiert=False)
+        for tag in ("v1.0.0", "v1.0.1"):
+            self.antworten = ["ja"]
+            self.fragen = []
+            self.assertEqual(self.zen("rollback", tag), 3, self.ausgabe)
+            self.assertIn("gebaut für Ubuntu 28.04, dieses Gerät läuft auf Ubuntu 26.04", self.ausgabe)
+            self.assertEqual(self.fragen, [], "gar nicht erst gefragt")
+        self.assertEqual((self.kopf(), self.laeufe()), (self.basis, []))
+        self.assertFalse(os.path.exists(os.path.join(K.STATE_DIR, "auftrag.json")))
+
+    def test_dev_auch_mit_ja_nie(self):
+        self.kanal("dev")
+        self.ohne_anker()
+        self.andere_basis()
+        self.antworten = ["ja"]
+        self.assertEqual(self.zen(), 3, self.ausgabe)
+        self.assertIn("gebaut für Ubuntu 28.04", self.ausgabe)
+        self.assertEqual((self.kopf(), self.laeufe(), self.fragen), (self.basis, [], []))
+        # Signiert ohne Anker-Problem: ebenso
+        self.anker()
+        self.commit("signiert obenauf", signiert_mit="rel")
+        self.assertEqual(self.zen(), 3, self.ausgabe)
+        self.assertEqual((self.kopf(), self.laeufe()), (self.basis, []))
+
+    def test_installieren_prueft_die_basis_nach(self):
+        """Zwischen Prüfen und Installieren wechselt das Gerät die Basis (do-release-upgrade von Hand): nichts."""
+        self.commit("neu")
+        self.signieren("v0.2.0")
+        K.write_wish("update")
+        _, stand = self.lauf()
+        self.assertEqual(stand["wunsch"]["ergebnis"], "bereitgestellt", stand["wunsch"])
+        self.os_release("28.04")
+        self.assertEqual(self.installieren(), 3)
+        self.assertIn("gebaut für Ubuntu 26.04, dieses Gerät läuft auf Ubuntu 28.04", self.ausgabe)
+        self.assertEqual((self.kopf(), self.laeufe()), (self.basis, []))
+        self.assertFalse(os.path.exists(os.path.join(K.STATE_DIR, "laeuft.json")), "nichts begonnen")
+
+    def test_automatik_nimmt_keine_andere_basis(self):
+        self.andere_basis("v1.0.0")
+        K.write_wish("automatik")
+        rc, stand = self.lauf()
+        self.assertEqual(stand["zustand"], "aktuell", stand["grund"])
+        self.assertEqual(stand["wunsch"]["ergebnis"], "aktuell", stand["wunsch"])
+        self.assertFalse(os.path.exists(os.path.join(K.STATE_DIR, "auftrag.json")))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)
