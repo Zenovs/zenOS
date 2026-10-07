@@ -753,6 +753,16 @@ Mit Wegwerf-Schlüsseln, im Container (git 2.53, OpenSSH 10.2) und auf dem Mac (
   Werk für rc auf vorschau und final auf stabil, danach «aktuell» beim ersten Lauf, rc nicht auf stabil, nie auf dev,
   unsigniert, fremd und mit der Wurzel signiert, nicht auf dem Tag, nicht sauber, ohne Anker, nur in einem neuen
   Zustand, später verschobener Tag ist ALARM, kein Downgrade unter den Stand ab Werk.
+- Ubuntu-Basis (Oktober 2026): Die Klassen `UbuntuBasis` in `test/einheiten/kanal.test.py` und
+  `kanal-installieren.test.py` spielen durch: höhere Version für 28.04 neben einer für 26.04 (Ziel ist die für 26.04),
+  nur 28.04 (aktuell, nichts für die Automatik), späteres Update für 26.04 nach einer Hauptversion für 28.04,
+  ungültige `system/basis` (zwei Zeilen, Text, leer, nur Kommentar, zu gross, Ordner), Gerät ohne `VERSION_ID`, Gerät
+  auf 28.04, Kennung zenOS mit `os-release.ubuntu`, dev für 28.04 (kein «Jetzt installieren», auch mit «ja» nicht),
+  `zen rollback` signiert und unsigniert mit «ja», Basis wechselt zwischen Prüfen und Installieren, Automatik;
+  `Image` dazu einen Tag für 28.04. `BasisImRepo` hält `system/basis` gleich der Regel in `scripts/lib/gemeinsam.sh`.
+  Im Container (`kanal-e2e.sh`, Schritte einrichten, dev, signiert, basis, danach kaputt): ein gültig signierter
+  `v0.9.0-rc1` für 28.04 bleibt liegen (`zen update` Exit 0, Hinweis, `basis.fremd`), `zen rollback v0.9.0-rc1` mit
+  «ja» endet mit Exit 3 ohne Frage, der Drop-in liegt root-eigen, `zen doctor` meldet `Prompt=never`.
 
 ### Grenzen
 
