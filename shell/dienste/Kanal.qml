@@ -11,17 +11,19 @@ import "kanal.js" as Logik
 // Update-Kanal in der Oberfläche: Lage für Einstellungen › System › Updates, Mitteilungen und «Update läuft» im
 // System-Menü. Die Logik steht in kanal.js und ist dort getestet.
 //
-// - Übernahme (install.sh aus dem Kanal): zenos-kanal meldet Beginn und Ende über IPC («kanal uebernahme beginn|ende»,
-//   als dieser Benutzer). Solange lädt Quickshell geänderte Dateien nicht einzeln nach (watchFiles aus, sonst womöglich
-//   ein Mischstand, dem Leiste oder Mitteilungen fehlen). Danach richtet install.sh --nur-benutzer die Benutzerteile
-//   ein (über systemd-run, ausserhalb der Oberfläche) und startet sie neu, wenn sich QML geändert hat; ist gesperrt,
-//   erst nach dem Entsperren. Läuft beim Start der Oberfläche gerade eine Übernahme, gilt dasselbe.
+// - Übernahme (install.sh aus dem Kanal, ebenso apt-get full-upgrade und install.sh der Basis-Updates): zenos-kanal
+//   bzw. zenos-basis meldet Beginn und Ende über IPC («kanal uebernahme beginn|ende», als dieser Benutzer). Solange
+//   lädt Quickshell geänderte Dateien nicht einzeln nach (watchFiles aus, sonst womöglich ein Mischstand, dem Leiste
+//   oder Mitteilungen fehlen, oder Plugins eines eben aktualisierten Qt). Danach richtet install.sh --nur-benutzer die
+//   Benutzerteile ein (über systemd-run, ausserhalb der Oberfläche) und startet sie neu, wenn sich QML oder Quickshell
+//   geändert hat; ist gesperrt, erst nach dem Entsperren. Läuft beim Start der Oberfläche gerade eine Übernahme, gilt
+//   dasselbe.
 //
 // - Gelesen wird ohne Rechte, was root schreibt: /var/lib/zenos/kanal/stand.json (letzte Prüfung) und letzte.json
 //   (letzte Installation), /etc/xdg/zenos/kanal-zeitpunkt (Zeitpunkt automatischer Updates) und
-//   /run/zenos-kanal/uebernahme (gibt es nur, solange install.sh aus dem Kanal läuft, mit Block-Inhibitor:
-//   Ausschalten und Neustart warten dann). Bei jeder Änderung (watchChanges), solange die Einstellungen oder ein Menü
-//   der Leiste offen sind alle 3 s, sonst jede Minute.
+//   /run/zenos-kanal/uebernahme bzw. /run/zenos-basis/uebernahme (gibt es nur, solange install.sh aus dem Kanal bzw. ein
+//   Basis-Update läuft, mit Block-Inhibitor: Ausschalten und Neustart warten dann). Bei jeder Änderung (watchChanges),
+//   solange die Einstellungen oder ein Menü der Leiste offen sind alle 3 s, sonst jede Minute.
 // - Bedient wird über pkexec mit dem Helfer zenos-kanal-bedienen (Argumentliste, keine Shell; polkit-Aktionen in
 //   system/polkit/org.zenos.kanal.policy): prüfen, jetzt installieren und den Zeitpunkt setzen ohne Passwort, nur in
 //   der aktiven Sitzung am Gerät; zustimmen jedes Mal mit Passwort, nur für das gezeigte Tag-Objekt. Die Arbeit machen
@@ -40,6 +42,7 @@ Singleton {
     readonly property string letztePfad: "/var/lib/zenos/kanal/letzte.json"
     readonly property string zeitpunktPfad: "/etc/xdg/zenos/kanal-zeitpunkt"
     readonly property string uebernahmePfad: "/run/zenos-kanal/uebernahme"
+    readonly property string basisUebernahmePfad: "/run/zenos-basis/uebernahme"
     readonly property string gemeldetPfad: Pfade.zustand + "/kanal-meldungen.json"
 
     // Lage (kanal.js: standLesen, letzteLesen, zeitpunktLesen); stand null: noch nie geprüft
@@ -66,8 +69,11 @@ Singleton {
     readonly property string zeitpunktText: Logik.zeitpunktText(_zeitpunkt)
     // Was für jeden Zeitpunkt gilt (Signatur, Zustimmung, Akku, dev)
     readonly property string zeitpunktImmer: Logik.ZEITPUNKT_IMMER
-    // install.sh aus dem Kanal läuft (Block-Inhibitor): System-Menü und Einstellungen «Update läuft»
-    readonly property bool updateLaeuft: _uebernahme || _pausiert
+    // install.sh aus dem Kanal oder ein Basis-Update läuft (Block-Inhibitor): System-Menü und Einstellungen «Update
+    // läuft»
+    readonly property bool updateLaeuft: _uebernahme || _uebernahmeBasis || _pausiert
+    // Davon nur das Basis-Update (apt-get full-upgrade, install.sh)
+    readonly property bool basisLaeuft: _uebernahmeBasis
     // Die Übernahme läuft (gemeldet über IPC oder beim Lesen gesehen), Quickshell lädt solange nicht nach: Die Sperre
     // schaltet das Nachladen nach dem Entsperren dann nicht ein und lädt nicht selbst neu
     readonly property bool uebernahmeLaeuft: _pausiert
@@ -81,6 +87,7 @@ Singleton {
         letzteDatei.reload();
         zeitpunktDatei.reload();
         uebernahmeDatei.reload();
+        basisUebernahmeDatei.reload();
     }
 
     function pruefen(): void {
@@ -133,6 +140,7 @@ Singleton {
     property var _letzte: null
     property var _zeitpunkt: Logik.zeitpunktLesen(null)
     property bool _uebernahme: false
+    property bool _uebernahmeBasis: false
     property string _laeuft: ""
     property string _zielArt: ""
     property string _fertigAktion: ""
@@ -171,10 +179,24 @@ Singleton {
             return;
         _pausiert = false;
         _uebernahme = false;
+        _uebernahmeBasis = false;
         _benutzerteileFaellig = true;
         if (!Oberflaeche.gesperrt)
             Quickshell.watchFiles = true;
         _benutzerteileStarten();
+    }
+
+    // Ein Marker gelesen (art: kanal oder basis): Solange einer besteht, läuft die Übernahme. Erst wenn beide fehlen,
+    // geht es weiter (sonst setzte der Takt des einen die Übernahme des anderen fort)
+    function _markerGelesen(art: string, da: bool): void {
+        if (art === "basis")
+            _uebernahmeBasis = da;
+        else
+            _uebernahme = da;
+        if (_uebernahme || _uebernahmeBasis)
+            _pausieren();
+        else
+            _fortsetzen();
     }
 
     function _benutzerteileStarten(): void {
@@ -325,7 +347,8 @@ Singleton {
         onLoadFailed: root._uebernehmen("zeitpunkt", "")
     }
 
-    // Der Ordner /run/zenos-kanal besteht nur während einer Installation: kein watchChanges, nur der Takt
+    // Die Ordner /run/zenos-kanal und /run/zenos-basis bestehen nur während einer Installation: kein watchChanges, nur
+    // der Takt
     FileView {
         id: uebernahmeDatei
 
@@ -333,14 +356,18 @@ Singleton {
         blockLoading: true
         printErrors: false
         // Auch ohne Nachricht über IPC (etwa nach einem Neustart der Oberfläche mitten in der Übernahme)
-        onLoaded: {
-            root._uebernahme = true;
-            root._pausieren();
-        }
-        onLoadFailed: {
-            root._uebernahme = false;
-            root._fortsetzen();
-        }
+        onLoaded: root._markerGelesen("kanal", true)
+        onLoadFailed: root._markerGelesen("kanal", false)
+    }
+
+    FileView {
+        id: basisUebernahmeDatei
+
+        path: root.basisUebernahmePfad
+        blockLoading: true
+        printErrors: false
+        onLoaded: root._markerGelesen("basis", true)
+        onLoadFailed: root._markerGelesen("basis", false)
     }
 
     Connections {
@@ -422,13 +449,13 @@ Singleton {
             return z.art === "fenster" ? "fenster " + z.von + "-" + z.bis : z.art;
         }
 
-        // «ja», solange install.sh aus dem Kanal läuft
+        // «ja», solange install.sh aus dem Kanal oder ein Basis-Update läuft
         function laeuft(): string {
             root.aktualisieren();
             return root.updateLaeuft ? "ja" : "nein";
         }
 
-        // Von zenos-kanal (als dieser Benutzer) vor und nach install.sh: «beginn» oder «ende»
+        // Von zenos-kanal bzw. zenos-basis (als dieser Benutzer) vor und nach der Übernahme: «beginn» oder «ende»
         function uebernahme(was: string): string {
             if (was === "beginn")
                 root._pausieren();

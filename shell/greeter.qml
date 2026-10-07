@@ -13,9 +13,12 @@ import qs.greeter
 ShellRoot {
     id: root
 
-    // Ein Update aus dem Kanal übernimmt gerade den Code (zenos-kanal: /run/zenos-kanal/uebernahme, für alle lesbar).
-    // Die Automatik installiert am Login-Bildschirm erst, wenn er seit 5 Min. wartet; wer sich dann anmeldet, sieht es.
-    property bool updateLaeuft: false
+    // Ein Update aus dem Kanal übernimmt gerade den Code (zenos-kanal: /run/zenos-kanal/uebernahme) oder ein Basis-Update
+    // läuft (zenos-basis: /run/zenos-basis/uebernahme), beide für alle lesbar. Die Automatik installiert am
+    // Login-Bildschirm erst, wenn er seit 5 Min. wartet; wer sich dann anmeldet, sieht es.
+    readonly property bool updateLaeuft: _kanalLaeuft || _basisLaeuft
+    property bool _kanalLaeuft: false
+    property bool _basisLaeuft: false
 
     Konten {
         id: kontoliste
@@ -60,16 +63,29 @@ ShellRoot {
         path: "/run/zenos-kanal/uebernahme"
         blockLoading: true
         printErrors: false
-        onLoaded: root.updateLaeuft = true
-        onLoadFailed: root.updateLaeuft = false
+        onLoaded: root._kanalLaeuft = true
+        onLoadFailed: root._kanalLaeuft = false
     }
 
-    // Der Ordner besteht nur während der Installation: kein watchChanges, nur ein ruhiger Takt
+    FileView {
+        id: basisUebernahme
+
+        path: "/run/zenos-basis/uebernahme"
+        blockLoading: true
+        printErrors: false
+        onLoaded: root._basisLaeuft = true
+        onLoadFailed: root._basisLaeuft = false
+    }
+
+    // Die Ordner bestehen nur während der Installation: kein watchChanges, nur ein ruhiger Takt
     Timer {
         interval: 3000
         running: true
         repeat: true
-        onTriggered: uebernahme.reload()
+        onTriggered: {
+            uebernahme.reload();
+            basisUebernahme.reload();
+        }
     }
 
     Component.onCompleted: {

@@ -235,8 +235,8 @@ Menuekarte {
         }
     }
 
-    // Während eines Updates aus dem Kanal hält zenos-kanal einen Block-Inhibitor: systemctl lehnte ab. Darum hier
-    // ehrlich sagen, dass es wartet, statt still nichts zu tun.
+    // Während eines Updates aus dem Kanal oder der Ubuntu-Basis hält zenos-kanal bzw. zenos-basis einen Block-Inhibitor:
+    // systemctl lehnte ab. Darum hier ehrlich sagen, dass es wartet, statt still nichts zu tun.
     MenueEintrag {
         width: parent.width
         symbol: "neustart"
