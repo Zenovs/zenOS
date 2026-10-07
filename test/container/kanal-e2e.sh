@@ -330,7 +330,7 @@ s_basis() {
     "Hinweis: kein Ziel"
   erwarte_kopf "$vorher" "nichts installiert"
   [[ "$(json "$STAND/stand.json" .basis.geraet)" == 26.04 ]] || fehler "stand.json: basis.geraet"
-  [[ "$(json "$STAND/stand.json" '.basis.fremd | index("v0.9.0-rc1") != null')" == true ]] ||
+  [[ "$(json "$STAND/stand.json" '.basis.fremd | any(. == "v0.9.0-rc1")')" == true ]] ||
     fehler "stand.json: basis.fremd"
   [[ "$(json "$STAND/stand.json" .zustand)" == aktuell ]] || fehler "stand.json: zustand"
   ok "stand.json: aktuell, v0.9.0-rc1 unter basis.fremd"
