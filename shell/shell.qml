@@ -108,9 +108,10 @@ ShellRoot {
 
     // Dienste, die unabhängig von einer Oberfläche von Anfang an laufen müssen
     // (Übertragung des Erscheinungsbilds, Mitteilungsdienst, Auslöser, IPC, Höchstdauer der Sperre trotz Video,
-    // Mitteilungen des Update-Kanals, Schreibtisch zeigen samt Verlauf der aktiven Fenster, Wischen mit drei Fingern).
+    // Mitteilungen des Update-Kanals und der Basis-Updates samt Hinweis «Neustart nötig», Schreibtisch zeigen samt
+    // Verlauf der aktiven Fenster, Wischen mit drei Fingern).
     Component.onCompleted: {
-        const dienste = [() => Erscheinung.dunkel, () => Mitteilungen.anzahlWartend, () => Modi.aktivId, () => Zustaende.aktivId, () => Freigabe.aktiv, () => Raster.aktivId, () => Energie.sperreTrotzHemmerMinuten, () => Kanal.zustand, () => Schreibtisch.frei, () => Gesten.verbunden];
+        const dienste = [() => Erscheinung.dunkel, () => Mitteilungen.anzahlWartend, () => Modi.aktivId, () => Zustaende.aktivId, () => Freigabe.aktiv, () => Raster.aktivId, () => Energie.sperreTrotzHemmerMinuten, () => Kanal.zustand, () => Basis.zustand, () => Schreibtisch.frei, () => Gesten.verbunden];
         for (const starten of dienste) {
             try {
                 starten();

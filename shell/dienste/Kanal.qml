@@ -54,9 +54,11 @@ Singleton {
     // Zustand der Prüfung (aktuell, bereit, zustimmung, dev, anker_fehlt, blockiert, kein_kontakt, fehler) oder
     // «ungeprueft»
     readonly property string zustand: _stand ? _stand.zustand : "ungeprueft"
-    readonly property string zustandTitel: Logik.zustandTitel(_stand, veraltet, _letzte, updateLaeuft)
-    readonly property var zustandSymbol: Logik.zustandSymbol(_stand, veraltet, _letzte, updateLaeuft)
-    readonly property string grundText: Logik.grundText(_stand, veraltet, _letzte, updateLaeuft)
+    // Titel, Symbol und Satz zeigen «Update läuft» nur für den Kanal; ein Basis-Update zeigt Basis.qml im eigenen
+    // Abschnitt (die Knöpfe warten bei beiden, updateLaeuft)
+    readonly property string zustandTitel: Logik.zustandTitel(_stand, veraltet, _letzte, kanalLaeuft)
+    readonly property var zustandSymbol: Logik.zustandSymbol(_stand, veraltet, _letzte, kanalLaeuft)
+    readonly property string grundText: Logik.grundText(_stand, veraltet, _letzte, kanalLaeuft)
     // [{ titel, wert }] für die Einstellungen (neu nur, wenn sich etwas geändert hat: der Repeater baut sonst bei jedem
     // Takt alle Zeilen neu auf)
     readonly property var zeilen: _zeilen
@@ -72,8 +74,10 @@ Singleton {
     // install.sh aus dem Kanal oder ein Basis-Update läuft (Block-Inhibitor): System-Menü und Einstellungen «Update
     // läuft»
     readonly property bool updateLaeuft: _uebernahme || _uebernahmeBasis || _pausiert
-    // Davon nur das Basis-Update (apt-get full-upgrade, install.sh)
+    // Davon nur das Basis-Update (apt-get full-upgrade, install.sh) bzw. nur install.sh aus dem Kanal (gemeldet über IPC,
+    // ohne Marker der Basis: der Kanal)
     readonly property bool basisLaeuft: _uebernahmeBasis
+    readonly property bool kanalLaeuft: _uebernahme || (_pausiert && !_uebernahmeBasis)
     // Die Übernahme läuft (gemeldet über IPC oder beim Lesen gesehen), Quickshell lädt solange nicht nach: Die Sperre
     // schaltet das Nachladen nach dem Entsperren dann nicht ein und lädt nicht selbst neu
     readonly property bool uebernahmeLaeuft: _pausiert
@@ -457,12 +461,16 @@ Singleton {
 
         // Von zenos-kanal bzw. zenos-basis (als dieser Benutzer) vor und nach der Übernahme: «beginn» oder «ende»
         function uebernahme(was: string): string {
-            if (was === "beginn")
+            if (was === "beginn") {
+                // Die Marker gleich lesen: Einstellungen und System-Menü wissen so sofort, wessen Update läuft
+                uebernahmeDatei.reload();
+                basisUebernahmeDatei.reload();
                 root._pausieren();
-            else if (was === "ende")
+            } else if (was === "ende") {
                 root._fortsetzen();
-            else
+            } else {
                 return "unbekannt";
+            }
             return "ok";
         }
     }

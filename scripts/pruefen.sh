@@ -772,11 +772,15 @@ START_RUNDGANG=(
   "einstellungen oeffnen allgemein"
   "einstellungen oeffnen energie"
   "einstellungen oeffnen system"
-  # Updates (Dienst Kanal): Lage, Zeitpunkt und «Update läuft» ohne Erwartung (auf dem Pi echt, im Container und in
-  # der CI meist «ungeprueft» und «sperre»), dann die Seite System mit gescrolltem Abschnitt «Updates»
+  # Updates (Dienste Kanal und Basis): Lage, Zeitpunkt, «Update läuft», Neustart nötig und der Hinweis in der Leiste
+  # ohne Erwartung (auf dem Pi echt, im Container und in der CI meist «ungeprueft» und «sperre»), dann die Seite System
+  # mit gescrolltem Abschnitt «Updates». Nur lesend: «basis pruefen» startete pkexec und apt-get update.
   "kanal status"
   "kanal zeitpunkt"
   "kanal laeuft"
+  "basis status"
+  "basis neustart"
+  "basis hinweis"
   "einstellungen oeffnen system/updates"
   # Energie: Zeitleiste mit den Standardwerten (ohne Erwartung: Mit Akku, etwa am Argon ONE UP, steht dazu «Aus nach
   # 65 Min. im Akkubetrieb»). Ungesperrt bleibt die Sperre hell, auch wenn zenos-bildschirm «aus» meldet (dunkel heisst
@@ -824,10 +828,12 @@ START_RUNDGANG=(
   "hinweis warnen Prüfung"
   # polkit-Dialog geladen, keine Anfrage offen
   "polkit status → zu"
-  # Bildschirmfreigabe mit offener Zentrale (Leitplanke: Inhalte verborgen), danach zurück
+  # Bildschirmfreigabe mit offener Zentrale (Leitplanke: Inhalte verborgen; kein Hinweis «Neustart nötig»), danach
+  # zurück
   "freigabe gestartet"
   "mitteilungen zentrale"
   "mitteilungen zentrale"
+  "basis hinweis → nein"
   "freigabe beendet"
 )
 
