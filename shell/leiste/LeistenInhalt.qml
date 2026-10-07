@@ -207,6 +207,8 @@ Item {
             parts.push(System.temperatur + " Grad");
         if (Geraet.akkuVorhanden)
             parts.push(!Geraet.akkuBekannt ? "Akku unbekannt" : "Akku " + Geraet.akkuProzent + " Prozent" + (Geraet.akkuLaedt ? ", lädt" : ""));
+        if (Basis.neustartHinweis)
+            parts.push("Neustart nötig");
         return "System: " + parts.join(", ");
     }
     // Akku: ohne Messwert gedämpft, bei höchstens 10 % und Entladen in der Warnfarbe (ruhig, ohne Blinken)
@@ -510,6 +512,16 @@ Item {
                 color: Theme.text
                 font.family: Theme.schriftMono
                 font.pixelSize: Theme.groesseKlein
+            }
+
+            // Neustart nötig (/run/reboot-required nach Updates): still und gedämpft, ohne Farbe und ohne Mitteilung.
+            // Nur bei voller Leiste, nie bei Bildschirmfreigabe (Leitplanke in dienste/basis.js)
+            Symbol {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: Basis.neustartHinweis
+                name: "neustart"
+                groesse: 14
+                farbe: Theme.gedaempft
             }
 
             // Akku (nur mit Akku, z. B. Argon ONE UP): Füllstand oder Ladeblitz, Prozent in Mono. Ruhig: bei

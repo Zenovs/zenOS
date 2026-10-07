@@ -452,3 +452,11 @@ test("Abgleich mit den Einstellungen: zwei Abschnitte, Knöpfe, Automatik", () =
   assert.match(seite, /onClicked: Dienste\.Basis\.zustimmen\(Dienste\.Basis\.zustimmungListe\)/);
   assert.match(seite, /Dienste\.Basis\.automatikImmer/);
 });
+
+test("Abgleich mit der Leiste: Symbol im System-Knopf und Wert im System-Menü", () => {
+  const leiste = lesen("shell", "leiste", "LeistenInhalt.qml");
+  assert.match(leiste, /visible: Basis\.neustartHinweis\s+name: "neustart"\s+groesse: 14\s+farbe: Theme\.gedaempft/);
+  assert.match(leiste, /if \(Basis\.neustartHinweis\)\s+parts\.push\("Neustart nötig"\)/);
+  const menue = lesen("shell", "leiste", "SystemMenue.qml");
+  assert.match(menue, /wert: Kanal\.updateLaeuft \? "Update läuft" : Basis\.neustartHinweis \? "nötig" : ""/);
+});

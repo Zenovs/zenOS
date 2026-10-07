@@ -59,6 +59,7 @@ Scope {
             System.aktualisieren();
             Geraet.aktualisieren();
             Kanal.aktualisieren();
+            Basis.aktualisieren();
             _nmPruefen();
         }
     }

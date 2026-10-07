@@ -9,8 +9,9 @@ import qs.komponenten
 // vergessen, WLAN ein/aus über NetworkManager), Lautstärke mit Regler und Stumm, 1Password, dann das Gerät
 // (Akku und CPU-Temperatur als Anzeige; Lüfter mit aufklappbarer Wahl «Auto · 1 · 2 · 3 · 4», LuefterAbschnitt),
 // dann Sperren, Bildschirm aus, Einstellungen, Abmelden, Neustart und Ausschalten. Läuft gerade ein Update aus dem
-// Kanal (install.sh mit Block-Inhibitor), steht bei Neustart und Ausschalten «Update läuft»: Beides wartet dann,
-// bis es fertig ist (meist wenige Minuten), statt dpkg mittendrin abzubrechen.
+// Kanal oder der Basis (install.sh bzw. apt mit Block-Inhibitor), steht bei Neustart und Ausschalten «Update läuft»:
+// Beides wartet dann, bis es fertig ist (meist wenige Minuten), statt dpkg mittendrin abzubrechen. Sonst steht bei
+// Neustart «nötig», wenn Updates einen Neustart brauchen.
 Menuekarte {
     id: root
 
@@ -236,12 +237,14 @@ Menuekarte {
     }
 
     // Während eines Updates aus dem Kanal oder der Ubuntu-Basis hält zenos-kanal bzw. zenos-basis einen Block-Inhibitor:
-    // systemctl lehnte ab. Darum hier ehrlich sagen, dass es wartet, statt still nichts zu tun.
+    // systemctl lehnte ab. Darum hier ehrlich sagen, dass es wartet, statt still nichts zu tun. Sonst steht hier «nötig»,
+    // wenn Updates einen Neustart brauchen (/run/reboot-required; nur wie der Hinweis im System-Knopf: volle Leiste, keine
+    // Freigabe)
     MenueEintrag {
         width: parent.width
         symbol: "neustart"
         text: "Neustart"
-        wert: Kanal.updateLaeuft ? "Update läuft" : ""
+        wert: Kanal.updateLaeuft ? "Update läuft" : Basis.neustartHinweis ? "nötig" : ""
         // Während des Updates ohne Rückfrage: Der Klick sagt nur, warum es wartet
         bestaetigen: !Kanal.updateLaeuft
         frage: "Wirklich neu starten?"
