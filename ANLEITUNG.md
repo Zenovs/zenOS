@@ -703,6 +703,17 @@ systemctl --user start zenos-shell.service
   (`zenos-basis automatik` zeigt «zuletzt … installiert»); solange du per SSH angemeldet bist, wartet sie («… ist per
   SSH angemeldet»). Mit Kernel, Firmware oder Bootloader in der Liste installiert sie nie (`automatik.json`:
   «zustimmung»). `sudo zen kanal automatik aus` schaltet auch die Basis-Timer aus, `… an` wieder ein.
+- [ ] Einstellungen → System: zwei Abschnitte «Updates · zenOS» und «Updates · Ubuntu-Basis», in hell und dunkel ruhig.
+  Bei der Basis «Jetzt prüfen» ohne Passwort, danach Titel (etwa «12 Updates bereit» oder «Aktuell»), der Satz mit dem
+  Wann («Kommt automatisch bei der nächsten Sperre, nicht während einer SSH-Sitzung.») und die Werte (Ausstehend,
+  Geprüft, Liste …), dazu der Hinweis «Ubuntu-Basis geprüft». «Jetzt installieren» fragt nicht nach dem Passwort; der
+  Titel wird «Update läuft» (nur in diesem Abschnitt), im System-Menü steht «Update läuft», danach kommt die Mitteilung
+  «Ubuntu-Basis aktualisiert». Steht ein Kernel an, heisst der Knopf «Mit Passwort installieren», und polkit fragt.
+- [ ] Neustart nötig: Nach einem Kernel-Update (zum Ausprobieren auch `sudo touch /run/reboot-required`) erscheint im
+  System-Knopf der Leiste innert einer Minute das Neustart-Symbol, gedämpft, ohne Mitteilung; im System-Menü steht
+  «Neustart · nötig», in den Einstellungen die Zeile «Neustart». Während einer Bildschirmfreigabe und in einem Zustand
+  mit reduzierter Leiste ist beides weg. Nach dem Neustart ist es fort (zum Ausprobieren:
+  `sudo rm /run/reboot-required`).
 
 **Lüfter einstellen (Argon ONE UP, auch Argon ONE V3)**
 - [ ] System-Menü: Die Zeile «Lüfter» zeigt z. B. «aus · Auto» und rechts einen Pfeil. Ein Klick klappt darunter

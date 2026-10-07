@@ -105,7 +105,8 @@ erscheint erst nach dem Neustart, und eine SSH-Verbindung bleibt während der In
 | `System` | Temperatur, Netz, Ton (PipeWire), 1Password |
 | `Geraet` | Akku und Lüfter aus `/run/zenos/geraet.json` (`zenos-argon`) samt Lüfterwunsch, Mitteilung bei niedrigem Akku |
 | `Luefter` | Lüfter einstellen («auto» oder Mindeststufe 1–4) über `pkexec zenos-luefter`, Bestätigung über `Geraet` |
-| `Kanal` | Update-Kanal: Lage aus `/var/lib/zenos/kanal/stand.json` und `letzte.json`, Zeitpunkt aus `/etc/xdg/zenos/kanal-zeitpunkt`, «Update läuft» aus `/run/zenos-kanal/uebernahme`; prüfen, jetzt installieren, zustimmen und Zeitpunkt über `pkexec zenos-kanal-bedienen`; Mitteilungen je einmal (Logik in `kanal.js`) |
+| `Kanal` | Update-Kanal: Lage aus `/var/lib/zenos/kanal/stand.json` und `letzte.json`, Zeitpunkt aus `/etc/xdg/zenos/kanal-zeitpunkt`, «Update läuft» aus `/run/zenos-kanal/uebernahme` und `/run/zenos-basis/uebernahme`; prüfen, jetzt installieren, zustimmen und Zeitpunkt über `pkexec zenos-kanal-bedienen`; Mitteilungen je einmal (Logik in `kanal.js`) |
+| `Basis` | Basis-Updates: Lage aus `/var/lib/zenos/basis/stand.json`, `letzte.json` und `automatik.json`, Notschalter `/etc/xdg/zenos/kanal-automatik-aus`, «Neustart nötig» aus `/run/reboot-required(.pkgs)` (Hinweis in Leiste und System-Menü, Leitplanke in `basis.js`); prüfen, jetzt installieren und mit Passwort installieren über `pkexec zenos-kanal-bedienen basis-…`; Mitteilungen je einmal (Logik in `basis.js`) |
 | `Mitteilungen` | Mitteilungsdienst (`NotificationServer`), Bündelung, Zentrale |
 | `Konfig` | Modi, Zustände, Raster, Bildschirme, Web-Apps lesen; schreiben über `zenos-konfig` |
 | `Modi` | aktiver Modus, Wechsel (Akzent, Raster, Apps, Chrome-Profil) |
@@ -130,7 +131,8 @@ selbst endet in v0.3.1 auch bei Fehlern mit 0; `zenos-ipc` wertet die Ausgabe au
 | `befehlsfeld` | `umschalten`, `oeffnen`, `schliessen`, `werkzeuge`, `apps` (App-Übersicht), `status` (`offen`/`zu`), `ansicht` (`apps`/`suche`) |
 | `sperre` | `sperren`, `status` (`gesperrt`/`offen`), `bildschirm(aus\|an)` (Meldung von `zenos-bildschirm`; ungesperrt bleibt es hell), `taste` (Ein/Aus-Taste, gesperrt: Bildschirm an oder aus) |
 | `energie` | `aus` (sperren und Bildschirm aus), `status` (Zeitleiste), `vorwarnung` (Probe der Vorwarnung, schaltet nie aus, nur gesperrt) |
-| `kanal` | `status` (Zustand der letzten Prüfung oder `ungeprueft`), `zeitpunkt` (`sperre`, `jederzeit`, `hand` oder `fenster 02:00-05:00`), `laeuft` (`ja`, solange install.sh aus dem Kanal läuft) |
+| `kanal` | `status` (Zustand der letzten Prüfung oder `ungeprueft`), `zeitpunkt` (`sperre`, `jederzeit`, `hand` oder `fenster 02:00-05:00`), `laeuft` (`ja`, solange install.sh aus dem Kanal oder ein Basis-Update läuft), `uebernahme(beginn\|ende)` (von zenos-kanal und zenos-basis) |
+| `basis` | `status` (Ergebnis der letzten Prüfung der Ubuntu-Basis: `aktuell`, `bereit`, `zustimmung`, `gesperrt`, `fehler` oder `ungeprueft`), `neustart` (`ja`, solange `/run/reboot-required` besteht), `hinweis` (`ja`, wenn Leiste und System-Menü «Neustart nötig» zeigen), `pruefen` (wie «Jetzt prüfen»: pkexec, `apt-get update` über die Unit; `gestartet` oder `nicht jetzt`) |
 | `thema` | `wechseln`, `setzen(hell\|dunkel\|tageszeit)`, `status` |
 | `modus` | `waehlen`, `wechseln(id)`, `aktiv` |
 | `zustand` | `waehlen`, `starten(id)`, `beenden`, `aktiv` |

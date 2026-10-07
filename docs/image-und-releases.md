@@ -955,6 +955,27 @@ Ein Auftrag, den die Unit nicht nahm (sie lief nicht), bleibt nicht liegen. Ende
 setzt zenos-basis ihren Zustand «failed» zurück (das sind Zustände der Basis-Updates); 1 und 5 bleiben sichtbar
 (`systemctl --failed`).
 
+Die Oberfläche (`shell/dienste/Basis.qml`, Logik in `basis.js`, getestet mit `test/einheiten/basis.test.mjs`) liest
+ohne Rechte `stand.json`, `letzte.json`, `automatik.json`, den Notschalter und `/run/reboot-required(.pkgs)` und zeigt
+unter Einstellungen › System › Updates einen eigenen Abschnitt «Updates · Ubuntu-Basis» neben «Updates · zenOS»
+(Aussehen: `docs/design.md`). «Jetzt installieren» erscheint nur bei «bereit», «Mit Passwort installieren» nur bei
+«zustimmung»; beide übergeben den Hash der angezeigten Liste, bei «gesperrt» gibt es keinen Knopf. Ein Hinweis
+(Toast) kommt nur nach dem eigenen Klick; das Ergebnis einer Installation, von wem auch immer, kommt als Mitteilung
+(aus `letzte.json`, je einmal, gemerkt in `~/.local/state/zenos/basis-meldungen.json`): «Ubuntu-Basis aktualisiert»
+(still, höchstens 24 h alt), «Basis-Update kaputt» (dringend), «Basis-Update gescheitert». Hat die Automatik Kernel,
+Firmware, Bootloader oder Entfernungen gesehen (`automatik.json` «zustimmung» für die Liste von `stand.json`), kommt
+«Basis-Updates warten auf dich» einmal; wieder erst, wenn sich genau das ändert (ein neuer Kernel, andere
+Entfernungen), nicht bei jeder neuen Liste. Bei «gesperrt» ebenso «Basis-Updates gesperrt».
+
+**Neustart nötig.** Quelle ist `/run/reboot-required` (Ubuntu und unattended-upgrades schreiben es, zenos-basis trägt
+eine neue greetd-Version ein), abgefragt im Takt der Updates (jede Minute, bei offenen Einstellungen oder Menüs alle
+3 s, beim Öffnen des System-Menüs sofort). Die Leiste zeigt dann im System-Knopf das Symbol `neustart` gedämpft,
+das System-Menü bei «Neustart» den Wert «nötig» («Update läuft» geht vor), die Einstellungen die Zeile «Neustart».
+Leitplanke (`neustartHinweis` in `basis.js`, Code): nur bei voller Leiste, nie während der Bildschirm geteilt wird,
+nie bei reduzierter oder ausgeblendeter Leiste, nie auf der Sperre; keine Mitteilung, kein Popup, nie ein Neustart von
+selbst. IPC `basis status|neustart|hinweis|pruefen` (`docs/architektur.md`); der Rundgang in `scripts/pruefen.sh`
+ruft nur die lesenden.
+
 ### Automatik
 
 Entscheid Zeno (Oktober 2026): Basis-Updates dürfen automatisch laufen, ab Werk an, auch auf dem Kanal dev, ohne

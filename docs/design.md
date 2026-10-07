@@ -193,7 +193,9 @@ Reichweite»; sonst bleibt sie reine Anzeige ohne Zusatz.
 Läuft gerade ein Update aus dem Kanal oder der Ubuntu-Basis (install.sh bzw. apt mit Block-Inhibitor), steht bei
 «Neustart» und «Ausschalten» rechts
 in Mono «Update läuft»; beide fragen dann nicht nach, ein Klick schliesst das Menü und zeigt den Hinweis (Warnung)
-«Update läuft: Ausschalten geht erst danach (meist wenige Minuten)».
+«Update läuft: Ausschalten geht erst danach (meist wenige Minuten)». Sonst steht bei «Neustart» in Mono «nötig»,
+solange Updates einen Neustart brauchen (`/run/reboot-required`), mit denselben Grenzen wie das Symbol im System-Knopf
+(«Update läuft» geht vor).
 
 Solange die Firewall aus ist, steht im System-Menü unter «Einstellungen» der Eintrag «Firewall» mit dem Wert «aus»
 und dem offenen Schloss, ohne Farbe; er öffnet die Einstellungen (System). Ist sie an, fehlt er.
@@ -226,8 +228,13 @@ Formularfehler erscheinen nicht als Hinweis, sondern ruhig unter dem Formular.
   `reduziert` und `aus` ohne ihn).
 - **Mitte:** Datum und Uhrzeit in Geist Mono. Der nächste Termin kommt «Danach».
 - **Rechts:** Mitteilungen mit nächster Zustellung («3 · 10:00», «2 warten»), Hell/Dunkel (Mond im Hellen, Sonne im
-  Dunkeln), System-Knopf auf `abgesetzt` (Netz, Ton, 1Password, Temperatur, mit Akku zuletzt der Akku). Die
-  Dev-Server-Übersicht kommt «Danach».
+  Dunkeln), System-Knopf auf `abgesetzt` (Netz, Ton, 1Password, Temperatur, Neustart nötig, mit Akku zuletzt der
+  Akku). Die Dev-Server-Übersicht kommt «Danach».
+- **Neustart nötig** (`/run/reboot-required`, etwa nach einem Kernel- oder greetd-Update): das Symbol `neustart` mit
+  14 px in `gedaempft` im System-Knopf, ohne Farbe, ohne Blinken, ohne Mitteilung und ohne Popup; der Screenreader
+  hört «Neustart nötig». Leitplanke (Code in `dienste/basis.js`, nicht abschaltbar): nur bei voller Leiste, nie
+  während der Bildschirm geteilt wird, nie bei Leiste `reduziert` oder `aus`, nie auf der Sperre. zenOS startet nie
+  selbst neu.
 - **Netz im System-Knopf:** Kabel als Buchse, WLAN mit Signalstufe: drei Bögen ab 60 %, zwei ab 35 %, sonst einer;
   die fehlenden Bögen blass (30 % der Farbe), ohne Animation. Ohne Verbindung `wlan-aus` in `gedaempft`.
 - **Akku** (nur wenn das Gerät einen hat, z. B. Argon ONE UP): Symbol 15 px, waagrecht, der Füllstand in bis zu drei
@@ -324,7 +331,11 @@ stehen, nichts rückt.
   gescheitert» normal, «Update kaputt» und «Updates blockiert» dringend, dazu «Anker fehlt», «Update abgelehnt»,
   «Update wartet auf deine Zustimmung», «Seit 14 Tagen kein Kontakt zu origin», beim Zeitpunkt «Von Hand» «Update
   bereit» und «Zeitpunkt für Updates geändert», wenn ihn nicht die Einstellungen setzten; Verweise nennen
-  «Einstellungen › System › Updates»; `docs/image-und-releases.md`) und bei niedrigem Akku (10 % und 5 % im Akkubetrieb, je einmal): Absender
+  «Einstellungen › System › Updates»; `docs/image-und-releases.md`), bei den Basis-Updates («Ubuntu-Basis
+  aktualisiert» still, «Basis-Update kaputt» dringend, «Basis-Update gescheitert» normal und «Basis-Updates warten
+  auf dich» bzw. «Basis-Updates gesperrt», wenn die Automatik Kernel, Firmware, Bootloader, Entfernungen oder ein
+  geschütztes Paket sah, je einmal, bis sich genau das ändert; zu «Neustart nötig» keine) und bei niedrigem Akku
+  (10 % und 5 % im Akkubetrieb, je einmal): Absender
   «zenOS» mit der Bildmarke. 10 % mit Dringlichkeit normal, also nach der Regel des Zustands wie jede andere Mitteilung. 5 %
   dringend: Die Karte kommt sofort (ausser im Zustand «keine») und bleibt bis zum Schliessen, ohne Ton und ohne
   Blinken; bei 3 % schaltet zenOS kontrolliert aus, also darf sie nicht warten. Es steht immer nur eine
@@ -486,7 +497,8 @@ Auf der Seite System steht zuoberst der Schalter «Firewall» mit Zustand («An�
 Passwort …») und einer Zeile Erklärung in `gedaempft`. Beim Ausschalten zeigt der Schalter sofort «aus»; bricht die
 Passwortabfrage ab, springt er zurück.
 
-Darunter «Updates» (`SeiteSystem.qml`, Dienst `Kanal`; `einstellungen oeffnen system/updates` scrollt dorthin):
+Darunter «Updates · zenOS» (`SeiteSystem.qml`, Dienst `Kanal`; `einstellungen oeffnen system/updates` scrollt
+dorthin):
 
 - Die Lage als Zeile mit Symbol (16 px) und Titel in `text`: «Aktuell» (Haken im Akzent), «Neue Version bereit»
   (Info im Akzent), «Wartet auf deine Zustimmung» (Schloss im Akzent), «Kanal dev, nur von Hand» bzw. «Neuer Stand
@@ -512,16 +524,43 @@ Darunter «Updates» (`SeiteSystem.qml`, Dienst `Kanal`; `einstellungen oeffnen 
   Satz oben sagen es).
 - Rückmeldungen als Hinweis nur, wo keine Mitteilung kommt («Updates geprüft», «zenOS ist schon aktuell», «Das Update
   braucht deine Zustimmung», «Gerade läuft schon ein Update …»); abgebrochene Passwortabfragen bleiben still.
+- «Update läuft» zeigt nur der Abschnitt, dessen Update läuft; die Knöpfe beider Abschnitte warten, solange eines
+  läuft oder eine Bedienung unterwegs ist.
+
+Darunter «Updates · Ubuntu-Basis» (Dienst `Basis`, Pakete von Ubuntu und den Herstellerquellen über `zenos-basis`),
+mit denselben Bausteinen (Lage, Satz, Werte, Knöpfe 38 px):
+
+- Lage: «Aktuell» (Haken im Akzent), «3 Updates bereit» (Info im Akzent), «4 Updates warten auf dich» (Schloss im
+  Akzent; Kernel, Firmware, Bootloader oder Entfernungen), «Gesperrt» (Warnung in `warnung`: apt würde ein
+  geschütztes Paket entfernen), «Kein Kontakt zu den Paketquellen» (Wolke, `gedaempft`), «Prüfung gescheitert»
+  (Warnung in `warnung`), «Noch nie geprüft» (Info, `gedaempft`). Vor allem: «Update läuft» (Info im Akzent) und
+  «Basis-Update kaputt» (Warnung in `warnung`, bis eine spätere Installation es ablöst).
+- Satz: bei «bereit» was ansteht und wann es automatisch kommt («Kommt automatisch bei der nächsten Sperre, nicht
+  während einer SSH-Sitzung.», «… zwischen 02:00 und 05:00 Uhr …», «… innert 15 Minuten …», «Automatisch kommt nichts
+  (Zeitpunkt «Von Hand»).»), bei «warten auf dich» was dabei ist und dass es nie automatisch kommt.
+- Werte: Ausstehend («12 Updates · 3 Sicherheit»), Kernel/Boot, Entfernen, Geschützt, Hersteller, Neustart («nötig ·
+  linux-raspi» bzw. «voraussichtlich nach dem Update»), Letztes Update («installiert · heute, 03:12 · automatisch»),
+  Automatik (letzter Lauf in wenigen Worten, etwa «heute, 09:04 · nicht jetzt: …», oder «aus · einschalten: …»),
+  Geprüft, Liste (die ersten 12 Zeichen des Hashs).
+- Knöpfe: «Jetzt prüfen» (sekundär), «Jetzt installieren» (primär, nur bei «bereit», ohne Passwort) bzw. «Mit
+  Passwort installieren» (sekundär mit Schloss, nur bei Kernel, Firmware, Bootloader oder Entfernungen). Darunter in
+  `gedaempft`: «Installiert genau die angezeigte Liste (…), ohne neue Prüfung. …» bzw. «Verlangt dein Passwort und gilt
+  nur für die angezeigte Liste (…). zenOS startet danach nie selbst neu.»
+- Rückmeldungen wie beim Kanal: als Hinweis nur nach dem eigenen Klick («Ubuntu-Basis geprüft», «Die Liste hat sich
+  geändert: bitte noch einmal ansehen», «Kernel, Firmware, Bootloader oder Entfernungen: nur mit deinem Passwort»);
+  das Ergebnis einer Installation kommt als Mitteilung.
 
 «Automatisch installieren»: Segmente «Bei Sperre · Zeitfenster · Jederzeit · Von Hand», beim Zeitfenster darunter
 «Von» und «bis» mit zwei Zeitfeldern (HH:MM) und «Uhr». Ein zu kurzes Fenster (unter einer Stunde) steht ruhig in
 `fehler` darunter und wird nicht gesetzt. Dann ein Satz in `gedaempft`, knapp und ehrlich je Wahl («Kommt, wenn
 zenOS seit 5 Minuten gesperrt ist oder der Login-Bildschirm seit 5 Minuten wartet …», «Kommt zwischen 02:00 und
 05:00 Uhr, auch wenn du gerade arbeitest. Das Gerät muss dann laufen.», «… die Oberfläche lädt dabei kurz neu.»),
-danach, was immer gilt: ganzes Gerät, nur gültig Signiertes, Zustimmung bei Firewall, Netz oder Boot, im Akkubetrieb
-erst ab 50 %, auf dev nie. Ist die Datei von Hand kaputt, steht neben der Beschriftung in Mono «Datei ungültig · es
-gilt «Bei Sperre»» in `warnung` (ein Problem, nichts Angepasstes; nicht im Akzent), und ein Klick auf «Bei Sperre»
-schreibt sie neu. Während des Setzens zeigen die Segmente schon die neue Wahl; scheitert es, springen sie zurück.
+danach, was immer gilt: ganzes Gerät für zenOS und die Ubuntu-Basis, im Akkubetrieb erst ab 50 %, von zenOS nur
+gültig Signiertes, Zustimmung bei Firewall, Netz oder Boot, auf dev nie; die Pakete der Ubuntu-Basis auch auf dev, aber
+nie während einer SSH-Sitzung und nie mit Kernel, Firmware, Bootloader oder Entfernungen, nie ein Neustart. Ist die
+Datei von Hand kaputt, steht neben der Beschriftung in Mono «Datei ungültig · es gilt «Bei Sperre»» in `warnung` (ein
+Problem, nichts Angepasstes; nicht im Akzent), und ein Klick auf «Bei Sperre» schreibt sie neu. Während des Setzens
+zeigen die Segmente schon die neue Wahl; scheitert es, springen sie zurück.
 
 Darunter «Im Terminal» mit den Tastenkappen «zen kanal», «zen update», «zen doctor» und «Terminal öffnen».
 
