@@ -63,7 +63,7 @@ zenos/
 ## Deploy und Test
 
 - Der Branch `dev` läuft auf dem Pi. Tags `v0.x` dürfen auf den Bürorechner.
-- **Deploy auf den Pi:** pushen, dann per SSH `zen update` auslösen. Es zieht `dev` und führt `scripts/install.sh` aus.
+- **Deploy auf den Pi:** pushen, dann per SSH `zen update --nur-zenos` auslösen. Es zieht `dev` und führt `scripts/install.sh` aus. Paketänderungen der Ubuntu-Basis (Schritt 2 von `zen update`) bleiben bei Zeno.
 - **Live-Reload:** Änderungen an der Oberfläche (QML) lädt Quickshell live nach. Systemänderungen laufen immer über `scripts/install.sh`, das beliebig oft laufen darf.
 - **Wo gebaut wird:** am liebsten direkt auf dem Pi (Claude Code per SSH in einer tmux-Sitzung). Auf dem Mac laufen labwc und Quickshell nicht nativ, aber in der Testumgebung `test/container/` (Docker, Ubuntu 26.04 arm64, headless labwc mit Screenshots). Version 0.1 wurde so gebaut; die Abnahme auf echter Hardware ersetzt das nicht.
 - **Selbsttest:** `scripts/pruefen.sh` (shellcheck, JSON-Schemas, Hex- und sh-c-Regel, Einheitentests, qmllint, gitleaks, Start-Test der Oberfläche).

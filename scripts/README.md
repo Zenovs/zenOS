@@ -17,8 +17,8 @@
 | `release-signieren.sh` | signiert ein Release oder einen Tag `vertrauen/NNNN` mit 1Password (Mac, bash 3.2) |
 | `bin/zenos-kanal` | signierter Kanal auf dem Gerät: holen (ohne Rechte), prüfen und bereitstellen (root, ohne Netz), installieren mit Gesundheitsprüfung und Rückweg, nachstart, Status, Anker, Zeitpunkt, `jetzt` und `zustimmen` für die Einstellungen, `automatik` (Timer, Notschalter) und `bestaetigen` (nach dem Start); Kern von `zen update` und `zen rollback` |
 | `bin/zenos-gesten` | Wischen mit drei Fingern (Systemdienst `zenos-gesten.service`, Benutzer `zenos-gesten`): liest reine Touchpads nur lesend über libinput und meldet «oben» und «unten» an die Oberfläche; `--messen` misst die Schwelle ein, `--pruefen` für `zen doctor` (Modul und Prüfung `82-gesten`) |
-| `bin/zenos-basis` | Paket-Updates der Ubuntu-Basis: `pruefen` (apt-get update, Auswertung von `apt-get -s full-upgrade`), `installieren` (genau die geprüfte Liste, policy-rc.d nur gegen greetd, danach install.sh, Gesundheitsprüfung), `status`; root-eigene Kopie unter `/usr/local/libexec/zenos` (`71-basis`) |
-| `bin/zenos-kanal-bedienen` | Updates aus den Einstellungen (root über pkexec, polkit `org.zenos.kanal.*`): `pruefen`, `installieren ZIEL`, `zustimmen OBJEKT` starten die Units des Kanals (ZIEL und OBJEKT: der angezeigte Stand), `zeitpunkt …` setzt den Zeitpunkt; nur feste Wörter, Journal `-t zenos-kanal-bedienen` |
+| `bin/zenos-basis` | Paket-Updates der Ubuntu-Basis: `pruefen` (apt-get update, Auswertung von `apt-get -s full-upgrade`), `installieren` (genau die geprüfte Liste, policy-rc.d nur gegen greetd, danach install.sh, Gesundheitsprüfung), `update [--ja]` (Schritt 2 von `zen update`), `jetzt HASH` und `zustimmen HASH` (Einstellungen), `automatik lauf\|gelegenheit` (Timer; fragt `zenos-kanal automatik darf --ohne-ssh`), `status`; root-eigene Kopie unter `/usr/local/libexec/zenos` (`71-basis`) |
+| `bin/zenos-kanal-bedienen` | Updates aus den Einstellungen (root über pkexec, polkit `org.zenos.kanal.*`): `pruefen`, `installieren ZIEL`, `zustimmen OBJEKT` starten die Units des Kanals (ZIEL und OBJEKT: der angezeigte Stand), `zeitpunkt …` setzt den Zeitpunkt; für die Ubuntu-Basis `basis-pruefen` (Unit), `basis-installieren HASH` und `basis-installieren-zustimmen HASH` (HASH: die angezeigte Liste); nur feste Wörter, Journal `-t zenos-kanal-bedienen` |
 
 ## install.sh
 
@@ -105,7 +105,7 @@ modul_benutzer() {  # optional; als Benutzer, ohne sudo, nie im --image-Modus
 
 | Befehl | Modul | Was es tut |
 |---|---|---|
-| `zen update` | M1 | über den Kanal holen, prüfen, bei Bedarf «ja», installieren, Gesundheit prüfen, sonst zurück |
+| `zen update [--ja] [--nur-zenos\|--nur-basis]` | M1 | Schritt 1: über den Kanal holen, prüfen, bei Bedarf «ja», installieren, Gesundheit prüfen, sonst zurück; Schritt 2: Pakete der Ubuntu-Basis prüfen, zeigen, nach «ja» (oder `--ja`) installieren |
 | `zen rollback <tag>` | M1 | über den Kanal zu einem Tag zurück (signiert, sonst nur mit «ja») |
 | `zen kanal [status\|pruefen\|anker\|zeitpunkt\|automatik]` | Kanal | signierter Kanal: Stand mit Fingerabdrücken, letzte Installation; `sudo zen kanal pruefen` holt und prüft (installiert nichts); `sudo zen kanal anker ORDNER` setzt den Anker von Hand; `zen kanal zeitpunkt` zeigt, `sudo zen kanal zeitpunkt sperre\|fenster VON BIS\|jederzeit\|hand` setzt, wann geprüfte Updates automatisch kommen (dasselbe in Einstellungen › System › Updates); `zen kanal automatik` zeigt die Automatik, `sudo zen kanal automatik an\|aus` ist ihr Notschalter |
 | `zen doctor [--kurz]` | M1 | Prüfbericht ohne Geheimnisse, Exit 1 bei Fehlern |
@@ -129,7 +129,7 @@ modul_benutzer() {  # optional; als Benutzer, ohne sudo, nie im --image-Modus
   (schreibend als root), `zen_fehler`, `zen_warnung`, `zen_hinweis`, `$SUDO` und `$ZENOS_CODE` (immer
   `/opt/zenos`) zur Verfügung.
 - `zen update` und `zen rollback <tag>` starten `sudo /usr/local/libexec/zenos/zenos-kanal update` bzw. `rollback
-  <tag>`. Das schreibt einen Wunsch, startet `zenos-kanal-holen` und `zenos-kanal-pruefen`, fragt bei Bedarf nach «ja»
+  <tag>` (`zen update` danach als Schritt 2 `sudo …/zenos-basis update [--ja]`, ausser mit `--nur-zenos`). Das schreibt einen Wunsch, startet `zenos-kanal-holen` und `zenos-kanal-pruefen`, fragt bei Bedarf nach «ja»
   (gebunden an die gezeigte Commit- bzw. Objekt-ID), startet dann `zenos-kanal-installieren` und zeigt dessen Journal,
   danach prüft es den Stand neu. Eine eigene Sperre (`/run/zenos-sperre/bedienung.lock`, nur root) verhindert zwei
   gleichzeitige Aufrufe. Nach einer Installation oder einem Rückweg richtet zen die Benutzerteile ein (`install.sh

@@ -67,6 +67,13 @@ Grundsatz 1: Sicherheit ist Standard und geht vor Design und Bequemlichkeit. Sie
   nur Gültiges zum eingestellten Zeitpunkt (unten, «Signierte Releases»). Das gilt auch für ein frisch geflashtes
   Image: Es folgt ab dem ersten Start dem Kanal seines Tags (`stabil` oder `vorschau`). Ausschalten:
   `sudo zen kanal automatik aus` (Timer aus, `install.sh` lässt sie aus); `zen update` holt dann nur noch von Hand.
+- **Automatische Verbindung der Basis-Updates (Regel 8, Entscheid Zeno: ab Werk an):** `zenos-basis-automatik.timer`
+  startet 30–40 Minuten nach dem Start und danach alle 6 Stunden `apt-get update` (`zenos-basis-pruefen.service`):
+  dieselben Paketquellen, die apt-daily ohnehin täglich fragt (Ubuntu-Spiegel, die Herstellerquellen, über esm-cache
+  auch contracts.canonical.com), nur öfter; gesendet wird nichts über das Gerät. Installiert wird danach nur eine Liste
+  ohne Kernel, Firmware, Bootloader und Entfernungen, zum Zeitpunkt des Kanals, nur am Netzteil oder ab 50 % und nie,
+  solange jemand per SSH angemeldet ist. Derselbe Notschalter `sudo zen kanal automatik aus` schaltet auch diese Timer
+  aus; `zen update` prüft dann nur noch von Hand.
 - **Ohne snapd und landscape-common** (Regel 8, `scripts/module/22-aufraeumen.sh`): snapd ist Store-Software, die von
   selbst ins Netz geht, deshalb entfernt zenOS es samt landscape-common (nur die Marke Landscape, ohne Funktion) und
   sperrt snapd mit `/etc/apt/preferences.d/zenos-ohne-snapd` (Priorität -10), damit apt es nie als Empfehlung
@@ -149,8 +156,8 @@ festen `PATH`, schreibt nur `/var/lib/zenos/luefter` (atomar, 0644) und trägt j
 systemd-Benutzerinstanz gilt dieselbe Grenze wie bei der Firewall: polkit ordnet sie der Sitzung am Gerät zu.
 
 **Updates in den Einstellungen** (System › Updates): Die Oberfläche startet
-`pkexec /opt/zenos/scripts/bin/zenos-kanal-bedienen pruefen|installieren ZIEL|zustimmen OBJEKT|zeitpunkt …`
-(Argumentliste, keine Shell). Die polkit-Aktionen in `system/polkit/org.zenos.kanal.policy` (→ `/usr/share/polkit-1/actions/`, Modul
+`pkexec /opt/zenos/scripts/bin/zenos-kanal-bedienen pruefen|installieren ZIEL|zustimmen OBJEKT|zeitpunkt …`, für die
+Ubuntu-Basis `basis-pruefen|basis-installieren HASH|basis-installieren-zustimmen HASH` (Argumentliste, keine Shell). Die polkit-Aktionen in `system/polkit/org.zenos.kanal.policy` (→ `/usr/share/polkit-1/actions/`, Modul
 `14-kanal`):
 
 | Aktion | jeder Prozess des Benutzers, solange seine Sitzung am Gerät aktiv ist (auch gesperrt) | inaktive Sitzung | ohne Sitzung am Gerät |
@@ -159,6 +166,9 @@ systemd-Benutzerinstanz gilt dieselbe Grenze wie bei der Firewall: polkit ordnet
 | `org.zenos.kanal.installieren` | ja, ohne Passwort | nein | nein |
 | `org.zenos.kanal.zeitpunkt` | ja, ohne Passwort | nein | nein |
 | `org.zenos.kanal.zustimmen` | nur mit Passwort (`auth_admin`), jedes Mal | nein | nein |
+| `org.zenos.kanal.basis-pruefen` | ja, ohne Passwort | nein | nein |
+| `org.zenos.kanal.basis-installieren` | ja, ohne Passwort | nein | nein |
+| `org.zenos.kanal.basis-zustimmen` (`basis-installieren-zustimmen`) | nur mit Passwort (`auth_admin`), jedes Mal | nein | nein |
 
 «Aktive Sitzung am Gerät» heisst nicht «nur die Oberfläche»: logind lässt die Sitzung auch bei gesperrtem Bildschirm
 aktiv, und polkit ordnet Prozesse des Benutzerdienstes (systemd `--user`) dieser Sitzung zu. Wer per SSH als derselbe
@@ -184,6 +194,15 @@ nicht dicht und unterbleibt. Das Abschalten der Automatik («von Hand») bleibt 
   ohne neues Holen. Nennt die Prüfung inzwischen ein anderes Objekt, geschieht nichts. Unsigniertes, `dev` und
   Rollbacks bleiben beim Terminal (`zen update`, `zen rollback` mit getipptem «ja»); das prüft zenos-kanal selbst
   (`nur_signiert` im Wunsch), nicht erst die Oberfläche.
+- **Ubuntu-Basis** (Entscheid Zeno, Oktober 2026): «Jetzt prüfen» (`basis-pruefen`) startet
+  `zenos-basis-pruefen.service` (`apt-get update`, Auswertung, installiert nichts). «Jetzt installieren»
+  (`basis-installieren HASH`, ohne Passwort) installiert genau die angezeigte Liste: HASH (40 Zeichen `0-9a-f`) muss
+  zur letzten Prüfung und zu einer Auswertung von jetzt passen, ohne neues `apt-get update`, sonst Exit 3. Enthält die
+  Liste Kernel, Firmware, Bootloader oder Entfernungen, lehnt die Unit ab (Exit 10); dafür gibt es «Mit Passwort
+  installieren» (`basis-installieren-zustimmen HASH`, `auth_admin` bei jedem Aufruf). Ohne Passwort, weil die Pakete
+  von Ubuntu bzw. den Herstellern signiert und von apt geprüft sind und dieselben auch über `zen update` und die
+  Automatik kämen; wer über den Umweg `systemd-run` an `allow_active` kommt, kann so nur früher installieren, was
+  ohnehin ansteht. Ein geschütztes Paket entfernt zenOS nie, auch nicht mit Passwort.
 - Die Arbeit machen Units, nicht der Helfer: Lädt die Oberfläche neu oder endet die Sitzung, läuft die Installation zu
   Ende. Der Helfer hat einen festen `PATH`, nimmt nur diese Wörter an (das Objekt nur als 40 Zeichen `0-9a-f`) und
   trägt jeden Aufruf ins Journal ein (`journalctl -t zenos-kanal-bedienen`, mit Weg und uid; der Zeitpunkt unter

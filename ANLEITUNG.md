@@ -687,6 +687,22 @@ systemctl --user start zenos-shell.service
   `zen doctor` im Abschnitt «Ubuntu-Basis» «Basis-Updates ausstehend: …» als Hinweis.
   `/usr/local/libexec/zenos/zenos-basis status` nennt Sicherheit, Kernel/Firmware/Bootloader und Entfernungen; die Zahl
   passt zu `apt list --upgradable` ohne die gestaffelten Pakete (Phasing).
+- [ ] `zen update` hat zwei Schritte: «== Schritt 1 von 2: zenOS-Kanal» endet mit «zenOS-Kanal: gelungen.», dann
+  «== Schritt 2 von 2: Ubuntu-Basis» mit der Zusammenfassung (Updates, davon Sicherheit, Kernel/Firmware/Bootloader,
+  Entfernungen, Neustart voraussichtlich) und der Frage «Genau diese Liste (…) installieren? Tippe «ja»:». Mit «nein»:
+  «Nichts geändert.» und «Ubuntu-Basis: nicht gelungen – wartet (Exit 10).», `echo $?` zeigt 10. Mit «ja» läuft das
+  Journal von `zenos-basis-installieren.service` mit, am Ende «Ubuntu-Basis: installiert – … gesund.» und «Ubuntu-Basis:
+  gelungen.»; danach `echo $?` 0.
+- [ ] `zen update --nur-zenos` zeigt keinen Basis-Schritt; `zen update --nur-basis --ja` fragt nicht und installiert.
+  `zen update --ja --nur-zenos` lehnt ab (Exit 2).
+- [ ] Während `zen update` (Schritt 2) installiert: Im System-Menü steht bei Neustart und Ausschalten «Update läuft».
+  Die SSH-Verbindung trennen: Die Installation läuft zu Ende (`journalctl -fu zenos-basis-installieren` nach dem
+  erneuten Anmelden).
+- [ ] Automatik der Basis: `systemctl list-timers 'zenos-basis-*'` zeigt beide Timer (03/09/15/21 Uhr und alle
+  15 Minuten). Bei Zeitpunkt «jederzeit» und ohne SSH-Sitzung installiert die Gelegenheit eine bereite Liste
+  (`zenos-basis automatik` zeigt «zuletzt … installiert»); solange du per SSH angemeldet bist, wartet sie («… ist per
+  SSH angemeldet»). Mit Kernel, Firmware oder Bootloader in der Liste installiert sie nie (`automatik.json`:
+  «zustimmung»). `sudo zen kanal automatik aus` schaltet auch die Basis-Timer aus, `… an` wieder ein.
 
 **Lüfter einstellen (Argon ONE UP, auch Argon ONE V3)**
 - [ ] System-Menü: Die Zeile «Lüfter» zeigt z. B. «aus · Auto» und rechts einen Pfeil. Ein Klick klappt darunter

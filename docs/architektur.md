@@ -168,8 +168,8 @@ Die Tastenkürzel von labwc rufen dieselben Ziele auf (Liste in `docs/module/m9.
 | `zenos-argon` | Argon ONE: Lüfter und Power-Button (V3), Akku-Messchip, Deckel und kontrolliertes Ausschalten bei 3 % (ONE UP), Mindeststufe für den Lüfter, Werte für die Leiste |
 | `zenos-gesten` | Wischen mit drei Fingern: Systemdienst `zenos-gesten.service` (eigener Benutzer, liest reine Touchpads nur lesend über libinput, meldet «oben» und «unten» auf `/run/zenos-gesten/gesten.sock`); dazu `--messen` (Schwelle einmessen) und `--pruefen` (für `zen doctor`) |
 | `zenos-luefter` | Lüfterwunsch schreiben («auto» oder Mindeststufe 1–4; root: über pkexec oder sudo, `zen luefter`) |
-| `zenos-kanal-bedienen` | Updates aus den Einstellungen (root über pkexec): prüfen, jetzt installieren und zustimmen starten Units des Kanals, Zeitpunkt setzen über `zenos-kanal zeitpunkt` |
-| `zenos-basis` | Paket-Updates der Ubuntu-Basis (root, ausgeführt wird die Kopie unter `/usr/local/libexec/zenos`): `pruefen` (apt-get update, Auswertung von `apt-get -s full-upgrade`), `installieren` (genau die geprüfte Liste, mit Inhibitor, danach `install.sh` und Gesundheitsprüfung), `status` (ohne root) |
+| `zenos-kanal-bedienen` | Updates aus den Einstellungen (root über pkexec): prüfen, jetzt installieren und zustimmen starten Units des Kanals, Zeitpunkt setzen über `zenos-kanal zeitpunkt`; für die Ubuntu-Basis `basis-pruefen` (Unit), `basis-installieren HASH` und `basis-installieren-zustimmen HASH` (über `zenos-basis jetzt` bzw. `zustimmen`) |
+| `zenos-basis` | Paket-Updates der Ubuntu-Basis (root, ausgeführt wird die Kopie unter `/usr/local/libexec/zenos`): `pruefen` (apt-get update, Auswertung von `apt-get -s full-upgrade`), `installieren` (genau die geprüfte Liste, mit Inhibitor, danach `install.sh` und Gesundheitsprüfung), `update [--ja]` (Schritt 2 von `zen update`), `jetzt` und `zustimmen` (Einstellungen), `automatik lauf\|gelegenheit` (Timer), `status` (ohne root) |
 | `zenos-netzwerk` | Netz von netplan/systemd-networkd auf NetworkManager umstellen und zurück (`zen netzwerk`) |
 | `zenos-firewall` | Firewall ein- und ausschalten (root: über pkexec, sudo oder `install.sh`), bewussten Zustand merken |
 | `zenos-sicherheitsquelle` | prüft mit unattended-upgrades selbst, ob die Ubuntu-Sicherheitsquelle erlaubt ist (nur lesend, für `zen doctor` und die Vorab-Prüfung von `72-kennung`) |
@@ -336,7 +336,7 @@ Die Logik läuft in Quickshell selbst, ohne eigenen Hintergrunddienst.
 | Standard-Apps, ausgeblendete Starter | `/etc/xdg/labwc-mimeapps.list` (Ordner: Thunar), `/usr/local/share/applications/thunar-{bulk-rename,settings}.desktop` (`Hidden=true`) | ja (Kopien) |
 | Richtlinien | `/etc/opt/chrome/policies/managed/zenos.json`, `/etc/vscode/policy.json`, `/etc/apt/apt.conf.d/51zenos-ubuntu-quellen`, `52zenos-unattended` | ja (Kopien) |
 | Kein Basiswechsel | `/etc/update-manager/release-upgrades.d/zenos.cfg` (`Prompt=never`, `71-basis`); die Ubuntu-Version eines Stands steht in `system/basis` (liest `zenos-kanal` aus dem geprüften Stand) | ja (Kopie von `system/update-manager/zenos.cfg`) |
-| Basis-Updates | Programm `/usr/local/libexec/zenos/zenos-basis` (Kopie, root, 0755), Units `zenos-basis-pruefen` und `-installieren` (statisch); Zustand `/var/lib/zenos/basis/` (`stand.json`, `letzte.json`, `auftrag.json`, `install-ergebnis`; root, für alle lesbar); Übernahme-Marker `/run/zenos-basis/uebernahme` (Laufzeitordner der Unit); Log `/var/log/zenos/basis.log` (root, 0640, Paketstand vorher und Änderungen); Sperre gemeinsam mit dem Kanal (`/run/zenos-sperre/kanal.lock`) | Programm und Units ja (Kopien), Zustand nie |
+| Basis-Updates | Programm `/usr/local/libexec/zenos/zenos-basis` (Kopie, root, 0755), Units `zenos-basis-pruefen` und `-installieren` (statisch), `zenos-basis-automatik.timer` und `zenos-basis-gelegenheit.timer` (ab Werk an, gemeinsamer Notschalter `/etc/xdg/zenos/kanal-automatik-aus`); Zustand `/var/lib/zenos/basis/` (`stand.json`, `letzte.json`, `auftrag.json`, `install-ergebnis`, `automatik.json`, `automatik-bereit`; root, für alle lesbar); Übernahme-Marker `/run/zenos-basis/uebernahme` (Laufzeitordner der Unit); Log `/var/log/zenos/basis.log` (root, 0640, Paketstand vorher und Änderungen); Sperre gemeinsam mit dem Kanal (`/run/zenos-sperre/kanal.lock`) | Programm und Units ja (Kopien), Zustand nie |
 | Install-Log | `/var/log/zenos/install.log`, Rückfall `~/.local/state/zenos/install.log` | nie |
 | Einstellungen | `~/.config/zenos/einstellungen.json` | nie |
 | Modi | `~/.config/zenos/modi/*.json` | nie |
@@ -382,7 +382,7 @@ Systemteile, dann alle Benutzerteile.
 | `60-terminal` | kitty, fish, tldr-Seiten |
 | `65-oberflaeche` | automatische Sperre, Notfall-Sperre, Hilfsprogramme |
 | `70-sicherheit` | Sicherheitsupdates, Richtlinien, Ubuntu-Nachrichten aus (motd-news maskiert und stillgelegt), Firewall (standardmässig an) und polkit-Aktionen, gitleaks-Hook |
-| `71-basis` | Ubuntu-Basis: Paket-Updates über `zenos-basis` (root-eigene Kopie, Units `zenos-basis-pruefen` und `-installieren`, `/var/lib/zenos/basis`; installiert selbst nichts), kein Wechsel der Hauptversion (`Prompt=never` per Drop-in in `/etc/update-manager/release-upgrades.d/`), keine Hinweise auf neue Ubuntu-Versionen |
+| `71-basis` | Ubuntu-Basis: Paket-Updates über `zenos-basis` (root-eigene Kopie, Units `zenos-basis-pruefen` und `-installieren`, Timer der Automatik nach dem gemeinsamen Notschalter, `/var/lib/zenos/basis`; installiert selbst nichts), kein Wechsel der Hauptversion (`Prompt=never` per Drop-in in `/etc/update-manager/release-upgrades.d/`), keine Hinweise auf neue Ubuntu-Versionen |
 | `72-kennung` | Systemkennung zenOS (`zenos-kennung`, apt-Hook, Version, Logo), nur nach der Vorab-Prüfung der Ubuntu-Sicherheitsquelle |
 | `75-apps` | Werkzeuge für `zen apps`, Starter für Chrome und Web-Apps |
 | `80-argon` | Argon-Dienst (V3 und ONE UP) und Shutdown-Hook |
@@ -415,7 +415,12 @@ Mac (Claude Code, Tests im Container) ── push ──▶ GitHub dev ──▶
                                                                   und Bürorechner (nur getestete Stände)
 ```
 
-- **`zen update`** läuft über den signierten Kanal (`scripts/bin/zenos-kanal`, root-eigene Kopie unter
+- **`zen update`** hat zwei Schritte, jeder meldet für sich, ob er gelungen ist: zuerst zenOS über den Kanal (unten),
+  dann die Pakete der Ubuntu-Basis (`zenos-basis`, «Basis-Updates» unten; Zusammenfassung, ein getipptes «ja», mit
+  `--ja` ohne Rückfrage). `--nur-zenos` und `--nur-basis` nehmen nur einen; Claude deployt mit `--nur-zenos`. Die
+  Basis läuft auch, wenn der Kanal nichts Neues hatte, ein «ja» fehlte oder etwas lief, aber nicht über einen
+  kaputten oder unterbrochenen Stand des Kanals. Exit 0 nur, wenn jeder gelaufene Schritt gelang, sonst der schwerere.
+- **Schritt 1, der Kanal,** läuft über `scripts/bin/zenos-kanal` (root-eigene Kopie unter
   `/usr/local/libexec/zenos`). Die Arbeit machen systemd-Units, ein SSH-Abbruch schadet nicht:
   1. holen ohne Rechte (`zenos-kanal-holen.service`, DynamicUser, nur https) als Bundle;
   2. prüfen und bereitstellen als root ohne Netz (`zenos-kanal-pruefen.service`): Signatur gegen den Anker
@@ -425,8 +430,8 @@ Mac (Claude Code, Tests im Container) ── push ──▶ GitHub dev ──▶
      Gesundheitsprüfung; scheitert sie, kommt die Version nach `gesperrt/` und der Stand davor zurück.
   Der Kanal steht in `/etc/xdg/zenos/kanal`: `stabil` (nur `vX.Y.Z`), `vorschau` (auch `-rcN`), `dev` (Branch dev;
   ohne Frage nur, wenn jeder neue Commit gültig signiert ist, sonst nach «ja» für genau diesen Commit). Firewall,
-  Netz und Boot fragen immer. Solange der Anker leer ist, geht nur dev von Hand. Zum Schluss richtet `zen update`
-  die Benutzerteile als Benutzer ein (`install.sh --nur-benutzer`).
+  Netz und Boot fragen immer. Solange der Anker leer ist, geht nur dev von Hand. Zum Schluss (nach beiden Schritten)
+  richtet `zen update` die Benutzerteile als Benutzer ein (`install.sh --nur-benutzer`).
 - **`zen rollback <tag>`:** derselbe Weg mit einem Tag als Ziel, signiert ohne Frage, unsigniert nur nach «ja» für
   genau dieses Tag-Objekt. `hoechste` bleibt; das nächste `zen update` kehrt auf den Kanal zurück. Die Automatik
   bringt die verlassene Version nicht wieder (sie liegt nicht über `hoechste`). Eine gesperrte Version noch einmal
@@ -437,8 +442,8 @@ Mac (Claude Code, Tests im Container) ── push ──▶ GitHub dev ──▶
   (`/etc/xdg/zenos/kanal-zeitpunkt`: seit 5 Min. gesperrt oder Login-Bildschirm seit 5 Min., ohne SSH-Sitzung;
   Zeitfenster; jederzeit; nie), nur am Netzteil oder ab 50 % Akku und nicht über einen Stand von Hand
   («angehalten»). Ein automatisch installierter Stand gilt erst als gut, wenn nach einem Neustart der Login kommt
-  (`zenos-kanal-bestaetigen.timer`); sonst geht es nach zwei Starts zurück. Notschalter:
-  `sudo zen kanal automatik aus`.
+  (`zenos-kanal-bestaetigen.timer`); sonst geht es nach zwei Starts zurück. Notschalter (gilt auch für die
+  Basis-Updates): `sudo zen kanal automatik aus`.
 - **Abbruch:** Strom weg oder hart beendet hinterlässt `/var/lib/zenos/kanal/laeuft.json`. Beim Start vollendet
   `zenos-kanal-nachstart.service` vor greetd die Übernahme des Codes (`install.sh --nur-code`, ohne Netz), damit der
   Login keinen Mischstand sieht; `zen update` setzt den Rest fort. Nach zwei unterbrochenen Versuchen wird die
@@ -456,7 +461,13 @@ Mac (Claude Code, Tests im Container) ── push ──▶ GitHub dev ──▶
   diesen Lauf; eine neue greetd-Version heisst «Neustart nötig»). Danach `install.sh` aus `/opt/zenos` (baut
   Quickshell nach einem Qt-Update neu) und eine Gesundheitsprüfung, die nur wertet, was schlechter wurde; zurückgerollt
   wird nichts. Kernel, Firmware, Bootloader und Entfernungen nur mit Zustimmung, ein geschütztes Paket nie.
-  Sicherheitsupdates bringt weiter unattended-upgrades. Einzelheiten: `docs/image-und-releases.md`, «Basis-Updates».
+  Sicherheitsupdates bringt weiter unattended-upgrades. Von Hand: Schritt 2 von `zen update` und die Knöpfe in
+  Einstellungen › System › Updates (`zenos-kanal-bedienen basis-…`; mit Kernel, Firmware, Bootloader oder
+  Entfernungen nur mit Passwort). Automatisch: `zenos-basis-automatik.timer` (alle 6 h, versetzt zum Kanal) prüft,
+  `zenos-basis-gelegenheit.timer` (alle 15 Min.) installiert eine bereite Liste, aber nie Kernel, Firmware,
+  Bootloader oder Entfernungen, nur wenn `zenos-kanal automatik darf --ohne-ssh` ja sagt (dieselben Regeln wie der
+  Kanal: Notschalter, Zeitpunkt, Akku; dazu bei jedem Zeitpunkt keine SSH-Sitzung), auch auf dev, nie ein Neustart.
+  Einzelheiten: `docs/image-und-releases.md`, «Basis-Updates».
 - **`zen kanal`:** `zen kanal status` zeigt Kanal, Zustand, Fingerabdrücke, abgelehnte Tags, letzte Installation,
   guten und gesperrten Stand; `sudo zen kanal pruefen` holt und prüft, ohne zu installieren. Regeln, Zustände und
   Dateien: `docs/image-und-releases.md`, «Signierte Releases».

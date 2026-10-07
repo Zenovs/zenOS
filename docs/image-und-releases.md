@@ -256,7 +256,7 @@ Rückfrage-Pfade, nach der Wartezeit und zum Zeitpunkt, den der Benutzer am Ger�
 
 | Befehl | Wer | Was |
 |---|---|---|
-| `zen update` | Benutzer mit sudo, im Terminal | holen, prüfen und bereitstellen, bei Bedarf «ja», installieren mit Gesundheitsprüfung und Rückweg, dann die Benutzerteile |
+| `zen update` | Benutzer mit sudo, im Terminal | holen, prüfen und bereitstellen, bei Bedarf «ja», installieren mit Gesundheitsprüfung und Rückweg; danach als Schritt 2 die Pakete der Ubuntu-Basis («Basis-Updates» unten; nur der Kanal: `--nur-zenos`), dann die Benutzerteile |
 | `zen rollback <tag>` | ebenso | dasselbe mit einem Tag als Ziel |
 | `zen kanal status` | alle | Kanal, Zustand, Anker mit Fingerabdrücken, installierter Stand, `hoechste`, gültige und abgelehnte Tags, letzter Kontakt, letzte Installation, guter Stand, gesperrte Stände |
 | `sudo zen kanal pruefen` | root | startet `zenos-kanal-holen.service`, dann `zenos-kanal-pruefen.service`, zeigt danach den Status. Installiert nichts |
@@ -475,7 +475,7 @@ installiert den Stand des Kanals dann neu, auch wenn der Commit gleich ist.
 | `gesperrt/<version oder commit>` | gescheiterte Ziele mit Grund |
 | `angehalten` | Stand von Hand aus einem Arbeits-Checkout: Die Automatik ruht bis `zen update` |
 
-| Exit | `zen update`, `zen rollback` |
+| Exit | `zen rollback`, Schritt 1 von `zen update` (den Exit von `zen update` mit beiden Schritten zeigt «Basis-Updates» unten) |
 |---|---|
 | 0 | installiert oder schon aktuell |
 | 2 | Aufruf falsch |
@@ -813,13 +813,17 @@ Paket-Updates innerhalb von Ubuntu 26.04 LTS bringt `scripts/bin/zenos-basis` (P
 `python3 -I`), root-eigene Kopie unter `/usr/local/libexec/zenos/zenos-basis` (Modul `71-basis`). Es installiert, was
 `apt full-upgrade` brächte: Fehlerkorrekturen aus `-updates`, Sicherheitsupdates, Pakete der Herstellerquellen (Chrome,
 VS Code, 1Password-CLI). Sicherheitsupdates spielt unattended-upgrades weiter täglich selbst ein; daran ändert sich
-nichts. Die Arbeit machen zwei statische Units als root mit Netz.
+nichts. Die Arbeit machen zwei statische Units als root mit Netz; sie starten Schritt 2 von `zen update`, die Knöpfe
+in Einstellungen › System › Updates und die Automatik.
 
 | Befehl | Wer | Was |
 |---|---|---|
 | `zenos-basis pruefen` | root, `zenos-basis-pruefen.service` | `apt-get update`, dann `apt-get -s full-upgrade` auswerten; schreibt `stand.json`. Installiert nichts |
 | `zenos-basis installieren` | root, `zenos-basis-installieren.service` | installiert die Liste aus `auftrag.json` (Hash, Zustimmung ja/nein, von wem; höchstens eine Stunde alt), mit `--liste HASH [--zustimmung]` ohne Auftrag (Tests, von Hand) |
-| `zenos-basis status [--json\|--kurz\|--installation]` | alle | letzte Prüfung, letzte Installation, Neustart nötig; `--kurz` für `zen doctor` und die Zeile `Pakete` von `zen version` |
+| `zenos-basis status [--json\|--kurz\|--installation]` | alle | letzte Prüfung, letzte Installation, Neustart nötig, Automatik; `--kurz` für `zen doctor` und die Zeile `Pakete` von `zen version` |
+| `zenos-basis update [--ja]` | root, im Terminal (`zen update`) | Schritt 2 von `zen update`, siehe unten |
+| `zenos-basis jetzt HASH`, `zenos-basis zustimmen HASH` | root (`zenos-kanal-bedienen` über pkexec) | «Jetzt installieren» bzw. «Mit Passwort installieren» in den Einstellungen |
+| `zenos-basis automatik [lauf\|gelegenheit]` | root (Timer); ohne Argument alle | Automatik, siehe unten; ohne Argument: an oder aus, letzter Lauf |
 
 **Prüfen.** Unter der Sperre des Kanals (`/run/zenos-sperre/kanal.lock`, nicht blockierend, sonst Exit 75; ebenso,
 solange ein `install.sh` von Hand läuft). Vorher wartet es höchstens 20 Minuten auf einen anderen Paketvorgang
@@ -899,6 +903,101 @@ Geprüft mit `test/einheiten/basis-updates.test.py` (Fixtures ohne und mit Kerne
 Pakete, Herstellerquelle; Attrappen für apt, dpkg und install.sh) und im Testcontainer über die echten Units:
 prüfen (7 bzw. 3 Updates, siehe Staffelung), installieren ohne Zustimmung (3 Pakete, `install.sh` Exit 0, gesund,
 danach «aktuell»), Inhibitor und Marker während des Laufs, `policy-rc.d` danach weg.
+
+### `zen update`: zwei Schritte
+
+`zen update` (scripts/zen.d/update.sh) bringt zuerst zenOS über den Kanal (Schritt 1, wie oben, unverändert; sein «ja»
+bleibt an die gezeigte ID gebunden und gibt es nur getippt im Terminal), dann die Basis (Schritt 2,
+`sudo …/zenos-basis update`). Jeder Schritt meldet am Ende eine Zeile «zenOS-Kanal: gelungen.» bzw. «Ubuntu-Basis:
+nicht gelungen – wartet (Exit 10).»; zum Schluss die Benutzerteile (`install.sh --nur-benutzer` als Benutzer), wenn der
+Kanal installierte oder zurückging (0, 4) oder der Basis-Schritt gelang.
+
+Der Basis-Schritt hält die Sperre der Bedienung wie der Kanal (`/run/zenos-sperre/bedienung.lock`: `zen update`, die
+Automatik und die Knöpfe der Einstellungen laufen nie zugleich), prüft über `zenos-basis-pruefen.service` und zeigt
+die Zusammenfassung: Anzahl, davon Sicherheit, Kernel/Firmware/Bootloader (ja/nein mit Namen), Entfernungen,
+«Neustart voraussichtlich nötig», Herstellerquellen, den Hash. Ist etwas offen, fragt er «Genau diese Liste (…)
+installieren? Tippe «ja»:». Das getippte «ja» ist die Zustimmung für genau diese Liste, auch für Kernel, Firmware,
+Bootloader und Entfernungen (dann mit dem Satz, dass danach ein Neustart nötig ist; zenOS startet nie selbst neu).
+Danach installiert `zenos-basis-installieren.service` mit dem Auftrag `von: zen update`, das Journal läuft im
+Terminal mit; bricht die Verbindung ab, läuft die Unit zu Ende.
+
+| Option | Wirkung |
+|---|---|
+| `--ja` | Basis ohne Rückfrage, mit Zustimmung. Gilt nur für den Basis-Schritt, nie für das «ja» des Kanals; mit `--nur-zenos` ein Aufruffehler |
+| `--nur-zenos` | nur Schritt 1 (so deployt Claude; Paketänderungen der Basis bleiben bei Zeno) |
+| `--nur-basis` | nur Schritt 2 |
+
+Der Basis-Schritt läuft auch nach einem Kanal-Ergebnis «nichts neu», «Zustimmung abgelehnt» (10) oder «läuft schon»
+(75), aber nicht über einen kaputten Kanal (5) oder eine unterbrochene Installation des Kanals (`laeuft.json`, auch
+`letzte.json` «kaputt»: «übersprungen», 10; das prüft zenos-basis selbst noch einmal) und nicht nach Ctrl+C (130).
+Ohne Terminal und ohne `--ja` installiert er nichts (10).
+
+| Exit | `zen update` |
+|---|---|
+| 0 | jeder gelaufene Schritt gelang (aktuell oder installiert) |
+| sonst | der Exit des Schritts mit dem schwereren Ergebnis, in dieser Reihenfolge: 5 kaputt, 4 gescheitert und zurück (Kanal), 1 Fehler, 3 abgelehnt oder gesperrt, 10 wartet (auch «nein», ohne Terminal, übersprungen), 75 läuft schon |
+| 2 | Aufruf falsch (`--nur-zenos` mit `--nur-basis`, `--ja` mit `--nur-zenos`, ein anderes Wort) |
+| 130 | abgebrochen (Ctrl+C; eine laufende Installation läuft zu Ende) |
+
+### In den Einstellungen
+
+Über `pkexec /opt/zenos/scripts/bin/zenos-kanal-bedienen` (polkit-Aktionen in `org.zenos.kanal.policy`, nur in der
+aktiven Sitzung am Gerät; `docs/sicherheit.md`):
+
+- `basis-pruefen` (ohne Passwort): `zenos-basis-pruefen.service`, Exit der Unit.
+- `basis-installieren HASH` (ohne Passwort): `zenos-basis jetzt HASH` schreibt den Auftrag ohne Zustimmung für genau
+  die angezeigte Liste und startet die Unit, ohne neues `apt-get update`. Kernel, Firmware, Bootloader oder
+  Entfernungen: Exit 10; Liste nicht mehr aktuell: Exit 3.
+- `basis-installieren-zustimmen HASH` (Passwort bei jedem Aufruf): `zenos-basis zustimmen HASH`, dasselbe mit
+  Zustimmung.
+
+Ein Auftrag, den die Unit nicht nahm (sie lief nicht), bleibt nicht liegen. Endet die Unit mit 0, 3, 10 oder 75,
+setzt zenos-basis ihren Zustand «failed» zurück (das sind Zustände der Basis-Updates); 1 und 5 bleiben sichtbar
+(`systemctl --failed`).
+
+### Automatik
+
+Entscheid Zeno (Oktober 2026): Basis-Updates dürfen automatisch laufen, ab Werk an, auch auf dem Kanal dev, ohne
+Wartezeit (Ubuntu staffelt selbst), nie ein Neustart.
+
+- `zenos-basis-automatik.timer`: 30–40 Minuten nach dem Start, dann alle 6 Stunden (03, 09, 15, 21 Uhr plus bis zu 10
+  Minuten Zufall, versetzt zu `zenos-kanal.timer`), `Persistent`. `zenos-basis-automatik.service` (`automatik lauf`)
+  prüft über die Unit (`apt-get update`) und installiert, wenn es darf.
+- `zenos-basis-gelegenheit.timer`: alle 15 Minuten (7, 22, 37, 52). `zenos-basis-gelegenheit.service`
+  (`automatik gelegenheit`) startet nur mit `/var/lib/zenos/basis/automatik-bereit` (es gibt ihn genau dann, wenn
+  `stand.json` «bereit» sagt) und installiert die bereite Liste ohne `apt-get update`, wenn es darf. Hat sich die
+  Liste inzwischen geändert (etwa durch unattended-upgrades), lehnt die Unit ab, `stand.json` zeigt die neue, die
+  nächste Gelegenheit nimmt sie.
+- Beide in derselben Sandbox wie die Automatik des Kanals (ohne Netz; apt läuft in den eigenen Units),
+  `SuccessExitStatus=10 75`, Sperre der Bedienung (belegt: 75, beim nächsten Mal).
+
+Installiert wird nur:
+
+1. eine Liste ohne Kernel, Firmware, Bootloader und Entfernungen («bereit»). Bei «zustimmung» oder «gesperrt» wartet
+   sie auf «ja» von Hand; `automatik.json` hat dann `ergebnis` «zustimmung» bzw. «gesperrt» und die `liste`, die
+   Oberfläche meldet daraus «Basis-Updates warten auf dich» höchstens einmal je Liste;
+2. wenn `zenos-kanal automatik darf --ohne-ssh --json` ja sagt. Das ist dieselbe Quelle, aus der die Automatik des
+   Kanals vor jeder Installation fragt (`automatic_may` in zenos-kanal): Notschalter
+   `/etc/xdg/zenos/kanal-automatik-aus`, Zeitpunkt aus `/etc/xdg/zenos/kanal-zeitpunkt` (sperre, fenster,
+   jederzeit; hand nie), Akku (Netzteil oder ab 50 %). Strenger als beim Kanal: Bei jedem Zeitpunkt keine
+   SSH-Sitzung, nicht nur bei «sperre» (apt startet Dienste neu; wer per SSH arbeitet, merkte das). Antwortet
+   zenos-kanal nicht genau so (Exit 0 heisst ja, 10 nein, JSON), heisst das nein;
+3. nicht, solange ein `install.sh` von Hand läuft oder der Kanal unterbrochen oder kaputt ist.
+
+Der Notschalter ist gemeinsam: `sudo zen kanal automatik aus` schaltet auch die beiden Timer der Basis aus, und
+install.sh (71-basis) lässt sie dann aus. Scheitert `apt-get update` (etwa ohne Netz), endet der Lauf mit 10 (kein
+Ausfall der Unit), `automatik.json` und `zen doctor` nennen den Grund.
+
+| Datei | Inhalt |
+|---|---|
+| `/var/lib/zenos/basis/automatik.json` | letzter Lauf der Automatik: `art` (lauf, gelegenheit), `beginn`, `ende`, `ergebnis` (aus, nichts, aktuell, wartet, zustimmung, gesperrt, installiert, kaputt, fehler), `grund`, `zeitpunkt`, `liste` |
+| `/var/lib/zenos/basis/automatik-bereit` | eine Liste ohne Zustimmung installierbar (Hash): Bedingung für `zenos-basis-gelegenheit.service` |
+
+Geprüft mit `test/einheiten/basis-automatik.test.py` (zen update mit «ja», «nein», ohne Terminal, `--ja`, Kernel;
+Einstellungen mit und ohne Zustimmung, fremder Hash; Automatik mit und ohne «darf», nie Kernel oder Entfernungen,
+Gelegenheit ohne Netz, Liste dazwischen geändert, Notschalter), `test/einheiten/zen-update.test.py` (Schritte,
+Optionen, Exit, Benutzerteile), `test/einheiten/kanal-automatik.test.py` («automatik darf», SSH bei jedem Zeitpunkt,
+Notschalter auch für die Basis-Timer) und `test/einheiten/kanal-bedienung.test.py` (Helfer und polkit).
 
 ## Basiswechsel: neue Hauptversion, neues Image
 
