@@ -431,14 +431,17 @@ class EnergieTest(unittest.TestCase):
     def test_kanal_installation_als_root(self):
         # Ein Lauf des Kanals (zen update, Einstellungen, Automatik, Bestätigung nach dem Start) arbeitet in Units als
         # root: Seine Sperren in /run/zenos-sperre sieht ein Benutzer nicht, der Block-Hemmer gilt nur während
-        # install.sh. systemd sagt jedem, ob eine Unit zenos-kanal-* läuft.
+        # install.sh. systemd sagt jedem, ob eine Unit zenos-kanal-* läuft; ebenso für die Basis-Updates
+        # (zenos-basis-*: apt-get update, apt-get full-upgrade, install.sh, Gesundheitsprüfung).
         self.frei()
         self.assertEqual(self.darf(), (0, "ja"))
         for einheit, zustand in (("zenos-kanal-installieren.service", "activating"),
                                  ("zenos-kanal-automatik.service", "activating"),
                                  ("zenos-kanal-bestaetigen.service", "activating"),
                                  ("zenos-kanal-zustimmen@0123456789abcdef0123456789abcdef01234567.service",
-                                  "deactivating")):
+                                  "deactivating"),
+                                 ("zenos-basis-installieren.service", "activating"),
+                                 ("zenos-basis-pruefen.service", "active")):
             with self.subTest(einheit):
                 self.verhalten("systemctl", "aus.list-units",
                                f"{einheit} loaded {zustand} start start zenOS: Kanal\nzenos-kanal-pruefen.service "
@@ -451,7 +454,8 @@ class EnergieTest(unittest.TestCase):
         self.assertEqual(self.darf(), (0, "ja"))
         aufruf = [a for a in self.aufrufe("systemctl") if a and a[0] == "list-units"][-1]
         self.assertEqual(aufruf, ["list-units", "--type=service", "--state=activating,active,deactivating,reloading",
-                                  "--no-legend", "--plain", "--no-pager", "zenos-kanal-*.service"])
+                                  "--no-legend", "--plain", "--no-pager", "zenos-kanal-*.service",
+                                  "zenos-basis-*.service"])
         # Auch unmittelbar vor dem Ausschalten (nach der Vorwarnung) und am Login-Bildschirm
         self.sperren()
         self.vorwarnung(70)

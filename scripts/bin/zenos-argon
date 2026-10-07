@@ -251,6 +251,9 @@ ROOT_INSTALL_LOCK_PATH = "/run/zenos-sperre/install.lock"
 # Laufzeitordner von zenos-kanal-installieren.service: Es gibt ihn, solange der Kanal installiert, auch zwischen den
 # Läufen von install.sh (Gesundheitsprüfung, Rückweg)
 CHANNEL_RUN_PATH = "/run/zenos-kanal"
+# Laufzeitordner von zenos-basis-installieren.service (Paket-Updates der Ubuntu-Basis): Es gibt ihn, solange die Unit
+# läuft (apt-get full-upgrade, install.sh, Gesundheitsprüfung)
+BASIS_RUN_PATH = "/run/zenos-basis"
 
 
 # --- Log -------------------------------------------------------------------
@@ -1566,12 +1569,14 @@ def process_running(name, proc=None):
 
 
 def system_busy():
-    """Warum jetzt nicht ausgeschaltet werden sollte (install.sh, ein Update über den Kanal oder dpkg läuft), sonst
-    ""."""
+    """Warum jetzt nicht ausgeschaltet werden sollte (install.sh, ein Update über den Kanal oder der Ubuntu-Basis oder
+    dpkg läuft), sonst ""."""
     if install_running() or install_running(system_path(ROOT_INSTALL_LOCK_PATH)):
         return "install.sh läuft"
     if os.path.isdir(system_path(CHANNEL_RUN_PATH)):
         return "zenOS-Update läuft"
+    if os.path.isdir(system_path(BASIS_RUN_PATH)):
+        return "Update der Ubuntu-Basis läuft"
     if process_running("dpkg"):
         return "dpkg läuft"
     return ""

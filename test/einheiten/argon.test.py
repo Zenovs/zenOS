@@ -1652,6 +1652,8 @@ class WaechterBeimAusschalten(unittest.TestCase):
                 fcntl.flock(gehalten, fcntl.LOCK_EX)
                 self.assertEqual(A.system_busy(), "install.sh läuft")
             self.assertEqual(A.system_busy(), "")
+            os.makedirs(os.path.join(wurzel, "run", "zenos-basis"))
+            self.assertEqual(A.system_busy(), "Update der Ubuntu-Basis läuft")
             os.makedirs(os.path.join(wurzel, "run", "zenos-kanal"))
             self.assertEqual(A.system_busy(), "zenOS-Update läuft")
 
