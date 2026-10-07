@@ -669,10 +669,11 @@ Ein Update von Hand gilt sofort als gut (der Mensch sitzt davor); es ersetzt ein
 nennt einen unbestätigten Stand «schon installiert», `zen doctor` zeigt ihn als Hinweis.
 
 **Notschalter:** `sudo zen kanal automatik aus` legt `/etc/xdg/zenos/kanal-automatik-aus` an und schaltet
-`zenos-kanal.timer` und `zenos-kanal-gelegenheit.timer` aus (`systemctl disable --now`); `install.sh` lässt sie dann
-aus, und die Units starten nicht (`ConditionPathExists=!…`). `… an` macht beides rückgängig. Er schaltet nur die
-Automatik, nie die Prüfung: Signatur, Anker und Rückfrage gelten bei `zen update` weiter. Die Bestätigung nach dem
-Start bleibt an.
+`zenos-kanal.timer` und `zenos-kanal-gelegenheit.timer` aus (`systemctl disable --now`), dazu die beiden Timer der
+Basis-Updates (`zenos-basis-automatik.timer`, `zenos-basis-gelegenheit.timer`, siehe «Basis-Updates»); `install.sh`
+lässt sie dann aus, und die Units starten nicht (`ConditionPathExists=!…`). `… an` macht beides rückgängig. Er
+schaltet nur die Automatik, nie die Prüfung: Signatur, Anker und Rückfrage gelten bei `zen update` weiter. Die
+Bestätigung nach dem Start bleibt an, und die Sicherheitsupdates von unattended-upgrades laufen weiter.
 
 **Ausschalten während eines Updates:** Während `install.sh` hält der Kanal einen Block-Hemmer (Ausschalten und
 Ruhezustand). Davor und danach (Bereitstellen, Gesundheitsprüfung, Rückweg) nicht, und die Sperren in
@@ -776,7 +777,9 @@ Mit Wegwerf-Schlüsseln, im Container (git 2.53, OpenSSH 10.2) und auf dem Mac (
 - Die Rückfrage-Pfade fangen indirekte Änderungen nicht, etwa neue Pakete, die initramfs auslösen.
 - Ein Rückweg ist kein Schnappschuss: Pakete, Units und Dateien, die ein gescheiterter Stand neu brachte, bleiben
   liegen; zurück kommt der Code und was install.sh des alten Stands einrichtet.
-- Ein Abbruch mitten in apt bleibt bis zum nächsten `zen update` halb (dpkg); nachstart vollendet nur den Code.
+- Ein Abbruch mitten in apt bleibt halb (dpkg), bis `dpkg --configure -a` ihn nachholt: die nächste Prüfung der
+  Basis-Updates (`zen update`, «Jetzt prüfen», die Automatik alle 6 h), eine Installation des Kanals oder
+  unattended-upgrades. nachstart vollendet nur den Code.
 - Ein Update, das erst nach dem Neustart den Login bricht (greetd-Konfiguration, PAM), fällt der
   Gesundheitsprüfung nicht auf. Nur ein automatisch installierter Stand wartet deshalb auf die Bestätigung nach dem
   Start («Automatik»); ein `zen update` von Hand gilt sofort als gut.
@@ -824,6 +827,9 @@ in Einstellungen › System › Updates und die Automatik.
 | `zenos-basis update [--ja]` | root, im Terminal (`zen update`) | Schritt 2 von `zen update`, siehe unten |
 | `zenos-basis jetzt HASH`, `zenos-basis zustimmen HASH` | root (`zenos-kanal-bedienen` über pkexec) | «Jetzt installieren» bzw. «Mit Passwort installieren» in den Einstellungen |
 | `zenos-basis automatik [lauf\|gelegenheit]` | root (Timer); ohne Argument alle | Automatik, siehe unten; ohne Argument: an oder aus, letzter Lauf |
+| `zen update [--ja] [--nur-basis]` | Benutzer mit sudo, im Terminal | Schritt 2 startet `zenos-basis update`; `--nur-zenos` lässt ihn aus (unten) |
+| `zen version`, `zen doctor` | alle | Zeile `Pakete` bzw. Abschnitt «Ubuntu-Basis», ohne Netz (unten) |
+| `sudo zen kanal automatik aus\|an` | root | gemeinsamer Notschalter für die Automatik von Kanal und Basis |
 
 **Prüfen.** Unter der Sperre des Kanals (`/run/zenos-sperre/kanal.lock`, nicht blockierend, sonst Exit 75; ebenso,
 solange ein `install.sh` von Hand läuft). Vorher wartet es höchstens 20 Minuten auf einen anderen Paketvorgang
@@ -886,9 +892,9 @@ Ein Stopp (Ausschalten durch root) vor apt beginnt nichts mehr (Exit 10); währe
 zu Ende (`KillMode=mixed`, `TimeoutStopSec=20min`, SIGHUP ignoriert, ein SSH-Abbruch schadet nicht). Ein harter Abbruch
 (Strom, `kill -9`) hinterlässt ein unterbrochenes dpkg und die `policy-rc.d` der Basis (hält nur greetd ab); die
 nächste Prüfung (`zen update`, «Jetzt prüfen», Automatik) oder Installation holt `dpkg --configure -a` nach und räumt
-die `policy-rc.d` weg (diese räumt auch jedes `install.sh` weg). `letzte.json` nennt einen solchen Abbruch nicht (sie schreibt erst das
-Ende eines Laufs). zenos-energie schaltet nicht aus,
-solange eine Unit `zenos-basis-*` läuft, zenos-argon nicht, solange `/run/zenos-basis` besteht.
+die `policy-rc.d` weg (diese räumt auch jedes `install.sh` weg). `letzte.json` nennt einen solchen Abbruch nicht (sie
+schreibt erst das Ende eines Laufs). zenos-energie schaltet nicht aus, solange eine Unit `zenos-basis-*` läuft;
+zenos-argon wartet bei 3 % Akku, solange `/run/zenos-basis` besteht, bis zu 5 Minuten länger.
 
 | Datei | Inhalt |
 |---|---|
@@ -946,6 +952,19 @@ Ohne Terminal und ohne `--ja` installiert er nichts (10).
 | sonst | der Exit des Schritts mit dem schwereren Ergebnis, in dieser Reihenfolge: 5 kaputt, 4 gescheitert und zurück (Kanal), 1 Fehler, 3 abgelehnt oder gesperrt, 10 wartet (auch «nein», ohne Terminal, übersprungen), 75 läuft schon |
 | 2 | Aufruf falsch (`--nur-zenos` mit `--nur-basis`, `--ja` mit `--nur-zenos`, ein anderes Wort) |
 | 130 | abgebrochen (Ctrl+C; eine laufende Installation läuft zu Ende) |
+
+Ohne Netz und schnell zeigen den Stand der letzten Prüfung:
+
+- `zen version`, Zeile `Pakete` (aus `zenos-basis status --kurz`): «12 Updates (3 Sicherheit)», mit Kernel, Firmware
+  oder Bootloader «… (3 Sicherheit, Kernel/Firmware/Bootloader)», «aktuell», «noch nie geprüft», «Basis-Update läuft»;
+  steht ein Neustart an, dahinter «· Neustart nötig». Hat sich der Paketstand seit der Prüfung geändert (etwa durch
+  unattended-upgrades), steht dahinter «(Stand …, seither Paketänderungen)». Dieselbe Ausgabe erscheint in
+  Einstellungen › System.
+- `zen doctor`, Abschnitt «Ubuntu-Basis»: `Prompt=never` (Warnung, wenn nicht), Programm und Units der Basis-Updates
+  (root-eigen, gleich dem Stand in `/opt/zenos`), Timer der Automatik (Hinweis bei Notschalter), ausstehende Updates
+  als Hinweis («Basis-Updates ausstehend: …»), «gesperrt» als Warnung, die letzte Installation (`kaputt` als Fehler).
+  Einen ausstehenden Neustart nennt weiter der Abschnitt «Sicherheit» (`/run/reboot-required`), die Basis-Version
+  der Abschnitt «System».
 
 ### In den Einstellungen
 
@@ -1041,6 +1060,31 @@ in dpkg holt das nächste `zen update` `dpkg --configure -a` nach. Während eine
 eine zweite Basis-Installation mit 75, ein `install.sh` von Hand wartet; hält der Kanal die Sperre oder läuft ein
 `install.sh` von Hand, endet die Basis mit 75.
 
+### Grenzen
+
+- **Kein Rückweg:** Ein Basis-Update ist kein Schnappschuss. apt kann ältere Versionen nicht verlässlich zurückholen
+  (das Archiv behält sie nicht), und zenos-basis versucht es auch nicht. Was schlechter wurde, nennt `letzte.json`
+  (und `zen doctor`); repariert wird von Hand oder mit dem nächsten Update. `/var/log/zenos/basis.log` hält den
+  Paketstand vorher fest, nur zur Diagnose.
+- **Nach dem Neustart:** Was erst beim nächsten Start bricht (Kernel, Firmware, initramfs, PAM), sieht die
+  Gesundheitsprüfung nicht. Darum kommen Kernel, Firmware und Bootloader nur mit Zustimmung und nie automatisch, und
+  zenOS startet nie selbst neu. Auf dem Pi prüft piboot-try einen neuen Kernel beim nächsten Start (der Start läuft
+  zweimal, `docs/module/bootsplash.md`) und bleibt bei `current/`, wenn er scheitert.
+- **unattended-upgrades bleibt, wie es ist:** Sicherheitsupdates (auch Kernel aus `-security`) spielt es täglich
+  selbst ein, ohne Zustimmung, ohne Rücksicht auf den Zeitpunkt von zenOS und ohne den Notschalter. Läuft es gerade,
+  wartet zenos-basis höchstens 20 Minuten; ändert es den Paketstand nach einer Prüfung, lehnt die Installation die
+  alte Liste ab (Exit 3).
+- **Neustart voraussichtlich** ist eine Schätzung aus den Paketnamen. Andere Dienste (etwa ssh, wenn sein Paket dabei
+  ist) startet apt wie bei Ubuntu neu; eine laufende SSH-Sitzung bleibt dabei bestehen.
+- **Herstellerquellen:** Chrome, VS Code und die 1Password-CLI kommen mit, sobald `zen apps` ihre Quellen eingerichtet
+  hat. Ihre Pakete prüft apt gegen den Schlüssel des Herstellers; mehr Vertrauen als in diese Quelle gibt es nicht.
+- **Geänderte Konfigurationsdateien** behält dpkg (`--force-confold`), die neue Fassung des Pakets liegt daneben als
+  `.dpkg-dist`. Wer eine Datei unter `/etc` von Hand geändert hat, bekommt die neue Vorgabe also nicht von selbst.
+- **Häufiger `apt-get update`:** Die Automatik fragt die Paketquellen alle 6 Stunden statt einmal täglich, über
+  esm-cache also auch `contracts.canonical.com` öfter (`docs/sicherheit.md`, offen in `docs/module/m11.md`).
+- **root kann alles:** Wer die Paketquellen von Hand ändert, `apt` selbst startet oder den Drop-in löscht, umgeht
+  zenos-basis. Gegen root schützt nichts.
+
 ## Basiswechsel: neue Hauptversion, neues Image
 
 Ein Stand von zenOS ist für genau eine Ubuntu-Version gebaut; sie steht in `system/basis` (heute `26.04`). Innerhalb
@@ -1107,7 +1151,8 @@ Runner):
   11 GiB freiem Platz.
 - **Dateigrösse:** Einzelne Release-Dateien müssen kleiner als 2 GiB sein. Ein schlankes Image ist besser als ein zerstückeltes. Der Workflow bricht vorher ab.
 - **Kein `apt upgrade` beim Bau:** Ein neuer Kernel käme im chroot nicht auf die Boot-Partition. Die ausstehenden
-  Sicherheitsupdates holt unattended-upgrades nach dem ersten Start.
+  Sicherheitsupdates holt unattended-upgrades nach dem ersten Start, die übrigen Pakete bringen die Basis-Updates
+  (`zen update` oder die Automatik; ein neuer Kernel nur mit Zustimmung).
 
 ## Was nicht ins Image kommt
 
@@ -1117,8 +1162,9 @@ Chrome, VS Code, 1Password und coremail sind nicht im Image; Chrome, VS Code und
 
 - **Bootloader:** Ubuntu 26.04 verlangt auf dem Pi 5 einen Bootloader (EEPROM) vom 11.02.2025 oder neuer
   (Release-Notes von Ubuntu 26.04). Prüfen mit `sudo rpi-eeprom-update`, aktualisieren mit
-  `sudo rpi-eeprom-update -a` oder mit dem Raspberry Pi Imager (Bootloader-Image). zenOS selbst fasst die Firmware
-  nie an.
+  `sudo rpi-eeprom-update -a` oder mit dem Raspberry Pi Imager (Bootloader-Image). zenOS selbst schreibt nie ins
+  EEPROM. Neue Pakete wie `rpi-eeprom`, `linux-firmware-raspi` oder `flash-kernel` kommen als Basis-Update nur mit
+  Zustimmung («Basis-Updates», heikel); Kernel aus `-security` spielt unattended-upgrades wie bei Ubuntu selbst ein.
 - Am besten mit dem Raspberry Pi Imager ab 2.0.11 **über die Manifest-Datei** `zenos-<v>.rpi-imager-manifest`: per
   Doppelklick öffnen oder im Imager «App Options › Content Repository › Edit › Use custom file › Apply & Restart»,
   dann zenOS auswählen. Unter

@@ -151,9 +151,11 @@ Rückänderung, sonst fragte dpkg bei der nächsten Version nach). `zen doctor`:
   (`-security`), liesse unattended-upgrades sie aus: Seine Prüfung auf Conffile-Rückfragen vergleicht die Datei am
   ursprünglichen Ort und kennt keine Umlenkung (im Container nachgestellt, siehe unten). Die übrigen Updates kommen
   trotzdem, der Lauf endet aber mit «upgrade result: False»; `zen doctor` meldet dann das ausstehende Update von
-  base-files und nach drei Tagen den fehlenden erfolgreichen Lauf. `sudo apt upgrade` von Hand läuft ohne Rückfrage
-  durch (dpkg kennt die Umlenkung). Das ist der Preis dafür, Konsole und `/etc/legal` umzubenennen; os-release ist
-  kein Conffile und davon nicht betroffen.
+  base-files und nach drei Tagen den fehlenden erfolgreichen Lauf. Die Basis-Updates (`zen update`, Schritt 2, und
+  ihre Automatik; `docs/image-und-releases.md`, «Basis-Updates») bringen base-files ohne Rückfrage, wie
+  `sudo apt upgrade` von Hand (dpkg kennt die Umlenkung, `--force-confold`); danach zieht der Hook die Kennung nach.
+  Das ist der Preis dafür, Konsole und `/etc/legal` umzubenennen; os-release ist kein Conffile und davon nicht
+  betroffen.
 
 ## Rückweg
 

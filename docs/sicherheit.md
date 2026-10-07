@@ -4,7 +4,9 @@ Grundsatz 1: Sicherheit ist Standard und geht vor Design und Bequemlichkeit. Sie
 
 ## Unterbau
 
-- Nur LTS-Versionen von Ubuntu. Sicherheitsupdates laufen automatisch (`unattended-upgrades`).
+- Nur LTS-Versionen von Ubuntu. Sicherheitsupdates laufen automatisch (`unattended-upgrades`). Die übrigen
+  Paket-Updates innerhalb von Ubuntu 26.04 LTS bringt `zen update` als zweiten Schritt (Abschnitt «Basis-Updates»
+  unten); ein Wechsel der Hauptversion ist gesperrt.
   - **Ubuntu-Quellen fest erlaubt:** Die Vorgabe des Pakets (`50unattended-upgrades`) nennt die Ubuntu-Quellen nur
     über `${distro_id}`, etwa `${distro_id}:${distro_codename}-security`. `${distro_id}` kommt aus `lsb_release -is`,
     also aus ID und NAME in `/etc/os-release`. Meldet os-release einmal eine andere Kennung als Ubuntu (etwa «zenOS»), erlaubte
@@ -85,6 +87,8 @@ Grundsatz 1: Sicherheit ist Standard und geht vor Design und Bequemlichkeit. Sie
 - Festplattenverschlüsselung: auf dem Bürorechner Pflicht. Auf dem Pi ist sie das Ziel; in 0.1 noch nicht umgesetzt (offen).
 - Secure Boot: auf dem Bürorechner aktiv. Auf dem Pi bewusst nicht, weil dort Schlüssel dauerhaft in den Chip geschrieben werden.
 - Backups sollen automatisch und verschlüsselt auf einen eigenen Server oder ein NAS laufen (Ziel, in 0.1 noch nicht umgesetzt).
+  Bis dahin sichert man vor einem Wechsel der Ubuntu-Basis von Hand auf einen eigenen Datenträger, nie auf ein Ziel im
+  Netz (`docs/image-und-releases.md`, «Basiswechsel»).
 
 ## Firewall
 
@@ -157,8 +161,8 @@ systemd-Benutzerinstanz gilt dieselbe Grenze wie bei der Firewall: polkit ordnet
 
 **Updates in den Einstellungen** (System › Updates): Die Oberfläche startet
 `pkexec /opt/zenos/scripts/bin/zenos-kanal-bedienen pruefen|installieren ZIEL|zustimmen OBJEKT|zeitpunkt …`, für die
-Ubuntu-Basis `basis-pruefen|basis-installieren HASH|basis-installieren-zustimmen HASH` (Argumentliste, keine Shell). Die polkit-Aktionen in `system/polkit/org.zenos.kanal.policy` (→ `/usr/share/polkit-1/actions/`, Modul
-`14-kanal`):
+Ubuntu-Basis `basis-pruefen|basis-installieren HASH|basis-installieren-zustimmen HASH` (Argumentliste, keine Shell).
+Die polkit-Aktionen in `system/polkit/org.zenos.kanal.policy` (→ `/usr/share/polkit-1/actions/`, Modul `14-kanal`):
 
 | Aktion | jeder Prozess des Benutzers, solange seine Sitzung am Gerät aktiv ist (auch gesperrt) | inaktive Sitzung | ohne Sitzung am Gerät |
 |---|---|---|---|
@@ -175,8 +179,9 @@ aktiv, und polkit ordnet Prozesse des Benutzerdienstes (systemd `--user`) dieser
 Benutzer angemeldet ist (gestohlener Schlüssel, Code in einer tmux-Sitzung), erreicht die Aktionen ohne Passwort über
 `systemd-run` im Benutzerdienst und `pkexec`, solange die Sitzung am Gerät aktiv ist (Prüfung, selbst nachgestellt).
 Direkt aus SSH ohne diesen Umweg verweigert pkexec (Exit 127). Was das öffnet, ist begrenzt: prüfen, den angezeigten,
-schon geprüften und signierten Stand installieren und den Zeitpunkt setzen, also die Automatik auf «von Hand»
-stellen oder sie auf «jederzeit» vorziehen. Eine Änderung des Zeitpunkts, die nicht aus den Einstellungen kam, meldet
+schon geprüften und signierten Stand installieren, die geprüfte Paketliste der Ubuntu-Basis ohne Kernel, Firmware,
+Bootloader und Entfernungen installieren und den Zeitpunkt setzen, also die Automatik auf «von Hand» stellen oder
+sie auf «jederzeit» vorziehen. Eine Änderung des Zeitpunkts, die nicht aus den Einstellungen kam, meldet
 die Oberfläche deshalb als Mitteilung mit dem Weg (pkexec oder sudo, uid). Eine Schleife mit «prüfen» kann die
 Automatik aufhalten, nichts installieren. Den Aufrufer an der cgroup von `zenos-shell.service` festzumachen, wäre
 nicht dicht und unterbleibt. Das Abschalten der Automatik («von Hand») bleibt nach Zenos Entscheid ohne Passwort.
@@ -689,3 +694,58 @@ stehen in `docs/image-und-releases.md`, Abschnitt «Signierte Releases».
   jedes Gerät ein neues Image oder einen neuen Anker von Hand. GitHub-Regeln für Tags (`v*`, `vertrauen/*` nicht
   verschieben oder löschen) und Immutable Releases sind eine zweite Schicht, die Zeno auf GitHub einschaltet
   (ANLEITUNG G).
+
+## Basis-Updates (Pakete von Ubuntu)
+
+Paket-Updates innerhalb von Ubuntu 26.04 LTS bringt `zenos-basis` (Entscheid Zeno, Oktober 2026), so wie
+`apt full-upgrade` sie brächte: aus Ubuntu (auch `-updates`) und aus den Herstellerquellen. Bedrohung: Ein Update, das
+etwas zerstört (Kernel, Login, Pakete, die wegfallen), oder ein Weg, über den jemand ohne Passwort root-Arbeit
+anstösst. Ablauf, Dateien und Exit-Codes: `docs/image-und-releases.md`, «Basis-Updates».
+
+- **Kein eigenes Vertrauen:** zenOS prüft keine Signaturen selbst. apt prüft jede Paketliste gegen die Schlüssel von
+  Ubuntu bzw. des Herstellers, genau wie bei `apt full-upgrade` von Hand. zenOS wählt nur aus, wann und mit wessen
+  Zustimmung das geschieht, und installiert genau die Liste, die gezeigt wurde (Hash über die Liste; ändert sie sich
+  dazwischen, Exit 3).
+- **Nur root arbeitet:** Prüfen und Installieren laufen in Units als root (`zenos-basis-pruefen`,
+  `-installieren`), aus der root-eigenen Kopie unter `/usr/local/libexec/zenos`, mit Argumentlisten und festem `PATH`.
+  Wege dorthin: `zen update` mit sudo im Terminal, die Knöpfe der Einstellungen über polkit (oben, «Updates in den
+  Einstellungen») und die Automatik. Zustand und Log sind root-eigen (`/var/lib/zenos/basis/`, für alle lesbar;
+  `/var/log/zenos/basis.log` 0640); die Gesundheitsprüfung liest das root-eigene `install-ergebnis`, nicht das
+  install.log.
+- **Zustimmung:** Kernel, Firmware, Bootloader (`linux-raspi`, `linux-image-*`, `linux-firmware*`, `flash-kernel`,
+  `piboot-try`, `rpi-eeprom`, `u-boot*`, `grub*`, `shim*` …) und jede Entfernung nur mit Zustimmung: ein getipptes
+  «ja» (oder `--ja`) in `zen update` oder das Passwort in den Einstellungen, jedes Mal, gebunden an die Liste. Die
+  Automatik installiert so etwas nie. Ein geschütztes Paket (die Liste aus `scripts/lib/aufraeumen.sh`, die
+  zenOS-Pakete, alles manuell Installierte) entfernt zenOS nie, auch nicht mit Zustimmung (`gesperrt`).
+- **`--ja` gilt nur für die Basis:** Das «ja» des Kanals bleibt an die gezeigte ID gebunden und nur im Terminal;
+  `zen update --ja --nur-zenos` ist ein Aufruffehler. Claude deployt mit `zen update --nur-zenos`; Paketänderungen
+  der Basis bleiben bei Zeno (`CLAUDE.md`).
+- **Automatik** (ab Werk an, auch auf dev): nur eine Liste ohne Kernel, Firmware, Bootloader und Entfernungen, nur
+  wenn `zenos-kanal automatik darf --ohne-ssh` ja sagt (dieselbe Quelle wie beim Kanal: Notschalter, Zeitpunkt des
+  Geräts, Netzteil oder ab 50 % Akku) und bei jedem Zeitpunkt nie, solange jemand per SSH angemeldet ist: apt startet
+  Dienste neu, wer per SSH arbeitet, merkte das. Nie ein Neustart. Keine Wartezeit wie auf stabil: Die 24 h schützen
+  dort gegen einen gestohlenen Release-Schlüssel von zenOS, die Pakete signiert Ubuntu, und Ubuntu staffelt Updates
+  selbst (Phasing, apt hält sich daran).
+- **Nie zwei Paketvorgänge:** Die Installation hält dieselbe Sperre wie der Kanal (`/run/zenos-sperre/kanal.lock`,
+  nur root) und läuft nicht neben einem `install.sh` von Hand, einer unterbrochenen oder kaputten Installation des
+  Kanals; auf apt-daily, unattended-upgrades und die Sperren von dpkg wartet sie höchstens 20 Minuten.
+- **Kein Aussperren:** greetd startet beim Update nicht neu (eigene `policy-rc.d` nur für diesen Lauf, die nur greetd
+  ablehnt); eine neue greetd-Version heisst «Neustart nötig». Während apt und `install.sh` hält ein Block-Inhibitor
+  Ausschalten und Ruhezustand auf, `zenos-energie` schaltet nicht aus (`zenos-argon` wartet bei 3 % Akku bis zu
+  5 Minuten länger), und ein Abbruch der SSH-Verbindung beendet die Unit nicht. Danach zählt nur, was schlechter
+  wurde (dpkg, install.sh, Quickshell, greetd, ausgefallene Units, Fehler in `zen doctor`); zurückgerollt wird nichts,
+  `letzte.json` und `zen doctor` nennen es, und die Oberfläche meldet «Basis-Update kaputt» dringend.
+- **Sicherheitsupdates bleiben bei unattended-upgrades:** täglich, unabhängig vom Notschalter und vom Zeitpunkt; daran
+  ändert zenos-basis nichts.
+- **Kein Wechsel der Hauptversion:** `Prompt=never` (Drop-in in `/etc/update-manager/release-upgrades.d/`, oben unter
+  «Unterbau») und die Grenze im Kanal (`system/basis`): Ein Stand für eine andere Ubuntu-Version ist nie ein Ziel,
+  auch nicht mit «ja».
+- **Neustart nötig** zeigt die Oberfläche still (Symbol in der Leiste, Wert im System-Menü), nie während der Bildschirm
+  geteilt wird und nie auf der Sperre (Leitplanke im Code, `shell/dienste/basis.js`); `zen version` und `zen doctor`
+  nennen ihn auch.
+- **Grenzen:** Kein Schnappschuss und kein Rückweg. Was erst nach dem Neustart bricht (Kernel, initramfs, PAM), sieht
+  die Gesundheitsprüfung nicht; dagegen helfen nur die Zustimmung, piboot-try (prüft einen neuen Kernel beim nächsten
+  Start) und die zweite Karte. Kernel aus `-security` bringt unattended-upgrades wie bei Ubuntu ohne Zustimmung. Wer
+  über `systemd-run` an `allow_active` kommt, kann eine anstehende Liste ohne Kernel und Entfernungen früher
+  installieren, sonst nichts. Häufigeres `apt-get update` heisst häufigere Abfragen an die Paketquellen und über
+  esm-cache an `contracts.canonical.com` (oben, «Unterbau»). Gegen root schützt nichts.
