@@ -284,5 +284,86 @@ class Doctor(unittest.TestCase):
                 self.assertTrue(self.doctor().startswith(erwartet + ": "), text)
 
 
+@unittest.skipUnless(BASH, "bash fehlt")
+class DoctorUpdates(unittest.TestCase):
+    """_ubuntu_updates: Programm und Units da, Zustand aus «zenos-basis status --kurz» und «--installation» (hier eine
+    Attrappe für python3, die die Zeilen ausgibt)."""
+
+    def setUp(self):
+        self.ziel = tempfile.mkdtemp(prefix="zenos-basis-doctor.")
+        self.addCleanup(shutil.rmtree, self.ziel, True)
+        schreiben(os.path.join(self.ziel, "libexec", "zenos-basis"), "programm\n")
+        schreiben(os.path.join(self.ziel, "opt", "zenos-basis"), "programm\n")
+        for name in ("zenos-basis-pruefen.service", "zenos-basis-installieren.service"):
+            schreiben(os.path.join(self.ziel, "units", name), "")
+        python = os.path.join(self.ziel, "python3")
+        schreiben(python, '#!/bin/sh\ncase "$4" in --kurz) cat "$(dirname "$0")/kurz" ;; '
+                          '--installation) cat "$(dirname "$0")/installation" ;; esac\n')
+        os.chmod(python, 0o755)
+        self.zeilen("ungeprueft noch nie geprüft", "keine noch kein Basis-Update über zenOS")
+
+    def zeilen(self, kurz, installation):
+        schreiben(os.path.join(self.ziel, "kurz"), kurz + "\n")
+        schreiben(os.path.join(self.ziel, "installation"), installation + "\n")
+
+    def doctor(self):
+        r = subprocess.run([BASH, "-c", DOCTOR_RAHMEN], capture_output=True, text=True, check=False,
+                           env={"PATH": "/usr/bin:/bin", "DOCTOR": DOCTOR, "ZIEL": self.ziel,
+                                "FUNKTION": "_ubuntu_updates"})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        return r.stdout.splitlines()
+
+    def test_zustaende(self):
+        faelle = (
+            ("ungeprueft noch nie geprüft", "hinweis: Basis-Updates noch nie geprüft (zen update)"),
+            ("aktuell aktuell", "ok: Basis-Updates: keine ausstehend"),
+            ("bereit 12 Updates (3 Sicherheit)", "hinweis: Basis-Updates ausstehend: 12 Updates (3 Sicherheit) (zen update)"),
+            ("zustimmung 2 Updates (Kernel/Firmware/Bootloader)",
+             "hinweis: Basis-Updates ausstehend: 2 Updates (Kernel/Firmware/Bootloader) (zen update)"),
+            ("laeuft Basis-Update läuft", "hinweis: Ein Basis-Update läuft gerade"),
+            ("gesperrt 1 Update, gesperrt: ubuntu-minimal ginge weg",
+             "warnung: Basis-Updates gesperrt: 1 Update, gesperrt: ubuntu-minimal ginge weg (apt-get -s full-upgrade)"),
+            ("fehler Prüfung gescheitert: apt-get update endete mit Exit 100",
+             "warnung: Basis-Updates: Prüfung gescheitert: apt-get update endete mit Exit 100"),
+        )
+        for kurz, erwartet in faelle:
+            with self.subTest(kurz=kurz):
+                self.zeilen(kurz, "keine noch kein Basis-Update über zenOS")
+                self.assertEqual(self.doctor(), [erwartet])
+
+    def test_installation(self):
+        faelle = (("installiert 2026-10-07 12:00: 6 Pakete aktualisiert, gesund.",
+                   "ok: Letztes Basis-Update 2026-10-07 12:00: 6 Pakete aktualisiert, gesund."),
+                  ("kaputt 2026-10-07 12:00: Nach dem Update schlechter als vorher: greetd ist ausgefallen.",
+                   "fehler: Letztes Basis-Update kaputt 2026-10-07 12:00: Nach dem Update schlechter als vorher: "
+                   "greetd ist ausgefallen."),
+                  ("fehler 2026-10-07 12:00: apt-get full-upgrade endete mit Exit 100",
+                   "warnung: Letztes Basis-Update brach ab 2026-10-07 12:00: apt-get full-upgrade endete mit Exit 100"))
+        for installation, erwartet in faelle:
+            with self.subTest(installation=installation):
+                self.zeilen("aktuell aktuell", installation)
+                self.assertEqual(self.doctor(), ["ok: Basis-Updates: keine ausstehend", erwartet])
+
+    def test_programm_und_units(self):
+        os.unlink(os.path.join(self.ziel, "units", "zenos-basis-installieren.service"))
+        schreiben(os.path.join(self.ziel, "opt", "zenos-basis"), "neuer\n")
+        zeilen = self.doctor()
+        self.assertIn("warnung: zenos-basis-installieren.service fehlt (install.sh)", zeilen)
+        self.assertTrue(any(z.startswith("warnung: ") and "weicht vom Stand in /opt/zenos ab" in z for z in zeilen))
+        schreiben(os.path.join(self.ziel, "nicht-root"), "")
+        self.assertTrue(any(z.startswith("fehler: ") and "nicht nur für root schreibbar" in z for z in self.doctor()))
+        shutil.rmtree(os.path.join(self.ziel, "libexec"))
+        self.assertEqual(self.doctor(), [f"hinweis: Basis-Updates noch nicht eingerichtet "
+                                         f"({self.ziel}/libexec/zenos-basis fehlt; install.sh richtet es ein)"])
+
+    def test_ganzer_abschnitt(self):
+        r = subprocess.run([BASH, "-c", DOCTOR_RAHMEN], capture_output=True, text=True, check=False,
+                           env={"PATH": "/usr/bin:/bin", "DOCTOR": DOCTOR, "ZIEL": self.ziel})
+        zeilen = r.stdout.splitlines()
+        self.assertEqual(zeilen[0], "abschnitt: Ubuntu-Basis")
+        self.assertTrue(zeilen[1].startswith("warnung: Prompt ist"))
+        self.assertEqual(zeilen[2], "hinweis: Basis-Updates noch nie geprüft (zen update)")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

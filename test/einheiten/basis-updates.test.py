@@ -2,7 +2,7 @@
 """Einheitentests für scripts/bin/zenos-basis (Paket-Updates der Ubuntu-Basis): Auswertung von «apt-get -s full-upgrade»
 mit Fixtures (ohne und mit Kernel, Entfernungen, Sicherheit, geschützte Pakete, Herstellerquellen), Hash der Liste,
 pruefen, installieren (Sperren, Auftrag, Zustimmung, policy-rc.d nur gegen greetd, install.sh danach, Gesundheit, Log,
-Neustart nach einer neuen greetd-Version) und status.
+Neustart nach einer neuen greetd-Version) und status. Dazu die Zeile «Pakete» von zen version.
 
 Das Programm wird als Modul geladen; die Tests legen alle Pfade in einen Temp-Ordner und ersetzen apt-get, apt-mark,
 dpkg, dpkg-query, install.sh und zen durch Attrappen (Python-Skripte). Die Attrappe von apt-get führt DPkg::Pre-Invoke
@@ -32,6 +32,7 @@ WURZEL = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 PROGRAMM = os.path.join(WURZEL, "scripts", "bin", "zenos-basis")
 AUFRAEUMEN = os.path.join(WURZEL, "scripts", "lib", "aufraeumen.sh")
 GEMEINSAM = os.path.join(WURZEL, "scripts", "lib", "gemeinsam.sh")
+VERSION = os.path.join(WURZEL, "scripts", "zen.d", "version.sh")
 BASH = shutil.which("bash")
 SH = "/bin/sh"
 
@@ -953,6 +954,32 @@ class Status(Umgebung):
             self.assertEqual(os.stat(B.state_path(name)).st_mode & 0o004, 0o004)
         B.TRUSTED_UIDS = (0, os.getuid())
         self.assertEqual(self.lauf(B.cmd_status, ["--kurz"])[0], 0)
+
+
+@unittest.skipUnless(BASH, "bash fehlt")
+class ZenVersion(unittest.TestCase):
+    """Die Zeile «Pakete» von zen version: Spaltenbreite 12, Text aus «zenos-basis status --kurz», dazu der Neustart."""
+
+    def zeile(self, kurz, neustart):
+        with tempfile.TemporaryDirectory() as w:
+            programm = os.path.join(w, "zenos-basis")
+            schreiben(programm, "")
+            python = os.path.join(w, "python3")
+            schreiben(python, f"#!/bin/sh\nprintf '%s\\n' {kurz!r}\n", 0o755)
+            neustart_datei = os.path.join(w, "reboot-required")
+            if neustart:
+                schreiben(neustart_datei, "*** System restart required ***\n")
+            rahmen = (f'source "$1"; _VERSION_BASIS={programm!r}; _VERSION_PYTHON={python!r}; '
+                      f'_VERSION_NEUSTART={neustart_datei!r}; printf "%-12s %s\\n" Pakete "$(_version_pakete)"')
+            r = subprocess.run([BASH, "-c", rahmen, "-", VERSION], capture_output=True, text=True, check=True,
+                               env={"PATH": "/usr/bin:/bin"})
+            return r.stdout
+
+    def test_zeile(self):
+        self.assertEqual(self.zeile("bereit 12 Updates (3 Sicherheit)", True),
+                         "Pakete       12 Updates (3 Sicherheit) · Neustart nötig\n")
+        self.assertEqual(self.zeile("aktuell aktuell", False), "Pakete       aktuell\n")
+        self.assertEqual(self.zeile("ungeprueft noch nie geprüft", False), "Pakete       noch nie geprüft\n")
 
 
 if __name__ == "__main__":

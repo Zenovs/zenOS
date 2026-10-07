@@ -114,14 +114,14 @@ _kennung_verweise() {
 }
 
 # base-files kommt aus -updates; das erlaubt unattended-upgrades nicht, und ein Update eines umgelenkten Conffiles
-# (/etc/issue, /etc/legal) liesse es ohnehin aus. Von Hand (apt upgrade) läuft es ohne Rückfrage durch.
+# (/etc/issue, /etc/legal) liesse es ohnehin aus. Die Basis-Updates (zen update, zenos-basis) bringen es ohne Rückfrage.
 _kennung_base_files() {
   local installiert kandidat
   installiert=$(dpkg-query -W -f='${Version}' base-files 2>/dev/null)
   kandidat=$(LC_ALL=C apt-cache policy base-files 2>/dev/null | awk '$1 == "Candidate:" { print $2 }')
   [[ -n "$installiert" && -n "$kandidat" && "$kandidat" != "(none)" ]] || return 0
   if dpkg --compare-versions "$kandidat" gt "$installiert"; then
-    hinweis "Update für base-files steht aus ($installiert → $kandidat); kommt nicht automatisch: sudo apt upgrade"
+    hinweis "Update für base-files steht aus ($installiert → $kandidat); kommt mit den Basis-Updates (zen update)"
   fi
 }
 
