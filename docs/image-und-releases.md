@@ -827,9 +827,14 @@ in Einstellungen › System › Updates und die Automatik.
 
 **Prüfen.** Unter der Sperre des Kanals (`/run/zenos-sperre/kanal.lock`, nicht blockierend, sonst Exit 75; ebenso,
 solange ein `install.sh` von Hand läuft). Vorher wartet es höchstens 20 Minuten auf einen anderen Paketvorgang
-(apt-daily, apt-daily-upgrade mit unattended-upgrades, die Sperren von apt und dpkg; danach Exit 75). Ausgewertet werden
-die Zeilen `Inst` und `Remv` von `apt-get -s full-upgrade` (`LC_ALL=C`, ohne autoremove): je Paket Name, alt, neu,
-Tasche und Herkunft. Daraus:
+(apt-daily, apt-daily-upgrade mit unattended-upgrades, die Sperren von apt und dpkg; danach Exit 75). Ein unterbrochenes
+dpkg (`/var/lib/dpkg/updates`, etwa nach einem Abbruch mitten in einem Update) holt es zuerst nach, wie
+unattended-upgrades: `dpkg --force-confdef --force-confold --configure -a` mit derselben `policy-rc.d` wie beim
+Installieren (greetd startet nicht neu; die eines abgebrochenen Laufs ist danach weg) und unter einem Block-Inhibitor;
+bleibt es unterbrochen, `fehler` (Exit 1) ohne `apt-get update`. Ohne das sähe `apt-get -s full-upgrade` den halb
+konfigurierten Stand als «aktuell» (nur eine Zeile `Conf`), und nichts holte ihn je nach (im Container geprüft,
+`test/container/basis-e2e.sh abbruch`). Ausgewertet werden die Zeilen `Inst` und `Remv` von `apt-get -s full-upgrade`
+(`LC_ALL=C`, ohne autoremove): je Paket Name, alt, neu, Tasche und Herkunft. Daraus:
 
 - **Sicherheit:** Pakete aus einer Tasche `…-security`.
 - **Heikel** (Kernel, Firmware, Bootloader): `linux-raspi`, `linux-image-*`, `linux-modules-*`,
@@ -853,8 +858,8 @@ zählte die Auswertung 7 Updates, `apt-get full-upgrade` danach 3, und jede Inst
 `apt-get update`); sonst Exit 3, und `stand.json` zeigt die neue Liste. Heikle Pakete und Entfernungen ohne Zustimmung:
 Exit 10. Dann:
 
-1. Ein unterbrochenes dpkg (`/var/lib/dpkg/updates`) repariert es mit `dpkg --configure -a`; bleibt es unterbrochen,
-   Exit 1 ohne apt.
+1. Ein unterbrochenes dpkg (`/var/lib/dpkg/updates`, seit der Prüfung) repariert es wie beim Prüfen mit
+   `dpkg --configure -a`; bleibt es unterbrochen, Exit 1 ohne apt.
 2. Ausgangslage für die Gesundheitsprüfung: `quickshell --version`, greetd ausgefallen, ausgefallene Units (ohne die
    von Kanal und Basis), Fehlerzahl von `zen doctor --kurz` als root.
 3. Unter einem Block-Inhibitor für Ausschalten und Ruhezustand («Ubuntu-Basis wird aktualisiert») und mit
@@ -879,7 +884,10 @@ Exit 10. Dann:
 
 Ein Stopp (Ausschalten durch root) vor apt beginnt nichts mehr (Exit 10); während apt und `install.sh` laufen beide
 zu Ende (`KillMode=mixed`, `TimeoutStopSec=20min`, SIGHUP ignoriert, ein SSH-Abbruch schadet nicht). Ein harter Abbruch
-hinterlässt ein unterbrochenes dpkg; das nächste Basis-Update repariert es zuerst. zenos-energie schaltet nicht aus,
+(Strom, `kill -9`) hinterlässt ein unterbrochenes dpkg und die `policy-rc.d` der Basis (hält nur greetd ab); die
+nächste Prüfung (`zen update`, «Jetzt prüfen», Automatik) oder Installation holt `dpkg --configure -a` nach und räumt
+die `policy-rc.d` weg (diese räumt auch jedes `install.sh` weg). `letzte.json` nennt einen solchen Abbruch nicht (sie schreibt erst das
+Ende eines Laufs). zenos-energie schaltet nicht aus,
 solange eine Unit `zenos-basis-*` läuft, zenos-argon nicht, solange `/run/zenos-basis` besteht.
 
 | Datei | Inhalt |

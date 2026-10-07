@@ -1,8 +1,9 @@
 # zenOS: Paket-Updates der Ubuntu-Basis prüfen (zenos-basis pruefen). Läuft als root mit Netz: apt-get update schreibt
 # die Paketlisten, danach wertet «apt-get -s full-upgrade» aus, was ein Update brächte, und schreibt
 # /var/lib/zenos/basis/stand.json. Installiert nichts. Hält die gemeinsame Sperre mit dem Kanal und wartet höchstens
-# 20 Minuten auf einen anderen Paketvorgang (unattended-upgrades, apt-daily). Gestartet von «zen update», den
-# Einstellungen und der Automatik.
+# 20 Minuten auf einen anderen Paketvorgang (unattended-upgrades, apt-daily). Ein unterbrochenes dpkg (Abbruch mitten
+# in einem Update) holt es vorher nach («dpkg --configure -a», wie unattended-upgrades). Gestartet von «zen update»,
+# den Einstellungen und der Automatik.
 [Unit]
 Description=zenOS: Ubuntu-Basis prüfen (apt-get update, Auswertung)
 Documentation=file:///opt/zenos/docs/image-und-releases.md

@@ -171,16 +171,24 @@ with open(os.path.join(W, "dpkg-zustand.txt"), encoding="utf-8") as f:
 '''
 
 DPKG = r'''
-import os, sys
+import json, os, subprocess, sys
 if sys.argv[1:] == ["--print-architecture"]:
     print("arm64")
     sys.exit(0)
 with open(os.path.join(W, "dpkg-aufrufe"), "a", encoding="utf-8") as f:
     f.write(" ".join(sys.argv[1:]) + "\n")
-if sys.argv[1:] == ["--configure", "-a"] and not os.path.exists(os.path.join(W, "dpkg-bleibt-unterbrochen")):
-    ordner = os.path.join(W, "var", "lib", "dpkg", "updates")
-    for name in os.listdir(ordner):
-        os.unlink(os.path.join(ordner, name))
+if sys.argv[-2:] == ["--configure", "-a"]:
+    # Was gilt beim Nachholen: die policy-rc.d (wie invoke-rc.d sie fragt) und ob apt schon lief
+    ergebnis = {"vor_apt": not os.path.exists(os.path.join(W, "apt", "aufrufe")), "policy": None}
+    if os.path.exists(POLICY):
+        ergebnis["policy"] = {" ".join(fall): subprocess.run([POLICY] + fall).returncode
+                              for fall in (["greetd.service", "restart"], ["ssh.service", "restart"])}
+    with open(os.path.join(W, "dpkg-nachholen.json"), "w", encoding="utf-8") as f:
+        json.dump(ergebnis, f)
+    if not os.path.exists(os.path.join(W, "dpkg-bleibt-unterbrochen")):
+        ordner = os.path.join(W, "var", "lib", "dpkg", "updates")
+        for name in os.listdir(ordner):
+            os.unlink(os.path.join(ordner, name))
 '''
 
 INSTALL = r'''
@@ -529,6 +537,58 @@ class Pruefen(Umgebung):
         self.assertEqual(code, 75)
         self.assertIn("läuft noch immer ein anderer Paketvorgang", aus)
 
+    def nachholen(self):
+        with open(f"{self.w}/dpkg-nachholen.json", encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_dpkg_unterbrochen_wird_zuerst_nachgeholt(self):
+        """Nach einem Abbruch mitten in dpkg sähe apt-get -s den halb konfigurierten Stand als «aktuell»: Die Prüfung
+        holt «dpkg --configure -a» vor apt-get update nach, mit der policy-rc.d der Basis (greetd nicht neu)."""
+        schreiben(f"{B.DPKG_UPDATES}/0000", "")
+        code, aus = self.pruefen()
+        self.assertEqual(code, 0, aus)
+        with open(f"{self.w}/dpkg-aufrufe", encoding="utf-8") as f:
+            self.assertEqual(f.read(), "--force-confdef --force-confold --configure -a\n")
+        self.assertEqual(self.nachholen(), {"vor_apt": True, "policy": {"greetd.service restart": 101,
+                                                                         "ssh.service restart": 0}})
+        self.assertIn("dpkg wurde unterbrochen: dpkg --configure -a", aus)
+        self.assertEqual(os.listdir(B.DPKG_UPDATES), [])
+        self.assertFalse(os.path.lexists(B.POLICY_FILE), "die policy-rc.d ist danach weg")
+        self.assertEqual([a["args"][-1] for a in self.apt_aufrufe()], ["update", "full-upgrade"])
+        self.assertEqual(self.json(B.STAND)["ergebnis"], "bereit")
+
+    def test_rest_einer_policy_und_fremde_policy(self):
+        """Der Rest des abgebrochenen Laufs (policy-rc.d der Basis oder von install.sh) wird beim Nachholen ersetzt und
+        danach entfernt; eine fremde bleibt und gilt."""
+        for rest in (B.POLICY_TEXT, f"#!/bin/sh\n{B.INSTALL_POLICY_MARK}\nexit 101\n"):
+            with self.subTest(rest=rest.split("\n")[1]):
+                schreiben(B.POLICY_FILE, rest, 0o755)
+                schreiben(f"{B.DPKG_UPDATES}/0000", "")
+                self.assertEqual(self.pruefen()[0], 0)
+                self.assertEqual(self.nachholen()["policy"]["ssh.service restart"], 0, "die eigene galt")
+                self.assertFalse(os.path.lexists(B.POLICY_FILE))
+        fremd = "#!/bin/sh\n# fremd\nexit 101\n"
+        schreiben(B.POLICY_FILE, fremd, 0o755)
+        schreiben(f"{B.DPKG_UPDATES}/0000", "")
+        self.assertEqual(self.pruefen()[0], 0)
+        self.assertEqual(self.nachholen()["policy"], {"greetd.service restart": 101, "ssh.service restart": 101})
+        with open(B.POLICY_FILE, encoding="utf-8") as f:
+            self.assertEqual(f.read(), fremd, "eine fremde policy-rc.d bleibt")
+
+    def test_dpkg_bleibt_unterbrochen(self):
+        self.pruefen()
+        schreiben(f"{B.DPKG_UPDATES}/0000", "")
+        self.setze("dpkg-bleibt-unterbrochen", "")
+        os.unlink(f"{self.w}/apt/aufrufe")
+        B.now = lambda: JETZT + datetime.timedelta(hours=3)
+        code, aus = self.pruefen()
+        self.assertEqual(code, 1, aus)
+        s = self.json(B.STAND)
+        self.assertEqual((s["ergebnis"], s["liste"], s["geprueft"]), ("fehler", None, "2026-10-07T10:00:00Z"))
+        self.assertIn("dpkg ist unterbrochen", s["grund"])
+        self.assertIn("sudo dpkg --configure -a", aus)
+        self.assertEqual(self.apt_aufrufe(), [], "ohne apt-get update und Auswertung")
+
     def test_sperre_von_apt_erkannt(self):
         sperre = B.APT_LOCKS[2]
         schreiben(sperre, "")
@@ -817,7 +877,7 @@ class Installieren(Umgebung):
         code, aus = self.installieren()
         self.assertEqual(code, 0, aus)
         with open(f"{self.w}/dpkg-aufrufe", encoding="utf-8") as f:
-            self.assertEqual(f.read(), "--configure -a\n")
+            self.assertEqual(f.read(), "--force-confdef --force-confold --configure -a\n")
         # Bleibt dpkg unterbrochen: kein apt, keine letzte.json
         os.unlink(f"{self.w}/apt/gelaufen")
         os.unlink(B.state_path(B.LAST))

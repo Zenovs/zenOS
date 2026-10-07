@@ -7,8 +7,8 @@
 # Während apt und install.sh hält es einen Block-Inhibitor für Ausschalten und Ruhezustand; zenos-energie schaltet
 # nicht aus, solange eine Unit zenos-basis-* läuft, zenos-argon nicht, solange /run/zenos-basis besteht. KillMode=mixed:
 # Ein Stopp schickt SIGTERM nur an zenos-basis, das apt und install.sh zu Ende laufen lässt (dpkg nie mittendrin);
-# erst nach TimeoutStopSec beendet systemd alles. Ein harter Abbruch hinterlässt ein unterbrochenes dpkg: Das nächste
-# Basis-Update repariert es zuerst («dpkg --configure -a»).
+# erst nach TimeoutStopSec beendet systemd alles. Ein harter Abbruch hinterlässt ein unterbrochenes dpkg: Die nächste
+# Prüfung oder Installation holt es zuerst nach («dpkg --configure -a»).
 [Unit]
 Description=zenOS: Ubuntu-Basis installieren (apt-get full-upgrade, mit Netz)
 Documentation=file:///opt/zenos/docs/image-und-releases.md

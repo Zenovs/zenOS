@@ -224,6 +224,25 @@ class Update(Bedienung):
         self.assertEqual(self.units, ["pruefen"], "auch --ja installiert nie, was ein geschütztes Paket entfernt")
         self.assertIn("ubuntu-minimal", aus)
 
+    def test_dpkg_unterbrochen(self):
+        """Nach einem Abbruch mitten in dpkg: zen update sagt es, die Prüfung holt «dpkg --configure -a» nach, danach
+        zählt der Stand von jetzt. Bleibt dpkg unterbrochen: Exit 1, nichts installiert."""
+        U.schreiben(f"{B.DPKG_UPDATES}/0000", "")
+        self.sim(U.SIM_LEER)
+        code, aus = self.update("--ja")
+        self.assertEqual(code, 0, aus)
+        self.assertIn("dpkg wurde unterbrochen (Abbruch mitten in einem Update): Die Prüfung holt zuerst", aus)
+        self.assertIn("dpkg wurde unterbrochen: dpkg --configure -a", aus)
+        self.assertIn("Die Ubuntu-Basis ist aktuell.", aus)
+        self.assertEqual((self.units, os.listdir(B.DPKG_UPDATES)), (["pruefen"], []))
+        U.schreiben(f"{B.DPKG_UPDATES}/0001", "")
+        U.schreiben(f"{self.w}/dpkg-bleibt-unterbrochen", "")
+        self.spaeter(30)
+        code, aus = self.update("--ja")
+        self.assertEqual(code, 1, aus)
+        self.assertIn("Prüfung gescheitert: dpkg ist unterbrochen", aus)
+        self.assertNotIn("installieren", self.units)
+
     def test_pruefung_scheitert(self):
         U.schreiben(f"{self.w}/apt/update.exit", "100")
         code, aus = self.update()

@@ -195,7 +195,8 @@ nicht dicht und unterbleibt. Das Abschalten der Automatik («von Hand») bleibt 
   Rollbacks bleiben beim Terminal (`zen update`, `zen rollback` mit getipptem «ja»); das prüft zenos-kanal selbst
   (`nur_signiert` im Wunsch), nicht erst die Oberfläche.
 - **Ubuntu-Basis** (Entscheid Zeno, Oktober 2026): «Jetzt prüfen» (`basis-pruefen`) startet
-  `zenos-basis-pruefen.service` (`apt-get update`, Auswertung, installiert nichts). «Jetzt installieren»
+  `zenos-basis-pruefen.service` (`apt-get update`, Auswertung, installiert nichts; ein unterbrochenes dpkg holt es
+  vorher mit `dpkg --configure -a` nach, wie unattended-upgrades täglich: nur was schon entpackt war). «Jetzt installieren»
   (`basis-installieren HASH`, ohne Passwort) installiert genau die angezeigte Liste: HASH (40 Zeichen `0-9a-f`) muss
   zur letzten Prüfung und zu einer Auswertung von jetzt passen, ohne neues `apt-get update`, sonst Exit 3. Enthält die
   Liste Kernel, Firmware, Bootloader oder Entfernungen, lehnt die Unit ab (Exit 10); dafür gibt es «Mit Passwort

@@ -34,8 +34,10 @@ Aufruf:
                                        Netz
 
 Prüfen: Auf einen anderen Paketvorgang (apt-daily, apt-daily-upgrade mit unattended-upgrades, eine Sperre von apt oder
-dpkg) wartet es höchstens 20 Minuten, sonst Exit 75. Ausgewertet werden die Zeilen «Inst» und «Remv» von apt-get -s
-(LC_ALL=C, ohne autoremove): je Paket Name, alt, neu, Tasche und Herkunft. Daraus:
+dpkg) wartet es höchstens 20 Minuten, sonst Exit 75. Ein unterbrochenes dpkg (Abbruch mitten in einem Update) holt es
+zuerst nach («dpkg --configure -a» wie unattended-upgrades; bleibt es unterbrochen: «fehler», Exit 1): apt-get -s sähe
+den halb konfigurierten Stand sonst als «aktuell», und nichts holte ihn je nach. Ausgewertet werden die Zeilen «Inst»
+und «Remv» von apt-get -s (LC_ALL=C, ohne autoremove): je Paket Name, alt, neu, Tasche und Herkunft. Daraus:
   sicherheit   Pakete aus einer Tasche …-security
   heikel       Kernel, Firmware, Bootloader (HEIKEL: linux-image-*, linux-modules-*, linux-raspi, flash-kernel,
                piboot-try, rpi-eeprom, u-boot*, grub*, shim* …)
@@ -54,9 +56,9 @@ Installieren: Sperre wie der Kanal (/run/zenos-sperre/kanal.lock, nie zwei Paket
 Hand läuft: Exit 75). Nicht, solange eine Installation des Kanals unterbrochen ist oder «kaputt» meldet (Exit 10). Der
 Hash des Auftrags muss der letzten Prüfung und einer Auswertung von jetzt gleichen (sonst Exit 3, stand.json zeigt dann
 die neue Liste). Heikle Pakete und Entfernungen nur mit Zustimmung («ja» in zen update, Passwort in den
-Einstellungen), sonst Exit 10. Ein unterbrochenes dpkg repariert es vorher («dpkg --configure -a»). Dann, unter einem
-Block-Inhibitor für Ausschalten und Ruhezustand und mit dem Übernahme-Marker /run/zenos-basis/uebernahme (die
-Oberfläche zeigt «Update läuft» und lädt nicht nach):
+Einstellungen), sonst Exit 10. Ein unterbrochenes dpkg repariert es vorher wie beim Prüfen (falls es seit der Prüfung
+unterbrochen wurde). Dann, unter einem Block-Inhibitor für Ausschalten und Ruhezustand und mit dem Übernahme-Marker
+/run/zenos-basis/uebernahme (die Oberfläche zeigt «Update läuft» und lädt nicht nach):
   1. apt-get full-upgrade -y (DEBIAN_FRONTEND=noninteractive, NEEDRESTART_MODE=l, NEEDRESTART_SUSPEND=1, confdef und
      confold, kein autoremove). Dienste starten wie bei Ubuntu neu, nur greetd nicht (beendete die Sitzung): eine
      eigene policy-rc.d nur für diesen Lauf (apt setzt sie vor dpkg ein und nimmt sie danach weg). Bringt das Update
@@ -642,17 +644,22 @@ def dpkg_interrupted():
 
 
 def dpkg_repair():
-    """Holt «dpkg --configure -a» nach, wenn dpkg mittendrin unterbrochen wurde (Strom, kill). Grund, wenn dpkg danach
-    noch unterbrochen ist, sonst None. Vorher hat wait_for_apt gewartet."""
+    """Holt «dpkg --configure -a» nach, wenn dpkg mittendrin unterbrochen wurde (Strom, kill), so wie apt-get
+    full-upgrade es täte: confdef und confold, die policy-rc.d der Basis (greetd startet auch hier nicht neu; die eines
+    abgebrochenen Laufs wird dabei weggeräumt), unter einem Block-Inhibitor. Grund, wenn dpkg danach noch unterbrochen
+    ist, sonst None. Vorher hat wait_for_apt gewartet; die Sperre des Kanals hält der Aufrufer."""
     if not dpkg_interrupted():
         return None
     if any(lock_held(p) for p in DPKG_LOCKS):
         return "Ein anderer Paketvorgang hält dpkg, und dpkg ist unterbrochen. Später noch einmal."
     print("dpkg wurde unterbrochen: dpkg --configure -a …")
-    rc = run_visible([DPKG, "--configure", "-a"], apt_env(), timeout=DPKG_TIMEOUT)
+    with inhibitor("dpkg wird repariert (dpkg --configure -a)"), repair_policy():
+        rc = run_visible([DPKG, "--force-confdef", "--force-confold", "--configure", "-a"], apt_env(),
+                         timeout=DPKG_TIMEOUT)
     if dpkg_interrupted():
         return (f"dpkg ist unterbrochen, und «dpkg --configure -a» endete mit Exit {rc}. Erst reparieren: sudo dpkg "
                 "--configure -a")
+    journal(f"dpkg war unterbrochen: «dpkg --configure -a» hat es nachgeholt (Exit {rc})")
     return None
 
 
@@ -883,16 +890,22 @@ def cmd_check(argv):
         if busy:
             print(f"{NAME}: {busy}", file=sys.stderr)
             return EXIT_BUSY
-        t = now()
-        print("Paketlisten aktualisieren (apt-get update) …")
-        rc = run_visible([APT_GET, "-q", "update"], apt_env(), timeout=UPDATE_TIMEOUT)
         previous = load_json(state_path(STAND)) or {}
-        checked = iso(t) if rc == 0 else previous.get("geprueft")
-        error = None if rc == 0 else f"apt-get update endete mit Exit {rc} (Netz oder Paketserver?)"
-        try:
-            stand = evaluate_now(checked, error)
-        except Failure as e:
-            stand = failed_stand(str(e) if not error else f"{error}; {e}", checked)
+        # Ein unterbrochenes dpkg zuerst nachholen (wie unattended-upgrades): apt-get -s zeigte den halb konfigurierten
+        # Stand sonst als «aktuell», und weder zen update noch die Automatik holten ihn je nach
+        problem = dpkg_repair()
+        if problem:
+            stand = failed_stand(problem, previous.get("geprueft"))
+        else:
+            t = now()
+            print("Paketlisten aktualisieren (apt-get update) …")
+            rc = run_visible([APT_GET, "-q", "update"], apt_env(), timeout=UPDATE_TIMEOUT)
+            checked = iso(t) if rc == 0 else previous.get("geprueft")
+            error = None if rc == 0 else f"apt-get update endete mit Exit {rc} (Netz oder Paketserver?)"
+            try:
+                stand = evaluate_now(checked, error)
+            except Failure as e:
+                stand = failed_stand(str(e) if not error else f"{error}; {e}", checked)
         write_stand(stand)
     finally:
         lock.release()
@@ -963,6 +976,23 @@ def greetd_policy(notes):
             with contextlib.suppress(OSError):
                 os.unlink(POLICY_FILE)
         shutil.rmtree(folder, ignore_errors=True)
+
+
+@contextlib.contextmanager
+def repair_policy():
+    """Die policy-rc.d der Basis direkt in /usr/sbin, solange «dpkg --configure -a» läuft (ohne apt gibt es kein
+    DPkg::Pre-Invoke): greetd startet auch beim Nachholen nicht neu. Eine fremde policy-rc.d bleibt unangetastet; eine
+    von zenOS (der Rest des abgebrochenen Laufs) wird ersetzt und danach mit der eigenen entfernt."""
+    if os.path.lexists(POLICY_FILE) and not policy_is_own(POLICY_FILE, (POLICY_MARK, INSTALL_POLICY_MARK)):
+        yield False
+        return
+    write_atomic(POLICY_FILE, POLICY_TEXT, 0o755)
+    try:
+        yield True
+    finally:
+        if policy_is_own(POLICY_FILE):
+            with contextlib.suppress(OSError):
+                os.unlink(POLICY_FILE)
 
 
 @contextlib.contextmanager
@@ -1592,6 +1622,9 @@ def update_steps(consent):
     if problem:
         print(f"Basis-Updates übersprungen: {problem}")
         return EXIT_WAIT
+    if dpkg_interrupted():
+        print("dpkg wurde unterbrochen (Abbruch mitten in einem Update): Die Prüfung holt zuerst «dpkg --configure -a» "
+              "nach.")
     stand, code = check_now()
     if stand is None:
         return code
