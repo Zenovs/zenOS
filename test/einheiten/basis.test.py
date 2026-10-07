@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""Einheitentests für die Sperre des Ubuntu-Basiswechsels: scripts/module/71-basis.sh (Prompt=never per Drop-in, alter
-Hinweis auf eine neue Version geleert) und die Prüfung in zen doctor (scripts/doctor.d/71-ubuntu.sh).
+"""Einheitentests für scripts/module/71-basis.sh (Sperre des Ubuntu-Basiswechsels: Prompt=never per Drop-in, alter
+Hinweis auf eine neue Version geleert; Programm und Units der Basis-Updates) und die Prüfungen in zen doctor
+(scripts/doctor.d/71-ubuntu.sh: Prompt=never, Basis-Updates). Das Programm zenos-basis selbst prüft
+test/einheiten/basis-updates.test.py.
 
 Modul und Prüfung laufen in bash mit Attrappen für die Hilfsfunktionen von install.sh bzw. zen doctor, gegen Ordner im
 Temp-Ordner. Die Reihenfolge, in der der Release-Upgrader liest (release-upgrades, danach release-upgrades.d/*.cfg in
@@ -33,12 +35,22 @@ datei_installieren() {
   printf 'aenderung: %s\n' "$2"
 }
 datei_schreiben() { local t; t=$(mktemp); cat > "$t"; datei_installieren "$t" "$1"; rm -f -- "$t"; }
+ordner_sicherstellen() {
+  [[ -d "$1" ]] && return 0
+  mkdir -p -- "$1"
+  printf 'aenderung: %s\n' "$1"
+}
 aenderung() { printf 'aenderung: %s\n' "$*"; }
 log_info() { printf 'info: %s\n' "$*"; }
 log_warnung() { printf 'warnung: %s\n' "$*"; }
 source "$MODUL"
 _BASIS_DROPIN=$ZIEL/etc/update-manager/release-upgrades.d/zenos.cfg
 _BASIS_HINWEIS=$ZIEL/var/lib/ubuntu-release-upgrader/release-upgrade-available
+_BASIS_LIBEXEC=$ZIEL/usr/local/libexec
+_BASIS_UNITS=$ZIEL/etc/systemd/system
+_BASIS_ZUSTAND=$ZIEL/var/lib/zenos
+# Der Temp-Ordner gehört nicht root: die Prüfung des Wegs nur, wenn der Test sie verlangt
+if [[ "${PFAD_PRUEFEN:-0}" != 1 ]]; then _basis_pfad_sicher() { return 0; }; fi
 modul_system
 '''
 
@@ -51,7 +63,12 @@ warnung() { printf 'warnung: %s\n' "$*"; }
 fehler() { printf 'fehler: %s\n' "$*"; }
 source "$DOCTOR"
 _UBUNTU_ORDNER=$ZIEL/etc/update-manager
-pruefe_ubuntu
+_UBUNTU_PROGRAMM=$ZIEL/libexec/zenos-basis
+_UBUNTU_QUELLE=$ZIEL/opt/zenos-basis
+_UBUNTU_UNITS=$ZIEL/units
+_UBUNTU_PYTHON=$ZIEL/python3
+_ubuntu_nur_root() { [[ ! -e "$ZIEL/nicht-root" ]]; }
+"${FUNKTION:-pruefe_ubuntu}"
 '''
 
 UBUNTU_RELEASE_UPGRADES = """# Default behavior for the release upgrader.
@@ -98,18 +115,82 @@ class Modul(unittest.TestCase):
         self.dropin = os.path.join(self.ziel, "etc", "update-manager", "release-upgrades.d", "zenos.cfg")
         self.hinweis = os.path.join(self.ziel, "var", "lib", "ubuntu-release-upgrader", "release-upgrade-available")
 
-    def lauf(self):
+    def lauf(self, pfad_pruefen=False, nur_aenderungen=True):
         r = subprocess.run([BASH, "-c", MODUL_RAHMEN], capture_output=True, text=True, check=False,
-                           env={"PATH": "/usr/bin:/bin", "MODUL": MODUL, "ZIEL": self.ziel, "ZENOS_CODE": WURZEL})
+                           env={"PATH": "/usr/bin:/bin", "MODUL": MODUL, "ZIEL": self.ziel, "ZENOS_CODE": WURZEL,
+                                "PFAD_PRUEFEN": "1" if pfad_pruefen else "0"})
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        if not nur_aenderungen:
+            return r.stdout.splitlines()
         return [z for z in r.stdout.splitlines() if z.startswith("aenderung: ")]
 
+    def basis_teile(self):
+        """Programm, Units und Zustandsordner, wie das Modul sie anlegt."""
+        z = self.ziel
+        return [f"{z}/usr/local/libexec/zenos", f"{z}/usr/local/libexec/zenos/zenos-basis",
+                f"{z}/etc/systemd/system/zenos-basis-pruefen.service",
+                f"{z}/etc/systemd/system/zenos-basis-installieren.service", f"{z}/var/lib/zenos",
+                f"{z}/var/lib/zenos/basis"]
+
     def test_dropin_einmal(self):
-        self.assertEqual(self.lauf(), [f"aenderung: {self.dropin}"])
+        self.assertEqual(self.lauf(), [f"aenderung: {self.dropin}"] + [f"aenderung: {p}" for p in self.basis_teile()])
         with open(self.dropin, encoding="utf-8") as a, open(DROPIN, encoding="utf-8") as b:
             self.assertEqual(a.read(), b.read())
         self.assertEqual(self.lauf(), [], "zweiter Lauf: 0 Änderungen")
         self.assertFalse(os.path.exists(self.hinweis), "kein Hinweis angelegt, wo keiner war")
+
+    def test_programm_und_units(self):
+        self.lauf()
+        for quelle, ziel in (("scripts/bin/zenos-basis", "usr/local/libexec/zenos/zenos-basis"),
+                             ("system/systemd/system/zenos-basis-pruefen.service",
+                              "etc/systemd/system/zenos-basis-pruefen.service"),
+                             ("system/systemd/system/zenos-basis-installieren.service",
+                              "etc/systemd/system/zenos-basis-installieren.service")):
+            with open(os.path.join(WURZEL, quelle), "rb") as a, open(os.path.join(self.ziel, ziel), "rb") as b:
+                self.assertEqual(a.read(), b.read(), ziel)
+        self.assertTrue(os.path.isdir(os.path.join(self.ziel, "var", "lib", "zenos", "basis")))
+
+    def test_unsicherer_weg(self):
+        """Ein Ordner auf dem Weg gehört nicht root (hier: der Temp-Ordner): Programm und Units bleiben weg."""
+        if os.geteuid() == 0:
+            os.makedirs(os.path.join(self.ziel, "usr", "local", "libexec"))
+            os.chmod(os.path.join(self.ziel, "usr", "local", "libexec"), 0o777)
+        zeilen = self.lauf(pfad_pruefen=True, nur_aenderungen=False)
+        self.assertIn("ist nicht nur für root schreibbar: zenos-basis bleibt weg", "\n".join(zeilen))
+        self.assertFalse(os.path.exists(os.path.join(self.ziel, "usr", "local", "libexec", "zenos")))
+        self.assertTrue(os.path.exists(self.dropin), "Prompt=never gilt trotzdem")
+
+    def test_units_wie_vorgesehen(self):
+        """Statisch (ohne [Install]), root, mit Netz; installieren mit Laufzeitordner, Inhibitor-tauglichem KillMode und
+        langen Zeitlimits wie der Kanal."""
+        for name in ("zenos-basis-pruefen.service", "zenos-basis-installieren.service"):
+            parser = configparser.ConfigParser(strict=False, interpolation=None)
+            parser.optionxform = str
+            parser.read(os.path.join(WURZEL, "system", "systemd", "system", name), encoding="utf-8")
+            self.assertFalse(parser.has_section("Install"), name)
+            self.assertEqual(parser.get("Service", "Type"), "oneshot", name)
+            self.assertNotIn("User", parser["Service"], name)
+            self.assertNotIn("PrivateNetwork", parser["Service"], name)
+            self.assertNotIn("SuccessExitStatus", parser["Service"], name)
+            self.assertIn("network-online.target", parser.get("Unit", "Wants"), name)
+            self.assertEqual(parser.get("Unit", "ConditionPathExists"), "/usr/local/libexec/zenos/zenos-basis")
+            # Ein eigener Mount-Namensraum gilt apt als chroot: Es liesse die Staffelung (Phasing) aus, und die
+            # Auswertung passte nicht mehr zu apt-get full-upgrade (im Container geprüft)
+            for schluessel in ("PrivateTmp", "PrivateDevices", "PrivateMounts", "ProtectSystem", "ProtectHome",
+                               "ProtectKernelTunables", "ProtectKernelModules", "ProtectKernelLogs",
+                               "ProtectControlGroups", "ProtectProc", "ProcSubset", "ReadOnlyPaths", "ReadWritePaths",
+                               "InaccessiblePaths", "TemporaryFileSystem", "BindPaths", "BindReadOnlyPaths",
+                               "RootDirectory", "RootImage", "DynamicUser"):
+                self.assertNotIn(schluessel, parser["Service"], f"{name}: {schluessel}")
+        parser = configparser.ConfigParser(strict=False, interpolation=None)
+        parser.optionxform = str
+        parser.read(os.path.join(WURZEL, "system", "systemd", "system", "zenos-basis-installieren.service"),
+                    encoding="utf-8")
+        dienst = parser["Service"]
+        self.assertEqual((dienst["RuntimeDirectory"], dienst["KillMode"], dienst["TimeoutStartSec"],
+                          dienst["TimeoutStopSec"]), ("zenos-basis", "mixed", "3h", "20min"))
+        self.assertTrue(dienst["ExecStart"].endswith("/usr/local/libexec/zenos/zenos-basis installieren"))
+        self.assertIn("apt-daily-upgrade.service", parser.get("Unit", "After"))
 
     def test_dropin_gewinnt_wie_metarelease(self):
         ordner = os.path.join(self.ziel, "etc", "update-manager")
@@ -151,11 +232,13 @@ class Doctor(unittest.TestCase):
         self.ordner = os.path.join(self.ziel, "etc", "update-manager")
         self.dropin = os.path.join(self.ordner, "release-upgrades.d", "zenos.cfg")
 
-    def doctor(self):
+    def doctor(self, funktion="_ubuntu_prompt", alle=False):
         r = subprocess.run([BASH, "-c", DOCTOR_RAHMEN], capture_output=True, text=True, check=False,
-                           env={"PATH": "/usr/bin:/bin", "DOCTOR": DOCTOR, "ZIEL": self.ziel})
+                           env={"PATH": "/usr/bin:/bin", "DOCTOR": DOCTOR, "ZIEL": self.ziel, "FUNKTION": funktion})
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         zeilen = [z for z in r.stdout.splitlines() if not z.startswith("abschnitt: ")]
+        if alle:
+            return zeilen
         self.assertEqual(len(zeilen), 1, r.stdout)
         return zeilen[0]
 

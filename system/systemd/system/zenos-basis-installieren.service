@@ -1,0 +1,32 @@
+# zenOS: Paket-Updates der Ubuntu-Basis installieren (zenos-basis installieren). Läuft als root mit Netz und ohne
+# Sandbox: apt-get full-upgrade für genau die Liste des Auftrags in /var/lib/zenos/basis/auftrag.json (Hash der zuletzt
+# geprüften Liste; ohne neues apt-get update), danach install.sh aus /opt/zenos und eine Gesundheitsprüfung. Kernel,
+# Firmware, Bootloader und Entfernungen nur mit Zustimmung im Auftrag. Gestartet von «zen update», den Einstellungen und
+# der Automatik. Ein SSH-Abbruch schadet nicht: Der Dienst läuft zu Ende.
+#
+# Während apt und install.sh hält es einen Block-Inhibitor für Ausschalten und Ruhezustand; zenos-energie schaltet
+# nicht aus, solange eine Unit zenos-basis-* läuft, zenos-argon nicht, solange /run/zenos-basis besteht. KillMode=mixed:
+# Ein Stopp schickt SIGTERM nur an zenos-basis, das apt und install.sh zu Ende laufen lässt (dpkg nie mittendrin);
+# erst nach TimeoutStopSec beendet systemd alles. Ein harter Abbruch hinterlässt ein unterbrochenes dpkg: Das nächste
+# Basis-Update repariert es zuerst («dpkg --configure -a»).
+[Unit]
+Description=zenOS: Ubuntu-Basis installieren (apt-get full-upgrade, mit Netz)
+Documentation=file:///opt/zenos/docs/image-und-releases.md
+Wants=network-online.target
+After=network-online.target zenos-basis-pruefen.service apt-daily.service apt-daily-upgrade.service
+ConditionPathExists=/usr/local/libexec/zenos/zenos-basis
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/zenos/zenos-basis installieren
+Environment=HOME=/root LANG=C.UTF-8
+StateDirectory=zenos/basis
+StateDirectoryMode=0755
+RuntimeDirectory=zenos-basis
+RuntimeDirectoryMode=0755
+UMask=0022
+KillMode=mixed
+TimeoutStartSec=3h
+TimeoutStopSec=20min
+SyslogIdentifier=zenos-basis
+# Ohne Sandbox mit eigenem Mount-Namensraum, wie zenos-basis-pruefen.service (sonst liesse apt die Staffelung aus)

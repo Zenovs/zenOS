@@ -115,6 +115,9 @@ _ZENOS_MODUL_START=0
 
 _ZENOS_POLICY=/usr/sbin/policy-rc.d
 _ZENOS_POLICY_MARKE='# zenOS: temporär während apt-get, verhindert Dienststarts (scripts/lib/gemeinsam.sh)'
+# Die policy-rc.d der Basis-Updates (scripts/bin/zenos-basis, hält nur greetd ab): Bleibt sie nach einem Abbruch liegen,
+# räumt install.sh sie weg wie die eigene
+_ZENOS_POLICY_MARKE_BASIS='# zenOS-Basis: temporär während apt-get full-upgrade, hält nur greetd ab (scripts/bin/zenos-basis)'
 _ZENOS_POLICY_AKTIV=0
 _ZENOS_POLICY_ORDNER=""
 _ZENOS_POLICY_OPTIONEN=()
@@ -427,7 +430,7 @@ SH
 _zenos_policy_an() {
   _ZENOS_POLICY_OPTIONEN=()
   if [[ -e "$_ZENOS_POLICY" || -L "$_ZENOS_POLICY" ]]; then
-    grep -qxF -- "$_ZENOS_POLICY_MARKE" "$_ZENOS_POLICY" 2>/dev/null || return 0
+    grep -qxF -e "$_ZENOS_POLICY_MARKE" -e "$_ZENOS_POLICY_MARKE_BASIS" -- "$_ZENOS_POLICY" 2>/dev/null || return 0
     # Eigene aus einem abgebrochenen Lauf: sofort weg, sie gälte sonst auch für fremde Paketvorgänge
     $SUDO rm -f -- "$_ZENOS_POLICY"
   fi
@@ -457,7 +460,8 @@ _zenos_policy_aus() {
 # ihrem Inhalt, auch aus einem abgebrochenen Lauf
 _zenos_policy_altlast_entfernen() {
   [[ -n "$SUDO" ]] || (( EUID == 0 )) || return 0
-  if [[ -e "$_ZENOS_POLICY" ]] && grep -qxF -- "$_ZENOS_POLICY_MARKE" "$_ZENOS_POLICY" 2>/dev/null; then
+  if [[ -e "$_ZENOS_POLICY" ]] &&
+    grep -qxF -e "$_ZENOS_POLICY_MARKE" -e "$_ZENOS_POLICY_MARKE_BASIS" -- "$_ZENOS_POLICY" 2>/dev/null; then
     $SUDO rm -f -- "$_ZENOS_POLICY" 2>/dev/null || true
   fi
   local ordner

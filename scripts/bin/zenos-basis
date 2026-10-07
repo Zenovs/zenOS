@@ -1,0 +1,1510 @@
+#!/usr/bin/python3 -I
+"""zenos-basis: Paket-Updates der Ubuntu-Basis innerhalb von Ubuntu 26.04 LTS. Der Kanal (zenos-kanal) bringt den Code
+von zenOS; zenos-basis bringt die Pakete, so wie «apt full-upgrade» sie bringt: aus Ubuntu (auch -updates) und aus den
+Herstellerquellen (Chrome, VS Code, 1Password-CLI). Sicherheitsupdates spielt weiter unattended-upgrades ein; ein
+Wechsel der Ubuntu-Hauptversion ist gesperrt (scripts/module/71-basis.sh).
+
+Aufruf:
+  zenos-basis pruefen                  apt-get update, dann «apt-get -s full-upgrade» auswerten und stand.json schreiben
+                                       (root, zenos-basis-pruefen.service, mit Netz)
+  zenos-basis installieren             installiert genau die Liste eines Auftrags (auftrag.json) und nur, wenn eine
+                                       Auswertung von jetzt (ohne neues apt-get update) denselben Hash ergibt
+                                       (root, zenos-basis-installieren.service: mit Netz, Block-Inhibitor)
+  zenos-basis installieren --liste HASH [--zustimmung]
+                                       dasselbe ohne Auftrag, für Tests und von Hand (läuft im aufrufenden Prozess; ein
+                                       Abbruch der Verbindung ist dann nicht abgefangen, darum sonst über die Unit)
+  zenos-basis status [--json|--kurz|--installation]
+                                       letzte Prüfung, letzte Installation, Neustart nötig (ohne root). --kurz: eine
+                                       Zeile «Zustand Text» (zen doctor, zen version), --installation: «Ergebnis Text»
+
+Prüfen: Auf einen anderen Paketvorgang (apt-daily, apt-daily-upgrade mit unattended-upgrades, eine Sperre von apt oder
+dpkg) wartet es höchstens 20 Minuten, sonst Exit 75. Ausgewertet werden die Zeilen «Inst» und «Remv» von apt-get -s
+(LC_ALL=C, ohne autoremove): je Paket Name, alt, neu, Tasche und Herkunft. Daraus:
+  sicherheit   Pakete aus einer Tasche …-security
+  heikel       Kernel, Firmware, Bootloader (HEIKEL: linux-image-*, linux-modules-*, linux-raspi, flash-kernel,
+               piboot-try, rpi-eeprom, u-boot*, grub*, shim* …)
+  entfernen    was full-upgrade entfernen würde; ist ein geschütztes Paket dabei (die Liste aus
+               scripts/lib/aufraeumen.sh, die zenOS-Pakete aus scripts/pakete/*.txt, alles manuell Installierte), gilt
+               «gesperrt»: nichts wird installiert, auch nicht mit Zustimmung (Exit 3)
+  neustart     voraussichtlich nötig: heikel oder libc6, systemd, dbus, greetd (eine Schätzung; gewiss ist erst
+               /run/reboot-required danach)
+  liste        Hash der Liste (40 Zeichen 0-9a-f, SHA-256 gekürzt): Installiert wird genau dieser Stand
+Gehaltene Pakete (apt-mark hold), der Pin gegen snapd und gestaffelte Updates (Phasing) respektiert apt selbst; sie
+stehen nicht in der Liste. Auswerten und Installieren laufen darum ohne Sandbox mit eigenem Mount-Namensraum
+(PrivateTmp, ProtectSystem …): apt hielte das für ein chroot, liesse die Staffelung aus, und die Auswertung passte nicht
+mehr zu apt-get full-upgrade.
+
+Installieren: Sperre wie der Kanal (/run/zenos-sperre/kanal.lock, nie zwei Paketvorgänge zugleich; ein install.sh von
+Hand läuft: Exit 75). Nicht, solange eine Installation des Kanals unterbrochen ist oder «kaputt» meldet (Exit 10). Der
+Hash des Auftrags muss der letzten Prüfung und einer Auswertung von jetzt gleichen (sonst Exit 3, stand.json zeigt dann
+die neue Liste). Heikle Pakete und Entfernungen nur mit Zustimmung («ja» in zen update, Passwort in den
+Einstellungen), sonst Exit 10. Ein unterbrochenes dpkg repariert es vorher («dpkg --configure -a»). Dann, unter einem
+Block-Inhibitor für Ausschalten und Ruhezustand und mit dem Übernahme-Marker /run/zenos-basis/uebernahme (die
+Oberfläche zeigt «Update läuft» und lädt nicht nach):
+  1. apt-get full-upgrade -y (DEBIAN_FRONTEND=noninteractive, NEEDRESTART_MODE=l, NEEDRESTART_SUSPEND=1, confdef und
+     confold, kein autoremove). Dienste starten wie bei Ubuntu neu, nur greetd nicht (beendete die Sitzung): eine
+     eigene policy-rc.d nur für diesen Lauf (apt setzt sie vor dpkg ein und nimmt sie danach weg). Bringt das Update
+     eine neue greetd-Version, trägt zenos-basis greetd in /run/reboot-required(.pkgs) ein: Neustart nötig.
+  2. /opt/zenos/scripts/install.sh --ruhig als root mit ZENOS_KANAL_LAUF=1 (die Sperre hält zenos-basis schon) und
+     eigenem Ergebnis (install-ergebnis): baut Quickshell neu, wenn sich Qt geändert hat, und zieht zenos-kennung nach.
+Gesundheit: Es zählt nur, was schlechter ist als vor apt: dpkg unterbrochen, install.sh nicht Exit 0 oder ohne «== Ende
+… ok», «quickshell --version» scheitert, greetd ausgefallen, neu ausgefallene Units, mehr Fehler in «zen doctor» (als
+root). Scheitert sie, steht in letzte.json, was kaputt ist; zurückgerollt wird nichts. Das Log /var/log/zenos/basis.log
+(root) hält den Paketstand vorher und die Änderungen fest, nur zur Diagnose.
+
+Dateien: /var/lib/zenos/basis/{stand.json, letzte.json, auftrag.json, install-ergebnis} (root, 0755, Dateien 0644, für
+alle lesbar), /run/zenos-basis/uebernahme (Laufzeitordner von zenos-basis-installieren.service), /var/log/zenos/basis.log
+(root, 0640).
+
+Exit: 0 in Ordnung (geprüft, aktuell, installiert und gesund) · 1 Fehler (apt-get update oder full-upgrade scheiterte) ·
+2 Aufruf · 3 abgelehnt (gesperrt durch ein geschütztes Paket, Liste veraltet, kein Auftrag) · 5 kaputt (nach dem
+Update schlechter als vorher, nichts zurückgerollt) · 10 wartet (Zustimmung nötig, Kanal unterbrochen oder kaputt,
+Stopp) · 75 läuft schon (Sperre, install.sh von Hand, ein anderer Paketvorgang nach 20 Minuten).
+"""
+
+import contextlib
+import datetime
+import fcntl
+import fnmatch
+import grp
+import hashlib
+import json
+import os
+import pwd
+import re
+import shutil
+import signal
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import traceback
+
+NAME = "zenos-basis"
+SYSTEM_PATH = "/usr/bin:/bin"
+INSTALL_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+USER_PATH = "/usr/local/bin:/usr/bin:/bin"
+
+# Pfade. Nur die Einheitentests setzen andere Werte (nach dem Laden als Modul); einen Schalter gibt es nicht.
+CODE_DIR = "/opt/zenos"
+STATE_DIR = "/var/lib/zenos/basis"
+CHANNEL_STATE_DIR = "/var/lib/zenos/kanal"
+# Laufzeitordner von zenos-basis-installieren.service (RuntimeDirectory): Es gibt ihn, solange die Unit läuft
+# (zenos-argon schaltet dann nicht aus); darin der Übernahme-Marker und die policy-rc.d dieses Laufs
+RUNTIME_DIR = "/run/zenos-basis"
+# Gemeinsame Sperre mit dem Kanal (nur root, /run/zenos-sperre 0700) und Vermerk eines install.sh von Hand
+LOCK_FILE = "/run/zenos-sperre/kanal.lock"
+HAND_MARK = "/run/zenos-sperre/hand"
+LOG_FILE = "/var/log/zenos/basis.log"
+REBOOT_FILE = "/run/reboot-required"
+REBOOT_PKGS = "/run/reboot-required.pkgs"
+POLICY_FILE = "/usr/sbin/policy-rc.d"
+DPKG_STATUS = "/var/lib/dpkg/status"
+DPKG_UPDATES = "/var/lib/dpkg/updates"
+# Sperren von apt und dpkg (fcntl, wie apt_warten in scripts/lib/gemeinsam.sh)
+APT_LOCKS = ("/var/lib/apt/lists/lock", "/var/cache/apt/archives/lock", "/var/lib/dpkg/lock-frontend",
+             "/var/lib/dpkg/lock")
+DPKG_LOCKS = ("/var/lib/dpkg/lock-frontend", "/var/lib/dpkg/lock")
+APT_UNITS = ("apt-daily.service", "apt-daily-upgrade.service")
+SYSTEMD_RUN_DIR = "/run/systemd/system"
+PROC = "/proc"
+BOOT_ID = "/proc/sys/kernel/random/boot_id"
+RUN_USER = "/run/user"
+TRUSTED_UIDS = (0,)
+PATH_CHECK_TOP = "/"
+
+APT_GET = "/usr/bin/apt-get"
+APT_MARK = "/usr/bin/apt-mark"
+DPKG = "/usr/bin/dpkg"
+DPKG_QUERY = "/usr/bin/dpkg-query"
+SYSTEMCTL = "/usr/bin/systemctl"
+LOGINCTL = "/usr/bin/loginctl"
+LOGGER = "/usr/bin/logger"
+SYSTEMD_INHIBIT = "/usr/bin/systemd-inhibit"
+SLEEP = "/usr/bin/sleep"
+SETPRIV = "/usr/bin/setpriv"
+QUICKSHELL = "/usr/local/bin/quickshell"
+
+# Auf einen anderen Paketvorgang warten (wie apt_warten), Zeitlimits
+APT_WAIT = 1200
+APT_POLL = 5
+UPDATE_TIMEOUT = 1800
+SIMULATE_TIMEOUT = 600
+DPKG_TIMEOUT = 3600
+CHECK_TIMEOUT = 120
+DOCTOR_TIMEOUT = 600
+MAX_AGE = datetime.timedelta(hours=1)
+MAX_LOG = 2 << 20
+KEEP_LOG = 512 << 10
+MAX_SMALL_FILE = 4 << 20
+
+EXIT_OK = 0
+EXIT_ERROR = 1
+EXIT_USAGE = 2
+EXIT_REFUSED = 3
+EXIT_BROKEN = 5
+EXIT_WAIT = 10
+EXIT_BUSY = 75
+
+STAND = "stand.json"
+LAST = "letzte.json"
+ORDER = "auftrag.json"
+INSTALL_RESULT = "install-ergebnis"
+TAKEOVER = "uebernahme"
+
+# Kernel, Firmware und Bootloader: nie automatisch, nur mit Zustimmung (fnmatch auf den Paketnamen ohne Architektur).
+# grub* und shim* sicherheitshalber (Bürorechner); linux-libc-dev (Header zum Kompilieren) zählt nicht.
+HEIKEL = ("linux-raspi", "linux-raspi-*", "linux-image-*", "linux-modules-*", "linux-headers-*-raspi", "linux-generic*",
+          "linux-firmware*", "flash-kernel", "piboot-try", "rpi-eeprom", "u-boot*", "grub*", "shim*")
+# Ausserdem voraussichtlich ein Neustart nötig (laufende Bibliothek, PID 1, Bus, Login)
+RESTART_PACKAGES = ("libc6", "systemd", "dbus", "dbus-daemon", "dbus-broker", "greetd")
+# Geschützt (nie entfernen): dieselbe Liste wie _aufraeumen_geschuetzt in scripts/lib/aufraeumen.sh (ein Einheitentest
+# hält beide gleich); dazu kommen die zenOS-Pakete und alles, was als manuell installiert gilt
+PROTECTED = ("ubuntu-minimal", "ubuntu-standard", "ubuntu-server", "ubuntu-server-raspi", "ubuntu-pro-client",
+             "lsb-release", "distro-info-data", "python3-distro-info", "update-notifier-common",
+             "ubuntu-release-upgrader-core", "motd-news-config", "apport", "fonts-ubuntu-console", "lxd-installer",
+             "ubuntu-keyring", "base-files")
+GREETD = "greetd"
+
+PACKAGE_RE = re.compile(r"[a-z0-9][a-z0-9+.-]{0,127}")
+LIST_RE = re.compile(r"[0-9a-f]{40}")
+TIME_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
+USER_RE = re.compile(r"[a-z_][a-z0-9_-]{0,31}")
+# «Inst NAME[:ARCH] [ALT] (NEU QUELLE, QUELLE … [ARCH]) […]», «Remv NAME[:ARCH] [ALT] […]»
+INST_RE = re.compile(r"Inst (?P<name>[a-z0-9][a-z0-9+.-]*(?::[a-z0-9]+)?) (?:\[(?P<old>[^\]\s]+)\] )?"
+                     r"\((?P<new>[^\s()]+) (?P<rest>[^()]*)\)(?: \[[^\]]*\])?")
+REMV_RE = re.compile(r"(?:Remv|Purg) (?P<name>[a-z0-9][a-z0-9+.-]*(?::[a-z0-9]+)?)(?: \[(?P<old>[^\]\s]+)\])?"
+                     r"(?: \[[^\]]*\])?")
+DOCTOR_RE = re.compile(r"^([0-9]{1,6}) Fehler · ", re.M)
+
+ORIGINS = ("zen update", "einstellungen", "automatik", "hand")
+
+# policy-rc.d für die Dauer von apt-get full-upgrade (Markierung in der zweiten Zeile). Aufruf durch invoke-rc.d und
+# deb-systemd-invoke: policy-rc.d [--quiet] DIENST "AKTION …" [RUNLEVEL] → 0 erlaubt, 101 verboten.
+POLICY_MARK = "# zenOS-Basis: temporär während apt-get full-upgrade, hält nur greetd ab (scripts/bin/zenos-basis)"
+POLICY_TEXT = (
+    "#!/bin/sh\n"
+    f"{POLICY_MARK}\n"
+    "# greetd neu starten beendete die laufende Sitzung; alles andere wie ohne Richtlinie\n"
+    '[ "${1:-}" = --quiet ] && shift\n'
+    "case ${1:-} in greetd | greetd.service) exit 101 ;; esac\n"
+    "exit 0\n"
+)
+POLICY_DIR_RE = re.compile(r"/[A-Za-z0-9/._-]+")
+# Markierung der policy-rc.d von install.sh (scripts/lib/gemeinsam.sh, verhindert alle Dienststarts): Liegt sie nach
+# einem Abbruch noch da, ist sie ein Rest von zenOS und fliegt wie die eigene (ein Einheitentest hält beide gleich)
+INSTALL_POLICY_MARK = "# zenOS: temporär während apt-get, verhindert Dienststarts (scripts/lib/gemeinsam.sh)"
+
+RESULT_TEXT = {
+    "installiert": "installiert", "aktuell": "aktuell", "kaputt": "kaputt", "fehler": "Fehler",
+    "abgelehnt": "abgelehnt", "wartet": "wartet",
+}
+
+
+class Failure(Exception):
+    """Fehler mit einer Meldung für Menschen."""
+
+
+# --- Allgemein -------------------------------------------------------------------------------------------------
+
+
+def now():
+    return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+
+
+def iso(t):
+    return t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def parse_iso(text):
+    if not isinstance(text, str) or not TIME_RE.fullmatch(text):
+        return None
+    try:
+        return datetime.datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+    except ValueError:
+        return None
+
+
+def local_time(text):
+    t = parse_iso(text)
+    return t.astimezone().strftime("%Y-%m-%d %H:%M") if t else "–"
+
+
+def short(text, length=60):
+    text = "".join(c if c.isprintable() else "?" for c in str(text))
+    return text if len(text) <= length else text[: length - 1] + "…"
+
+
+def first_line(text):
+    for line in str(text).splitlines():
+        line = line.strip()
+        if line:
+            return short(line, 160)
+    return ""
+
+
+def names_text(names, limit=6):
+    names = list(names)
+    text = ", ".join(names[:limit])
+    return text + (f" und {len(names) - limit} weitere" if len(names) > limit else "")
+
+
+def plural(n, one, many):
+    return f"{n} {one if n == 1 else many}"
+
+
+def run(argv, env, cwd="/", timeout=CHECK_TIMEOUT):
+    """Startet ein Programm mit Argumentliste (nie über eine Shell), Ausgabe gesammelt. Zeitlimit → Exit 124, fehlt es
+    → 127."""
+    try:
+        return subprocess.run(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                              errors="replace", timeout=timeout, check=False)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(argv, 124, "", f"Zeitlimit von {timeout} s überschritten")
+    except OSError as e:
+        return subprocess.CompletedProcess(argv, 127, "", f"{argv[0]}: {e.strerror}")
+
+
+def run_visible(argv, env, timeout=None, cwd="/"):
+    """Startet ein Programm mit Argumentliste, die Ausgabe geht durch (Journal bzw. Terminal). Exit-Code; Zeitlimit →
+    124, fehlt es → 127."""
+    sys.stdout.flush()
+    sys.stderr.flush()
+    try:
+        return subprocess.run(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, timeout=timeout, check=False).returncode
+    except subprocess.TimeoutExpired:
+        print(f"{NAME}: {os.path.basename(argv[0])}: Zeitlimit von {timeout} s überschritten", file=sys.stderr)
+        return 124
+    except OSError as e:
+        print(f"{NAME}: {argv[0]}: {e.strerror}", file=sys.stderr)
+        return 127
+
+
+def systemd_env():
+    return {"PATH": SYSTEM_PATH, "LANG": "C.UTF-8", "SYSTEMD_PAGER": "", "SYSTEMD_COLORS": "0"}
+
+
+def apt_env(simulate=False):
+    """Umgebung für apt-get und dpkg: nicht-interaktiv, needrestart nur auflisten (und während apt ausgesetzt), ucf und
+    dpkg behalten geänderte Konfigurationsdateien. Zum Auswerten LC_ALL=C."""
+    env = {"PATH": INSTALL_PATH, "HOME": "/root", "LANG": "C.UTF-8", "DEBIAN_FRONTEND": "noninteractive",
+           "NEEDRESTART_MODE": "l", "NEEDRESTART_SUSPEND": "1", "APT_LISTCHANGES_FRONTEND": "none",
+           "UCF_FORCE_CONFFOLD": "1"}
+    if simulate:
+        env["LC_ALL"] = "C"
+    return env
+
+
+def install_env():
+    """Umgebung für install.sh: ZENOS_KANAL_LAUF=1, weil zenos-basis die Sperre des Kanals schon hält (sonst wartete
+    install.sh 15 Minuten auf sie und gälte als Lauf von Hand), ZENOS_KANAL_ERGEBNIS: das eigene, root-eigene Ergebnis
+    für die Gesundheitsprüfung."""
+    return {"PATH": INSTALL_PATH, "HOME": "/root", "LANG": "C.UTF-8", "ZENOS_KANAL_LAUF": "1",
+            "ZENOS_KANAL_ERGEBNIS": state_path(INSTALL_RESULT)}
+
+
+def journal(text):
+    """Eine Zeile ins Journal (logger -t zenos-basis), still, wenn das nicht geht."""
+    if os.access(LOGGER, os.X_OK):
+        run([LOGGER, "-t", NAME, "--", short(text, 400)], env={"PATH": SYSTEM_PATH, "LANG": "C.UTF-8"}, timeout=10)
+
+
+def state_path(*parts):
+    return os.path.join(STATE_DIR, *parts)
+
+
+def is_root():
+    return os.geteuid() in TRUSTED_UIDS
+
+
+def path_problem(path):
+    """Grund, warum PATH (und jeder Ordner darüber bis PATH_CHECK_TOP) nicht sicher ist, sonst None: kein Verweis,
+    Besitzer root, für Gruppe und andere nicht schreibbar."""
+    path = os.path.abspath(path)
+    top = os.path.abspath(PATH_CHECK_TOP)
+    while True:
+        try:
+            st = os.lstat(path)
+        except OSError as e:
+            return f"{path}: {e.strerror}"
+        if stat.S_ISLNK(st.st_mode):
+            return f"{path} ist ein Verweis"
+        if st.st_uid not in TRUSTED_UIDS:
+            return f"{path} gehört nicht root"
+        if st.st_mode & 0o022:
+            return f"{path} ist für andere schreibbar"
+        if path in (top, "/"):
+            return None
+        path = os.path.dirname(path)
+
+
+def read_small(path, trusted=False, limit=MAX_SMALL_FILE):
+    """Liest eine kleine reguläre Datei ohne Verweis zu folgen. trusted: Besitzer root, für andere nicht schreibbar.
+    FileNotFoundError, wenn sie fehlt; Failure bei allem anderen."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0))
+    except FileNotFoundError:
+        raise
+    except OSError as e:
+        raise Failure(f"{path}: {e.strerror}") from e
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise Failure(f"{path} ist keine Datei")
+        if trusted and st.st_uid not in TRUSTED_UIDS:
+            raise Failure(f"{path} gehört nicht root")
+        if trusted and st.st_mode & 0o022:
+            raise Failure(f"{path} ist für andere schreibbar")
+        data = os.read(fd, limit + 1)
+        if len(data) > limit:
+            raise Failure(f"{path} ist zu gross")
+    finally:
+        os.close(fd)
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise Failure(f"{path} ist kein UTF-8") from e
+
+
+def write_atomic(path, text, mode=0o644):
+    """Schreibt PATH atomar: .PATH.neu im selben Ordner, fsync, rename, fsync des Ordners."""
+    folder = os.path.dirname(path)
+    tmp = os.path.join(folder, "." + os.path.basename(path) + ".neu")
+    with contextlib.suppress(FileNotFoundError):
+        os.unlink(tmp)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0), mode)
+    try:
+        data = text.encode("utf-8")
+        while data:
+            data = data[os.write(fd, data):]
+        os.fchmod(fd, mode)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.replace(tmp, path)
+    dfd = os.open(folder, os.O_RDONLY)
+    try:
+        os.fsync(dfd)
+    finally:
+        os.close(dfd)
+
+
+def write_json(path, data, mode=0o644):
+    write_atomic(path, json.dumps(data, ensure_ascii=False, indent=1) + "\n", mode)
+
+
+def load_json(path, trusted=True):
+    """JSON-Objekt aus PATH, None wenn es fehlt oder unlesbar ist (trusted: nur root-eigen und für andere nicht
+    schreibbar)."""
+    try:
+        data = json.loads(read_small(path, trusted=trusted))
+    except (FileNotFoundError, Failure, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def prepare_state():
+    """Zustandsordner (root, 0755) anlegen und prüfen."""
+    os.makedirs(STATE_DIR, mode=0o755, exist_ok=True)
+    problem = path_problem(STATE_DIR)
+    if problem:
+        raise Failure(f"Zustand unsicher: {problem}")
+
+
+def boot_clock():
+    """(Kennung dieses Starts, Sekunden seit dem Start) oder (None, None): springt nicht, wenn NTP die Uhr stellt."""
+    try:
+        with open(BOOT_ID, encoding="ascii") as f:
+            boot = f.read(64).strip()
+        clock = time.clock_gettime(getattr(time, "CLOCK_BOOTTIME", time.CLOCK_MONOTONIC))
+    except (OSError, ValueError, AttributeError):
+        return None, None
+    return (boot, clock) if re.fullmatch(r"[0-9a-f-]{16,40}", boot) else (None, None)
+
+
+def stamp():
+    """Zeitstempel eines Auftrags: Uhrzeit und Zeit seit dem Start."""
+    boot, clock = boot_clock()
+    return {"zeit": iso(now()), "start": boot, "seit_start": clock}
+
+
+def fresh(data, t):
+    """Höchstens eine Stunde alt (im selben Start nach der Zeit seit dem Start, sonst nach der Uhr)."""
+    boot, clock = boot_clock()
+    if boot and data.get("start") == boot and isinstance(data.get("seit_start"), (int, float)) \
+            and not isinstance(data.get("seit_start"), bool):
+        age = datetime.timedelta(seconds=clock - data["seit_start"])
+    else:
+        when = parse_iso(data.get("zeit"))
+        if not when:
+            return False
+        age = t - when
+    return abs(age) <= MAX_AGE
+
+
+# --- Sperren ---------------------------------------------------------------------------------------------------
+
+
+def take_lock(path=None):
+    """Gemeinsame Sperre mit dem Kanal (Standard /run/zenos-sperre/kanal.lock): Ordner 0700 und Datei gehören root.
+    None, wenn sie belegt ist; Failure, wenn Ordner oder Datei nicht sicher sind."""
+    path = path or LOCK_FILE
+    folder = os.path.dirname(path)
+    with contextlib.suppress(FileExistsError):
+        os.mkdir(folder, 0o700)
+    problem = path_problem(folder)
+    if problem:
+        raise Failure(f"Ordner der Sperren unsicher: {problem}")
+    if os.lstat(folder).st_mode & 0o077:
+        os.chmod(folder, 0o700)
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0), 0o600)
+    except OSError as e:
+        raise Failure(f"Sperre {path}: {e.strerror}") from e
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_uid not in TRUSTED_UIDS:
+            raise Failure(f"Sperre {path} gehört nicht root")
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        return None
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+class Locked:
+    """Eine gehaltene Sperre (Dateideskriptor)."""
+
+    def __init__(self, fd):
+        self.fd = fd
+
+    def release(self):
+        if self.fd is not None:
+            os.close(self.fd)
+            self.fd = None
+
+
+def lock_or_exit():
+    """Locked, sonst den Exit-Code mit Meldung: 75, wenn die Sperre belegt ist, 1, wenn sie nicht sicher ist."""
+    try:
+        fd = take_lock()
+    except Failure as e:
+        print(f"{NAME}: {e}", file=sys.stderr)
+        return EXIT_ERROR
+    if fd is None:
+        print(f"{NAME}: Ein Update oder eine Prüfung läuft gerade (zenOS-Kanal oder Ubuntu-Basis). Später noch einmal.",
+              file=sys.stderr)
+        return EXIT_BUSY
+    return Locked(fd)
+
+
+def hand_run():
+    """PID eines laufenden install.sh von Hand (Vermerk HAND_MARK, nur root schreibt ihn), sonst None."""
+    try:
+        text = read_small(HAND_MARK, trusted=True, limit=64)
+    except (FileNotFoundError, Failure):
+        return None
+    pid = text.strip()
+    if not re.fullmatch(r"[1-9][0-9]{0,9}", pid):
+        return None
+    try:
+        with open(os.path.join(PROC, pid, "cmdline"), "rb") as f:
+            argv = f.read(1 << 16).split(b"\0")
+    except OSError:
+        return None
+    return int(pid) if any(a.endswith(b"/install.sh") or a == b"install.sh" for a in argv) else None
+
+
+def channel_problem():
+    """Grund, warum jetzt keine Basis-Installation laufen darf, weil der Kanal einen unterbrochenen oder kaputten Stand
+    hinterliess, sonst None. install.sh aus /opt/zenos liefe dann auf einem halb übernommenen Stand."""
+    if os.path.lexists(os.path.join(CHANNEL_STATE_DIR, "laeuft.json")):
+        return ("Eine Installation des zenOS-Kanals ist unterbrochen: zuerst zen update (setzt sie fort), danach die "
+                "Basis-Updates.")
+    last = load_json(os.path.join(CHANNEL_STATE_DIR, "letzte.json")) or {}
+    if last.get("ergebnis") == "kaputt":
+        return ("Der zenOS-Kanal meldet «kaputt»: zuerst den Kanal reparieren (zen update, ANLEITUNG.md Abschnitt F), "
+                "danach die Basis-Updates.")
+    return None
+
+
+# --- apt und dpkg ----------------------------------------------------------------------------------------------
+
+
+def lock_held(path):
+    """Hält ein anderer Prozess die fcntl-Sperre PATH (wie apt und dpkg sperren)? Ohne Datei oder Zugriff: nein."""
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0))
+    except OSError:
+        return False
+    try:
+        fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.lockf(fd, fcntl.LOCK_UN)
+        return False
+    except OSError:
+        return True
+    finally:
+        os.close(fd)
+
+
+def apt_busy():
+    """Wer gerade einen Paketvorgang hält (apt-daily, apt-daily-upgrade, eine Sperre von apt oder dpkg), als Liste."""
+    who = []
+    if os.path.isdir(SYSTEMD_RUN_DIR):
+        for unit in APT_UNITS:
+            r = run([SYSTEMCTL, "show", "--property=ActiveState", "--value", unit], env=systemd_env())
+            if r.returncode == 0 and r.stdout.strip() in ("activating", "active", "deactivating", "reloading",
+                                                          "refreshing"):
+                who.append(unit)
+    who += [p for p in APT_LOCKS if lock_held(p)]
+    return who
+
+
+def wait_for_apt(limit=None):
+    """Wartet höchstens LIMIT Sekunden (20 Minuten), bis kein anderer Paketvorgang mehr läuft (unattended-upgrades
+    über apt-daily-upgrade, apt-daily, eine Sperre von apt oder dpkg). None, wenn frei; sonst der Grund."""
+    limit = APT_WAIT if limit is None else limit
+    end = time.monotonic() + limit
+    who = apt_busy()
+    if not who:
+        return None
+    print(f"Warte auf einen anderen Paketvorgang: {', '.join(who)} – höchstens {limit // 60} Minuten …")
+    while who:
+        if time.monotonic() >= end:
+            return (f"Nach {limit // 60} Minuten läuft noch immer ein anderer Paketvorgang ({', '.join(who)}). Später "
+                    "noch einmal.")
+        time.sleep(APT_POLL)
+        who = apt_busy()
+    print("Der andere Paketvorgang ist fertig.")
+    return None
+
+
+def dpkg_interrupted():
+    """Hat ein abgebrochener dpkg-Lauf sein Journal hinterlassen (Dateien mit reinen Ziffern in /var/lib/dpkg/updates)?
+    Dann verweigert apt alles bis «dpkg --configure -a»."""
+    try:
+        names = os.listdir(DPKG_UPDATES)
+    except OSError:
+        return False
+    return any(re.fullmatch(r"[0-9]+", n) for n in names)
+
+
+def dpkg_repair():
+    """Holt «dpkg --configure -a» nach, wenn dpkg mittendrin unterbrochen wurde (Strom, kill). Grund, wenn dpkg danach
+    noch unterbrochen ist, sonst None. Vorher hat wait_for_apt gewartet."""
+    if not dpkg_interrupted():
+        return None
+    if any(lock_held(p) for p in DPKG_LOCKS):
+        return "Ein anderer Paketvorgang hält dpkg, und dpkg ist unterbrochen. Später noch einmal."
+    print("dpkg wurde unterbrochen: dpkg --configure -a …")
+    rc = run_visible([DPKG, "--configure", "-a"], apt_env(), timeout=DPKG_TIMEOUT)
+    if dpkg_interrupted():
+        return (f"dpkg ist unterbrochen, und «dpkg --configure -a» endete mit Exit {rc}. Erst reparieren: sudo dpkg "
+                "--configure -a")
+    return None
+
+
+def base_name(name):
+    return name.split(":", 1)[0]
+
+
+def parse_sources(rest):
+    """«Ubuntu:26.04/resolute-updates, Ubuntu:26.04/resolute-security [arm64]» → (Quellen, Architektur). Eine Quelle
+    ist (Herkunft, Tasche)."""
+    rest = rest.strip()
+    m = re.fullmatch(r"(?P<sources>.*?)\s*\[(?P<arch>[a-z0-9]+)\]", rest)
+    if not m:
+        raise Failure(f"Quelle in der Ausgabe von apt nicht verstanden: {short(rest)}")
+    sources = []
+    for item in [s.strip() for s in m.group("sources").split(", ") if s.strip()]:
+        origin, _, archive = item.rpartition("/")
+        origin = origin.split(":", 1)[0] if ":" in origin else origin
+        sources.append((short(origin, 60), short(archive, 60)))
+    return sources, m.group("arch")
+
+
+def parse_simulation(text):
+    """Zeilen «Inst» und «Remv»/«Purg» aus «LC_ALL=C apt-get -s full-upgrade»: (Pakete, Entfernungen). Ein Paket ist
+    {name, arch, alt, neu, tasche, herkunft, sicherheit}; eine Entfernung {name, alt}. Eine Zeile, die so beginnt, aber
+    nicht passt: Failure (lieber nichts als etwas Falsches installieren)."""
+    packages, removals = [], []
+    for line in text.split("\n"):
+        line = line.rstrip()
+        if line.startswith("Inst "):
+            m = INST_RE.fullmatch(line)
+            if not m:
+                raise Failure(f"Zeile von apt nicht verstanden: {short(line, 120)}")
+            sources, arch = parse_sources(m.group("rest"))
+            archives = [a for _, a in sources]
+            security = any(a.endswith("-security") for a in archives)
+            pocket = next((a for a in archives if a.endswith("-security")), archives[0] if archives else "")
+            origin = sources[0][0] if sources else ""
+            packages.append({"name": m.group("name"), "arch": arch, "alt": m.group("old"), "neu": m.group("new"),
+                             "tasche": pocket, "herkunft": origin, "sicherheit": security})
+        elif line.startswith("Remv ") or line.startswith("Purg "):
+            m = REMV_RE.fullmatch(line)
+            if not m:
+                raise Failure(f"Zeile von apt nicht verstanden: {short(line, 120)}")
+            removals.append({"name": m.group("name"), "alt": m.group("old")})
+    return packages, removals
+
+
+def list_hash(packages, removals):
+    """Hash der Liste: SHA-256 über die sortierten Einträge (Name, alt, neu, Architektur bzw. Entfernung), die ersten
+    40 Zeichen. Unabhängig von der Reihenfolge, in der apt sie nennt."""
+    entries = [f"inst {p['name']} {p['alt'] or '-'} {p['neu']} {p['arch']}" for p in packages]
+    entries += [f"remv {r['name']} {r['alt'] or '-'}" for r in removals]
+    return hashlib.sha256("\n".join(sorted(entries)).encode("utf-8")).hexdigest()[:40]
+
+
+def is_heikel(name):
+    name = base_name(name)
+    return any(fnmatch.fnmatchcase(name, pattern) for pattern in HEIKEL)
+
+
+def zenos_packages():
+    """Pakete aus /opt/zenos/scripts/pakete/*.txt (auch die Build-Abhängigkeiten von Quickshell)."""
+    folder = os.path.join(CODE_DIR, "scripts", "pakete")
+    found = set()
+    try:
+        names = sorted(n for n in os.listdir(folder) if n.endswith(".txt"))
+    except OSError:
+        return found
+    for name in names:
+        try:
+            text = read_small(os.path.join(folder, name), limit=1 << 20)
+        except (FileNotFoundError, Failure):
+            continue
+        for line in text.split("\n"):
+            for word in line.split("#", 1)[0].split():
+                if PACKAGE_RE.fullmatch(base_name(word)):
+                    found.add(base_name(word))
+    return found
+
+
+def manual_packages():
+    """Als manuell installiert markierte Pakete (apt-mark showmanual). Failure, wenn apt-mark scheitert: Dann ist
+    unklar, was geschützt ist."""
+    r = run([APT_MARK, "showmanual"], env=apt_env(simulate=True), timeout=SIMULATE_TIMEOUT)
+    if r.returncode != 0:
+        raise Failure(f"apt-mark showmanual endete mit Exit {r.returncode}: {first_line(r.stderr)}")
+    return {base_name(w) for w in r.stdout.split() if PACKAGE_RE.fullmatch(base_name(w))}
+
+
+def protected_packages():
+    return set(PROTECTED) | zenos_packages() | manual_packages()
+
+
+def simulate():
+    """«apt-get -s full-upgrade» (ohne autoremove, ohne Netz, sperrt nichts). Ausgabe, Failure bei einem Fehler."""
+    r = run([APT_GET, "-s", "-o", "APT::Get::AutomaticRemove=false", "full-upgrade"], env=apt_env(simulate=True),
+            timeout=SIMULATE_TIMEOUT)
+    if r.returncode != 0:
+        raise Failure(f"apt-get -s full-upgrade endete mit Exit {r.returncode}: "
+                      f"{first_line(r.stderr) or first_line(r.stdout)}")
+    return r.stdout
+
+
+def evaluate(text, protected, checked=None, error=None):
+    """Stand aus der Ausgabe von apt-get -s: Pakete, Sicherheit, heikel, Entfernungen, geschützt, Neustart
+    voraussichtlich, Hash, Ergebnis (aktuell, bereit, zustimmung, gesperrt, fehler) und Grund."""
+    packages, removals = parse_simulation(text)
+    for p in packages:
+        p["heikel"] = is_heikel(p["name"])
+    heikel = sorted({p["name"] for p in packages if p["heikel"]})
+    removed = sorted({r["name"] for r in removals})
+    blocked = sorted({r["name"] for r in removals if base_name(r["name"]) in protected})
+    restart = sorted({p["name"] for p in packages if p["heikel"] or base_name(p["name"]) in RESTART_PACKAGES})
+    stand = {
+        "version": 1, "zeit": iso(now()), "geprueft": checked, "fehler": error, "ergebnis": None, "grund": "",
+        "liste": list_hash(packages, removals), "anzahl": len(packages),
+        "sicherheit": sum(1 for p in packages if p["sicherheit"]), "heikel": heikel, "entfernen": removed,
+        "geschuetzt": blocked, "neustart": bool(restart), "neustart_wegen": restart,
+        "pakete": sorted(packages, key=lambda p: p["name"]), "entfernungen": sorted(removals, key=lambda r: r["name"]),
+    }
+    stand["ergebnis"], stand["grund"] = verdict(stand)
+    return stand
+
+
+def failed_stand(reason, checked=None):
+    """Stand, wenn sich nichts auswerten liess (apt-get -s oder apt-mark scheiterten)."""
+    return {"version": 1, "zeit": iso(now()), "geprueft": checked, "fehler": reason, "ergebnis": "fehler",
+            "grund": f"Prüfung gescheitert: {reason}", "liste": None, "anzahl": None, "sicherheit": None, "heikel": [], "entfernen": [],
+            "geschuetzt": [], "neustart": False, "neustart_wegen": [], "pakete": [], "entfernungen": []}
+
+
+def count_text(stand):
+    """«12 Updates (3 Sicherheit, Kernel/Firmware/Bootloader, 1 Entfernung)» bzw. «keine Updates»."""
+    n = stand.get("anzahl") or 0
+    parts = []
+    if stand.get("sicherheit"):
+        parts.append(f"{stand['sicherheit']} Sicherheit")
+    if stand.get("heikel"):
+        parts.append("Kernel/Firmware/Bootloader")
+    if stand.get("entfernen"):
+        parts.append(plural(len(stand["entfernen"]), "Entfernung", "Entfernungen"))
+    if not n and not stand.get("entfernen"):
+        return "keine Updates"
+    return plural(n, "Update", "Updates") + (f" ({', '.join(parts)})" if parts else "")
+
+
+def verdict(stand):
+    """(Ergebnis, Grund) einer Auswertung."""
+    if stand.get("fehler"):
+        return "fehler", f"Prüfung gescheitert: {stand['fehler']}"
+    if stand.get("geschuetzt"):
+        return "gesperrt", (f"{count_text(stand)}: apt würde geschützte Pakete entfernen ({names_text(stand['geschuetzt'])})."
+                            " zenOS installiert das nicht, auch nicht mit Zustimmung; prüfen: apt-get -s full-upgrade")
+    if not stand.get("anzahl") and not stand.get("entfernen"):
+        return "aktuell", "Die Ubuntu-Basis ist aktuell."
+    if stand.get("heikel") or stand.get("entfernen"):
+        what = []
+        if stand.get("heikel"):
+            what.append(f"Kernel, Firmware oder Bootloader ({names_text(stand['heikel'])})")
+        if stand.get("entfernen"):
+            what.append(f"Entfernungen ({names_text(stand['entfernen'])})")
+        return "zustimmung", f"{count_text(stand)}; braucht eine Zustimmung: {' und '.join(what)}."
+    return "bereit", f"{count_text(stand)} bereit."
+
+
+def evaluate_now(checked=None, error=None):
+    """Auswertung von jetzt (ohne Netz). Failure, wenn apt oder apt-mark scheitern."""
+    return evaluate(simulate(), protected_packages(), checked, error)
+
+
+def stand_lines(stand):
+    """Zusammenfassung für Terminal und Journal."""
+    lines = [f"Ubuntu-Basis: {stand.get('grund') or count_text(stand)}"]
+    if stand.get("ergebnis") == "fehler" and stand.get("liste") is None:
+        return lines
+    lines.append(f"  Updates: {stand.get('anzahl') or 0}, davon Sicherheit: {stand.get('sicherheit') or 0}")
+    lines.append(f"  Kernel, Firmware, Bootloader: {names_text(stand['heikel']) if stand.get('heikel') else 'nein'}")
+    lines.append(f"  Entfernungen: {names_text(stand['entfernen']) if stand.get('entfernen') else 'keine'}")
+    if stand.get("neustart"):
+        lines.append(f"  Neustart voraussichtlich nötig ({names_text(stand.get('neustart_wegen') or [])})")
+    vendors = sorted({p.get("herkunft") for p in stand.get("pakete") or [] if p.get("herkunft") not in ("Ubuntu", "")})
+    if vendors:
+        lines.append(f"  Auch aus Herstellerquellen: {names_text(vendors)}")
+    if stand.get("liste"):
+        lines.append(f"  Liste {stand['liste']}")
+    return lines
+
+
+# --- Prüfen ----------------------------------------------------------------------------------------------------
+
+
+def cmd_check(argv):
+    if argv:
+        print(f"{NAME} pruefen: keine Argumente erwartet", file=sys.stderr)
+        return EXIT_USAGE
+    if not is_root():
+        print(f"{NAME} pruefen: nur als root (zenos-basis-pruefen.service)", file=sys.stderr)
+        return EXIT_USAGE
+    os.umask(0o022)
+    try:
+        prepare_state()
+    except Failure as e:
+        print(f"{NAME}: {e}", file=sys.stderr)
+        return EXIT_ERROR
+    lock = lock_or_exit()
+    if not isinstance(lock, Locked):
+        return lock
+    try:
+        pid = hand_run()
+        if pid:
+            print(f"{NAME}: Ein install.sh von Hand läuft gerade (PID {pid}); danach noch einmal.", file=sys.stderr)
+            return EXIT_BUSY
+        busy = wait_for_apt()
+        if busy:
+            print(f"{NAME}: {busy}", file=sys.stderr)
+            return EXIT_BUSY
+        t = now()
+        print("Paketlisten aktualisieren (apt-get update) …")
+        rc = run_visible([APT_GET, "-q", "update"], apt_env(), timeout=UPDATE_TIMEOUT)
+        previous = load_json(state_path(STAND)) or {}
+        checked = iso(t) if rc == 0 else previous.get("geprueft")
+        error = None if rc == 0 else f"apt-get update endete mit Exit {rc} (Netz oder Paketserver?)"
+        try:
+            stand = evaluate_now(checked, error)
+        except Failure as e:
+            stand = failed_stand(str(e) if not error else f"{error}; {e}", checked)
+        write_json(state_path(STAND), stand)
+    finally:
+        lock.release()
+    for line in stand_lines(stand):
+        print(line)
+    journal(f"geprüft: {stand['ergebnis']} – {stand['grund']}")
+    return {"fehler": EXIT_ERROR, "gesperrt": EXIT_REFUSED}.get(stand["ergebnis"], EXIT_OK)
+
+
+# --- Installieren ----------------------------------------------------------------------------------------------
+
+
+def write_order(liste, consent, origin):
+    """Auftrag für zenos-basis-installieren.service (root): genau diese Liste, mit oder ohne Zustimmung."""
+    if not LIST_RE.fullmatch(str(liste)) or origin not in ORIGINS:
+        raise Failure("ungültiger Auftrag")
+    write_json(state_path(ORDER), {"version": 1, "liste": liste, "zustimmung": bool(consent), "von": origin, **stamp()})
+
+
+def take_order(t):
+    """Auftrag aus auftrag.json (danach weg): {liste, zustimmung, von}. Failure, wenn er fehlt, ungültig oder älter als
+    eine Stunde ist."""
+    order = load_json(state_path(ORDER))
+    with contextlib.suppress(FileNotFoundError):
+        os.unlink(state_path(ORDER))
+    if order is None:
+        raise Failure("Kein Auftrag: zen update oder die Einstellungen stellen einen.")
+    if not LIST_RE.fullmatch(str(order.get("liste"))) or not isinstance(order.get("zustimmung"), bool) \
+            or order.get("von") not in ORIGINS:
+        raise Failure("Auftrag unbrauchbar.")
+    if not fresh(order, t):
+        raise Failure("Auftrag älter als eine Stunde. Noch einmal: zen update.")
+    return {"liste": order["liste"], "zustimmung": order["zustimmung"], "von": order["von"]}
+
+
+def policy_is_own(path, marks=(POLICY_MARK,)):
+    """Trägt die policy-rc.d PATH eine der Markierungen MARKS in den ersten Zeilen?"""
+    try:
+        text = read_small(path, limit=1 << 16)
+    except (FileNotFoundError, Failure):
+        return False
+    return any(mark in text.split("\n")[:3] for mark in marks)
+
+
+@contextlib.contextmanager
+def greetd_policy(notes):
+    """apt-Optionen für eine policy-rc.d, die nur greetd vom Neustart abhält, solange apt die dpkg-Sperre hält
+    (DPkg::Pre-Invoke setzt sie ein, DPkg::Post-Invoke nimmt sie weg, auch nach einem Fehler von dpkg). Eine fremde
+    policy-rc.d bleibt unangetastet (dann ohne eigene Richtlinie); eine von zenOS aus einem abgebrochenen Lauf fliegt."""
+    if os.path.lexists(POLICY_FILE):
+        if not policy_is_own(POLICY_FILE, (POLICY_MARK, INSTALL_POLICY_MARK)):
+            notes.append(f"{POLICY_FILE} gehört nicht zenOS: ohne eigene Richtlinie, greetd könnte neu starten")
+            yield []
+            return
+        # Rest eines abgebrochenen Laufs (zenos-basis oder install.sh): gälte sonst für dieses Update
+        os.unlink(POLICY_FILE)
+    folder = tempfile.mkdtemp(prefix="policy.", dir=RUNTIME_DIR)
+    try:
+        if not POLICY_DIR_RE.fullmatch(folder):
+            raise Failure(f"Unerwarteter Ordner für die policy-rc.d: {folder}")
+        source = os.path.join(folder, "policy-rc.d")
+        write_atomic(source, POLICY_TEXT, 0o755)
+        # apt führt diese Befehle mit /bin/sh aus; sie enthalten nur feste Pfade und den geprüften Ordner
+        yield ["-o", f"DPkg::Pre-Invoke::=[ -e {POLICY_FILE} ] || install -m 0755 {source} {POLICY_FILE}",
+               "-o", f"DPkg::Post-Invoke::=if cmp -s {source} {POLICY_FILE}; then rm -f {POLICY_FILE}; fi"]
+    finally:
+        if policy_is_own(POLICY_FILE):
+            with contextlib.suppress(OSError):
+                os.unlink(POLICY_FILE)
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+@contextlib.contextmanager
+def inhibitor(why):
+    """Block-Inhibitor für Ausschalten und Ruhezustand, solange der Block läuft (wie zenos-kanal). Ohne logind geht es
+    ohne."""
+    if not os.path.isdir(SYSTEMD_RUN_DIR) or not os.access(SYSTEMD_INHIBIT, os.X_OK):
+        yield False
+        return
+    proc = subprocess.Popen([SYSTEMD_INHIBIT, "--what=shutdown:sleep", "--mode=block", "--who=zenOS", f"--why={why}",
+                             SLEEP, "infinity"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.PIPE, env={"PATH": SYSTEM_PATH, "LANG": "C.UTF-8"})
+    time.sleep(0.5)
+    if proc.poll() is not None:
+        print(f"{NAME}: ohne Inhibitor: {first_line(proc.stderr.read().decode('utf-8', 'replace'))}", file=sys.stderr)
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+
+
+def seat_uids():
+    """Benutzer mit einer Sitzung von Menschen auf seat0 (logind, Klasse user…)."""
+    if not os.path.isdir(SYSTEMD_RUN_DIR):
+        return []
+    r = run([LOGINCTL, "list-sessions", "--json=short", "--no-pager"], env=systemd_env())
+    try:
+        items = json.loads(r.stdout) if r.returncode == 0 else []
+    except ValueError:
+        items = []
+    uids = set()
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict) or item.get("seat") != "seat0":
+            continue
+        uid, kind = item.get("uid"), item.get("class")
+        if isinstance(uid, int) and not isinstance(uid, bool) and (kind is None or str(kind).startswith("user")):
+            uids.add(uid)
+    return sorted(uids)
+
+
+def session_notify(what):
+    """«zenos-ipc kanal uebernahme WHAT» als jeder Benutzer auf seat0 (setpriv ohne neue Rechte, feste Argumente): Die
+    Oberfläche lädt während der Übernahme nicht nach und richtet danach die Benutzerteile ein (startet neu, wenn sich
+    Quickshell geändert hat). Dieselbe Übernahme wie beim Kanal. Ein Fehler hält nichts auf."""
+    if not os.path.isdir(SYSTEMD_RUN_DIR):
+        return
+    ipc = os.path.join(CODE_DIR, "scripts", "bin", "zenos-ipc")
+    if not os.access(SETPRIV, os.X_OK) or not os.path.isfile(ipc):
+        return
+    for uid in seat_uids():
+        try:
+            account = pwd.getpwuid(uid)
+        except KeyError:
+            continue
+        run([SETPRIV, f"--reuid={uid}", f"--regid={account.pw_gid}", "--init-groups", "--no-new-privs", "--", ipc,
+             "kanal", "uebernahme", what], env={"PATH": USER_PATH, "HOME": account.pw_dir,
+                                                "XDG_RUNTIME_DIR": os.path.join(RUN_USER, str(uid)), "LANG": "C.UTF-8"},
+            timeout=20)
+
+
+@contextlib.contextmanager
+def takeover(liste):
+    """/run/zenos-basis/uebernahme, solange apt und install.sh laufen: Einstellungen, System-Menü und Login zeigen
+    «Update läuft», die Oberfläche lädt nicht nach (session_notify)."""
+    flag = os.path.join(RUNTIME_DIR, TAKEOVER)
+    made = False
+    if os.path.isdir(RUNTIME_DIR) and not path_problem(RUNTIME_DIR):
+        write_atomic(flag, f"{liste}\n")
+        made = True
+    session_notify("beginn")
+    try:
+        yield
+    finally:
+        if made:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(flag)
+        session_notify("ende")
+
+
+def package_state():
+    """Installierte Pakete {Name: Version} (dpkg-query; Name wie dpkg ihn nennt, auch mit Architektur)."""
+    r = run([DPKG_QUERY, "-W", "-f=${binary:Package}\t${Version}\t${db:Status-Status}\n"],
+            env=apt_env(simulate=True), timeout=CHECK_TIMEOUT)
+    state = {}
+    for line in r.stdout.split("\n"):
+        parts = line.split("\t")
+        if len(parts) == 3 and parts[2] not in ("not-installed", "config-files", ""):
+            state[parts[0]] = parts[1]
+    return state
+
+
+def native_arch():
+    """Architektur des Systems (dpkg --print-architecture), "" wenn unbekannt."""
+    r = run([DPKG, "--print-architecture"], env=apt_env(simulate=True))
+    arch = r.stdout.strip()
+    return arch if r.returncode == 0 and re.fullmatch(r"[a-z0-9]{1,16}", arch) else ""
+
+
+def package_key(name, native):
+    """Name wie apt ihn nennt: ohne die eigene Architektur (dpkg-query schreibt «libc6:arm64» für Multi-Arch: same),
+    mit einer fremden («libc6:armhf»)."""
+    base, _, arch = name.partition(":")
+    return base if arch in ("", native) else name
+
+
+def changes_between(before, after, native=""):
+    """[(Name, alt oder None, neu oder None)] für jedes Paket, das kam, ging oder sich änderte."""
+    b = {package_key(k, native): v for k, v in before.items()}
+    a = {package_key(k, native): v for k, v in after.items()}
+    return [(n, b.get(n), a.get(n)) for n in sorted(set(b) | set(a)) if b.get(n) != a.get(n)]
+
+
+def mark_reboot(package):
+    """Trägt PACKAGE in /run/reboot-required(.pkgs) ein wie notify-reboot-required von Ubuntu (zen doctor, die
+    Begrüssung und die Oberfläche lesen es). /run ist nach dem Neustart leer."""
+    if not os.path.exists(REBOOT_FILE):
+        write_atomic(REBOOT_FILE, "*** System restart required ***\n")
+    try:
+        listed = read_small(REBOOT_PKGS, limit=1 << 20).split("\n")
+    except (FileNotFoundError, Failure):
+        listed = []
+    if package not in listed:
+        write_atomic(REBOOT_PKGS, "".join(f"{p}\n" for p in listed if p) + f"{package}\n")
+
+
+def reboot_state():
+    """(Neustart nötig?, Pakete) aus /run/reboot-required und .pkgs."""
+    if not os.path.exists(REBOOT_FILE):
+        return False, []
+    try:
+        listed = read_small(REBOOT_PKGS, limit=1 << 20).split("\n")
+    except (FileNotFoundError, Failure):
+        listed = []
+    return True, sorted({p.strip() for p in listed if PACKAGE_RE.fullmatch(p.strip())})
+
+
+# --- Gesundheit ------------------------------------------------------------------------------------------------
+
+
+def greetd_failed():
+    if not os.path.isdir(SYSTEMD_RUN_DIR):
+        return None
+    return run([SYSTEMCTL, "is-failed", "--quiet", "greetd.service"], env=systemd_env()).returncode == 0
+
+
+def quickshell_exit():
+    if not os.path.exists(QUICKSHELL):
+        return None
+    return run([QUICKSHELL, "--version"], env=install_env()).returncode
+
+
+def failed_units():
+    """Ausgefallene Units ohne die von zenOS-Basis und Kanal (deren Ergebnis steht in ihrem Zustand; eine Automatik, die
+    während des Laufs an der Sperre scheitert, ist kein Schaden des Updates). None ohne systemd oder wenn systemctl
+    scheitert."""
+    if not os.path.isdir(SYSTEMD_RUN_DIR):
+        return None
+    r = run([SYSTEMCTL, "list-units", "--state=failed", "--all", "--plain", "--no-legend", "--no-pager"],
+            env=systemd_env())
+    if r.returncode != 0:
+        return None
+    units = set()
+    for line in r.stdout.split("\n"):
+        parts = line.replace("●", " ").split()
+        if parts and not parts[0].startswith(("zenos-basis-", "zenos-kanal-")):
+            units.add(parts[0])
+    return sorted(units)
+
+
+def doctor_errors():
+    """Anzahl Fehler von «zen doctor --kurz» als root (der Systemteil), None, wenn sie sich nicht lesen lässt."""
+    zen = os.path.join(CODE_DIR, "scripts", "zen")
+    if not os.path.isfile(zen):
+        return None
+    r = run([zen, "doctor", "--kurz"], env={"PATH": INSTALL_PATH, "HOME": "/root", "LANG": "C.UTF-8"},
+            timeout=DOCTOR_TIMEOUT)
+    found = DOCTOR_RE.findall(r.stdout)
+    return int(found[-1]) if found else None
+
+
+def health_baseline():
+    """Zustand vor apt: Was vorher schon kaputt war, legt die Gesundheitsprüfung dem Update nicht zur Last."""
+    return {"quickshell_exit": quickshell_exit(), "greetd_ausgefallen": greetd_failed(),
+            "ausgefallen": failed_units(), "doctor_fehler": doctor_errors()}
+
+
+def result_marks():
+    """Zeilen «== Beginn …» und «== Ende …» aus dem eigenen Ergebnis von install.sh (nur root-eigen zählt)."""
+    try:
+        text = read_small(state_path(INSTALL_RESULT), trusted=True)
+    except (FileNotFoundError, Failure):
+        return []
+    return [z for z in text.split("\n") if z.startswith("== Beginn ") or z.startswith("== Ende ")]
+
+
+def marks_ok(marks):
+    """Steht nach dem letzten Beginn eines normalen Laufs dessen Abschluss mit «ok»?"""
+    begins = [i for i, z in enumerate(marks) if z.startswith("== Beginn ") and " · normal · " in z]
+    if not begins:
+        return False
+    return any(z.startswith("== Ende ") and " · normal · ok · " in z for z in marks[begins[-1] + 1:])
+
+
+def health_problems(baseline, install_rc):
+    """Was nach dem Update schlechter ist als vorher (leer: gesund). install_rc None: install.sh lief nicht."""
+    problems = []
+    if dpkg_interrupted():
+        problems.append("dpkg ist unterbrochen (sudo dpkg --configure -a)")
+    if install_rc is not None:
+        if install_rc != 0:
+            problems.append(f"install.sh endete mit Exit {install_rc}")
+        if not marks_ok(result_marks()):
+            problems.append("im Ergebnis von install.sh fehlt «== Ende … ok»")
+    rc = quickshell_exit()
+    if rc not in (None, 0) and baseline.get("quickshell_exit") in (None, 0):
+        problems.append(f"quickshell --version endet mit Exit {rc}")
+    if greetd_failed() and not baseline.get("greetd_ausgefallen"):
+        problems.append("greetd ist ausgefallen (journalctl -u greetd)")
+    after = failed_units()
+    if after is not None and baseline.get("ausgefallen") is not None:
+        new = [u for u in after if u not in baseline["ausgefallen"]]
+        if new:
+            problems.append(f"neu ausgefallen: {names_text(new)} (systemctl --failed)")
+    errors = doctor_errors()
+    if errors is not None and baseline.get("doctor_fehler") is not None and errors > baseline["doctor_fehler"]:
+        problems.append(f"zen doctor meldet {errors} Fehler statt {baseline['doctor_fehler']} (sudo zen doctor)")
+    return problems
+
+
+# --- Log -------------------------------------------------------------------------------------------------------
+
+
+class RunLog:
+    """/var/log/zenos/basis.log: root-eigen (0640, Gruppe adm), nur zum Nachsehen, kein Rückweg. Über 2 MiB bleiben die
+    letzten 512 KiB."""
+
+    def __init__(self):
+        self.ok = False
+        with contextlib.suppress(OSError, Failure):
+            self.prepare()
+            self.ok = True
+
+    def prepare(self):
+        folder = os.path.dirname(LOG_FILE)
+        os.makedirs(folder, mode=0o755, exist_ok=True)
+        if path_problem(folder):
+            raise Failure(path_problem(folder))
+        with contextlib.suppress(FileNotFoundError):
+            st = os.lstat(LOG_FILE)
+            if not stat.S_ISREG(st.st_mode) or st.st_uid not in TRUSTED_UIDS:
+                os.unlink(LOG_FILE)
+            elif st.st_size > MAX_LOG:
+                with open(LOG_FILE, "rb") as f:
+                    f.seek(-KEEP_LOG, os.SEEK_END)
+                    rest = f.read()
+                write_atomic(LOG_FILE, rest.decode("utf-8", "replace"), 0o640)
+        fd = os.open(LOG_FILE, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+                     0o640)
+        try:
+            os.fchmod(fd, 0o640)
+            if os.geteuid() == 0:
+                gid = 0
+                with contextlib.suppress(KeyError):
+                    gid = grp.getgrnam("adm").gr_gid
+                os.fchown(fd, 0, gid)
+        finally:
+            os.close(fd)
+
+    def write(self, *lines):
+        if not self.ok:
+            return
+        try:
+            fd = os.open(LOG_FILE, os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0))
+        except OSError:
+            return
+        try:
+            data = "".join(f"{z}\n" for z in lines).encode("utf-8", "replace")
+            while data:
+                data = data[os.write(fd, data):]
+        finally:
+            os.close(fd)
+
+
+def log_stamp():
+    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+# --- Installation ----------------------------------------------------------------------------------------------
+
+
+class Installation:
+    """Ein Lauf von «installieren» für einen Auftrag {liste, zustimmung, von}. Schreibt letzte.json nur, wenn apt lief
+    (eine Ablehnung überschriebe sonst ein «kaputt»)."""
+
+    def __init__(self, order):
+        self.order = order
+        self.t = now()
+        self.stop_requested = False
+        self.attempted = False
+        self.current = None
+        self.result = {"version": 1, "ergebnis": None, "grund": "", "beginn": iso(self.t), "ende": None,
+                       "liste": order["liste"], "von": order["von"], "zustimmung": order["zustimmung"],
+                       "anzahl": None, "sicherheit": None, "heikel": [], "entfernt": [], "geaendert": None,
+                       "mehr": [], "neustart": False, "neustart_wegen": [], "probleme": [], "hinweise": []}
+
+    def finish(self, result, reason, code):
+        self.result.update(ergebnis=result, grund=reason, ende=iso(now()))
+        return code
+
+    def run(self):
+        problem = channel_problem()
+        if problem:
+            return self.finish("wartet", problem, EXIT_WAIT)
+        stand = load_json(state_path(STAND))
+        liste = self.order["liste"]
+        if stand is None:
+            return self.finish("abgelehnt", "Noch keine Prüfung: zen update prüft zuerst.", EXIT_REFUSED)
+        if stand.get("liste") != liste:
+            return self.finish("abgelehnt", "Die Liste ist nicht mehr die der letzten Prüfung. Noch einmal prüfen.",
+                               EXIT_REFUSED)
+        if stand.get("fehler"):
+            return self.finish("abgelehnt", "Die letzte Prüfung ist gescheitert. Noch einmal prüfen.", EXIT_REFUSED)
+        busy = wait_for_apt()
+        if busy:
+            return self.finish("wartet", busy, EXIT_BUSY)
+        problem = dpkg_repair()
+        if problem:
+            return self.finish("fehler", problem, EXIT_ERROR)
+        current = evaluate_now(stand.get("geprueft"))
+        self.current = current
+        if current["liste"] != liste:
+            write_json(state_path(STAND), current)
+            return self.finish("abgelehnt", f"Seit der Prüfung hat sich die Liste geändert (jetzt "
+                               f"{count_text(current)}). Noch einmal ansehen und bestätigen.", EXIT_REFUSED)
+        if current["geschuetzt"]:
+            return self.finish("abgelehnt", current["grund"], EXIT_REFUSED)
+        if not current["anzahl"] and not current["entfernen"]:
+            return self.finish("aktuell", "Nichts zu installieren: Die Ubuntu-Basis ist aktuell.", EXIT_OK)
+        if (current["heikel"] or current["entfernen"]) and not self.order["zustimmung"]:
+            return self.finish("wartet", current["grund"], EXIT_WAIT)
+        if self.stop_requested:
+            return self.finish("wartet", "Stopp verlangt (Ausschalten?), bevor apt begann; nichts geändert.",
+                               EXIT_WAIT)
+        return self.install(current)
+
+    def install(self, current):
+        liste = current["liste"]
+        self.attempted = True
+        self.result.update(anzahl=current["anzahl"], sicherheit=current["sicherheit"], heikel=current["heikel"],
+                           entfernt=current["entfernen"])
+        baseline = health_baseline()
+        before = package_state()
+        log = RunLog()
+        log.write("", f"== Beginn {log_stamp()} · Liste {liste} · {count_text(current)} · von {self.order['von']}"
+                      f"{' · mit Zustimmung' if self.order['zustimmung'] else ''}",
+                  f"-- Paketstand vorher (dpkg-query, {len(before)} Pakete)",
+                  *[f"{k} {v}" for k, v in sorted(before.items())])
+        script = os.path.join(CODE_DIR, "scripts", "install.sh")
+        install_rc = None
+        print(f"apt-get full-upgrade: {count_text(current)} …")
+        journal(f"installiere {count_text(current)}, Liste {liste}")
+        with inhibitor(f"Ubuntu-Basis wird aktualisiert ({count_text(current)})"), takeover(liste):
+            with greetd_policy(self.result["hinweise"]) as policy:
+                apt_rc = run_visible([APT_GET, "-q", "-y", "-o", "DPkg::Lock::Timeout=300",
+                                      "-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold",
+                                      "-o", "APT::Get::AutomaticRemove=false", *policy, "full-upgrade"], apt_env())
+            after_apt = package_state()
+            log.write(f"-- apt-get full-upgrade: Exit {apt_rc}")
+            if apt_rc == 0:
+                problem = path_problem(script)
+                if problem:
+                    self.result["probleme"].append(f"install.sh nicht gestartet: {problem}")
+                else:
+                    print("install.sh aus /opt/zenos (Quickshell neu bauen, wenn sich Qt geändert hat) …")
+                    with contextlib.suppress(FileNotFoundError):
+                        os.unlink(state_path(INSTALL_RESULT))
+                    install_rc = run_visible([script, "--ruhig"], install_env())
+                    log.write(f"-- install.sh: Exit {install_rc}")
+        native = native_arch()
+        changes = changes_between(before, after_apt, native)
+        shown = {package_key(p["name"], native) for p in current["pakete"]}
+        shown |= {package_key(n, native) for n in current["entfernen"]}
+        more = [n for n, _, _ in changes if n not in shown]
+        self.result.update(geaendert=len(changes), mehr=more)
+        log.write(f"-- Änderungen ({len(changes)})",
+                  *[f"{n} {old or '(neu)'} → {new or '(entfernt)'}" for n, old, new in changes])
+        if more:
+            self.result["hinweise"].append(f"apt änderte mehr als die angezeigte Liste: {names_text(more)}")
+        greetd_before = {package_key(k, native): v for k, v in before.items()}.get(GREETD)
+        greetd_after = {package_key(k, native): v for k, v in after_apt.items()}.get(GREETD)
+        if greetd_after and greetd_before and greetd_after != greetd_before:
+            with contextlib.suppress(OSError):
+                mark_reboot(GREETD)
+            self.result["hinweise"].append("Neue greetd-Version: Sie gilt erst nach einem Neustart (der laufende "
+                                           "Login blieb unberührt).")
+        problems = self.result["probleme"] + health_problems(baseline, install_rc)
+        self.result["probleme"] = problems
+        reboot, wegen = reboot_state()
+        self.result.update(neustart=reboot, neustart_wegen=wegen)
+        if self.stop_requested:
+            self.result["hinweise"].append("Während apt kam ein Stopp (Ausschalten?); apt und install.sh liefen zu "
+                                           "Ende.")
+        restart_note = " Neustart nötig." if reboot else ""
+        if apt_rc != 0:
+            code = self.finish("fehler", f"apt-get full-upgrade endete mit Exit {apt_rc}; nichts zurückgerollt"
+                               f"{', ' + plural(len(changes), 'Paket', 'Pakete') + ' geändert' if changes else ''}"
+                               f"{'; ' + '; '.join(problems) if problems else ''}. Einzelheiten: journalctl -u "
+                               f"zenos-basis-installieren, /var/log/apt/term.log.{restart_note}", EXIT_ERROR)
+        elif problems:
+            code = self.finish("kaputt", f"Nach dem Update schlechter als vorher: {'; '.join(problems)}. Nichts "
+                               "zurückgerollt; Einzelheiten: journalctl -u zenos-basis-installieren, "
+                               f"/var/log/zenos/basis.log.{restart_note}", EXIT_BROKEN)
+        else:
+            code = self.finish("installiert", f"{plural(len(changes), 'Paket', 'Pakete')} aktualisiert, gesund."
+                               f"{restart_note}", EXIT_OK)
+        log.write(*[f"-- Problem: {p}" for p in problems], *[f"-- Hinweis: {h}" for h in self.result["hinweise"]],
+                  f"== Ende {log_stamp()} · {self.result['ergebnis']}")
+        return code
+
+
+def refresh_stand(previous):
+    """stand.json nach einer Installation neu auswerten (ohne Netz, die Paketlisten sind dieselben)."""
+    try:
+        stand = evaluate_now((previous or {}).get("geprueft"))
+    except Failure as e:
+        stand = failed_stand(f"Auswertung nach dem Update: {e}", (previous or {}).get("geprueft"))
+    write_json(state_path(STAND), stand)
+
+
+def cmd_install(argv):
+    order = None
+    if argv:
+        consent = "--zustimmung" in argv[2:]
+        if len(argv) not in (2, 3) or argv[0] != "--liste" or not LIST_RE.fullmatch(argv[1]) \
+                or (len(argv) == 3 and not consent):
+            print(f"{NAME} installieren [--liste HASH [--zustimmung]]", file=sys.stderr)
+            return EXIT_USAGE
+        order = {"liste": argv[1], "zustimmung": consent, "von": "hand"}
+    if not is_root():
+        print(f"{NAME} installieren: nur als root (zen update)", file=sys.stderr)
+        return EXIT_USAGE
+    os.umask(0o022)
+    try:
+        prepare_state()
+    except Failure as e:
+        print(f"{NAME}: {e}", file=sys.stderr)
+        return EXIT_ERROR
+    lock = lock_or_exit()
+    if not isinstance(lock, Locked):
+        return lock
+    made_runtime = False
+    try:
+        pid = hand_run()
+        if pid:
+            print(f"{NAME}: Ein install.sh von Hand läuft gerade (PID {pid}); danach noch einmal.", file=sys.stderr)
+            return EXIT_BUSY
+        if order is None:
+            try:
+                order = take_order(now())
+            except Failure as e:
+                print(f"{NAME}: {e}", file=sys.stderr)
+                return EXIT_REFUSED
+        # Ohne die Unit (von Hand): den Laufzeitordner selbst anlegen und am Ende wieder weg
+        if not os.path.isdir(RUNTIME_DIR):
+            os.mkdir(RUNTIME_DIR, 0o755)
+            made_runtime = True
+        return run_installation(order)
+    finally:
+        if made_runtime:
+            shutil.rmtree(RUNTIME_DIR, ignore_errors=True)
+        lock.release()
+
+
+def run_installation(order):
+    run_ = Installation(order)
+    previous = load_json(state_path(STAND))
+
+    def stop(_signum, _frame):
+        # KillMode=mixed: Das Signal kommt nur hierher. apt und install.sh laufen zu Ende (dpkg nie mittendrin
+        # abbrechen), bis systemd nach TimeoutStopSec alles beendet. Vor apt beginnt nichts mehr.
+        run_.stop_requested = True
+        print(f"{NAME}: Stopp verlangt, apt und install.sh laufen zu Ende …", file=sys.stderr)
+
+    old_term = signal.signal(signal.SIGTERM, stop)
+    old_hup = signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    try:
+        try:
+            code = run_.run()
+        except Failure as e:
+            code = run_.finish("fehler", f"Basis-Update abgebrochen: {e}", EXIT_ERROR)
+        except Exception as e:  # noqa: BLE001 – Meldung statt Absturz, letzte.json zeigt es
+            traceback.print_exc()
+            code = run_.finish("fehler", f"Basis-Update abgebrochen: {type(e).__name__}: {short(e, 120)}", EXIT_ERROR)
+        if run_.attempted:
+            write_json(state_path(LAST), run_.result)
+            refresh_stand(previous)
+    finally:
+        signal.signal(signal.SIGTERM, old_term)
+        signal.signal(signal.SIGHUP, old_hup)
+    print(f"Ergebnis: {RESULT_TEXT.get(run_.result['ergebnis'], run_.result['ergebnis'])} – {run_.result['grund']}")
+    for note in run_.result["hinweise"]:
+        print(f"  Hinweis: {note}")
+    journal(f"installieren: {run_.result['ergebnis']} – {run_.result['grund']}")
+    return code
+
+
+# --- Status ----------------------------------------------------------------------------------------------------
+
+
+def stand_outdated(stand):
+    """Hat sich der Paketstand seit der Auswertung geändert (etwa durch unattended-upgrades)?"""
+    when = parse_iso((stand or {}).get("zeit"))
+    try:
+        changed = os.stat(DPKG_STATUS).st_mtime
+    except OSError:
+        return False
+    return bool(when) and changed > when.timestamp() + 2
+
+
+def short_state(stand, running=False):
+    """(Zustand, Text) für zen doctor und zen version: ungeprueft, laeuft, aktuell, bereit, zustimmung, gesperrt,
+    fehler, veraltet."""
+    if running:
+        return "laeuft", "Basis-Update läuft"
+    if stand is None:
+        return "ungeprueft", "noch nie geprüft"
+    result = stand.get("ergebnis")
+    if result not in ("aktuell", "bereit", "zustimmung", "gesperrt", "fehler"):
+        return "fehler", "stand.json unbrauchbar"
+    if result == "fehler":
+        return "fehler", short(stand.get("grund") or "Prüfung gescheitert", 160)
+    text = "aktuell" if result == "aktuell" else count_text(stand)
+    if result == "gesperrt":
+        text += f", gesperrt: {names_text(stand.get('geschuetzt') or [])} ginge weg"
+    if stand_outdated(stand):
+        return "veraltet", f"{text} (Stand {local_time(stand.get('zeit'))}, seither Paketänderungen)"
+    return result, text
+
+
+def installation_line(last):
+    if last is None:
+        return "keine", "noch kein Basis-Update über zenOS"
+    result = last.get("ergebnis") if last.get("ergebnis") in RESULT_TEXT else "fehler"
+    return result, f"{local_time(last.get('ende'))}: {short(last.get('grund') or '', 300)}"
+
+
+def cmd_status(argv):
+    mode = argv[0] if len(argv) == 1 else None
+    if len(argv) > 1 or (argv and mode not in ("--json", "--kurz", "--installation")):
+        print(f"{NAME} status [--json|--kurz|--installation]", file=sys.stderr)
+        return EXIT_USAGE
+    stand = load_json(state_path(STAND))
+    last = load_json(state_path(LAST))
+    running = os.path.exists(os.path.join(RUNTIME_DIR, TAKEOVER))
+    reboot, wegen = reboot_state()
+    state, text = short_state(stand, running)
+    if mode == "--kurz":
+        print(f"{state} {text}")
+        return EXIT_OK
+    if mode == "--installation":
+        result, line = installation_line(last)
+        print(f"{result} {line}")
+        return EXIT_OK
+    if mode == "--json":
+        print(json.dumps({"zustand": state, "text": text, "stand": stand, "letzte": last, "laeuft": running,
+                          "neustart": {"noetig": reboot, "pakete": wegen}}, ensure_ascii=False, indent=1))
+        return EXIT_OK
+    rows = [("Zustand", text)]
+    if stand:
+        rows.append(("Geprüft", local_time(stand.get("geprueft")) + (f" (ausgewertet {local_time(stand.get('zeit'))})"
+                                                                     if stand.get("zeit") else "")))
+        if stand.get("liste"):
+            rows += [("Sicherheit", str(stand.get("sicherheit") or 0)),
+                     ("Heikel", names_text(stand["heikel"]) if stand.get("heikel") else "nein"),
+                     ("Entfernen", names_text(stand["entfernen"]) if stand.get("entfernen") else "nichts"),
+                     ("Liste", stand["liste"])]
+    result, line = installation_line(last)
+    rows.append(("Installation", f"{RESULT_TEXT.get(result, result)} {line}" if last else line))
+    rows.append(("Neustart", f"nötig ({names_text(wegen)})" if reboot and wegen else "nötig" if reboot else "nein"))
+    for title, value in rows:
+        print(f"{title:<12} {value}")
+    return EXIT_OK
+
+
+def main(argv):
+    sys.dont_write_bytecode = True
+    if not argv or argv[0] in ("-h", "--hilfe", "--help"):
+        print(__doc__.strip())
+        return EXIT_OK if argv else EXIT_USAGE
+    commands = {"pruefen": cmd_check, "installieren": cmd_install, "status": cmd_status}
+    command = commands.get(argv[0])
+    if not command:
+        print(f"{NAME}: unbekannter Befehl «{short(argv[0], 30)}» (--hilfe)", file=sys.stderr)
+        return EXIT_USAGE
+    return command(argv[1:])
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

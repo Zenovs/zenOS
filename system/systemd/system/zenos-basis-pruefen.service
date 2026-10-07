@@ -1,0 +1,26 @@
+# zenOS: Paket-Updates der Ubuntu-Basis prüfen (zenos-basis pruefen). Läuft als root mit Netz: apt-get update schreibt
+# die Paketlisten, danach wertet «apt-get -s full-upgrade» aus, was ein Update brächte, und schreibt
+# /var/lib/zenos/basis/stand.json. Installiert nichts. Hält die gemeinsame Sperre mit dem Kanal und wartet höchstens
+# 20 Minuten auf einen anderen Paketvorgang (unattended-upgrades, apt-daily). Gestartet von «zen update», den
+# Einstellungen und der Automatik.
+[Unit]
+Description=zenOS: Ubuntu-Basis prüfen (apt-get update, Auswertung)
+Documentation=file:///opt/zenos/docs/image-und-releases.md
+Wants=network-online.target
+After=network-online.target apt-daily.service apt-daily-upgrade.service
+ConditionPathExists=/usr/local/libexec/zenos/zenos-basis
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/zenos/zenos-basis pruefen
+Environment=HOME=/root LANG=C.UTF-8
+StateDirectory=zenos/basis
+StateDirectoryMode=0755
+UMask=0022
+TimeoutStartSec=45min
+Nice=10
+SyslogIdentifier=zenos-basis
+# Ohne Sandbox mit eigenem Mount-Namensraum (PrivateTmp, ProtectHome, ProtectSystem …): apt hält das für ein chroot
+# und lässt die Staffelung der Updates (Phasing) aus. Die Auswertung enthielte dann Pakete, die apt-get full-upgrade
+# in zenos-basis-installieren.service zurückhält, und jede Installation endete mit «Liste geändert» (im Container
+# geprüft). Beide Units werten darum in derselben Umgebung aus.
