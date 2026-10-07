@@ -198,8 +198,8 @@ jobs:
           # Ein Release-Kandidat sagt es ganz oben, in beiden Sprachen
           case "$VORAB" in
             true)
-              vorab_de="> **Release-Kandidat zum Testen, nicht für den Alltag.** \`$TAG\` ist eine Vorabversion im Kanal \`$KANAL\`: Ein Gerät aus diesem Image bekommt weitere Release-Kandidaten ohne Wartezeit und danach die Endversion. Für den Alltag eine Version ohne «-rc» nehmen."
-              vorab_en="> **Release candidate for testing, not for everyday use.** \`$TAG\` is a pre-release on the \`$KANAL\` channel: devices from this image get further release candidates without delay, then the final version. For everyday use, pick a version without \`-rc\`."
+              vorab_de="> **Release-Kandidat zum Testen, nicht für den Alltag.** \`$TAG\` ist eine Vorabversion im Kanal \`$KANAL\`: Ein Gerät aus diesem Image bekommt weitere Release-Kandidaten ohne Wartezeit und danach die Endversion. Es bleibt auch danach im Kanal \`$KANAL\` und installiert so auch die Release-Kandidaten späterer Versionen; auf \`stabil\` wechselt es mit \`sudo zen kanal wechseln stabil\`. Für den Alltag eine Version ohne «-rc» nehmen."
+              vorab_en="> **Release candidate for testing, not for everyday use.** \`$TAG\` is a pre-release on the \`$KANAL\` channel: devices from this image get further release candidates without delay, then the final version. They stay on the \`$KANAL\` channel after that and so also install the release candidates of later versions; \`sudo zen kanal wechseln stabil\` switches a device to \`stabil\`. For everyday use, pick a version without \`-rc\`."
               ;;
             false) vorab_de=""; vorab_en="" ;;
             *) echo "::error::Ausgabe vorab ist «$VORAB», erwartet true oder false"; exit 1 ;;

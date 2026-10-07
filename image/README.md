@@ -200,7 +200,8 @@ die Rechte sind minimal (`contents: read` beim Bau, `contents: write` nur im Rel
   Image, Paketliste und Manifest; dafür hat nur dieser Job `id-token: write` und `attestations: write`) und die
   zweisprachigen Versionshinweise. Die `url` im Manifest zeigt auf die Datei der Release-Seite, auch bei `-rc`; bei
   `-rc` nennt die Beschreibung im Manifest den Release-Kandidaten, und die Versionshinweise beginnen in beiden
-  Sprachen mit «Release-Kandidat zum Testen, nicht für den Alltag» und dem Kanal `vorschau`. Image,
+  Sprachen mit «Release-Kandidat zum Testen, nicht für den Alltag» und dem Kanal `vorschau`, in dem ein Gerät
+  daraus auch nach der Endversion bleibt (auf `stabil` mit `sudo zen kanal wechseln stabil`). Image,
   Paketliste, `SHA256SUMS`, Manifest und Versionshinweise gehen als Artefakt `zenos-<version>-pi5-arm64` mit
   (3 Tage, bei `-rc` wie bei `vX.Y.Z`: Sie dienen nur den folgenden Jobs und einem Neustart, danach liegt alles auf
   der Release-Seite), die Paketliste zusätzlich als kleines Artefakt `zenos-<version>-pakete`

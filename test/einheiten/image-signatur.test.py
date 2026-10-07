@@ -781,6 +781,11 @@ class Workflow(WorkflowBasis):
         self.assertTrue(englisch.lstrip().startswith("> **Release candidate for testing, not for everyday use.** "
                                                      "`v0.1.0-rc4` is a pre-release on the `vorschau` channel"))
         self.assertIn("**zenOS 0.1.0-rc4 for Raspberry Pi 5", englisch)
+        # Auch nach der Endversion bleibt das Gerät im Kanal vorschau; der Weg zurück steht in beiden Sprachen
+        self.assertIn("Es bleibt auch danach im Kanal `vorschau`", deutsch)
+        self.assertIn("They stay on the `vorschau` channel after that", englisch)
+        self.assertIn("`sudo zen kanal wechseln stabil`", deutsch)
+        self.assertIn("`sudo zen kanal wechseln stabil`", englisch)
         self.assertIn("ubuntu-test.img.xz", deutsch)
         self.assertIn("Canonical Ltd.", englisch)
 

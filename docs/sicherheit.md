@@ -544,9 +544,9 @@ Telemetrie).
 - **Image nur aus einem signierten Tag:** `image.yml` prüft vor dem Bau mit `image/tag-pruefen.sh`, ob der Tag mit dem
   Release-Schlüssel des Ankers in seinem Stand gültig signiert ist (gehärtetes `git verify-tag` und unabhängig
   `ssh-keygen -Y verify`, ab Serie 2 mit passendem `vertrauen/NNNN`); `bauen.sh` prüft noch einmal, und im chroot
-  prüft `zenos-kanal` ein drittes Mal wie ein Gerät. Sonst entsteht kein Image. Ein Release (`vX.Y.Z`) gibt es nur,
-  wenn auch `scripts/pruefen.sh` im selben Lauf grün ist. Einen lokalen Testbau ohne Signatur gibt es nur mit
-  `--testbau-ohne-signatur`; GitHub Actions verweigert ihn. Grenze: Workflow und `bauen.sh` kommen aus dem Stand des
+  prüft `zenos-kanal` ein drittes Mal wie ein Gerät. Sonst entsteht kein Image. Ein Release (`vX.Y.Z` als «Latest»,
+  `vX.Y.Z-rcN` als Vorabversion) gibt es nur, wenn auch `scripts/pruefen.sh` im selben Lauf grün ist. Einen lokalen
+  Testbau ohne Signatur gibt es nur mit `--testbau-ohne-signatur`; GitHub Actions verweigert ihn. Grenze: Workflow und `bauen.sh` kommen aus dem Stand des
   Tags; wer auf GitHub einen eigenen Tag mit eigenem Workflow pushen kann, kann die Prüfung dort ändern. Dagegen
   helfen die Regeln auf GitHub, und die Geräte prüfen ohnehin selbst. Der Anker im Stand muss ausserdem der sein, den
   ein Gerät über das Netz hätte: Wurzel und Release-Schlüssel von Serie 1 stehen fest in `tag-pruefen.sh`, jede
