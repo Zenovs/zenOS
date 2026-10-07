@@ -535,8 +535,9 @@ test("Abgleich: Pfade und Wörter stimmen überall", () => {
   const kanal = lesen("scripts", "bin", "zenos-kanal");
   const pfad = /readonly property string helfer: "([^"]+)"/.exec(qml)[1];
   assert.equal(pfad, "/opt/zenos/scripts/bin/zenos-kanal-bedienen");
-  assert.equal([...policy.matchAll(/exec\.path">([^<]+)</g)].filter((m) => m[1] === pfad).length, 4);
-  assert.deepEqual([...policy.matchAll(/exec\.argv1">([^<]+)</g)].map((m) => m[1]).sort(), ["installieren", "pruefen", "zeitpunkt", "zustimmen"]);
+  // Dazu die drei Wörter der Ubuntu-Basis (zenos-basis über denselben Helfer)
+  assert.equal([...policy.matchAll(/exec\.path">([^<]+)</g)].filter((m) => m[1] === pfad).length, 7);
+  assert.deepEqual([...policy.matchAll(/exec\.argv1">([^<]+)</g)].map((m) => m[1]).sort(), ["basis-installieren", "basis-installieren-zustimmen", "basis-pruefen", "installieren", "pruefen", "zeitpunkt", "zustimmen"]);
   for (const wort of ["pruefen", "installieren", "zustimmen", "zeitpunkt"])
     assert.match(helfer, new RegExp(`^  (?:[a-z]+ \\| )*${wort}\\b`, "m"), `Helfer kennt ${wort}`);
   assert.match(qml, /"\/var\/lib\/zenos\/kanal\/stand\.json"/);

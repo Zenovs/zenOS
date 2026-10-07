@@ -22,7 +22,9 @@
 #   nach jedem install.sh kurz die Sperre der Bedienung (ein zen update oder die Automatik endete dann mit 75). Seine
 #   Unit läuft nur, wenn ein automatisch installierter Stand auf die Bestätigung wartet.
 # - polkit-Aktionen für diesen Helfer (system/polkit/org.zenos.kanal.policy): prüfen, jetzt installieren und den
-#   Zeitpunkt setzen ohne Passwort, zustimmen jedes Mal mit Passwort; alles nur in der aktiven Sitzung am Gerät.
+#   Zeitpunkt setzen ohne Passwort, zustimmen jedes Mal mit Passwort; für die Ubuntu-Basis (zenos-basis, Modul
+#   71-basis) prüfen und installieren ohne Passwort, mit Kernel, Firmware, Bootloader oder Entfernungen jedes Mal mit
+#   Passwort; alles nur in der aktiven Sitzung am Gerät.
 # - /var/lib/zenos/kanal (root, 0755) für Stand, Hauptbuch, hoechste, Auftrag und die Bereitstellungen.
 # Der Anker kommt aus 12-vertrauen.
 

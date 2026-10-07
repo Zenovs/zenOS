@@ -2,12 +2,13 @@
 <!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
  "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
 <!--
-  zenOS: Updates in den Einstellungen (System › Updates; pkexec mit scripts/bin/zenos-kanal-bedienen).
-  14-kanal legt die Datei nach /usr/share/polkit-1/actions/ (root, 0644).
+  zenOS: Updates in den Einstellungen (System › Updates; pkexec mit scripts/bin/zenos-kanal-bedienen), für den
+  zenOS-Kanal und die Ubuntu-Basis (zenos-basis). 14-kanal legt die Datei nach /usr/share/polkit-1/actions/ (root,
+  0644).
 
   - pkexec ordnet einen Aufruf über den echten Pfad des Programms (exec.path) und das erste Argument (exec.argv1)
     einer dieser Aktionen zu. Andere Argumente fallen auf org.freedesktop.policykit.exec (Administrator-Passwort);
-    der Helfer nimmt ohnehin nur pruefen, installieren, zustimmen und zeitpunkt an.
+    der Helfer nimmt ohnehin nur pruefen, installieren, zustimmen, zeitpunkt und die drei basis-Wörter an.
   - allow_active heisst: jeder Prozess des Benutzers, solange seine Sitzung am Gerät aktiv ist, auch bei gesperrtem
     Bildschirm (logind lässt die Sitzung dabei aktiv). polkit ordnet auch Prozesse seines Benutzerdienstes dieser
     Sitzung zu: Wer per SSH als derselbe Benutzer angemeldet ist, erreicht die Aktionen ohne Passwort über
@@ -21,6 +22,11 @@
     (pkexec oder sudo, uid).
   - Mit Passwort, jedes Mal (auth_admin, nicht auth_admin_keep): zustimmen, wenn ein signierter Stand Firewall, Netz
     oder Boot ändert. Das «ja» gilt nur für das angezeigte Tag-Objekt.
+  - Ubuntu-Basis (Entscheid Zeno, Oktober 2026): Die Pakete sind von Ubuntu bzw. den Herstellern signiert und von apt
+    geprüft. Ohne Passwort: basis-pruefen (apt-get update und Auswertung, installiert nichts) und basis-installieren
+    (genau die angezeigte Liste, gebunden an ihren Hash, ohne neues apt-get update; enthält sie Kernel, Firmware,
+    Bootloader oder Entfernungen, lehnt die Unit ab). Mit Passwort, jedes Mal: basis-installieren-zustimmen für eine
+    Liste mit Kernel, Firmware, Bootloader oder Entfernungen, ebenfalls nur für genau diese Liste.
 -->
 <policyconfig>
   <vendor>zenOS</vendor>
@@ -71,5 +77,41 @@
     </defaults>
     <annotate key="org.freedesktop.policykit.exec.path">/opt/zenos/scripts/bin/zenos-kanal-bedienen</annotate>
     <annotate key="org.freedesktop.policykit.exec.argv1">zustimmen</annotate>
+  </action>
+
+  <action id="org.zenos.kanal.basis-pruefen">
+    <description>Nach Updates der Ubuntu-Basis suchen</description>
+    <message>Nach Paket-Updates der Ubuntu-Basis suchen (apt-get update). Installiert wird nichts.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/opt/zenos/scripts/bin/zenos-kanal-bedienen</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">basis-pruefen</annotate>
+  </action>
+
+  <action id="org.zenos.kanal.basis-installieren">
+    <description>Updates der Ubuntu-Basis installieren</description>
+    <message>Die angezeigten Paket-Updates der Ubuntu-Basis installieren, ohne Kernel, Firmware, Bootloader und Entfernungen.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/opt/zenos/scripts/bin/zenos-kanal-bedienen</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">basis-installieren</annotate>
+  </action>
+
+  <action id="org.zenos.kanal.basis-zustimmen">
+    <description>Updates der Ubuntu-Basis mit Kernel, Firmware, Bootloader oder Entfernungen installieren</description>
+    <message>Die angezeigten Paket-Updates der Ubuntu-Basis installieren. Sie ändern Kernel, Firmware oder Bootloader oder entfernen Pakete; die Zustimmung gilt nur für diese Liste.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/opt/zenos/scripts/bin/zenos-kanal-bedienen</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">basis-installieren-zustimmen</annotate>
   </action>
 </policyconfig>

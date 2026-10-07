@@ -2,7 +2,9 @@
 """Einheitentests für die Bedienung des Kanals aus den Einstellungen (System › Updates): «Jetzt installieren»
 (zenos-kanal jetzt ZIEL), «Zustimmen …» (zenos-kanal zustimmen OBJEKT), der Zeitpunkt automatischer Updates
 (zenos-kanal zeitpunkt, /etc/xdg/zenos/kanal-zeitpunkt), dazu der pkexec-Helfer scripts/bin/zenos-kanal-bedienen
-(nur Aufrufe, die nichts ändern), die polkit-Aktionen und die Units.
+(nur Aufrufe, die nichts ändern; auch die Wörter der Ubuntu-Basis basis-pruefen, basis-installieren und
+basis-installieren-zustimmen), die polkit-Aktionen und die Units. Was zenos-basis jetzt und zustimmen tun, prüft
+test/einheiten/basis-automatik.test.py.
 
 Baut auf test/einheiten/kanal-installieren.test.py auf (Server, Gerät, Wegwerf-Schlüssel, Attrappen für install.sh,
 die Units laufen im Prozess). Ohne Root, ohne Netz; als root ändert der Helfer-Test nichts am System.
@@ -381,7 +383,14 @@ class Helfer(unittest.TestCase):
                           ("zeitpunkt", "fenster", "02:00"), ("zeitpunkt", "fenster", "2:00", "05:00"),
                           ("zeitpunkt", "fenster", "02:00", "24:00"), ("zeitpunkt", "fenster", "02:00", "05:00", "x"),
                           ("zeitpunkt", "fenster", "02:00;id", "05:00"), ("zeitpunkt", "hand", "02:00", "05:00"),
-                          ("--hilfe",), ("pruefen;id",), ("",)):
+                          ("--hilfe",), ("pruefen;id",), ("",), ("basis-pruefen", "x"), ("basis-pruefen", "0" * 40),
+                          ("basis-installieren",), ("basis-installieren", "A" * 40), ("basis-installieren", "0" * 39),
+                          ("basis-installieren", "0" * 41), ("basis-installieren", "0" * 40, "x"),
+                          ("basis-installieren", "0" * 39 + ";"), ("basis-installieren", "--zustimmung"),
+                          ("basis-installieren-zustimmen",), ("basis-installieren-zustimmen", "g" * 40),
+                          ("basis-installieren-zustimmen", "0" * 40, "--zustimmung"), ("basis",), ("basis-jetzt",),
+                          ("basis-zustimmen", "0" * 40), ("basis-update",), ("Basis-pruefen",),
+                          ("basis-automatik", "lauf")):
             with self.subTest(argumente=argumente):
                 e = self.lauf(*argumente)
                 self.assertEqual(e.returncode, 2, e.stderr)
@@ -391,7 +400,9 @@ class Helfer(unittest.TestCase):
     @unittest.skipIf(os.geteuid() == 0, "als root würde der Helfer wirklich prüfen, installieren oder setzen")
     def test_nur_als_root(self):
         for argumente in (("pruefen",), ("installieren", "0" * 40), ("zustimmen", "0" * 40), ("zeitpunkt", "sperre"),
-                          ("zeitpunkt", "fenster", "22:00", "06:00"), ("zeitpunkt", "hand"), ("zeitpunkt", "jederzeit")):
+                          ("zeitpunkt", "fenster", "22:00", "06:00"), ("zeitpunkt", "hand"), ("zeitpunkt", "jederzeit"),
+                          ("basis-pruefen",), ("basis-installieren", "0" * 40),
+                          ("basis-installieren-zustimmen", "0" * 40)):
             with self.subTest(argumente=argumente):
                 e = self.lauf(*argumente)
                 self.assertEqual(e.returncode, 2, e.stderr)
@@ -404,17 +415,31 @@ class Helfer(unittest.TestCase):
         self.assertIn('_unit "zenos-kanal-zustimmen@$2.service"', text)
         self.assertIn('_unit "zenos-kanal-jetzt@$2.service"', text)
         self.assertIn('systemctl reset-failed -- "$unit"', text)
+        # Ubuntu-Basis: prüfen über die Unit; installieren über zenos-basis (Auftrag genau für diesen Hash, dann die
+        # Unit), mit Zustimmung nur über das eigene Wort (eigene polkit-Aktion mit Passwort)
+        self.assertIn("_basis=/usr/local/libexec/zenos/zenos-basis", text)
+        self.assertIn("_unit zenos-basis-pruefen.service", text)
+        self.assertIn('/usr/bin/python3 -I "$_basis" jetzt "$2"', text)
+        self.assertIn('/usr/bin/python3 -I "$_basis" zustimmen "$2"', text)
+        self.assertEqual(text.count('"$_basis" zustimmen'), 1)
+        teil = text.split("  basis-installieren)\n")[-1].split(";;")[0]
+        self.assertNotIn("zustimmen", teil, "basis-installieren gibt nie eine Zustimmung")
 
 
 class Policy(unittest.TestCase):
-    """polkit: prüfen, jetzt installieren und Zeitpunkt ohne Passwort, zustimmen jedes Mal mit Passwort; alles nur in
-    der aktiven Sitzung am Gerät und nur für den Helfer mit genau diesem ersten Argument."""
+    """polkit: prüfen, jetzt installieren und Zeitpunkt ohne Passwort, zustimmen jedes Mal mit Passwort; für die
+    Ubuntu-Basis prüfen und installieren (ohne Kernel, Firmware, Bootloader, Entfernungen) ohne Passwort, mit Zustimmung
+    jedes Mal mit Passwort; alles nur in der aktiven Sitzung am Gerät und nur für den Helfer mit genau diesem ersten
+    Argument."""
 
     def test_aktionen(self):
         aktionen = ET.parse(POLICY).getroot().findall("action")
         erwartet = {"org.zenos.kanal.pruefen": ("pruefen", "yes"), "org.zenos.kanal.installieren": ("installieren", "yes"),
                     "org.zenos.kanal.zeitpunkt": ("zeitpunkt", "yes"),
-                    "org.zenos.kanal.zustimmen": ("zustimmen", "auth_admin")}
+                    "org.zenos.kanal.zustimmen": ("zustimmen", "auth_admin"),
+                    "org.zenos.kanal.basis-pruefen": ("basis-pruefen", "yes"),
+                    "org.zenos.kanal.basis-installieren": ("basis-installieren", "yes"),
+                    "org.zenos.kanal.basis-zustimmen": ("basis-installieren-zustimmen", "auth_admin")}
         self.assertEqual(sorted(a.get("id") for a in aktionen), sorted(erwartet))
         for a in aktionen:
             argv1, aktiv = erwartet[a.get("id")]
@@ -425,6 +450,20 @@ class Policy(unittest.TestCase):
             self.assertEqual((vorgaben.find("allow_any").text, vorgaben.find("allow_inactive").text,
                               vorgaben.find("allow_active").text), ("no", "no", aktiv))
             self.assertTrue(a.find("message").text.strip())
+
+    def test_helfer_kennt_genau_diese_woerter(self):
+        """Jedes erste Argument der Policy nimmt der Helfer an, und umgekehrt (sonst fiele eines auf
+        org.freedesktop.policykit.exec mit Administrator-Passwort, oder eine Aktion bliebe ohne Helfer)."""
+        woerter = {n.text for a in ET.parse(POLICY).getroot().findall("action") for n in a.findall("annotate")
+                   if n.get("key") == "org.freedesktop.policykit.exec.argv1"}
+        text = lesen(HELFER)
+        teil = text.split('case "$1" in', 1)[1].split("esac\n\nif (( EUID != 0 ))", 1)[0]
+        im_helfer = set()
+        for zeile in teil.splitlines():
+            m = re.fullmatch(r"  ([a-z|\- ]+)\)", zeile)
+            if m:
+                im_helfer |= {w.strip() for w in m.group(1).split("|")}
+        self.assertEqual(im_helfer, woerter)
 
 
 class Units(unittest.TestCase):
