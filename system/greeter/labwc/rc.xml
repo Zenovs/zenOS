@@ -4,6 +4,8 @@
   Nur die Oberfläche des Greeters läuft hier. Ohne eigene Tasten- und Mausbelegung lädt labwc
   seine Vorgaben (u. a. ein Terminal auf Super+Enter und ein Menü mit «Beenden») – deshalb steht
   hier je eine harmlose Belegung, damit keine Vorgabe greift.
+  Die Ein/Aus-Taste (XF86PowerOff) bleibt bewusst ohne Belegung: Sie geht an die Oberfläche des Logins und weckt dort
+  nur (shell/greeter/EinAusTaste.qml). Eine Belegung hier schluckte sie, der Login sähe sie nicht.
 -->
 <labwc_config>
   <core>

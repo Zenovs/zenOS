@@ -40,6 +40,9 @@ ShellRoot {
         leerlauf: leerlauf
     }
 
+    // Ein kurzer Druck auf die Ein/Aus-Taste weckt nur (Hemmer «handle-power-key», solange dieser Login läuft)
+    EinAusTaste {}
+
     Variants {
         model: Quickshell.screens
 

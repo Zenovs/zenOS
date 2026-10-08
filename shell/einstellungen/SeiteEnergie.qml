@@ -351,7 +351,7 @@ Item {
                 }
 
                 Hinweistext {
-                    text: Dienste.Energie.einAusTaste === "ausschalten" ? "Kurz drücken schaltet sofort aus. Gedrückt halten schaltet immer hart aus." : "Kurz drücken, gesperrt: Bildschirm an oder aus. Gedrückt halten schaltet immer hart aus. Ohne laufende Sitzung (am Login-Bildschirm, in den ersten Sekunden nach dem Anmelden) schaltet auch ein kurzer Druck sofort aus."
+                    text: Dienste.Energie.einAusTaste === "ausschalten" ? "Kurz drücken schaltet sofort aus, am Login-Bildschirm weckt es nur. Gedrückt halten schaltet immer hart aus." : "Kurz drücken, gesperrt: Bildschirm an oder aus. Am Login-Bildschirm weckt es nur, in den ersten Sekunden nach dem Anmelden schaltet es sofort aus. Gedrückt halten schaltet immer hart aus."
                 }
             }
         }

@@ -883,6 +883,93 @@ class EnergieTest(unittest.TestCase):
         self.assertEqual(self.taste(), [("ipc", ["sperre", "taste"]), ("bildschirm", ["status"]),
                                         ("zen", ["energie", "aus"])])
 
+    # --- Ein/Aus-Taste am Login-Bildschirm (Hemmer «handle-power-key», solange der Login läuft)
+
+    HEMMER_LOGIN = ["--what=handle-power-key", "--mode=block", "--who=zenOS",
+                    "--why=Ein/Aus-Taste am Login-Bildschirm: kurzer Druck weckt nur", "tail"]
+
+    def als_greetd(self):
+        """«id -un» meldet _greetd (der Benutzer des Logins unter greetd)"""
+        self.attrappe(os.path.join(self.fake, "id"), "id")
+        self.verhalten("id", "aus", "_greetd\n")
+
+    @staticmethod
+    def beendet(pid):
+        """Der Prozess ist weg oder nur noch ein Zombie (ohne init, das ihn abholt, etwa in der CI)"""
+        try:
+            with open(f"/proc/{pid}/stat", encoding="utf-8") as f:
+                return f.read().rsplit(")", 1)[1].split()[0] == "Z"
+        except OSError:
+            return True
+
+    def test_hemmer_login_nur_als_greetd(self):
+        # Start-Test von pruefen.sh, eine Sitzung, root in der CI (als nobody): kein Hemmer, Exit 0
+        code, aus, fehler = self.aufruf("hemmer-login")
+        self.assertEqual((code, fehler), (0, ""))
+        self.assertRegex(aus, r"^kein Login-Bildschirm unter greetd \(Benutzer [^)]+\), kein Hemmer\n$")
+        self.assertNotIn("_greetd", aus)
+        self.assertEqual(self.aufrufe("systemd-inhibit"), [])
+        for andere in ("tester", "greeter", "_greetd2", ""):
+            with self.subTest(benutzer=andere):
+                self.als_greetd()
+                self.verhalten("id", "aus", andere + "\n")
+                self.assertEqual(self.aufruf("hemmer-login")[0], 0)
+                self.assertEqual(self.aufrufe("systemd-inhibit"), [])
+
+    def test_hemmer_login_haelt_hemmer_an_der_oberflaeche(self):
+        self.als_greetd()
+        self.attrappe(os.path.join(self.fake, "systemd-inhibit"), "systemd-inhibit")
+        code, aus, fehler = self.aufruf("hemmer-login")
+        self.assertEqual((code, aus, fehler), (0, "", ""))
+        # Genau ein Hemmer: nur die Taste, Modus block, gebunden an den aufrufenden Prozess (hier dieser Test)
+        self.assertEqual(self.aufrufe("systemd-inhibit"),
+                         [self.HEMMER_LOGIN + [f"--pid={os.getpid()}", "-f", "/dev/null"]])
+        # Nichts sonst: kein Ausschalten, kein Journal, keine Einstellungen
+        self.assertEqual([e["wer"] for e in self.ereignisse()], ["id", "systemd-inhibit"])
+        # logind oder polkit lehnt ab: der Exit von systemd-inhibit, die Oberfläche meldet es und versucht es später
+        self.vergessen("ereignisse")
+        self.verhalten("systemd-inhibit", "exit", "1")
+        self.assertEqual(self.aufruf("hemmer-login")[0], 1)
+        self.assertEqual(self.poweroff(), [])
+
+    def test_hemmer_login_endet_mit_der_oberflaeche(self):
+        # systemd-inhibit wie das echte: führt den Befehl als Kind aus und endet mit ihm (dann ist der Hemmer weg)
+        self.als_greetd()
+        pfad = os.path.join(self.fake, "systemd-inhibit")
+        with open(pfad, "w", encoding="utf-8") as f:
+            f.write("#!/usr/bin/env python3\n"
+                    "import os, subprocess, sys\n"
+                    "argv = sys.argv[1:]\n"
+                    "with open(os.path.join(os.environ['ENERGIE_TEST'], 'inhibit.pid'), 'w') as f:\n"
+                    "    f.write(str(os.getpid()))\n"
+                    "befehl = argv[next(i for i, a in enumerate(argv) if not a.startswith('--')):]\n"
+                    "sys.exit(subprocess.call(befehl))\n")
+        os.chmod(pfad, 0o755)
+        # Die «Oberfläche»: eine Shell, die den Helfer startet und wartet
+        oberflaeche = subprocess.Popen(als_benutzer(["bash", "-c", '"$1" hemmer-login & wait', "oberflaeche",
+                                                     self.programm], self.wurzel), env=self.umgebung)
+        try:
+            pid_datei = os.path.join(self.wurzel, "inhibit.pid")
+            for _ in range(100):
+                if os.path.exists(pid_datei) and os.path.getsize(pid_datei) > 0:
+                    break
+                time.sleep(0.05)
+            with open(pid_datei, encoding="utf-8") as f:
+                inhibit = int(f.read())
+            time.sleep(0.5)
+            self.assertFalse(self.beendet(inhibit), "systemd-inhibit hält, solange die Oberfläche läuft")
+            # Absturz der Oberfläche (SIGKILL): tail --pid endet spätestens 1 s danach, mit ihm der Hemmer
+            oberflaeche.kill()
+            oberflaeche.wait(timeout=5)
+            ende = time.monotonic() + 5
+            while time.monotonic() < ende and not self.beendet(inhibit):
+                time.sleep(0.1)
+            self.assertTrue(self.beendet(inhibit), "systemd-inhibit läuft nach dem Ende der Oberfläche weiter")
+        finally:
+            if oberflaeche.poll() is None:
+                oberflaeche.kill()
+                oberflaeche.wait(timeout=5)
+
     # --- Aufruf und Abgleich
 
     def test_falscher_aufruf(self):

@@ -1,6 +1,7 @@
 // Einheitentests für shell/greeter/bildschirm.js (Bildschirm am Login-Bildschirm: nach 1 Min. ohne Eingabe aus, die
 // Eingabe, die weckt, wird verworfen, was scheitert, lässt ihn an) und die Verdrahtung in Bildschirm.qml,
-// Anmeldefenster.qml und greeter.qml. Läuft ohne Abhängigkeiten: node --test test/einheiten/
+// Anmeldefenster.qml, EinAusTaste.qml (Ein/Aus-Taste weckt nur) und greeter.qml. Läuft ohne Abhängigkeiten:
+// node --test test/einheiten/
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -462,4 +463,37 @@ test("Anmeldefenster: Wecker mit dem Tastaturfokus und Klickfang über allem, nu
   assert.match(greeter, /bildschirm: bildschirm\n/);
   // Der Notfall-Login bleibt, wie er ist: kein Ausschalten des Bildschirms
   assert.doesNotMatch(lesen("shell", "greeter", "notfall", "notfall.qml"), /wlopm|IdleMonitor/);
+});
+
+test("Ein/Aus-Taste am Login: Hemmer, solange der Login läuft; die Taste weckt nur, der Notfall-Login bleibt bei logind", () => {
+  const greeter = lesen("shell", "greeter.qml");
+  assert.match(greeter, /\n {4}EinAusTaste \{\}\n/);
+  const qml = lesen("shell", "greeter", "EinAusTaste.qml");
+  // Der Helfer hält den Hemmer, solange diese Oberfläche läuft (tail --pid auf Quickshell): feste Argumentliste
+  assert.match(qml, /command: \[Pfade\.bin \+ "\/zenos-energie", "hemmer-login"\]\n/);
+  assert.match(qml, /\n {8}running: true\n/);
+  assert.doesNotMatch(qml, /"(ba|da|z)?sh",\s*"-l?c"/);
+  assert.doesNotMatch(qml, /systemd-inhibit"|poweroff|reboot|Key_PowerOff/);
+  // Endet er unerwartet: einmal ins Journal, neuer Versuch nach 60 s (logind schaltet bis dahin aus wie bisher)
+  assert.match(qml, /readonly property int _pauseMs: 60000\n/);
+  assert.match(qml, /onTriggered: hemmer\.running = true\n/);
+  assert.match(qml, /if \(!root\._gemeldet\) \{\s*[^\n]*\n\s*console\.warn\("Login: Hemmer für die Ein\/Aus-Taste beendet/);
+  // Exit 0 heisst: kein Login unter greetd (Start-Test, Sitzung), kein neuer Versuch
+  assert.match(qml, /if \(code === 0\) \{[\s\S]*?return;\s*\}\s*if \(!root\._gemeldet\)/);
+
+  // labwc des Logins belegt XF86PowerOff nicht: Die Taste geht an den Login (eine Belegung schluckte sie)
+  const rc = lesen("system", "greeter", "labwc", "rc.xml").replace(/<!--[\s\S]*?-->/g, "");
+  assert.doesNotMatch(rc, /PowerOff|Power/i);
+  // Der Wecker nimmt jede Taste als Wecktaste, auch XF86PowerOff (keine Auswahl nach event.key). Ist der Bildschirm an,
+  // reagiert nichts im Login auf die Taste: Sie bewirkt dann nichts.
+  const fenster = lesen("shell", "greeter", "Anmeldefenster.qml");
+  const wecker = /Item \{\s*id: wecker\s*([\s\S]*?)\n {4}\}/.exec(fenster);
+  assert.ok(wecker, "Item wecker");
+  assert.doesNotMatch(wecker[1], /event\.key\b/);
+  for (const datei of ["Anmeldefenster.qml", "Formular.qml", "Energie.qml", "Bildschirm.qml", "Leerlauf.qml"])
+    assert.doesNotMatch(lesen("shell", "greeter", datei), /Key_PowerOff|PowerOff/, datei);
+
+  // Der Notfall-Login nimmt keinen Hemmer: Dort schaltet ein kurzer Druck weiter aus (logind)
+  const notfall = lesen("shell", "greeter", "notfall", "notfall.qml");
+  assert.doesNotMatch(notfall, /hemmer-login|systemd-inhibit|EinAusTaste/);
 });

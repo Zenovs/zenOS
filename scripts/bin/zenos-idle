@@ -32,8 +32,9 @@
 # an «zenos-energie taste» (rc.xml, XF86PowerOff). Der Hemmer gilt nur, solange zenos-idle läuft (tail endet mit
 # ihm, systemd-inhibit mit tail; zwischen zwei Läufen 1 s Pause, RestartSec). Er läuft im Benutzerdienst, also
 # ausserhalb einer Sitzung: logind zählt ihn dann vermutlich auf allen Konsolen (am Gerät zu prüfen, siehe
-# docs/module/energie.md). Ohne zenos-idle (Login-Bildschirm, erste Sekunden der Sitzung) schaltet ein kurzer Druck
-# sofort aus (logind). Halten schaltet immer hart aus.
+# docs/module/energie.md). Ohne zenos-idle (erste Sekunden der Sitzung) schaltet ein kurzer Druck sofort aus (logind).
+# Am Login-Bildschirm hält der Login einen eigenen Hemmer (zenos-energie hemmer-login), dort weckt ein kurzer Druck
+# nur. Halten schaltet immer hart aus.
 
 set -euo pipefail
 

@@ -13,7 +13,10 @@
 #                                    (Zenos Entscheid, die Einstellungen der Sitzung sind dort nicht lesbar), ohne
 #                                    Sperre, dafür darf keine andere Sitzung offen sein
 #   zenos-energie taste              Ein/Aus-Taste kurz gedrückt (labwc: XF86PowerOff, auch gesperrt)
-#   zenos-energie meldung            nach einem automatischen Aus: Titel und Text der Mitteilung (je eine Zeile),
+#   zenos-energie hemmer-login       am Login-Bildschirm (nur als _greetd): hält den logind-Hemmer «handle-power-key»,
+#                                    solange der aufrufende Prozess (die Oberfläche des Logins) läuft; ein kurzer
+#                                    Druck weckt dort nur. Sonst «kein Login-Bildschirm …» und Exit 0
+#   zenos-energie meldung           nach einem automatischen Aus: Titel und Text der Mitteilung (je eine Zeile),
 #                                    einmal, beim ersten Aufruf nach dem nächsten Start
 #
 # Leitplanken (Code, nicht abschaltbar):
@@ -30,7 +33,8 @@
 # - Prozesse nur mit Argumentlisten, keine Shell. Jeder Entscheid steht mit Grund im Journal (logger -t zenos-energie).
 # Exit 0 ja bzw. erledigt · 1 nein bzw. blockiert (Grund auf stdout) · 2 falscher Aufruf · 3 systemctl poweroff
 # abgelehnt (die Oberfläche versucht es dann erst nach der nächsten Eingabe wieder) · 4 Vorwarnung noch keine 60 s alt
-# (der Marker bleibt, die Oberfläche fragt im nächsten Takt erneut)
+# (der Marker bleibt, die Oberfläche fragt im nächsten Takt erneut). hemmer-login endet erst mit dem Hemmer, mit dem
+# Exit von systemd-inhibit (1: polkit oder logind lehnt ab).
 
 set -uo pipefail
 
@@ -525,6 +529,36 @@ befehl_taste() {
   "$zen" energie aus
 }
 
+# --- Ein/Aus-Taste am Login-Bildschirm -------------------------------------------------
+# Zenos Entscheid vom 08.10.2026: Am Login-Bildschirm weckt ein kurzer Druck nur (shell/greeter/EinAusTaste.qml); die
+# Taste kommt als XF86PowerOff beim Login an und ist dort die Wecktaste. Damit logind nicht selbst ausschaltet
+# (HandlePowerKey), hält dieser Aufruf den logind-Hemmer «handle-power-key», solange der aufrufende Prozess läuft (die
+# Oberfläche des Logins, Quickshell): systemd-inhibit … tail --pid=<Eltern>. Endet sie (Anmeldung, Absturz, SIGKILL),
+# endet tail spätestens 1 s danach, mit ihm systemd-inhibit und der Hemmer. polkit erlaubt «inhibit-handle-power-key»
+# einer aktiven Sitzung am Gerät ohne eigene Regel (allow_active yes); greetd führt den Login in einer eigenen Sitzung
+# der Klasse «greeter» auf seat0. Nur als _greetd (Benutzer des Logins in /etc/greetd/config.toml): Im Start-Test von
+# pruefen.sh oder in einer Sitzung nimmt er nichts. Ausfallsicher: Bekommt er den Hemmer nicht, endet er mit dem Exit
+# von systemd-inhibit, und logind schaltet wie bisher aus. Gedrückt halten schaltet immer hart aus (Hardware).
+
+befehl_hemmer_login() {
+  local benutzer
+  benutzer=$(id -un 2>/dev/null) || benutzer=""
+  if [[ "$benutzer" != _greetd ]]; then
+    printf 'kein Login-Bildschirm unter greetd (Benutzer %s), kein Hemmer\n' "${benutzer:-unbekannt}"
+    return 0
+  fi
+  if (( PPID <= 1 )); then
+    meldung "hemmer-login: ohne Elternprozess kein Hemmer (ein kurzer Druck schaltet aus)"
+    return 1
+  fi
+  if ! command -v systemd-inhibit >/dev/null 2>&1; then
+    meldung "systemd-inhibit fehlt: ein kurzer Druck auf die Ein/Aus-Taste schaltet aus (logind)"
+    return 1
+  fi
+  exec systemd-inhibit --what=handle-power-key --mode=block --who=zenOS \
+    --why="Ein/Aus-Taste am Login-Bildschirm: kurzer Druck weckt nur" tail --pid="$PPID" -f /dev/null
+}
+
 # --- Mitteilung nach einem automatischen Aus ---------------------------------------------
 # Gibt Titel und Text aus, wenn zenOS vor dem jetzigen Start selbst ausgeschaltet hat, und löscht die Datei. Im selben
 # Start (das Ausschalten läuft gerade) bleibt sie liegen. Eine ungültige Datei wird ohne Ausgabe gelöscht.
@@ -560,14 +594,14 @@ PY
 
 # --- Aufruf ----------------------------------------------------------------------------
 
-erlaubt="darf-ausschalten, status, ausschalten, darf-ausschalten-login, ausschalten-login, taste, meldung"
+erlaubt="darf-ausschalten, status, ausschalten, darf-ausschalten-login, ausschalten-login, taste, hemmer-login, meldung"
 if (( $# != 1 )); then
   meldung "Aufruf: zenos-energie ${erlaubt//, /|}"
   exit 2
 fi
 case "$1" in
-  darf-ausschalten | status | ausschalten | darf-ausschalten-login | ausschalten-login | taste | meldung) ;;
-  -h | --hilfe | --help) sed -n '2,33p' "$selbst" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  darf-ausschalten | status | ausschalten | darf-ausschalten-login | ausschalten-login | taste | hemmer-login | meldung) ;;
+  -h | --hilfe | --help) sed -n '2,37p' "$selbst" | sed 's/^# \{0,1\}//'; exit 0 ;;
   *) meldung "unbekannter Befehl «$1» (erlaubt: $erlaubt)"; exit 2 ;;
 esac
 if (( EUID == 0 )); then
@@ -586,5 +620,6 @@ case "$1" in
   darf-ausschalten-login) befehl_darf_ausschalten login ;;
   ausschalten-login) befehl_ausschalten login ;;
   taste) befehl_taste ;;
+  hemmer-login) befehl_hemmer_login ;;
   meldung) befehl_meldung ;;
 esac
