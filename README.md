@@ -27,7 +27,7 @@ Die Grundsätze stehen im [Manifest](MANIFEST.md).
 
 ## Status
 
-Version 0.1 ist gebaut und liegt auf dem Branch `dev`; die Release-Kandidaten `v0.1.0-rc1` bis `rc3` sind unsigniert (nur Workflow-Artefakte), `v0.1.0-rc4` ist der erste signierte (sein Image-Bau scheiterte, ohne Release-Seite). Als Nächstes kommt `v0.1.0-rc6` (rc5 übersprungen) mit Release-Seite als Vorabversion, nach der Abnahme dann `v0.1.0`. Alle Module sind in Docker-Containern mit Ubuntu 26.04 arm64 getestet, der gleichen Architektur wie der Pi. Die Abnahme auf echter Hardware steht noch aus; was dort zu prüfen ist, steht in der Testliste in [ANLEITUNG.md](ANLEITUNG.md). Was 0.1 kann: [docs/funktionen.md](docs/funktionen.md). Nächste Schritte: [ROADMAP.md](ROADMAP.md).
+Version 0.1 ist gebaut und liegt auf dem Branch `dev`; die Release-Kandidaten `v0.1.0-rc1` bis `rc3` sind unsigniert (nur Workflow-Artefakte), `v0.1.0-rc4` ist der erste signierte (sein Image-Bau scheiterte, ohne Release-Seite). `v0.1.0-rc6` ist der erste mit Image und Release-Seite (Vorabversion, rc5 übersprungen), `v0.1.0-rc7` bringt den zen Installer; nach der Abnahme kommt `v0.1.0`. Alle Module sind in Docker-Containern mit Ubuntu 26.04 arm64 getestet, der gleichen Architektur wie der Pi. Die Abnahme auf echter Hardware steht noch aus; was dort zu prüfen ist, steht in der Testliste in [ANLEITUNG.md](ANLEITUNG.md). Was 0.1 kann: [docs/funktionen.md](docs/funktionen.md). Nächste Schritte: [ROADMAP.md](ROADMAP.md).
 
 ## Installieren per Skript
 

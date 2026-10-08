@@ -21,7 +21,7 @@ Der Bau lief nicht auf dem Pi, sondern auf dem Mac: Claude Code hat dort gebaut 
 26.04 arm64 getestet, also mit derselben Architektur wie der Pi. Das Repo liegt auf GitHub: `main` enthält den
 Start-Commit, `dev` zenOS 0.1 mit den Release-Kandidaten `v0.1.0-rc1` bis `v0.1.0-rc3` (unsigniert, nur als
 Workflow-Artefakt). `v0.1.0-rc4` ist der erste signierte (G); sein Image-Bau scheiterte, die erste Release-Seite, als
-Vorabversion markiert, kommt mit `v0.1.0-rc6` (rc5 übersprungen). Die früheren Schritte A1 bis A14 fallen weg.
+Vorabversion markiert, kam mit `v0.1.0-rc6` (rc5 übersprungen); danach `v0.1.0-rc7`. Die früheren Schritte A1 bis A14 fallen weg.
 
 ---
 
