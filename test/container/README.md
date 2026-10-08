@@ -24,7 +24,7 @@ erzeugt; auf dem Pi läuft sie nur während einer Anmeldung (Login oder SSH).
 | `einaus-e2e.sh [schritt …]` | Container (root) | Ende-zu-Ende-Beleg der Ein/Aus-Taste am Login-Bildschirm: der Login als `_greetd` über `zenos-greeter` in einer über PAM (`greetd-greeter`) gestellten Sitzung der Klasse `greeter` auf seat0, Attrappe von greetd; Hemmer «handle-power-key» bei logind ohne eigene polkit-Regel (Gegenprobe ohne Sitzung), `XF86PowerOff` über wtype weckt nur, nach Anmeldung und Absturz kein Hemmer, Notfall-Login ohne Hemmer. Bewusst ohne `KEY_POWER` über uinput (logind der colima-VM sähe das Gerät); Schritte im Kopf der Datei |
 | `kanal-e2e.sh <schritt>` | Container (root) | Ende-zu-Ende-Test des signierten Kanals: eigenes origin über https mit Wegwerf-CA und Wegwerf-Schlüsseln, der Übergang von `v0.1.0-rc3` mit dessen altem `zen update` (in einem frischen Container aus `zenos-test:installiert`, ohne `install.sh` aus `~/zenOS`), `zen update`, `zen rollback`, Rückweg, Abbruch mit Neustart, Notweg, Automatik (Timer, Zeitpunkt, gestellte Sitzung auf seat0 mit echter Sperre, Bestätigung nach Neustarts; Schritte im Kopf der Datei) |
 | `basis-e2e.sh <schritt>…` | Container (root) | Ende-zu-Ende-Test der Basis-Updates (`zenos-basis`): lokale Paketquelle mit Attrappen-Paketen, Automatik, `zen update --nur-basis`, Kernel-Attrappe, geschütztes Paket, Abbruch mitten in dpkg, Stopp der Prüfung mitten in `dpkg --configure -a`, Sperren gegen Kanal und `install.sh`, greetd startet nicht neu (siehe «Basis-Updates Ende zu Ende») |
-| `installer-e2e.sh <schritt>…` | Container (root) | Ende-zu-Ende-Test des zen Installers (`zenos-installer`): selbst gebautes Test-Paket mit Dienst, Standard für .deb (gio, xdg-mime), ansehen als tester, Installieren und Entfernen über `sudo zenos-installer-bedienen` mit den echten Units, geänderte Datei und anderer Plan werden abgelehnt (Schritte im Kopf der Datei) |
+| `installer-e2e.sh <schritt>…` | Container (root) | Ende-zu-Ende-Test des zen Installers: selbst gebaute Test-Pakete, Standard für .deb (gio, xdg-mime), Doppelklick über `gio open` und `xdg-open` bis ins Fenster, Installieren mit echtem pkexec aus dem Fenster, «Öffnen», Liste in Einstellungen › Apps und Entfernen, Ablehnungen (geänderte Datei, anderer Plan, fremde Architektur, Verweis, fremde Datei), Sperren gegen Kanal und Basis, Stopp, `install.sh` zweimal (siehe «zen Installer Ende zu Ende») |
 
 ## Basis-Image bauen
 
@@ -272,6 +272,55 @@ bis zu 15 Minuten und endet dann mit Exit 75: Es nimmt zuerst `/run/zenos-sperre
 `kanal.lock`, das `install.sh` des Laufs wartet umgekehrt (im Test gesehen; ein Lauf als Benutzer, wie dokumentiert,
 nimmt eine andere Sperre und wartet nur auf `kanal.lock`). Ein harter Abbruch hinterlässt keine `letzte.json`; die Oberfläche zeigt bis zum nächsten Lauf das
 vorige Ergebnis.
+
+## zen Installer Ende zu Ende
+
+`installer-e2e.sh` prüft den zen Installer mit allem Echten: `zenos-installer`, `zenos-installer-bedienen`, den Units,
+apt, dpkg, pkexec und polkit und der Oberfläche als Sitzung wie auf dem Pi (`oberflaeche.sh start --sitzung`). Die
+Test-Pakete (`zenos-e2e-app` mit Starter, Symbol, Systemdienst, postinst und prerm, dazu `zenos-e2e-fremd` für eine
+fremde Architektur) baut der Test selbst mit `dpkg-deb`; Netz braucht er nur für `wtype` und `file` (xdg-open
+erkennt den Dateityp im generischen Modus unter labwc nur mit `file`; auf Ubuntu Server ist es da, im Testbild fehlt
+es).
+
+```
+ZENOS_TESTBILD=zenos-test:installiert test/container/starten.sh zenos-installer-e2e
+docker exec zenos-installer-e2e bash -c 'apt-get update -qq && apt-get install -y -qq wtype file'
+docker exec -u tester -w /home/tester/zenOS zenos-installer-e2e ./scripts/install.sh   # Arbeitsstand nach /opt/zenos
+docker exec zenos-installer-e2e bash /repo/test/container/installer-e2e.sh alle          # rund 5 Minuten
+docker rm -f zenos-installer-e2e
+```
+
+Einzelne Schritte gehen auch (`einrichten` zuerst; die Schritte mit der Oberfläche brauchen `oberflaeche` davor).
+Bildschirmfotos von «bereit», «fertig» und der Liste in den Einstellungen landen in `/srv/bilder`
+(`installer-e2e-*.png`, holen mit `holen.sh`).
+
+- **pkexec:** Im Container zeigt kein Bildschirm den Passwortdialog, und `docker exec` öffnet keine logind-Sitzung.
+  Der Schritt `oberflaeche` legt deshalb `/etc/polkit-1/rules.d/10-zenos-installer-e2e.rules` an: tester darf die zwei
+  Aktionen des zen Installers ohne Passwort, nur in diesem Wegwerf-Container (`installsh` und `aufraeumen` nehmen die
+  Regel wieder weg). So läuft im Schritt `fenster` der echte Weg: Tab und Enter im Fenster, pkexec, die polkit-Aktion
+  über `exec.path` und `argv1`, der Helfer als root mit `PKEXEC_UID`. `einstellungen` ruft genau den Befehl des Knopfs
+  «Entfernen …» (`pkexec … entfernen PAKET`) als tester in der Sitzung; den Klick selbst prüft der node-Test der Logik.
+- **Helfer direkt:** Wo der Test Zeitpunkt und Prozess selbst steuern muss (Ablehnungen, Sperren, Stopp), ruft er den
+  Helfer als root mit bereinigter Umgebung und `PKEXEC_UID` auf, so wie pkexec ihn startet. `installieren` und
+  `entfernen` gehen zusätzlich über sudo (wie `zen install` im Terminal).
+- **Sperren:** Ein Lauf von Kanal oder Basis hält `kanal.lock` im Test über `flock` auf dieselbe Datei. Damit apt
+  mitten im Lauf steht, wartet das postinst des Test-Pakets, solange `/run/zenos-installer-e2e/halt` besteht
+  (höchstens 2 Minuten).
+- **Timer:** Laufzeit-Drop-ins in `/run/systemd/system/<timer>.d/e2e.conf` halten die Timer von Basis, Kanal und
+  apt-daily an (wie bei den Basis-Updates).
+
+| Schritt | Ergebnis |
+|---|---|
+| `geaendert`, `plan` | Datei nach dem Ansehen verändert (andere SHA-256): über sudo und wie über pkexec Exit 3, «seit dem Ansehen geändert». Ein anderer Plan: Exit 3. Nichts installiert, Ablage leer |
+| `architektur`, `verweis` | Fremde Architektur: `ansehen` «abgelehnt» (architektur), der Helfer Exit 3. Ein Verweis auf die .deb und eine Datei, die root gehört: Exit 3 («ist ein Verweis», «gehört nicht dir»), keine Unit gestartet |
+| `installieren`, `entfernen` | über sudo: Unit mit der SHA-256 als Instanz, Dienst des Pakets läuft, Liste, `letzte.json`, Log nur root und adm; Entfernen mit maskierter Instanz, `bash` wird abgelehnt |
+| `gleichzeitig` | `kanal.lock` gehalten: Der Installer wartet («wartet» in `status --json`), nichts installiert; danach installiert er. Während apt steht: `zenos-basis pruefen` und `zenos-kanal pruefen` Exit 75. Stopp der Unit während des Wartens: Exit 10, `letzte.json` «wartet», nichts installiert |
+| `doppelklick`, `fenster`, `oeffnen` | `gio open` (Thunar, Firefox) und `xdg-open` (Chrome) der .deb als tester → Fenster «bereit»; Tab und Enter → pkexec (im Journal «pkexec, uid 1000») → «fertig»; Enter auf «Öffnen» → das Programm läuft als tester in `app.slice`, das Fenster ist zu |
+| `einstellungen` | Einstellungen › Apps zeigt das Paket (IPC `installer liste`), `pkexec … entfernen` wie der Knopf: weg, die Liste sagt «keine» |
+| `installsh` | `install.sh` zweimal von Hand (root), jeweils «0 Änderungen» |
+
+Grenzen: Den Passwortdialog selbst (polkit-Agent der Sitzung) zeigt der Container nicht; ihn prüft die Abnahme auf
+dem Gerät. Exit 75 nach 20 Minuten Warten prüft der Test nicht (nur das Warten und den Stopp).
 
 ## Bootsplash ansehen
 
