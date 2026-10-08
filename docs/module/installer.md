@@ -14,24 +14,35 @@ hat dafür nichts (nur `sudo apt install ./datei.deb` im Terminal).
    `realpath`, ohne Steuerzeichen, Endung `.deb`, vorhanden) und als Argument an die Oberfläche geben
    (`zenos-ipc installer oeffnen PFAD`).
 2. **Ansehen, ohne Rechte:** `zenos-installer ansehen PFAD --json` liest das Paket nur: `dpkg-deb --ctrl-tarfile` und
-   `--fsys-tarfile` als Datenstrom in Pythons `tarfile`, nichts wird entpackt oder ausgeführt. Daraus: Name, Version,
-   Architektur, Herausgeber (Maintainer), Webseite, Beschreibung, Platzbedarf, die sichtbaren Starter (Name deutsch,
-   wenn vorhanden) und das Symbol (PNG zwischen 64 und 256 Pixeln vor dem grössten PNG vor SVG; nach
-   `$XDG_RUNTIME_DIR/zenos-installer/`, 0700). Dazu der Zustand (neu, Update, Rückschritt, gleich), die Simulation
-   `apt-get -s install PFAD` (zusätzliche Pakete, Entfernungen), die SHA-256 der Datei und der **Plan**: ein Hash über
-   Hauptpaket, Zustand und die Namen aller Pakete, die apt installieren oder entfernen würde.
+   `--fsys-tarfile` als Datenstrom in Pythons `tarfile`, nichts wird entpackt oder ausgeführt. Mit Grenzen, damit eine
+   kleine Datei nicht Gigabytes Speicher verlangt: Köpfe für lange Namen höchstens 64 KiB, pax-Köpfe 1 MiB, keine
+   Sparse-Dateien, Pfade 4096 Byte (Teile 255), 200 000 Einträge; die Antwort mit `--json` höchstens 2 MiB (die
+   Oberfläche liest nichts über 4 MiB). Daraus: Name, Version, Architektur, Herausgeber (Maintainer), Webseite,
+   Beschreibung, Platzbedarf, die sichtbaren Starter (Name deutsch, wenn vorhanden) und das Symbol (PNG zwischen 64 und
+   256 Pixeln vor dem grössten PNG vor SVG; nach `$XDG_RUNTIME_DIR/zenos-installer/`, 0700). Dazu der Zustand (neu,
+   Update, Rückschritt, gleich), die Simulation `apt-get -s install PFAD` (zusätzliche Pakete, Entfernungen), die
+   SHA-256 der Datei und der **Plan**: ein Hash über Hauptpaket, Zustand und die Namen aller Pakete, die apt
+   installieren oder entfernen würde.
 3. **Hinweise** (ruhig, Stufe «hinweis»; nur Entfernungen sind eine «warnung»): eigene Skripte als root (preinst,
-   postinst …), Systemdienste (Units in `/lib`, `/usr/lib` oder `/etc/systemd/system`, `/etc/init.d`, oder ein postinst,
-   der `systemctl` und Verwandte ruft), Dienste für die Sitzung, Autostart, Paketquellen (`sources.list.d`,
-   Schlüsselbunde, oder ein Skript, das `/etc/apt` anfasst), setuid/setgid, Dateien ausserhalb von `/usr` und `/opt`
-   (`/lib`, `/bin` … zählen wegen merged `/usr` wie `/usr`), Kernel-Module und DKMS, Rechte (sudoers, polkit-Regeln,
-   PAM, `/etc/security`), ersetzt ein Paket, das nicht über den zen Installer kam, Rückschritt.
+   postinst …, in jeder Form, die dpkg ausführt: Datei, Verweis, harter Verweis mit dem Text seines Ziels),
+   Systemdienste (Units in `/lib`, `/usr/lib` oder `/etc/systemd/system`, `/etc/init.d`, oder ein postinst, der
+   `systemctl` und Verwandte ruft), Dienste für die Sitzung, Autostart, Paketquellen (`sources.list.d`, Schlüsselbunde,
+   oder ein Skript, das `/etc/apt` anfasst), setuid/setgid (auch über einen harten Verweis: dpkg setzt dessen Modus auf
+   die gemeinsame Datei), FIFOs, Dateien ausserhalb von `/usr` und `/opt` (`/lib`, `/bin` … zählen wegen merged `/usr`
+   wie `/usr`), Kernel-Module und DKMS, Rechte (sudoers, polkit-Regeln, PAM, `/etc/security`), übernimmt per `Replaces`
+   Dateien installierter Pakete, ersetzt ein Paket, das nicht über den zen Installer kam, Rückschritt. Jeder Hinweis ist
+   höchstens 300 Zeichen lang.
 4. **Ablehnen:** grösser als 2 GiB, ohne Endung `.deb`, gehört nicht dir, beschädigt (dpkg-deb oder tar scheitern,
-   ungültige Pfade oder Felder), falsche Architektur (nur `dpkg --print-architecture` oder `all`), `Essential: yes`,
-   ein Name, den schon ein Teil von zenOS oder Ubuntu trägt (Liste aus `scripts/lib/aufraeumen.sh` wie bei
-   `zenos-basis`, dazu `scripts/pakete/*.txt`), Abhängigkeiten, die apt nicht erfüllen kann, und jede Entfernung eines
-   geschützten Pakets. Geschützt beim Entfernen ist zusätzlich alles manuell Installierte, ausser es kam selbst über
-   den zen Installer.
+   ungültige oder zu lange Pfade, ein Kopf über den Grenzen, ein Eintrag unbekannter Art, ungültige Felder),
+   Gerätedateien (`geraete`: eine für alle schreibbare Gerätedatei gäbe jedem Prozess root), falsche Architektur (nur
+   `dpkg --print-architecture` oder `all`), `Essential: yes`, ein Name, den schon ein Teil von zenOS oder Ubuntu trägt
+   (Liste aus `scripts/lib/aufraeumen.sh` wie bei `zenos-basis`, dazu `scripts/pakete/*.txt`), `Replaces` auf ein
+   solches Paket oder auf ein installiertes mit `Essential: yes` oder `Priority: required` (dpkg übernähme dessen
+   Dateien still und liesse sie bei seinen Updates liegen; ein `Replaces`, das nur für ältere Versionen gilt, zählt
+   nicht), ein Paket, das nur halb installiert ist (`halb`: ein Skript scheiterte; der Grund nennt
+   `sudo apt-get -f install` und das Entfernen), Abhängigkeiten, die apt nicht erfüllen kann, und jede Entfernung eines
+   geschützten Pakets. Geschützt beim Entfernen ist zusätzlich alles manuell Installierte, ausser es kam selbst über den
+   zen Installer.
 5. **Installieren:** `pkexec /opt/zenos/scripts/bin/zenos-installer-bedienen installieren PFAD SHA256 PLAN` (polkit
    `org.zenos.installer.installieren`, `auth_admin` bei jedem Aufruf). Der Helfer prüft die Argumente streng und ruft
    `zenos-installer auftrag-installieren` (root-eigene Kopie). Das öffnet die Datei als der aufrufende Benutzer
@@ -43,8 +54,11 @@ hat dafür nichts (nur `sudo apt install ./datei.deb` im Terminal).
    Warten, sonst Exit 75), Sperre der Paketlisten (kein `apt-get update` dazwischen), dpkg nicht unterbrochen, noch
    einmal auswerten. Nur wenn das Ergebnis «bereit» ist und der Plan gleich blieb: `apt-get install -y` mit
    `DEBIAN_FRONTEND=noninteractive`, confdef und confold, ohne autoremove (bei einem Rückschritt mit
-   `--allow-downgrades`), unter einem Block-Inhibitor. Danach: `installiert.json`, `letzte.json` (mit den Startern
-   für «Öffnen»), Log, Ablage leer.
+   `--allow-downgrades`; ohne Entfernung im Plan mit `--no-remove`, damit apt abbricht statt neu zu planen, wenn
+   unattended-upgrades den Paketstand inzwischen änderte), unter einem Block-Inhibitor. Entfernte apt trotzdem mehr
+   als angezeigt, heisst das Ergebnis «fehler» mit den Namen. Danach: `installiert.json` (auch ein nur halb
+   installiertes Paket, damit «Entfernen …» geht), `letzte.json` (mit den Startern für «Öffnen»), Log, Ablage leer.
+   Ob die Installation gelang, vergleicht `dpkg --compare-versions` (dpkg nennt «0:1.0» als «1.0»).
 6. **Entfernen:** `zenos-installer-bedienen entfernen PAKET` (polkit `org.zenos.installer.entfernen`, `auth_admin`)
    startet `zenos-installer-entfernen@PAKET.service` (Instanz maskiert wie `systemd-escape`): nur Pakete aus
    `installiert.json`, nie ein geschütztes, und nur, wenn `apt-get -s remove` nichts anderes entfernte. Dann
@@ -114,10 +128,12 @@ IPC `installer liste` sagt, was die Liste zeigt (Paketnamen oder `keine`); Entfe
 `zen install DATEI.deb` öffnet in der Sitzung (Terminal in zenOS, `WAYLAND_DISPLAY` gesetzt) das Fenster, wie ein
 Doppelklick. Ohne Sitzung (etwa über SSH) oder mit `--text` zeigt es die Ansicht im Terminal
 (`zenos-installer ansehen DATEI --auftrag`: der Text und zuletzt `auftrag SHA256 PLAN`) und installiert erst nach der
-Eingabe «ja»: `sudo zenos-installer-bedienen installieren PFAD SHA256 PLAN`. Danach steht der Grund aus `letzte.json`
-da (nur wenn er zu dieser Datei und diesem Lauf gehört). Ohne Terminal fragt es nicht und installiert nichts.
-`zen install --liste` zeigt, was über den zen Installer kam, `zen install --status` was läuft und das letzte Ergebnis.
-Tests: `test/einheiten/zen-install.test.py`.
+Eingabe «ja»: `sudo zenos-installer-bedienen installieren PFAD SHA256 PLAN`. Danach steht der Grund aus `letzte.json` da
+(nur wenn er zu dieser Datei und diesem Lauf gehört). Ohne Terminal fragt es nicht und installiert nichts. Mit sudo
+bricht es ab (Exit 2, «zen install läuft ohne sudo und fragt selbst nach dem Passwort»): Das Ansehen liefe sonst als
+root und hielte die eigene Datei für fremd. Die Webseite des Pakets erscheint im Terminal nur als druckbares ASCII (kein
+ESC, das die Hinweise darunter verstecken könnte). `zen install --liste` zeigt, was über den zen Installer kam,
+`zen install --status` was läuft und das letzte Ergebnis. Tests: `test/einheiten/zen-install.test.py`.
 
 ## Dateien
 

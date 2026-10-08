@@ -814,18 +814,32 @@ geschieht, nur für genau die Datei, die er gesehen hat, und dass er vorher sieh
   --ctrl-tarfile` und `--fsys-tarfile` als Datenstrom in Pythons `tarfile`, nichts wird entpackt oder ausgeführt,
   auch kein Skript des Pakets. apt rechnet nur (`apt-get -s install`). Nur das Symbol landet als Datei in
   `$XDG_RUNTIME_DIR/zenos-installer/` (0700), mit Grenzen für Grösse und Anzahl. Texte aus dem Paket (Name,
-  Beschreibung, Herausgeber, Webseite) sind nicht vertrauenswürdig: Das Programm entfernt Steuerzeichen und kürzt sie,
-  die Oberfläche zeigt sie nur als reinen Text, die Webseite nicht als Link.
-- **Hinweise statt Verbote:** Was ein Paket mitbringt, steht ruhig unter «Beim Installieren»: eigene Skripte als root,
-  Systemdienste (Units im Paket oder ein Skript, das `systemctl` ruft), Dienste der Sitzung, Autostart, Paketquellen,
-  setuid/setgid, Dateien ausserhalb von `/usr` und `/opt`, Kernel-Module, Änderungen an sudo, polkit oder PAM, ein
-  ersetztes Paket, das nicht über den zen Installer kam, ein Rückschritt. Was ein Skript wirklich tut, sieht der
-  Installer nicht; ein Skript, das sich tarnt, fällt durch die Muster.
-- **Ablehnen:** grösser als 2 GiB, beschädigt, falsche Architektur (nur die von `dpkg --print-architecture` und
-  `all`), `Essential: yes`, ein Paketname, den schon zenOS oder ein geschütztes Ubuntu-Paket trägt (die Liste aus
-  `scripts/lib/aufraeumen.sh` wie bei den Basis-Updates und `scripts/pakete/*.txt`), Abhängigkeiten, die apt nicht
-  erfüllen kann, und jede Entfernung eines geschützten Pakets (dazu alles manuell Installierte, ausser es kam selbst
-  über den zen Installer). Eine erlaubte Entfernung steht als einziger Hinweis in `warnung` da.
+  Beschreibung, Herausgeber, Webseite) sind nicht vertrauenswürdig: Das Programm entfernt Steuerzeichen und kürzt sie
+  (die Webseite gilt nur aus druckbarem ASCII, sonst fällt sie weg; ein ESC darin versteckte in `zen install` sonst
+  die Hinweise darunter), die Oberfläche zeigt sie nur als reinen Text, die Webseite nicht als Link. Gegen eine kleine
+  Datei, die beim Ansehen Gigabytes Speicher verlangt (`tarfile` liest lange Namen und pax-Köpfe ganz ein): Köpfe für
+  lange Namen höchstens 64 KiB, pax 1 MiB, keine Sparse-Dateien, Pfade 4096 Byte, 200 000 Einträge, jeder Hinweis
+  höchstens 300 Zeichen, die Antwort an die Oberfläche höchstens 2 MiB (die Oberfläche liest nichts über 4 MiB, sie
+  läuft im selben Prozess wie Sperre und polkit-Agent).
+- **Hinweise statt Verbote:** Was ein Paket mitbringt, steht ruhig unter «Beim Installieren»: eigene Skripte als root
+  (in jeder Form, die dpkg ausführt, auch als harter Verweis im Steuerteil), Systemdienste (Units im Paket oder ein
+  Skript, das `systemctl` ruft), Dienste der Sitzung, Autostart, Paketquellen, setuid/setgid (auch über einen harten
+  Verweis, dessen Modus dpkg auf die gemeinsame Datei setzt), FIFOs, Dateien ausserhalb von `/usr` und `/opt`,
+  Kernel-Module, Änderungen an sudo, polkit oder PAM, Dateien installierter Pakete, die es per `Replaces` übernimmt,
+  ein ersetztes Paket, das nicht über den zen Installer kam, ein Rückschritt. Skripte, setuid und `Replaces` sind feste
+  Angaben aus dem Paket; was ein Skript wirklich tut, sieht der Installer nicht, ein Skript, das sich tarnt, fällt
+  durch die Muster für Dienste und Paketquellen. Auch ohne Skript bleibt manches ohne Hinweis (etwa udev-Regeln oder
+  ein Drop-in unter `*.service.d`).
+- **Ablehnen:** grösser als 2 GiB, beschädigt (auch: ein Kopf oder Pfad über den Grenzen, ein Eintrag, den dpkg nicht
+  kennt), Gerätedateien (eine für alle schreibbare Gerätedatei gäbe jedem Prozess root; kein ehrliches Paket bringt
+  eine mit), falsche Architektur (nur die von `dpkg --print-architecture` und `all`), `Essential: yes`, ein
+  Paketname, den schon zenOS oder ein geschütztes Ubuntu-Paket trägt (die Liste aus `scripts/lib/aufraeumen.sh` wie
+  bei den Basis-Updates und `scripts/pakete/*.txt`), `Replaces` auf ein solches Paket oder auf ein installiertes mit
+  `Essential: yes` oder `Priority: required` (dpkg übernähme dessen Dateien ohne Skript und ohne Entfernung und liesse
+  sie bei seinen Updates liegen; ein `Replaces`, das nur für ältere Versionen gilt, zählt nicht), ein nur halb
+  installiertes Paket gleichen Namens (erst reparieren), Abhängigkeiten, die apt nicht erfüllen kann, und jede
+  Entfernung eines geschützten Pakets (dazu alles manuell Installierte, ausser es kam selbst über den zen Installer).
+  Eine erlaubte Entfernung steht als einziger Hinweis in `warnung` da.
 - **Passwort jedes Mal:** «Installieren» startet `pkexec /opt/zenos/scripts/bin/zenos-installer-bedienen installieren
   PFAD SHA256 PLAN` (Argumentliste, keine Shell). Die polkit-Aktionen in `system/polkit/org.zenos.installer.policy` (→
   `/usr/share/polkit-1/actions/`, Modul `76-installer`):
@@ -838,8 +852,8 @@ geschieht, nur für genau die Datei, die er gesehen hat, und dass er vorher sieh
   `auth_admin` statt `auth_admin_keep`: Ein zweites Paket kurz danach fragt neu. Ohne Passwort gibt es keinen Weg zu
   root, auch nicht über IPC (`installer oeffnen` öffnet nur das Fenster, Installieren geht nur über den Knopf). Für
   Programme der systemd-Benutzerinstanz gilt dieselbe Grenze wie bei der Firewall: Wer per SSH als Zeno angemeldet ist,
-  kann den Dialog am Gerät auslösen, das Passwort muss trotzdem dort eingetippt werden. Aus SSH geht `zen install`:
-  die Ansicht als Text, ein getipptes «ja» und sudo mit Passwort.
+  kann den Dialog am Gerät auslösen, das Passwort muss trotzdem dort eingetippt werden. Aus SSH geht `zen install`
+  (ohne sudo davor, sonst bricht es ab): die Ansicht als Text, ein getipptes «ja» und sudo mit Passwort.
 - **Genau diese Datei:** Der Helfer (root) nimmt nur `installieren PFAD SHA256 PLAN` und `entfernen PAKET` an (Pfad
   absolut, `.deb`, ohne Steuerzeichen; SHA-256 und Plan als feste Länge `0-9a-f`; Paketname wie dpkg ihn erlaubt), hat
   einen festen `PATH` und trägt jeden Aufruf ins Journal ein (`journalctl -t zenos-installer-bedienen`, mit Weg und
@@ -854,13 +868,17 @@ geschieht, nur für genau die Datei, die er gesehen hat, und dass er vorher sieh
   aus. Nur wenn sie «bereit» ist und der Plan gleich blieb (Hauptpaket, Zustand und die Namen aller Pakete, die apt
   installiert oder entfernt), läuft `apt-get install -y` (noninteractive, confdef und confold, ohne autoremove; bei
   einem Rückschritt `--allow-downgrades`). Kam inzwischen ein Update dazwischen, das den Plan ändert, Exit 3 und
-  «Noch einmal ansehen».
+  «Noch einmal ansehen». Zwischen dieser Auswertung und apt kann unattended-upgrades noch den Paketstand ändern (es
+  nimmt die Sperre der Paketlisten nicht): Zeigte der Plan keine Entfernung, läuft apt deshalb mit `--no-remove` und
+  bricht ab, statt neu zu planen. Entfernt apt trotzdem mehr als angezeigt, heisst das Ergebnis «fehler» mit den
+  Namen (geschützte eigens genannt), nie still «installiert».
 - **Nie zwei Paketvorgänge:** dieselbe Sperre wie Kanal und Basis-Updates (`/run/zenos-sperre/kanal.lock`, nur root),
-  nicht neben einem `install.sh` von Hand, die Sperre der Paketlisten (kein `apt-get update` dazwischen) und die
-  Sperren von dpkg; auf apt-daily und unattended-upgrades wartet es höchstens 20 Minuten (sonst Exit 75). Solange apt
-  läuft, hält ein Block-Inhibitor Ausschalten und Ruhezustand auf (auch das Ausschalten nach langer Sperre, das
-  Hemmer nie übergeht). Ein Stopp vor apt beginnt apt nicht mehr (Exit 10), ein laufendes dpkg bricht keiner ab
-  (`KillMode=mixed`). Schliesst Zeno das Fenster oder startet die Oberfläche neu, läuft die Unit zu Ende.
+  nicht neben einem `install.sh` von Hand, die Sperre der Paketlisten (kein `apt-get update` dazwischen); die Sperren
+  von dpkg müssen beim Beginn frei sein (apt nimmt sie danach selbst); auf apt-daily und unattended-upgrades wartet es
+  höchstens 20 Minuten (sonst Exit 75). Solange apt läuft, hält ein Block-Inhibitor Ausschalten und Ruhezustand auf
+  (auch das Ausschalten nach langer Sperre, das Hemmer nie übergeht). Ein Stopp vor apt beginnt apt nicht mehr (Exit
+  10), ein laufendes dpkg bricht keiner ab (`KillMode=mixed`). Schliesst Zeno das Fenster oder startet die Oberfläche
+  neu, läuft die Unit zu Ende.
 - **Entfernen nur, was so kam:** `zenos-installer-entfernen@PAKET.service` entfernt nur Pakete aus
   `/var/lib/zenos/installer/installiert.json` (root-eigen; ein Benutzer kann die Liste nicht ändern), nie ein
   geschütztes, und nur, wenn `apt-get -s remove` nichts anderes entfernte; `apt-get remove` ohne purge (die

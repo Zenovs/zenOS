@@ -820,7 +820,8 @@ ist eine Frage an RustDesk, nicht an den Installer; notiere trotzdem, was du sie
   installiert …» das Fenster schliessen. Am Ende kommt eine ruhige Mitteilung «RustDesk ist installiert», keine
   dringende Karte: Sie wartet wie andere Mitteilungen, die Glocke → «Jetzt zustellen» holt sie.
 - [ ] Per SSH: `zen install --liste` zeigt RustDesk. `zen install ~/Ablage/rustdesk-<version>-aarch64.deb` zeigt
-  dieselbe Ansicht als Text (bei «Zustand»: «diese Version ist schon installiert») und fragt nichts.
+  dieselbe Ansicht als Text (bei «Zustand»: «diese Version ist schon installiert») und fragt nichts. Mit `sudo` davor
+  bricht es gleich ab: «zen install läuft ohne sudo und fragt selbst nach dem Passwort».
   `journalctl -t zenos-installer-bedienen` nennt jeden Aufruf mit Weg (pkexec, uid) und Dateiname.
 - [ ] `ls /var/lib/zenos/installer/ablage` ist leer, `zen doctor` zeigt «zen Installer zuletzt …» ohne Warnung.
 
