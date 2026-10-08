@@ -183,6 +183,8 @@ os.execv(DPKG, [DPKG] + args)
 IPC = r'''
 with open(os.path.join(W, "ipc-aufrufe"), "a", encoding="utf-8") as f:
     f.write(json.dumps(sys.argv[1:]) + "\n")
+# Antwort der Oberfläche (installer/Installer.qml)
+print(lies("ipc.antwort", "offen"))
 sys.exit(int(lies("ipc.exit", "0")))
 '''
 
@@ -418,9 +420,25 @@ class Ansehen(Umgebung):
         self.assertIn("Beispiel-App 1.0-1 (zenos-beispiel, arm64)", text)
         self.assertIn("Zustand      neu", text)
         self.assertIn("Ergebnis: Beispiel-App 1.0-1 ist bereit zum Installieren.", text)
-        for argv in ([], [pfad, pfad], ["--json"], [pfad, "--json", "--json"], ["-x.deb"]):
+        for argv in ([], [pfad, pfad], ["--json"], [pfad, "--json", "--json"], ["-x.deb"], [pfad, "--json", "--auftrag"],
+                     [pfad, "--auftrag", "--auftrag"]):
             with self.subTest(argv=argv):
                 self.assertEqual(self.lauf(I.cmd_view, argv)[0], 2)
+
+    def test_auftrag_fuer_zen_install(self):
+        """--auftrag: die Ansicht als Text und zuletzt SHA-256 und Plan genau dieser Ansicht (nur bei «bereit»)."""
+        pfad = self.deb()
+        code, text = self.lauf(I.cmd_view, [pfad, "--auftrag"])
+        self.assertEqual(code, 0, text)
+        zeilen = text.strip().split("\n")
+        ev = self.ansehen(pfad)
+        self.assertEqual(zeilen[-1], f"auftrag {ev['sha256']} {ev['plan']}")
+        self.assertEqual(zeilen[-2], "Ergebnis: Beispiel-App 1.0-1 ist bereit zum Installieren.")
+        self.assertEqual(sum(1 for z in zeilen if z.startswith("auftrag ")), 1)
+        # Abgelehnt: kein Auftrag
+        code, text = self.lauf(I.cmd_view, [self.deb(name="anders", arch="amd64"), "--auftrag"])
+        self.assertEqual(code, 3)
+        self.assertNotIn("auftrag ", text)
 
     def test_relativer_pfad_und_verweis(self):
         pfad = self.deb()
@@ -1099,6 +1117,20 @@ class Oeffnen(Umgebung):
         code, text = self.lauf(I.cmd_open, [self.deb()])
         self.assertEqual(code, 1)
         self.assertIn("zen install", text)
+
+    def test_antwort_der_oberflaeche(self):
+        """Offen ist es nur bei «offen» oder «laeuft»; gesperrt, Einrichtung und Unbekanntes sind ein Fehler."""
+        pfad = self.deb()
+        for antwort, erwartet, text in (("offen", 0, ""), ("laeuft", 0, "läuft eine Installation"),
+                                        ("gesperrt", 1, "gesperrt"), ("einrichtung", 1, "Einrichtung"),
+                                        ("ungueltig", 1, "nimmt den Pfad nicht an"), ("", 1, "Antwort «»"),
+                                        ("x\x1by", 1, "Antwort")):
+            with self.subTest(antwort=antwort):
+                self.apt("ipc.antwort", antwort)
+                code, ausgabe = self.lauf(I.cmd_open, [pfad])
+                self.assertEqual(code, erwartet, ausgabe)
+                self.assertIn(text, ausgabe)
+                self.assertNotIn("\x1b", ausgabe)
 
 
 class Helfer(unittest.TestCase):

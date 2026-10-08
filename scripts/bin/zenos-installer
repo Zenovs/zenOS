@@ -3,10 +3,11 @@
 «Installieren», Passwort, fertig. Die Oberfläche (Fenster «zen Installer») und «zen install» nutzen dieses Programm.
 
 Aufruf:
-  zenos-installer ansehen DATEI [--json]
+  zenos-installer ansehen DATEI [--json|--auftrag]
                         ohne Rechte: liest das Paket (dpkg-deb, nichts wird ausgeführt), simuliert die Installation
                         («apt-get -s install DATEI»), wertet aus und nennt Hinweise und Ablehnungen. Das Symbol des
-                        Pakets landet in $XDG_RUNTIME_DIR/zenos-installer/. --json: ein JSON-Objekt (siehe unten)
+                        Pakets landet in $XDG_RUNTIME_DIR/zenos-installer/. --json: ein JSON-Objekt (siehe unten).
+                        --auftrag (zen install): die Ansicht als Text, bei «bereit» zuletzt «auftrag SHA256 PLAN»
   zenos-installer liste [--json]
                         ohne Rechte: was über den zen Installer kam (installiert.json) und ob es noch installiert ist
   zenos-installer status [--json|--kurz]
@@ -14,7 +15,9 @@ Aufruf:
                         Zeile «Ergebnis Text» (zen doctor)
   zenos-installer oeffnen DATEI
                         Doppelklick auf eine .deb (zenos-installer.desktop, Standard für .deb): prüft den Pfad und gibt
-                        ihn als Argument an die Oberfläche weiter (zenos-ipc installer oeffnen PFAD)
+                        ihn als Argument an die Oberfläche weiter (zenos-ipc installer oeffnen PFAD). Exit 0, wenn das
+                        Fenster offen ist (Antwort «offen» oder «laeuft»), 1 sonst (keine Oberfläche, gesperrt,
+                        Einrichtung), 2 bei einem falschen Pfad
   zenos-installer auftrag-installieren PFAD SHA256 PLAN
                         root, über scripts/bin/zenos-installer-bedienen (pkexec, Passwort bei jedem Aufruf) oder sudo:
                         öffnet die Datei sicher als der aufrufende Benutzer (PKEXEC_UID bzw. SUDO_UID; kein Verweis,
@@ -202,6 +205,9 @@ PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 ART_TEXT = {"installieren": "Installation", "entfernen": "Entfernen"}
 RESULT_TEXT = {"installiert": "installiert", "gleich": "schon installiert", "entfernt": "entfernt",
                "abgelehnt": "abgelehnt", "fehler": "Fehler", "wartet": "wartet"}
+# Antworten der Oberfläche auf «installer oeffnen», wenn das Fenster nicht aufgeht
+OPEN_REFUSED = {"gesperrt": "Der Bildschirm ist gesperrt.", "einrichtung": "Erst die Einrichtung abschliessen.",
+                "ungueltig": "Die Oberfläche nimmt den Pfad nicht an."}
 
 
 class Failure(Exception):
@@ -1150,11 +1156,12 @@ def view_lines(ev):
 
 
 def cmd_view(argv):
-    as_json = "--json" in argv
-    rest = [a for a in argv if a != "--json"]
-    if len(rest) != 1 or len(argv) - len(rest) > 1 or not rest[0] or rest[0].startswith("-"):
-        print(f"{NAME} ansehen DATEI [--json]", file=sys.stderr)
+    options = [a for a in argv if a in ("--json", "--auftrag")]
+    rest = [a for a in argv if a not in ("--json", "--auftrag")]
+    if len(rest) != 1 or len(options) > 1 or not rest[0] or rest[0].startswith("-"):
+        print(f"{NAME} ansehen DATEI [--json|--auftrag]", file=sys.stderr)
         return EXIT_USAGE
+    as_json = options == ["--json"]
     raw = rest[0]
     if len(raw) > MAX_PATH or any(not c.isprintable() for c in raw):
         ev = {"version": 1, "ergebnis": "fehler", "grund": "Ungültiger Dateiname.", "pfad": None}
@@ -1166,6 +1173,9 @@ def cmd_view(argv):
     else:
         for line in view_lines(ev):
             print(line)
+        # zen install: SHA-256 und Plan genau dieser Ansicht für «sudo zenos-installer-bedienen installieren»
+        if options == ["--auftrag"] and ev.get("ergebnis") == "bereit":
+            print(f"auftrag {ev['sha256']} {ev['plan']}")
     return {"bereit": EXIT_OK, "installiert": EXIT_OK, "abgelehnt": EXIT_REFUSED}.get(ev.get("ergebnis"), EXIT_ERROR)
 
 
@@ -1300,6 +1310,14 @@ def cmd_open(argv):
         print(f"{NAME}: Die Oberfläche hat den zen Installer nicht geöffnet (zenos-ipc Exit {r.returncode}"
               f"{': ' + first_line(r.stderr) if first_line(r.stderr) else ''}). Im Terminal: zen install {path}",
               file=sys.stderr)
+        return EXIT_ERROR
+    # Antwort der Oberfläche (installer/Installer.qml, IPC installer oeffnen)
+    answer = first_line(r.stdout)
+    if answer == "laeuft":
+        print("Gerade läuft eine Installation; der zen Installer zeigt sie. Danach noch einmal öffnen.")
+    elif answer != "offen":
+        why = OPEN_REFUSED.get(answer, f"Antwort «{clean(answer, 40)}»")
+        print(f"{NAME}: Der zen Installer öffnet gerade nicht: {why}", file=sys.stderr)
         return EXIT_ERROR
     return EXIT_OK
 
