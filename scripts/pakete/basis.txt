@@ -41,6 +41,9 @@ slurp
 wl-clipboard
 libnotify-bin
 xdg-utils
+# xdg-open erkennt ohne GNOME/KDE den Dateityp mit «file», etwa eine .deb aus der Download-Liste von Chrome, die
+# der zen Installer öffnet (auf Ubuntu Server meist schon da, im Testbild nicht)
+file
 shared-mime-info
 jq
 
