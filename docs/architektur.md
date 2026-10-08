@@ -181,6 +181,8 @@ Die Tastenkürzel von labwc rufen dieselben Ziele auf (Liste in `docs/module/m9.
 | `zenos-firewall` | Firewall ein- und ausschalten (root: über pkexec, sudo oder `install.sh`), bewussten Zustand merken |
 | `zenos-sicherheitsquelle` | prüft mit unattended-upgrades selbst, ob die Ubuntu-Sicherheitsquelle erlaubt ist (nur lesend, für `zen doctor` und die Vorab-Prüfung von `72-kennung`) |
 | `zenos-kennung` | Systemkennung zenOS: os-release, Konsole, `/etc/legal` und Begrüssung per dpkg-divert und dpkg-statoverride einrichten, nachziehen (apt-Hook), prüfen und zurück zu Ubuntu (root; ausgeführt wird die Kopie unter `/usr/local/sbin`) |
+| `zenos-installer` | zen Installer für .deb: `ansehen` (ohne Rechte: Metadaten, Inhalt, Symbol, Simulation mit `apt-get -s install`, Hinweise, Ablehnungen, Plan), `oeffnen` (Starter für .deb, gibt den geprüften Pfad an die Oberfläche), `liste`, `status`; als root (ausgeführt wird die Kopie unter `/usr/local/libexec/zenos`) `auftrag-installieren`, `auftrag-entfernen` und in den Units `installieren SHA256`, `entfernen PAKET` (`docs/module/installer.md`) |
+| `zenos-installer-bedienen` | zen Installer mit Rechten (root über pkexec, jedes Mal mit Passwort, oder sudo aus `zen install`): `installieren PFAD SHA256 PLAN` (genau die angezeigte Datei und der angezeigte Plan), `entfernen PAKET` (nur aus der Liste des Installers); startet die Units, arbeitet nicht selbst |
 
 ### Portale und Bildschirmfreigabe
 
@@ -231,13 +233,16 @@ Die Tastenkürzel von labwc rufen dieselben Ziele auf (Liste in `docs/module/m9.
   Sperre gibt es keine Dialoge (Begründung in `docs/sicherheit.md`).
 - Programme mit Rootrechten aus der Oberfläche: nur über `pkexec` mit einer eigenen polkit-Aktion, deren
   `exec.path` genau ein Programm unter `/opt/zenos` nennt und `exec.argv1` das erste Argument. Ausserhalb der aktiven
-  Sitzung am Gerät erlaubt polkit keine davon. Heute drei Dateien in `system/polkit/`:
+  Sitzung am Gerät erlaubt polkit keine davon. Heute vier Dateien in `system/polkit/`:
   - `org.zenos.firewall.policy`: `zenos-firewall ein` ohne Passwort, `aus` nur mit Passwort, jedes Mal.
   - `org.zenos.luefter.policy`: `zenos-luefter` ohne Passwort (eine Aktion für den Helfer).
   - `org.zenos.kanal.policy`: `zenos-kanal-bedienen` für Einstellungen › System › Updates. Ohne Passwort `pruefen`,
     `installieren`, `zeitpunkt`, `basis-pruefen` und `basis-installieren`; nur mit Passwort, jedes Mal, `zustimmen`
     (Kanal: Firewall, Netz oder Boot) und `basis-installieren-zustimmen` (Basis: Kernel, Firmware, Bootloader oder
     Entfernungen). Einzelheiten in `docs/sicherheit.md`.
+  - `org.zenos.installer.policy`: `zenos-installer-bedienen` für den zen Installer. `installieren` (Fenster «zen
+    Installer») und `entfernen` (Einstellungen › Apps) nur mit Passwort, jedes Mal (`docs/sicherheit.md`, «zen
+    Installer»).
 
 ### Leitplanken im Code
 
@@ -273,6 +278,17 @@ Die Regeln aus dem Manifest stehen im Code, nicht in der Konfiguration, und lass
 - **Terminal:** kitty (`system/kitty/kitty.conf`) mit fish (`system/fish/`). Farben schreibt `zenos-thema`.
 - **Apps:** `zen apps installieren` holt Chrome, VS Code, 1Password mit CLI und coremail aus den Quellen der
   Hersteller, nur nach ausdrücklicher Zustimmung und nie im Image. Nubix folgt, sobald es einen arm64-Build gibt.
+- **zen Installer** (heruntergeladene .deb): Der Starter `zenos-installer.desktop` ist in der zenOS-Sitzung Standard
+  für .deb; ein Doppelklick ruft `zenos-installer oeffnen PFAD`, das den Pfad prüft und als Argument per IPC
+  `installer oeffnen` an die Oberfläche gibt. Das Fenster (`shell/installer/`) sieht das Paket ohne Rechte an
+  (`zenos-installer ansehen --json`: nichts wird entpackt oder ausgeführt, apt nur simuliert) und installiert erst
+  nach «Installieren» und dem Passwort: `pkexec zenos-installer-bedienen installieren PFAD SHA256 PLAN` kopiert genau
+  diese Datei in eine root-eigene Ablage und startet `zenos-installer-installieren@SHA256.service`, die unter der
+  gemeinsamen Sperre mit Kanal und Basis noch einmal auswertet und nur bei gleichem Plan `apt-get install` ausführt.
+  Was so kam, steht in `/var/lib/zenos/installer/installiert.json`; Einstellungen › Apps entfernt es wieder
+  (`zenos-installer-entfernen@PAKET.service`, mit Passwort). Updates solcher Software kommen mit den Basis-Updates,
+  wenn das Paket eine eigene Paketquelle einrichtet, sonst nur über eine neuere .deb («Aktualisieren»). Einzelheiten
+  in `docs/module/installer.md`.
 - **Argon ONE:** `zenos-argon.service` (Systemdienst, gehärtet) erkennt das Gerät am Gerätebaum. Am Raspberry Pi 5
   mit Argon ONE V3 regelt er den Lüfter über I2C und wertet den Power-Button aus; ein systemd-shutdown-Hook sendet
   beim Ausschalten das Abschaltsignal an die Platine. Am Compute Module 5 im Argon ONE UP liest er den
@@ -331,7 +347,7 @@ Die Logik läuft in Quickshell selbst, ohne eigenen Hintergrunddienst.
 | Gesten | Socket `/run/zenos-gesten/gesten.sock` und Merker `bereit` (flüchtig, Ordner gehört `zenos-gesten`); Einheit `/etc/systemd/system/zenos-gesten.service`, udev-Regel `/etc/udev/rules.d/72-zenos-gesten.rules`, Benutzer `/etc/sysusers.d/zenos-gesten.conf`; Notschalter `/etc/xdg/zenos/gesten-aus` (root, `install.sh` nimmt dann alles zurück) | Einheit, Regel und Benutzer ja (Kopien), sonst nie |
 | Lüfterwunsch | `/var/lib/zenos/luefter` (`modus=auto\|mindest`, `stufe=1…4`, `seit=…`; root, 0644; fehlt = auto) | nie |
 | Firewall, bewusster Zustand | `/var/lib/zenos/firewall` (`zustand=an\|aus`, `seit=…`; root, 0644; fehlt = Standard an) | nie |
-| polkit-Aktionen | `/usr/share/polkit-1/actions/org.zenos.firewall.policy`, `org.zenos.luefter.policy`, `org.zenos.kanal.policy` | ja (Kopie von `system/polkit/`) |
+| polkit-Aktionen | `/usr/share/polkit-1/actions/org.zenos.firewall.policy`, `org.zenos.luefter.policy`, `org.zenos.kanal.policy`, `org.zenos.installer.policy` | ja (Kopie von `system/polkit/`) |
 | Quickshell | `/usr/local/bin/quickshell`, Stempel `/usr/local/share/zenos/quickshell.version` | nein, Quellbau |
 | Systemkennung | `/usr/lib/os-release`, `/etc/issue`, `/etc/legal` (umgelenkt, Ubuntu-Fassung jeweils als `<datei>.ubuntu`), `/etc/update-motd.d/00-zenos`, statoverrides für Ubuntus motd-Skripte, Verweise `zenos.info`/`zenos.mirrors`/`zenos.csv`, Version `/usr/local/share/zenos/version`, Merker `/var/lib/zenos/kennung` (nur nach `zenos-kennung ubuntu`) | nein, von `zenos-kennung` |
 | `zenos-kennung` und Hook | `/usr/local/sbin/zenos-kennung` (Kopie, root, 0755), `/etc/apt/apt.conf.d/60zenos-kennung` | ja (Kopien) |
@@ -345,10 +361,11 @@ Die Logik läuft in Quickshell selbst, ohne eigenen Hintergrunddienst.
 | Netz nach dem Umstieg | `/etc/netplan/90-zenos-netzwerk.yaml`, WLAN-Profile `/etc/netplan/90-NM-<uuid>.yaml` (0600 root, Passwörter wie bisher in netplan) | nie |
 | Netz: Sicherung, Land, Treiber | `/var/lib/zenos/netplan-vorher/<zeit>/` (0700), `/etc/xdg/zenos/wlan-land`, `/etc/modprobe.d/zenos-brcmfmac.conf`, `/etc/cloud/cloud.cfg.d/99-zenos-netzwerk.cfg` | nie (Vorlagen: `system/modprobe/`, `system/cloud/`) |
 | Login, Portale | `/etc/greetd/config.toml`, `/etc/xdg/xdg-desktop-portal/labwc-portals.conf`, `/etc/xdg/xdg-desktop-portal-wlr/config` | ja (Kopien) |
-| Standard-Apps, ausgeblendete Starter | `/etc/xdg/labwc-mimeapps.list` (Ordner: Thunar), `/usr/local/share/applications/thunar-{bulk-rename,settings}.desktop` (`Hidden=true`) | ja (Kopien) |
+| Standard-Apps, Starter | `/etc/xdg/labwc-mimeapps.list` (Ordner: Thunar, .deb: zen Installer), `/usr/local/share/applications/thunar-{bulk-rename,settings}.desktop` (`Hidden=true`), `/usr/local/share/applications/zenos-installer.desktop` (`NoDisplay`, `MimeType` für .deb) | ja (Kopien) |
 | Richtlinien | `/etc/opt/chrome/policies/managed/zenos.json`, `/etc/vscode/policy.json`, `/etc/apt/apt.conf.d/51zenos-ubuntu-quellen`, `52zenos-unattended` | ja (Kopien) |
 | Kein Basiswechsel | `/etc/update-manager/release-upgrades.d/zenos.cfg` (`Prompt=never`, `71-basis`); die Ubuntu-Version eines Stands steht in `system/basis` (liest `zenos-kanal` aus dem geprüften Stand) | ja (Kopie von `system/update-manager/zenos.cfg`) |
 | Basis-Updates | Programm `/usr/local/libexec/zenos/zenos-basis` (Kopie, root, 0755), Units `zenos-basis-pruefen`, `-installieren`, `-automatik` und `-gelegenheit` (statisch), `zenos-basis-automatik.timer` und `zenos-basis-gelegenheit.timer` (ab Werk an, gemeinsamer Notschalter `/etc/xdg/zenos/kanal-automatik-aus`); Zustand `/var/lib/zenos/basis/` (`stand.json`, `letzte.json`, `auftrag.json`, `install-ergebnis`, `automatik.json`, `automatik-bereit`; root, für alle lesbar); Übernahme-Marker `/run/zenos-basis/uebernahme` (Laufzeitordner der Unit); Log `/var/log/zenos/basis.log` (root, 0640, Paketstand vorher und Änderungen); Sperre gemeinsam mit dem Kanal (`/run/zenos-sperre/kanal.lock`) | Programm und Units ja (Kopien), Zustand nie |
+| zen Installer | Programm `/usr/local/libexec/zenos/zenos-installer` (Kopie, root, 0755), Units `zenos-installer-installieren@.service` (Instanz: SHA-256 der Datei) und `zenos-installer-entfernen@.service` (Instanz: Paketname, maskiert; beide statisch); Zustand `/var/lib/zenos/installer/` (`installiert.json`: was über den zen Installer kam, `letzte.json`: letztes Ergebnis; root, 0644, für alle lesbar), darin `ablage/` (root, 0755; die Datei, solange eine Installation läuft, danach leer); was gerade läuft `/run/zenos-installer/laeuft-PID.json`; Log `/var/log/zenos/installer.log` (root, 0640, Gruppe adm); Symbol eines angesehenen Pakets `$XDG_RUNTIME_DIR/zenos-installer/` (0700, flüchtig); Sperre gemeinsam mit Kanal und Basis (`/run/zenos-sperre/kanal.lock`) | Programm, Units und Starter ja (Kopien), Zustand nie |
 | Install-Log | `/var/log/zenos/install.log`, Rückfall `~/.local/state/zenos/install.log` | nie |
 | Einstellungen | `~/.config/zenos/einstellungen.json` | nie |
 | Modi | `~/.config/zenos/modi/*.json` | nie |
@@ -363,7 +380,7 @@ Die Logik läuft in Quickshell selbst, ohne eigenen Hintergrunddienst.
 | Bildschirmfotos | `~/Ablage/Screenshots/` | nie |
 | Ablage | `~/Ablage` (beim Anlegen 0700), dorthin zeigen Schreibtisch, Downloads, Dokumente, Bilder, Musik, Videos | nie |
 | Benutzerordner | `~/.config/user-dirs.dirs`, `~/.config/user-dirs.conf` (zenOS schreibt sie nur, solange die erste Zeile die Marke von `48-ablage` trägt) | nein, erzeugt |
-| Thunar-Aktionen | `~/.config/Thunar/uca.xml` aus `system/thunar/uca.xml` («Terminal hier öffnen» mit kitty; nur mit der Marke von `48-ablage` in der ersten Zeile) | nein, erzeugt |
+| Thunar-Aktionen | `~/.config/Thunar/uca.xml` aus `system/thunar/uca.xml` («Terminal hier öffnen» mit kitty, «Mit zen Installer öffnen» für .deb; nur mit der Marke von `48-ablage` in der ersten Zeile) | nein, erzeugt |
 | Geheimnisse | 1Password | nie |
 
 Die Schlüssel der persönlichen Dateien stehen in `docs/konfiguration.md`.
@@ -388,7 +405,7 @@ Systemteile, dann alle Benutzerteile.
 | `40-sitzung` | greetd mit Greeter, Benutzereinheiten, Portale |
 | `42-bootsplash` | Bootsplash-Theme ablegen, nicht einschalten |
 | `45-thema` | Erscheinungsbild auf GTK, Qt, kitty, labwc und VS Code, App-Icon `zenos` |
-| `48-ablage` | Thunar als Standard für Ordner, `~/Ablage`, Benutzerordner (`user-dirs.dirs`), «Terminal hier öffnen» in Thunar |
+| `48-ablage` | Thunar als Standard für Ordner (dazu der zen Installer für .deb in derselben `labwc-mimeapps.list`), `~/Ablage`, Benutzerordner (`user-dirs.dirs`), «Terminal hier öffnen» und «Mit zen Installer öffnen» in Thunar |
 | `50-raster` | Raster, Tastenkürzel, Bildschirm-Profile |
 | `55-zustaende` | Freigabe-Portal, Vorlagen der Zustände |
 | `60-terminal` | kitty, fish, tldr-Seiten |
@@ -397,6 +414,7 @@ Systemteile, dann alle Benutzerteile.
 | `71-basis` | Ubuntu-Basis: Paket-Updates über `zenos-basis` (root-eigene Kopie, Units `zenos-basis-pruefen` und `-installieren`, Timer der Automatik nach dem gemeinsamen Notschalter, `/var/lib/zenos/basis`; installiert selbst nichts), kein Wechsel der Hauptversion (`Prompt=never` per Drop-in in `/etc/update-manager/release-upgrades.d/`), keine Hinweise auf neue Ubuntu-Versionen |
 | `72-kennung` | Systemkennung zenOS (`zenos-kennung`, apt-Hook, Version, Logo), nur nach der Vorab-Prüfung der Ubuntu-Sicherheitsquelle |
 | `75-apps` | Werkzeuge für `zen apps`, Starter für Chrome und Web-Apps |
+| `76-installer` | zen Installer: `zenos-installer` als root-eigene Kopie (nur, wenn der Weg dorthin nur für root schreibbar ist), Units `zenos-installer-installieren@` und `-entfernen@` (statisch), polkit-Aktionen, Starter `zenos-installer.desktop`, `/var/lib/zenos/installer` mit `ablage/`. Keine Pakete, läuft auch im Image |
 | `80-argon` | Argon-Dienst (V3 und ONE UP) und Shutdown-Hook |
 | `82-gesten` | Wischen mit drei Fingern: Dienstbenutzer `zenos-gesten` (systemd-sysusers), udev-Regel für reine Touchpads, `zenos-gesten.service` (startet ihn, wenn es ein Touchpad gibt; nach Änderungen neu); keine Pakete. Mit Notschalter `/etc/xdg/zenos/gesten-aus` nimmt es alles zurück |
 | `90-benutzer` | Oberfläche verknüpfen, Ordner für persönliche Daten |

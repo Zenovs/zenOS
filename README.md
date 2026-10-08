@@ -19,6 +19,7 @@ zenOS ist kein eigener Kernel. Unter der Haube läuft Ubuntu LTS, darauf ein sch
 - **Modi und Zustände:** Du legst eigene Modi an, zum Beispiel Arbeit oder privat, dazu Zustände wie Fokus oder Sitzung.
 - **Befehlsfeld:** Apps, Web-Apps, Rechner, Dateien, Werkzeuge und Einstellungen an einer Stelle, geöffnet mit `Super + Leertaste`.
 - **Raster:** Fenster rasten per Tastendruck ein, bis zum 4er-Grid, passend zum Bildschirm-Setup.
+- **Software installieren wie auf dem Mac:** Doppelklick auf eine heruntergeladene `.deb`, und der zen Installer zeigt in Ruhe, was kommt (Herausgeber, Version, Systemdienste, Paketquellen), installiert nach deinem Passwort und öffnet das Programm. Entfernen geht in den Einstellungen.
 - **Ein Terminal, das man versteht:** `Ctrl+C` kopiert, wenn Text markiert ist, sonst bricht es ab. Befehle erscheinen als Blöcke, Erklärungen gibt es offline.
 - **Sicher ab Werk:** Der Sperrbildschirm zeigt keine Inhalte, bei Bildschirmfreigabe bleibt Privates verborgen, und es gibt keine Telemetrie. Sicherheitsupdates für das Grundsystem kommen automatisch von Ubuntu; Programme aus «universe» (etwa labwc, greetd, kitty und fish) bekommen verlässliche Sicherheitsfixes nur mit Ubuntu Pro.
 
