@@ -755,6 +755,12 @@ class Ansehen(Umgebung):
         self.assertEqual(ev["ergebnis"], "bereit", ev["grund"])
         self.assertEqual(self.arten(ev), ["skripte", "dienste"])
         self.assertIn("(postinst)", ev["hinweise"][0]["text"])
+        # Ein Verweis im Steuerteil ebenso, mit dem Text seines Ziels
+        pfad = self.roh_deb([(eintrag("./zz", modus=0o755), skript),
+                             (eintrag("./preinst", tarfile.SYMTYPE, 0o777, "zz"), None)], ordner("./"), datei="sym.deb")
+        ev = self.ansehen(pfad)
+        self.assertEqual(self.arten(ev), ["skripte", "dienste"])
+        self.assertIn("(preinst)", ev["hinweise"][0]["text"])
         # Auch ein Skript, das keine Datei ist (Gerät, FIFO …), zählt
         pfad = self.roh_deb([(eintrag("./prerm", tarfile.FIFOTYPE, 0o755), None)], ordner("./"), datei="fifo.deb")
         self.assertIn("(prerm)", self.ansehen(pfad)["hinweise"][0]["text"])

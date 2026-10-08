@@ -659,6 +659,8 @@ def read_control(path):
                 kept += len(data)
         elif member.islnk():
             data = seen.get(member_path(member.linkname).lstrip("/"))
+        elif member.issym() and not member.linkname.startswith("/"):
+            data = seen.get(os.path.normpath(os.path.join(os.path.dirname(name), member.linkname)))
         if name == "control":
             if data is None:
                 raise Refusal("beschaedigt", "Die Paketbeschreibung (control) fehlt oder ist zu gross.")
