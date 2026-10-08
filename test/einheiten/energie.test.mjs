@@ -1,5 +1,6 @@
-// Einheitentests für shell/dienste/energie.js (wirksame Werte, Zeitleiste, Vorwarnung, Wecktaste) und den
-// Abgleich mit Einstellungen.qml und dem Schema. Läuft ohne Abhängigkeiten: node --test test/einheiten/
+// Einheitentests für shell/dienste/energie.js (wirksame Werte, Zeitleiste, Vorwarnung, Wecktaste, auch gehalten), die
+// Verdrahtung der Wecktaste in Sperre.qml und den Abgleich mit Einstellungen.qml und dem Schema. Läuft ohne
+// Abhängigkeiten: node --test test/einheiten/
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -248,6 +249,111 @@ test("Wecktaste: genau eine Taste wird verworfen", () => {
   assert.equal(E.wecktasteVerwerfen(z, T0 + 1), false);
   for (const kaputt of [null, undefined, "dunkel", {}])
     assert.equal(E.wecktasteVerwerfen(kaputt, T0), false);
+});
+
+// Ablauf wie in Sperre.qml: Jedes Drücken und Loslassen im Passwortfeld geht durch wecktasteSperre.
+// Ereignisse als [druck, code, wiederholt]; QtWayland wiederholt eine gehaltene Taste als Loslassen und Drücken mit
+// isAutoRepeat.
+function sperrfeld(stand, ereignisse, jetzt = T0) {
+  let { z, gehalten } = stand;
+  const verworfen = [];
+  for (const [druck, code, wiederholt] of ereignisse) {
+    const r = E.wecktasteSperre(z, gehalten, druck, code, wiederholt, jetzt);
+    z = r.z;
+    gehalten = r.gehalten;
+    verworfen.push(r.verwerfen);
+  }
+  return { verworfen, z, gehalten };
+}
+
+test("Sperre: gehaltene Wecktaste, ihre Wiederholungen werden verworfen, bis sie los ist, nie eine andere Taste", () => {
+  const Q = 32;
+  const T = 28;
+  const R = 44;
+  const RETURN = 36;
+  const SHIFT = 50;
+  const dunkel = () => ({ z: E.bildschirmDunkel(E.weckzustand()), gehalten: -1 });
+  const halten = (code, mal) => Array.from({ length: mal }, () => [[false, code, true], [true, code, true]]).flat();
+  const tippen = (...codes) => codes.flatMap((c) => [[true, c, false], [false, c, false]]);
+
+  // Dunkel, «q» 1,5 s gehalten (nach 600 ms 25 je Sekunde: rund 22 Wiederholungen), dann los: verworfen sind der Druck
+  // und jede Wiederholung, das Loslassen beendet es. Danach kommt alles an, auch Wiederholungen einer anderen Taste.
+  let s = sperrfeld(dunkel(), [[true, Q, false], ...halten(Q, 22), [false, Q, false]]);
+  assert.deepEqual(s.verworfen, [true, ...Array(44).fill(true), false]);
+  assert.equal(s.gehalten, -1, "losgelassen: vorbei");
+  assert.equal(s.z.offen, false, "die Wecktaste ist erledigt");
+  s = sperrfeld(s, [...tippen(T, R), [true, R, false], ...halten(R, 3), [false, R, false]]);
+  assert.ok(s.verworfen.every((v) => v === false), "danach kommt alles an");
+
+  // Return gehalten mit «tes» im Feld: keine Wiederholung erreicht das Feld (kein halbes Passwort an PAM). Ein neuer
+  // Druck derselben Taste kommt an.
+  s = sperrfeld(dunkel(), [[true, RETURN, false], ...halten(RETURN, 5), [false, RETURN, false], [true, RETURN, false]]);
+  assert.deepEqual(s.verworfen, [true, ...Array(10).fill(true), false, false]);
+  // Ebenso ohne Loslassen dazwischen (ein echter Druck derselben Taste beendet es)
+  s = sperrfeld(dunkel(), [[true, RETURN, false], ...halten(RETURN, 2), [true, RETURN, false], ...halten(RETURN, 2)]);
+  assert.deepEqual(s.verworfen, [true, true, true, true, true, false, false, false, false, false]);
+
+  // Nie eine andere Taste: Ein Druck während des Haltens kommt an und beendet es
+  s = sperrfeld(dunkel(), [[true, Q, false], ...halten(Q, 2), [true, R, false], ...halten(Q, 1), ...halten(R, 1)]);
+  assert.deepEqual(s.verworfen, [true, true, true, true, true, false, false, false, false, false]);
+  assert.equal(s.gehalten, -1);
+  // Das Loslassen einer anderen Taste (Shift, vor dem Wecken gedrückt) beendet es nicht
+  s = sperrfeld(dunkel(), [[true, Q, false], [false, SHIFT, false], ...halten(Q, 2), [false, Q, false]]);
+  assert.deepEqual(s.verworfen, [true, false, true, true, true, true, false]);
+  // Das Loslassen allein ist nie die Wecktaste (Taste vor dem Dunkelwerden gedrückt, danach losgelassen)
+  s = sperrfeld(dunkel(), [[false, SHIFT, false]]);
+  assert.deepEqual(s.verworfen, [false]);
+  assert.equal(s.z.offen, true, "die Wecktaste steht weiter aus");
+
+  // Hell und gesperrt: Wer festhält, bekommt alle Wiederholungen ins Feld, nichts wird verworfen
+  s = sperrfeld({ z: E.weckzustand(), gehalten: -1 }, [[true, Q, false], ...halten(Q, 5), [false, Q, false]]);
+  assert.ok(s.verworfen.every((v) => v === false));
+  assert.equal(s.gehalten, -1);
+  // Geweckt mit der Maus (mehr als 300 ms vorher): ebenso
+  const geweckt = { z: E.bildschirmHell(E.bildschirmDunkel(E.weckzustand()), T0), gehalten: -1 };
+  s = sperrfeld(geweckt, [[true, Q, false], ...halten(Q, 5)], T0 + 500);
+  assert.ok(s.verworfen.every((v) => v === false));
+  // «an» knapp vor der Taste (innert 300 ms): die Taste und ihre Wiederholungen verworfen
+  s = sperrfeld(geweckt, [[true, Q, false], ...halten(Q, 2), [false, Q, false], ...tippen(T)], T0 + 100);
+  assert.deepEqual(s.verworfen, [true, true, true, true, true, false, false, false]);
+
+  // Bleibt «dunkel» hängen (kein «an»), geht trotzdem nur diese eine Taste verloren
+  s = sperrfeld(dunkel(), [[true, Q, false], [false, Q, false], ...tippen(T, R), [true, Q, false]], T0 + 5 * MIN);
+  assert.deepEqual(s.verworfen, [true, false, false, false, false, false, false]);
+  assert.equal(s.z.dunkel, true);
+
+  // Gehalten vor dem Dunkelwerden (die Wiederholung ist der erste Druck danach): bis zum Loslassen verworfen
+  s = sperrfeld(dunkel(), [[true, Q, true], ...halten(Q, 2), [false, Q, false], ...tippen(T)]);
+  assert.deepEqual(s.verworfen, [true, true, true, true, true, false, false, false]);
+
+  // Ohne gültigen Code lässt sich die Taste nicht wiedererkennen: nur der eine Druck, nie mehr
+  for (const code of [undefined, null, NaN, -1, "32"]) {
+    s = sperrfeld(dunkel(), [[true, code, false], [false, code, true], [true, code, true], [true, Q, true]]);
+    assert.deepEqual(s.verworfen, [true, false, false, false], String(code));
+    assert.equal(s.gehalten, -1, String(code));
+  }
+  // Ein kaputter Stand verwirft nichts
+  for (const gehalten of [undefined, null, "32", NaN])
+    assert.deepEqual(sperrfeld({ z: E.weckzustand(), gehalten }, [[true, Q, true], [false, Q, true]]).verworfen, [false, false]);
+});
+
+test("Sperre.qml: jedes Drücken und Loslassen im Passwortfeld geht durch wecktasteSperre", () => {
+  const qml = lesen("shell", "sperre", "Sperre.qml");
+  assert.match(qml, /import "\.\.\/dienste\/energie\.js" as EnergieLogik\n/);
+  assert.match(qml, /property int _gehalten: -1\n/);
+  assert.match(qml, /function _vorTaste\(event: KeyEvent, druck: bool\): void \{\s*const r = EnergieLogik\.wecktasteSperre\(root\._weck, root\._gehalten, druck, event\.nativeScanCode, event\.isAutoRepeat, Date\.now\(\)\);\s*root\._weck = r\.z;\s*root\._gehalten = r\.gehalten;\s*if \(druck && root\.dunkel\)\s*Energie\.bildschirm\("an"\);\s*if \(r\.verwerfen\)\s*event\.accepted = true;\s*\}/);
+  const feld = /Eingabe \{\s*id: passwortFeld\s*([\s\S]*?)\n {32}\}/.exec(qml);
+  assert.ok(feld, "Eingabe passwortFeld");
+  assert.match(feld[1] + "\n", /onVorTaste: event => root\._vorTaste\(event, true\)\n/);
+  assert.match(feld[1] + "\n", /onVorLoslassen: event => root\._vorTaste\(event, false\)\n/);
+  // Der alte Weg (nur der erste Druck) ist weg, die Logik steht nur in energie.js
+  assert.doesNotMatch(qml, /wecktasteVerwerfen|wecktasteGesehen|wecktasteGehalten\(|_wecktaste\b/);
+  // Wo der Weckzustand neu beginnt (sperren, entsperren, labwc beendet die Sperre), beginnt auch das Halten neu
+  const neu = [...qml.matchAll(/root\._weck = EnergieLogik\.weckzustand\(\);\n(\s*)(.*)\n/g)];
+  assert.equal(neu.length, 3);
+  for (const m of neu) assert.equal(m[2], "root._gehalten = -1;");
+  const eingabe = lesen("shell", "komponenten", "Eingabe.qml");
+  assert.match(eingabe, /Keys\.onReleased: event => root\.vorLoslassen\(event\)\n/);
 });
 
 test("Vorwarnung: Wer das Passwort tippt, verliert kein Zeichen", () => {

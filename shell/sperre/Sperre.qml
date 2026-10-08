@@ -34,7 +34,8 @@ import "../dienste/energie.js" as EnergieLogik
 //   Super+L, und ohne Rücksicht auf Idle-Hemmer (ein Video hinter der Sperre sieht niemand). zenos-idle schaltet
 //   zusätzlich nach Sperre plus dieser Zeit ab, als Rückfallebene ohne Oberfläche. Jede Eingabe weckt ihn wieder.
 // - Wecktaste: Die Taste, die einen dunklen Bildschirm weckt, landet nicht im Passwortfeld (sonst ein Fehlversuch
-//   bei PAM). Verworfen wird genau eine Taste (Logik in dienste/energie.js). Dunkel ist die Sperre durch den
+//   bei PAM). Verworfen wird genau eine Taste (Logik in dienste/energie.js). Hält man sie fest, verwirft das Feld
+//   auch ihre Wiederholungen, bis sie losgelassen wird; jede andere Taste kommt an. Dunkel ist die Sperre durch den
 //   eigenen Aufruf von zenos-bildschirm oder dessen Meldung «sperre bildschirm aus», nie ungesperrt.
 // - Neustart der Oberfläche (Absturz, Neuladen) bei dunklem Bildschirm: Beim Start fragt die Sperre
 //   «zenos-bildschirm status». Ist es dunkel und gesperrt, gilt es als dunkel (Eingaben wecken, die Wecktaste wird
@@ -80,6 +81,8 @@ Scope {
 
     // Bildschirm und Wecktaste: { dunkel, gewecktUm, offen } aus energie.js
     property var _weck: EnergieLogik.weckzustand()
+    // Code der verworfenen Wecktaste, solange sie gehalten wird (-1: keine)
+    property int _gehalten: -1
     readonly property bool dunkel: root._weck.dunkel === true
     // Uhrzeit des Ausschaltens während der Vorwarnung, z. B. «22:41» (leer: keine Vorwarnung)
     readonly property string ausschaltenUm: Energie.vorwarnungLaeuft && Energie.ausschaltenUm > 0 ? Qt.formatDateTime(new Date(Energie.ausschaltenUm), "HH:mm") : ""
@@ -99,14 +102,19 @@ Scope {
         }
     }
 
-    // Vor jeder Taste im Passwortfeld: true verwirft sie (die Taste, die den Bildschirm weckt). Ist es noch
-    // dunkel, weckt die Taste ihn auch selbst (falls kein swayidle mit resume darauf wartet).
-    function _wecktaste(): bool {
-        const verwerfen = EnergieLogik.wecktasteVerwerfen(root._weck, Date.now());
-        root._weck = EnergieLogik.wecktasteGesehen(root._weck);
-        if (root.dunkel)
+    // Vor jeder Taste im Passwortfeld, beim Drücken (druck) und Loslassen. Verworfen werden die Taste, die den
+    // Bildschirm weckt, und, solange man sie festhält, ihre Wiederholungen: Der Client wiederholt sie nach 600 ms,
+    // sonst kämen Zeichen ins Feld, und ein gehaltenes Return prüfte das halbe Passwort. Nie eine andere Taste, das
+    // Loslassen beendet es (energie.js, wecktasteSperre). Ist es noch dunkel, weckt ein Druck den Bildschirm auch
+    // selbst (falls kein swayidle mit resume darauf wartet).
+    function _vorTaste(event: KeyEvent, druck: bool): void {
+        const r = EnergieLogik.wecktasteSperre(root._weck, root._gehalten, druck, event.nativeScanCode, event.isAutoRepeat, Date.now());
+        root._weck = r.z;
+        root._gehalten = r.gehalten;
+        if (druck && root.dunkel)
             Energie.bildschirm("an");
-        return verwerfen;
+        if (r.verwerfen)
+            event.accepted = true;
     }
 
     // Ein/Aus-Taste kurz gedrückt, während gesperrt ist: "an" oder "aus" (wie es danach sein soll), "offen" ohne Sperre
@@ -134,6 +142,7 @@ Scope {
             markerDatei.setText(new Date().toISOString() + "\n");
             zustand.gesperrt = true;
             root._weck = EnergieLogik.weckzustand();
+            root._gehalten = -1;
             _zuruecksetzen();
             lock.locked = true;
             // Ohne ext-session-lock bleibt locked false
@@ -205,6 +214,7 @@ Scope {
     function _entsperren(): void {
         zustand.gesperrt = false;
         root._weck = EnergieLogik.weckzustand();
+        root._gehalten = -1;
         lock.locked = false;
         Oberflaeche.gesperrt = false;
         _zuruecksetzen();
@@ -272,6 +282,7 @@ Scope {
                 console.warn("Sperre: labwc hat die Sperre nicht übernommen oder beendet");
                 zustand.gesperrt = false;
                 root._weck = EnergieLogik.weckzustand();
+                root._gehalten = -1;
                 root._zuruecksetzen();
                 root._aufraeumen();
                 Energie.bildschirm("an");
@@ -437,11 +448,10 @@ Scope {
                                     fehler: root.fehlerAnzeigen
                                     nurLesen: root.pruefe
                                     maximaleLaenge: 1024
-                                    // Die Taste, die einen dunklen Bildschirm weckt, landet nicht im Feld
-                                    onVorTaste: event => {
-                                        if (root._wecktaste())
-                                            event.accepted = true;
-                                    }
+                                    // Die Taste, die einen dunklen Bildschirm weckt, landet nicht im Feld, auch
+                                    // nicht ihre Wiederholungen, solange sie gehalten wird
+                                    onVorTaste: event => root._vorTaste(event, true)
+                                    onVorLoslassen: event => root._vorTaste(event, false)
                                     onTextChanged: {
                                         if (text !== root.eingabe)
                                             root.eingabe = text;
@@ -678,7 +688,7 @@ Scope {
 
     // Wecken: Solange es dunkel ist, weckt jede Eingabe (Taste, Maus, Touchpad), auch wenn den Bildschirm jemand
     // anderes ausgeschaltet hat (Sofort-Aktion ohne zenos-idle). Scharf nach 1 s Ruhe; eine Taste davor weckt über
-    // _wecktaste().
+    // _vorTaste().
     IdleMonitor {
         enabled: lock.secure && root.dunkel
         respectInhibitors: false

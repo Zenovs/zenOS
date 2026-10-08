@@ -23,7 +23,7 @@ Item {
     // verworfen: Nichts wird getippt, auch Return und Rücktaste wirken nicht. Die Sperre verwirft so die Taste, die
     // einen dunklen Bildschirm weckt.
     signal vorTaste(var event)
-    // Ebenso bei jedem Loslassen einer Taste (der Login erkennt so, dass die gehaltene Wecktaste los ist)
+    // Ebenso bei jedem Loslassen einer Taste (Login und Sperre erkennen so, dass die gehaltene Wecktaste los ist)
     signal vorLoslassen(var event)
 
     // Über text = "": Das leert auch den Rückgängig-Verlauf von TextInput, in dem clear() die getippten Zeichen

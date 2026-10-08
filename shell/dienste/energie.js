@@ -288,7 +288,7 @@ function wecktasteGesehen(z) {
 // an das Feld, das dann den Fokus hat. Sie werden verworfen, bis die Taste losgelassen wird; sonst landeten Zeichen
 // im Passwortfeld, und ein gehaltenes Return meldete mit dem halben Passwort an. Nie eine andere Taste: Jeder echte
 // Druck (auch derselben Taste), das echte Loslassen der gehaltenen Taste und die Wiederholung einer anderen beenden
-// es. Gebraucht im Login (greeter/Anmeldefenster.qml); für die Sperre vorgemerkt (docs/module/energie.md, «Offen»).
+// es. Gebraucht im Login (greeter/Anmeldefenster.qml) und in der Sperre (über wecktasteSperre).
 //   gehalten:   Code der verworfenen Wecktaste (nativeScanCode), -1: keine
 //   druck:      true beim Drücken, false beim Loslassen
 //   code:       nativeScanCode dieser Taste
@@ -305,6 +305,24 @@ function wecktasteGehalten(gehalten, druck, code, wiederholt) {
     if (druck === true || code === gehalten)
         return { verwerfen: false, gehalten: -1 };
     return { verwerfen: false, gehalten: gehalten };
+}
+
+// Jede Taste im Passwortfeld der Sperre (sperre/Sperre.qml), beim Drücken und Loslassen. Dort gibt es keinen eigenen
+// Wecker wie im Login: Alles geht durch das Feld. Verworfen werden die Wecktaste (genau ein Druck, wecktasteVerwerfen)
+// und, solange sie gehalten wird, ihre Wiederholungen (wecktasteGehalten). Nie eine andere Taste, ihr Loslassen
+// beendet es. Ein Loslassen zählt nie als Wecktaste.
+//   z:        Weckzustand (weckzustand, bildschirmDunkel, bildschirmHell)
+//   gehalten: Code der verworfenen Wecktaste, solange sie gehalten wird (-1: keine)
+//   druck, code, wiederholt wie bei wecktasteGehalten, jetzt in ms (Date.now())
+// Ergebnis: { verwerfen, z, gehalten } (z und gehalten: der neue Stand)
+function wecktasteSperre(z, gehalten, druck, code, wiederholt, jetzt) {
+    var g = wecktasteGehalten(gehalten, druck, code, wiederholt);
+    if (g.verwerfen || druck !== true)
+        return { verwerfen: g.verwerfen, z: z, gehalten: g.gehalten };
+    var verwerfen = wecktasteVerwerfen(z, jetzt);
+    // Ohne gültigen Code lässt sich die Taste nicht wiedererkennen: dann nur dieser eine Druck
+    var mitCode = typeof code === "number" && isFinite(code) && code >= 0;
+    return { verwerfen: verwerfen, z: wecktasteGesehen(z), gehalten: verwerfen && mitCode ? code : -1 };
 }
 
 // --- Ein/Aus-Taste, gesperrt ----------------------------------------------------
