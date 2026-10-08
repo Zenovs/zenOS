@@ -36,7 +36,7 @@ I2C/GPIO des Argon ONE, Tastatur), ist pro Modul unter «am Pi prüfen» notiert
 **Oktober 2026:** Nach `v0.1.0-rc2` kamen der signierte Update-Kanal, Energie, die Systemkennung zenOS und das Image
 als eigenständige Distribution (Release-Seite, Quellcode) dazu; `v0.1.0-rc3` ist gebaut (unsigniert, nur Artefakt).
 Die Fensterübersicht ist in Arbeit. `v0.1.0-rc4` ist der erste signierte Release-Kandidat (Image-Bau scheiterte, behoben). Nächster
-Schritt: `v0.1.0-rc5`, erstmals mit Release-Seite, als Vorabversion, dann die Abnahme auf echter Hardware und `v0.1.0` (`ROADMAP.md`). Der Rest dieses
+Schritt: `v0.1.0-rc6` (rc5 übersprungen), erstmals mit Release-Seite, als Vorabversion, dann die Abnahme auf echter Hardware und `v0.1.0` (`ROADMAP.md`). Der Rest dieses
 Abschnitts beschreibt den Stand von rc1/rc2.
 
 Alle Module sind gebaut und im Container getestet (Ubuntu 26.04 arm64 mit systemd, headless labwc, echte

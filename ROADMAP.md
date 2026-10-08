@@ -2,9 +2,9 @@
 
 Jeder Checkpoint endet mit einem Tag und einer Abnahme durch Zeno auf echter Hardware.
 
-**Version 0.1:** C1 bis C8 werden gemeinsam in einem Durchgang gebaut, nach `BAUAUFTRAG.md`. Den Workflow für C9 baut Claude Code mit; das erste Release mit Image entsteht als Vorabversion mit `v0.1.0-rc5`, das erste «Latest» erst nach Zenos Abnahme mit dem Tag `v0.1.0`.
+**Version 0.1:** C1 bis C8 werden gemeinsam in einem Durchgang gebaut, nach `BAUAUFTRAG.md`. Den Workflow für C9 baut Claude Code mit; das erste Release mit Image entsteht als Vorabversion mit `v0.1.0-rc6`, das erste «Latest» erst nach Zenos Abnahme mit dem Tag `v0.1.0`.
 
-**Stand 0.1 (Oktober 2026):** C1 bis C9 sind gebaut und im Container getestet. Seit `v0.1.0-rc2` kamen dazu: der signierte Update-Kanal (`stabil`, `vorschau`, `dev`, Vertrauensanker, Automatik mit einstellbarem Zeitpunkt), Energie (Bildschirm aus nach der Sperre, Ausschalten nach langer Sperre und bei 3 % Akku), die Systemkennung zenOS (`ID=zenos`) und das Image als eigenständige Distribution mit Release-Seite und Quellcode aller Pakete. `v0.1.0-rc3` ist gebaut (unsigniert, nur als Workflow-Artefakt). In Arbeit: die Fensterübersicht. `v0.1.0-rc4` ist der erste signierte Release-Kandidat; sein Image-Bau scheiterte an einer Dateiberechtigung im Workflow (behoben). Nächster Schritt ist `v0.1.0-rc5`, erstmals mit Release-Seite, als Vorabversion, danach die Abnahme auf echter Hardware und `v0.1.0`. Abweichungen sind unten mit «0.1:» markiert. Was genau umgesetzt ist, steht in `docs/funktionen.md`.
+**Stand 0.1 (Oktober 2026):** C1 bis C9 sind gebaut und im Container getestet. Seit `v0.1.0-rc2` kamen dazu: der signierte Update-Kanal (`stabil`, `vorschau`, `dev`, Vertrauensanker, Automatik mit einstellbarem Zeitpunkt), Energie (Bildschirm aus nach der Sperre, Ausschalten nach langer Sperre und bei 3 % Akku), die Systemkennung zenOS (`ID=zenos`) und das Image als eigenständige Distribution mit Release-Seite und Quellcode aller Pakete. `v0.1.0-rc3` ist gebaut (unsigniert, nur als Workflow-Artefakt). Dazu die Fensterübersicht mit Wischen, Bildschirm aus am Login und Updates der Ubuntu-Basis über `zen update` samt Sperre gegen einen Wechsel der Hauptversion. `v0.1.0-rc4` ist der erste signierte Release-Kandidat; sein Image-Bau scheiterte an einer Dateiberechtigung im Workflow (behoben). Nächster Schritt ist `v0.1.0-rc6` (rc5 übersprungen), erstmals mit Release-Seite, als Vorabversion, danach die Abnahme auf echter Hardware und `v0.1.0`. Abweichungen sind unten mit «0.1:» markiert. Was genau umgesetzt ist, steht in `docs/funktionen.md`.
 
 ## C0 · Grundlagen
 
@@ -68,7 +68,7 @@ Jeder Checkpoint endet mit einem Tag und einer Abnahme durch Zeno auf echter Har
 - GitHub Actions baut `zenos-<version>-pi5-arm64.img.xz`
 - Release mit Prüfsummen, Download direkt von GitHub; `vX.Y.Z` als «Latest», `-rcN` als Vorabversion (nie «Latest»).
   Bis `v0.1.0-rc3` bauten Tags mit `-rc` nur ein Workflow-Artefakt, ab `v0.1.0-rc4` bekommen sie eine Release-Seite (die erste hat
-  `v0.1.0-rc5`, der Bau zu rc4 scheiterte)
+  `v0.1.0-rc6`, der Bau zu rc4 scheiterte, rc5 wurde übersprungen)
 - Image nur aus einem mit dem Release-Schlüssel signierten Tag, Kanal aus dem Tag (`vX.Y.Z` → stabil, `-rcN` →
   vorschau), Anker und Zustand ab Werk im Image; Release nur bei grüner Prüfung
 

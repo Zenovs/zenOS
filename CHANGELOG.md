@@ -3,11 +3,47 @@
 Was sich an zenOS ändert, pro Version. Das Format lehnt sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/)
 an; eine Version entspricht einem Tag `v…` im Repo.
 
-## 0.1.0-rc5 – 2026-10-07
+## 0.1.0-rc6 – 2026-10-08
 
-Wie `v0.1.0-rc4`, dazu die Behebung im Bau des Images. `v0.1.0-rc5` ist der erste Release-Kandidat mit Image und
-Release-Seite, dort als Vorabversion (Pre-release): zum Testen, nicht für den Alltag. Geräte im Kanal `vorschau`
-installieren ihn automatisch zum eingestellten Zeitpunkt.
+Alles seit `v0.1.0-rc4`: Updates der Ubuntu-Basis über `zen update`, die Sperre gegen einen Wechsel der
+Ubuntu-Hauptversion und die Behebung im Bau des Images. `v0.1.0-rc5` wurde nie getaggt (übersprungen). `v0.1.0-rc6` ist
+der erste Release-Kandidat mit Image und Release-Seite, dort als Vorabversion (Pre-release): zum Testen, nicht für den
+Alltag. Geräte im Kanal `vorschau` installieren ihn automatisch zum eingestellten Zeitpunkt.
+
+### Neu
+
+- **Updates der Ubuntu-Basis in `zen update`:** Nach dem zenOS-Kanal (Schritt 1) kommt die Basis (Schritt 2), jeder
+  Schritt meldet sein Ergebnis für sich. `zenos-basis` holt die Paketlisten (`apt-get update`) und zeigt, was
+  `apt full-upgrade` brächte: Anzahl, davon Sicherheitsupdates, Kernel, Firmware oder Bootloader, Entfernungen und ob
+  danach voraussichtlich ein Neustart nötig ist. Installiert wird nach einem getippten «ja» (oder mit `--ja`, das nur
+  für diesen Schritt gilt, nie für das «ja» des Kanals) genau diese Liste, als Dienst
+  `zenos-basis-installieren.service` (root, Block-Inhibitor, läuft auch nach einem SSH-Abbruch zu Ende), nicht
+  interaktiv mit `--force-confold`; gehaltene Pakete und die Sperre von snapd bleiben. Die gemeinsame Sperre mit dem
+  Kanal und mit `install.sh` von Hand verhindert zwei Paketvorgänge gleichzeitig, auf unattended-upgrades wird
+  gewartet. Der Paketstand vorher und nachher steht in `/var/log/zenos/basis.log` (Diagnose, kein Rückweg). Danach
+  läuft `install.sh` (Quickshell wird bei einer neuen Qt-Version neu gebaut) und eine Gesundheitsprüfung, die nur
+  zählt, was schlechter wurde; ein «kaputt» nennt die Ursache, `zenos-basis quittieren` hebt es nach der Behebung auf.
+  greetd startet beim Upgrade nicht neu (sonst endete die Sitzung), stattdessen gilt «Neustart nötig». `--nur-zenos`
+  und `--nur-basis` führen nur einen Schritt aus; Claude deployt nur noch mit `--nur-zenos`.
+- **Automatik für die Basis:** zum selben Zeitpunkt wie der Kanal (Einstellungen › System › Updates: bei Sperre, im
+  Zeitfenster, jederzeit oder von Hand), nur am Netzteil oder ab 50 % Akku, mit demselben Notschalter
+  (`sudo zen kanal automatik aus`), zusätzlich nie während einer SSH-Sitzung, auch auf dem Kanal `dev`. Kernel,
+  Firmware, Bootloader und Entfernungen installiert sie nie selbst, sie warten auf «ja». Sicherheitsupdates bringt
+  weiter unattended-upgrades. Nie ein automatischer Neustart.
+- **Einstellungen › System › Updates:** zeigt zenOS und die Ubuntu-Basis getrennt (letzte Prüfung, ausstehende
+  Pakete, davon Sicherheit, Neustart nötig) mit «Jetzt prüfen» und «Jetzt installieren» (ohne Passwort, genau die
+  angezeigte Liste) bzw. «Mit Passwort installieren», wenn Kernel, Firmware, Bootloader oder Entfernungen dabei sind.
+- **Neustart nötig:** ein gedämpftes Symbol im System-Knopf der Leiste und «Neustart · nötig» im System-Menü, ohne
+  Mitteilung und ohne Popup; verborgen während einer Freigabe, bei reduzierter Leiste und auf der Sperre.
+- **`zen version`** hat die Zeile «Pakete» (ausstehende Basis-Updates, Neustart nötig), **`zen doctor`** zeigt
+  ausstehende Basis-Updates und den Stand der letzten Installation.
+- **Kein Wechsel der Ubuntu-Hauptversion:** `Prompt=never` per Drop-in unter `/etc/update-manager/release-upgrades.d/`
+  (die Konfigurationsdatei des Pakets bleibt unberührt). `do-release-upgrade` und der Hinweis auf eine neue Version
+  bleiben still, ohne Verbindung nach aussen; `zen doctor` warnt, wenn `Prompt` nicht `never` ist. Der Kanal
+  installiert nie einen Stand für eine andere Ubuntu-Version (`system/basis`), auch nicht mit «ja» oder
+  `zen rollback`. Ein Basiswechsel ist eine neue zenOS-Hauptversion mit neuem Image; was dafür von Hand zu sichern
+  ist, steht in `docs/image-und-releases.md`, «Basiswechsel». Die frühere Anleitung zu `do-release-upgrade` in
+  `docs/module/kennung.md` entfällt.
 
 ### Behoben
 
