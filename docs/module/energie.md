@@ -182,9 +182,10 @@ lesbar.
   1–3 s), bekommt sie unter Wayland vom Client wiederholt (QtWayland, nach 600 ms 25 je Sekunde, labwc-Vorgabe).
   Die Wiederholungen gingen an das Feld, das den Fokus zurückbekam. Der Wecker merkt sich deshalb den Code der Taste
   (`nativeScanCode`), und das Formular verwirft im Namens- und Passwortfeld jede Wiederholung dieser Taste, bis sie
-  losgelassen wird (`wecktasteGehalten` in `shell/dienste/energie.js`). Nie eine andere Taste: Jeder echte Druck,
-  auch derselben Taste, und das Loslassen beenden es. Ein gehaltenes Return meldet also nicht mit dem halben
-  Passwort an, eine gehaltene Rücktaste oder Escape löscht nichts.
+  losgelassen wird (`wecktasteGehalten` in `shell/dienste/energie.js`). Nie eine andere Taste: Ihr Loslassen, ein
+  neuer Druck derselben Taste und die Wiederholung einer anderen beenden es, jede andere Taste kommt an (Abschnitt
+  «Gehaltene Wecktaste in der Sperre», auch zu Shift, Ctrl, Alt, AltGr und Super). Ein gehaltenes Return meldet also
+  nicht mit dem halben Passwort an, auch nicht mit Shift dazu, eine gehaltene Rücktaste oder Escape löscht nichts.
 - **Zeichen im Feld:** Was schon im Passwortfeld stand, bleibt unverändert; die Wecktaste kommt nicht dazu. Das
   Passwort reicht weiterhin nur greetd an PAM weiter (`Ablauf.qml`), der Anmeldeablauf ist unverändert.
 - **Vorwarnung vor dem Ausschalten** (30 Min. im Akkubetrieb, `Leerlauf.qml`): Sie schaltet den Bildschirm an und hält
@@ -230,13 +231,24 @@ PAM, die Sperre blieb). Behoben wie am Login, mit derselben Logik:
   unverändert) mit dem Halten (`wecktasteGehalten`, wie im Login).
 - **Gemerkt wird der Code der Taste** (`nativeScanCode`), nur wenn ihr Druck als Wecktaste verworfen wurde. Danach
   verwirft das Feld jede Wiederholung (`isAutoRepeat`) genau dieser Taste, bis sie losgelassen wird.
-- **Nie eine andere Taste:** Jeder echte Druck, auch derselben Taste, die Wiederholung einer anderen Taste und das
-  Loslassen der gehaltenen Taste beenden es. Das Loslassen einer anderen Taste (etwa Shift) ändert nichts. Ein
-  Loslassen allein ist nie die Wecktaste. Ohne gültigen Code bleibt es beim einen Druck.
+- **Nie eine andere Taste:** Verworfen werden nur Wiederholungen genau dieser Taste. Das echte Loslassen der
+  gehaltenen Taste, ein neuer Druck derselben Taste und die Wiederholung einer anderen Taste beenden es. Eine andere
+  Taste kommt immer an, ihr Drücken und Loslassen beenden es aber nicht: QtWayland wiederholt nur die zuletzt
+  gedrückte Taste, die sich wiederholen darf (`xkb_keymap_key_repeats`). Eine Buchstabentaste, Return oder die
+  Rücktaste übernimmt die Wiederholung, die gehaltene Taste wiederholt sich danach nicht mehr. Shift, Ctrl, Alt,
+  AltGr, Super, Caps Lock, Num Lock und der Umschalter der Belegung wiederholen sich nicht (geprüft mit libxkbcommon,
+  Belegungen ch und us): Ihr Druck lässt die gehaltene Taste weiter wiederholen, und diese Wiederholungen bleiben
+  verworfen. Ein Loslassen allein ist nie die Wecktaste. Ohne gültigen Code bleibt es beim einen Druck, und ein
+  Druck ohne gültigen Code beendet es.
+- **Modifikatortasten** (behoben im Oktober 2026): Zuerst beendete jeder echte Druck einer anderen Taste das
+  Verwerfen, auch der von Shift, Ctrl, Alt, AltGr oder Super. Wer die Wecktaste länger als 600 ms hielt und dazu
+  eine davon drückte, bekam ab dann ihre Wiederholungen ins Feld: Mit Return prüfte PAM das halbe Passwort (ein
+  Fehlversuch, «Das Passwort stimmt nicht.»), mit einer Buchstabentaste scheiterte das nächste Passwort. Am Login
+  ebenso. Die Sperre war dadurch nicht schwächer, es gab keinen neuen Weg zu PAM.
 - **Neu beginnen:** Sperren, Entsperren und eine von labwc beendete Sperre setzen den gemerkten Code zurück, zusammen
   mit dem Weckzustand.
-- **Folgen:** Ein gehaltenes Return entsperrt nicht mit dem halben Passwort, eine gehaltene Rücktaste oder Escape
-  löscht nichts. Ist der Bildschirm hell (ohne Wecken, nach der Schonfrist von 300 ms, während der Vorwarnung),
+- **Folgen:** Ein gehaltenes Return entsperrt nicht mit dem halben Passwort, auch nicht mit Shift dazu, eine
+  gehaltene Rücktaste oder Escape löscht nichts. Ist der Bildschirm hell (ohne Wecken, nach der Schonfrist von 300 ms, während der Vorwarnung),
   wird nichts verworfen, auch keine Wiederholung. Der Weg zu PAM ist unverändert: Das Passwort geht nur über
   `PamContext` (Dienst `zenos-sperre`), zenOS prüft es nicht selbst.
 
@@ -374,8 +386,10 @@ hergeleitet und am Gerät zu prüfen («Am Gerät prüfen», Punkt 5).
     (60 Takte, ein Sprung der Uhr verkürzt nichts, Abbruch durch eine Eingabe, Blockade und neuer Versuch nach 5 Min.,
     Ablehnung durch logind erst nach einer Eingabe), Zeile der Vorwarnung, Wecktaste (genau eine Taste, 300 ms; nach
     dem Wecken mit der Maus und während der Vorwarnung geht kein Zeichen verloren), gehaltene Wecktaste in der Sperre
-    (`wecktasteSperre`: Wiederholungen verworfen bis zum Loslassen, auch Return; eine andere Taste kommt an und beendet
-    es; hell, nach der Schonfrist und ohne gültigen Code nie mehr als der eine Druck) und ihre Verdrahtung in
+    (`wecktasteSperre`: Wiederholungen verworfen bis zum Loslassen, auch Return; eine andere Taste kommt an und
+    übernimmt die Wiederholung; Shift, Ctrl, Alt, AltGr, Super, Caps Lock, Num Lock und der Umschalter der Belegung
+    während des Haltens kommen an und beenden es nicht; hell, nach der Schonfrist und ohne gültigen Code nie mehr als
+    der eine Druck) und ihre Verdrahtung in
     `Sperre.qml` (Drücken und Loslassen, Neubeginn beim Sperren und Entsperren), Ein/Aus-Taste gesperrt, Abgleich
     mit `Einstellungen.qml`, `Leitplanken.qml` und dem Schema, neutrales Beispiel.
     `test/einheiten/zustaende.test.mjs`: Zustände können die vier Schlüssel nicht setzen.
@@ -403,7 +417,7 @@ hergeleitet und am Gerät zu prüfen («Am Gerät prüfen», Punkt 5).
     Schonfrist, jede Eingabe beginnt die Minute neu (auch während des Ausschaltens), nach einem Wecken ohne Eingabe
     eine eigene Minute (Deckel 2 s vor dem Ende der alten Minute aufgeklappt: erst eine Minute später aus), neuer
     Bildschirm weckt ohne Wecktaste (auch während des Ausschaltens), gehaltene Wecktaste (Wiederholungen verworfen bis
-    zum Loslassen, nie eine andere Taste), Fehlerfall bleibt an (Ausschalten gescheitert: sofort wieder an, nach drei
+    zum Loslassen, nie eine andere Taste, Modifikatortasten beenden es nicht), Fehlerfall bleibt an (Ausschalten gescheitert: sofort wieder an, nach drei
     Fehlschlägen nie mehr; wlopm unbrauchbar: aufgeben ohne Neustart; sicher dunkel und geht nicht an: Neustart des
     Logins), Vorwarnung und Deckel ohne Wecktaste, Antworten von wlopm, Argumentliste ohne Shell, Verdrahtung in
     `Bildschirm.qml` (Wachminute, neue Bildschirme), `Anmeldefenster.qml` (Wecker, Klickfang, Wiederholungen),
@@ -432,9 +446,9 @@ hergeleitet und am Gerät zu prüfen («Am Gerät prüfen», Punkt 5).
 2. **Wecken:** Shift, eine Buchstabentaste und das Touchpad wecken. Die Sperre bleibt, kein Zeichen landet im
    Passwortfeld, das erste Passwort klappt. Gehalten: gesperrt drei Zeichen des Passworts tippen, `zen energie aus`
    (oder Super+Shift+L), eine Buchstabentaste 2 s halten, bis der Bildschirm hell ist, den Rest tippen und Enter: Es
-   entsperrt beim ersten Versuch. Dasselbe mit gehaltenem Enter zum Wecken: Es bleibt gesperrt ohne «Das Passwort
-   stimmt nicht.», der Rest und Enter entsperren. `journalctl -b | grep 'zenos-sperre:auth'` zeigt dabei keine Zeile
-   «authentication failure».
+   entsperrt beim ersten Versuch. Dasselbe mit gehaltenem Enter zum Wecken, und während Enter gehalten ist, kurz
+   Shift drücken: Es bleibt gesperrt ohne «Das Passwort stimmt nicht.», der Rest und Enter entsperren.
+   `journalctl -b | grep 'zenos-sperre:auth'` zeigt dabei keine Zeile «authentication failure».
 3. **Video in Chrome und Firefox:** Halten sie einen Idle-Hemmer (ungesperrt: keine Sperre, nicht dunkel)? Lassen sie
    ihn im Hintergrund-Tab oder minimiert los? Gesperrt geht der Bildschirm nach B trotzdem aus. Nach 60 Min. ohne
    Eingabe sperrt zenOS auch mit laufendem Video.
@@ -517,6 +531,10 @@ Bildschirm mit `system/greeter/labwc`, `shell/greeter.qml`, dazu eine Attrappe v
   und Return genau «tester». Dann «tes», dunkel, Return 1,5 s gehalten: greetd hat nichts bekommen, «ter» und Return
   melden mit «tester» an. Gegenprobe auf dem Stand vor der Behebung: greetd bekommt «tes», 20 Mal «q» und «ter»;
   mit gehaltenem Return meldet es mit «tes» an (Fehlversuch, dann `cancel_session`).
+- **modifikator:** «tes», dunkel, Return gehalten und nach 900 ms Shift dazu: greetd hat nichts bekommen, «ter» und
+  Return melden mit «tester» an. Dann «tes», dunkel, «q» gehalten und nacheinander Alt, AltGr und Super dazu: greetd
+  bekommt genau «tester». Gegenprobe mit `energie.js` von `8af6728`: Mit Return und Shift meldet es mit «tes» an
+  (dann `cancel_session`), mit «q» bekommt greetd «tes», 35 Mal «q» und «ter».
 - **klick:** «tester» getippt, Zeiger auf «Anmelden», nach 60 s aus. Der erste Klick weckt, greetd hat nichts
   bekommen; der zweite meldet an.
 - **fehler:** wlopm (Attrappe) schaltet ab, meldet aber einen Fehler: gleich wieder an, 20 s später weiter an, kein
@@ -557,11 +575,21 @@ diese Zeilen.
   hell, nach 3 s weiter gesperrt, PAM hat nichts geprüft; «ter» und Return entsperren beim ersten Versuch.
 - **andere:** gesperrt, «tes», dunkel, «q» gehalten und nach 800 ms (schon wiederholt) «t» gedrückt
   (`wtype -P q -s 800 -k t -s 700 -p q`): «t» kommt an, «er» und Return entsperren beim ersten Versuch.
+- **modifikator:** gesperrt, «tes», dunkel, Return gehalten und nach 900 ms Shift dazu
+  (`wtype -P Return -s 900 -P Shift_L -s 600 -p Shift_L -s 100 -p Return`): hell, nach 3 s weiter gesperrt, PAM hat
+  nichts geprüft; «ter» und Return entsperren beim ersten Versuch. Dann «q» gehalten und nacheinander Alt, AltGr
+  (`ISO_Level3_Shift`) und Super je 300 ms dazu: «ter» und Return entsperren beim ersten Versuch. In der Keymap von
+  wtype übernehmen Shift, Alt, AltGr und Super die Wiederholung nicht, Ctrl schon (anders als in den Belegungen ch
+  und us): Mit Ctrl prüft der Container nichts, ihn decken die Einheitentests ab.
 - **hell:** gesperrt und hell, «x» 1,5 s gehalten und Return: genau ein Fehlversuch (die Wiederholungen kamen an,
   ohne Wecken wird nichts verworfen); «tester» und Return entsperren.
 - **Gegenprobe** auf dem Stand vor der Behebung (`Sperre.qml` von `37306f4` im Container): «taste» gelingt; «halten»
   scheitert (mit gehaltenem «q» entsperrt «ter» nicht, ein Fehlversuch; mit gehaltenem Return prüft PAM das halbe
-  Passwort, danach entsperrt «ter» nicht); «andere» scheitert ebenso.
+  Passwort, danach entsperrt «ter» nicht); «andere» scheitert ebenso. «modifikator» auf dem Stand vor der Behebung
+  der Modifikatortasten (`energie.js` von `8af6728`): Mit Return und Shift prüft PAM «tes» (ein Fehlversuch), danach
+  entsperrt «ter» nicht; mit «q» und Alt, AltGr und Super entsperrt «ter» nicht (ein Fehlversuch). Einzeln geprobt
+  («q» gehalten, eine Taste dazu) scheitert es dort mit Shift_L, Shift_R, Alt_L, ISO_Level3_Shift und Super_L, nicht
+  mit Control_L und Control_R.
 - Nicht prüfbar im Container: eine echte Tastatur und ein Monitor, der erst nach 1–3 s hell ist («Am Gerät prüfen»,
   Punkt 2). Die Wiederholung macht auch dort der Client, mit der Vorgabe von labwc (600 ms, 25 je Sekunde; zenOS
   stellt sie in `rc.xml` nicht um).
