@@ -3,6 +3,46 @@
 Was sich an zenOS ändert, pro Version. Das Format lehnt sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/)
 an; eine Version entspricht einem Tag `v…` im Repo.
 
+## 0.1.0-rc7 – 2026-10-08
+
+Alles seit `v0.1.0-rc6`: der zen Installer für heruntergeladene `.deb`, die Ein/Aus-Taste am dunklen Login weckt nur,
+die gehaltene Wecktaste der Sperre und Kreditkarten in Chrome über die neue Richtlinie.
+
+### Neu
+
+- **zen Installer:** Ein Doppelklick auf eine heruntergeladene `.deb` (Thunar, Download-Liste von Chrome, «Mit zen
+  Installer öffnen», `zen install DATEI`) öffnet ein ruhiges Fenster: Symbol, Name, Version, Herausgeber,
+  Beschreibung, Grösse, ob neu, Update oder Rückschritt, welche Pakete dazukommen. Hinweise, wenn das Paket mehr tut
+  als ein Programm: eigene Skripte als root, Systemdienste, eigene Paketquellen, setuid, Autostart, Rechte (sudo,
+  polkit, PAM), übernommene Dateien anderer Pakete. Abgelehnt werden fremde Architektur, beschädigte Dateien,
+  Gerätedateien, Pakete, die Teile von zenOS oder Ubuntu ersetzen oder entfernen würden, und halb installierte Pakete.
+  «Installieren» verlangt jedes Mal das Passwort (polkit `auth_admin`) und installiert genau die angezeigte Datei
+  (SHA-256) mit genau dem angezeigten Plan (`--no-remove`, wenn keine Entfernung angezeigt war), als Dienst unter der
+  gemeinsamen Sperre mit Kanal und Basis; danach «Öffnen». Was über den Installer kam, steht unter Einstellungen ›
+  Apps mit «Entfernen …» (ebenfalls mit Passwort). Log `/var/log/zenos/installer.log`, Modul `76-installer`, Abschnitt
+  in `zen doctor`, Doku `docs/module/installer.md`.
+- **Ein/Aus-Taste am Login-Bildschirm:** Ein kurzer Druck am dunklen Login weckt nur (Hemmer «handle-power-key» für
+  `_greetd`, solange der Login läuft, ohne eigene polkit-Regel), am hellen tut er nichts. Ausschalten geht über das
+  Menü des Logins oder mit langem Drücken. Nach der Anmeldung oder einem Absturz ist der Hemmer nach höchstens 3 s weg,
+  der Notfall-Login bleibt bei logind.
+
+### Geändert
+
+- **Chrome:** Kreditkarten im Autofill sperrt jetzt auch `AutofillSettings` (`url_pattern` `*`, `blocked_types`
+  `payments`), Googles Nachfolger der ab Chrome 156 veralteten `AutofillCreditCardEnabled`; die alte Richtlinie bleibt,
+  solange Chrome sie auswertet. `chrome://policy` zeigt 14 Richtlinien von zenOS.
+- **Leerer Akku:** Zeno bestätigt am 08.10.2026, dass zenOS bei 3 % auch während SSH oder tmux kontrolliert ausschaltet
+  und auf Updates höchstens 5 Min. wartet.
+
+### Behoben
+
+- **Sperre, gehaltene Wecktaste:** Hält man die Taste, die den dunklen Bildschirm weckt, kommen ihre Wiederholungen
+  nicht mehr ins Passwortfeld, bis sie losgelassen wird; ein gehaltenes Return prüft kein halbes Passwort mehr. Gilt
+  auch mit Shift, Alt, AltGr oder Super dazu, in der Sperre und am Login; jede andere Taste kommt an. Ende-zu-Ende-Test
+  `test/container/sperre-e2e.sh` mit echter Sperre und PAM.
+- **Tests:** Der Übergang im kanal-e2e läuft wieder aus einem echten Stand ohne Kanal (`v0.1.0-rc3`); die Timer der
+  Basis lösen im kanal-e2e nicht mehr von selbst aus.
+
 ## 0.1.0-rc6 – 2026-10-08
 
 Alles seit `v0.1.0-rc4`: Updates der Ubuntu-Basis über `zen update`, die Sperre gegen einen Wechsel der
