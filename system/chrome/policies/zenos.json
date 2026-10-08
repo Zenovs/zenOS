@@ -3,6 +3,7 @@
   "SafeBrowsingProtectionLevel": 2,
   "PasswordManagerEnabled": false,
   "AutofillCreditCardEnabled": false,
+  "AutofillSettings": [{"url_pattern": "*", "blocked_types": ["payments"]}],
   "BlockThirdPartyCookies": true,
   "ExtensionInstallBlocklist": ["*"],
   "ExtensionInstallAllowlist": ["aeblfdkhhhdcdjpifhhbdiojplfjncoa"],

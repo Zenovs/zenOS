@@ -528,6 +528,7 @@ Datei: `system/chrome/policies/zenos.json`, wird nach `/etc/opt/chrome/policies/
   "SafeBrowsingProtectionLevel": 2,
   "PasswordManagerEnabled": false,
   "AutofillCreditCardEnabled": false,
+  "AutofillSettings": [{"url_pattern": "*", "blocked_types": ["payments"]}],
   "BlockThirdPartyCookies": true,
   "ExtensionInstallBlocklist": ["*"],
   "ExtensionInstallAllowlist": ["aeblfdkhhhdcdjpifhhbdiojplfjncoa"],
@@ -540,6 +541,31 @@ Update-Dienst des Chrome Web Store (September 2026).
 
 Dazu kommen fünf Abschaltungen von Telemetrie: `MetricsReportingEnabled`, `UrlKeyedAnonymizedDataCollectionEnabled`,
 `DomainReliabilityAllowed`, `FeedbackSurveysEnabled` und `SafeBrowsingSurveysEnabled`, alle `false`.
+
+**Kreditkarten im Autofill aus, mit zwei Richtlinien.** Karten liegen nur in 1Password, Chrome soll sie weder
+vorschlagen noch zum Speichern anbieten. Laut Googles Richtlinienliste (Stand 07.10.2026, Quellen unten):
+
+- `AutofillCreditCardEnabled` ist «deprecated in M156, please use AutofillSettings instead». Google nennt dort
+  selbst den Ersatz für `false`: `AutofillSettings` mit `"url_pattern"` `"*"` und `"blocked_types"` `["payments"]`.
+- `AutofillSettings` gibt es ab Chrome 154 (`chrome.*:154-`). Es ist eine Liste von Einträgen mit `url_pattern`
+  und `blocked_types`; `payments` sperrt Vorschläge und das Speichern von Kreditkarten und Zahlungsmethoden, `*`
+  passt auf jede Adresse. Die Richtlinie kann nur sperren, nicht erlauben; sie hebt die alte also nie auf.
+- `AutofillCreditCardEnabled` bleibt drin, weil Chrome es noch auswertet: In der Liste steht es mit
+  `chrome.*:63-`, ohne letzte Version. Es deckt Chrome vor 154 ab; ab 154 gelten beide, in dieselbe Richtung.
+  Google rät von veralteten Richtlinien ab, «because they will be removed in future releases», und von entfernten
+  erst recht, weil sie Fehler in Chrome auslösen können. Sobald die Liste eine letzte Version nennt
+  (`chrome.*:63-<Version>`), fliegt die alte Richtlinie hier und in `system/chrome/policies/zenos.json` raus.
+- Chrome stable unter Linux war am 08.10.2026 Version 155 (Version History API von Google). Ab 156 kann
+  `chrome://policy` die alte Richtlinie als veraltet markieren; das ist erwartet und kein Fehler.
+
+`test/einheiten/chrome-richtlinie.test.py` prüft das Format von `AutofillSettings` gegen das Schema aus Googles
+Liste und dass der Block oben und die Telemetrie-Abschaltungen genau der Datei entsprechen.
+
+Quellen: Richtlinienliste <https://chromeenterprise.google/policies/#AutofillSettings> und
+<https://chromeenterprise.google/policies/#AutofillCreditCardEnabled> (maschinenlesbar:
+<https://chromeenterprise.google/static/json/policy_templates_en-US.json>), veraltete Richtlinien
+<https://support.google.com/chrome/a/answer/7643500>, Versionen
+<https://versionhistory.googleapis.com/v1/chrome/platforms/linux/channels/stable/versions>.
 
 Mit Maschinenrichtlinien schaltet Chrome «Sicheres DNS verwenden» (DNS-over-HTTPS) von selbst ab, der Schalter in den
 Einstellungen ist gesperrt. Eine Richtlinie `DnsOverHttpsMode` würde es festlegen (`automatic` oder `secure`, für
