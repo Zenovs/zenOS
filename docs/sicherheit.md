@@ -218,7 +218,8 @@ nicht dicht und unterbleibt. Das Abschalten der Automatik («von Hand») bleibt 
 
 Die Oberfläche ist der polkit-Agent der Sitzung (`shell/polkit/Polkit.qml`, `Quickshell.Services.Polkit`). Er
 zeigt den Passwortdialog, wenn ein Programm Rechte verlangt, die polkit nur nach einer Anmeldung gibt: den Schalter
-«Firewall», später auch andere (etwa NetworkManager).
+«Firewall», «Zustimmen …» bei den Updates, «Installieren» und «Entfernen …» des zen Installers, später auch andere
+(etwa NetworkManager).
 
 - **Was er sieht:** die Nachricht und die Kennung der Aktion (aus den Dateien unter `/usr/share/polkit-1/actions/`,
   die nur root ändern kann), die Konten, die bestätigen dürfen (bei Ubuntu die Gruppe `sudo`; vorgewählt ist das
@@ -800,3 +801,85 @@ anstösst. Ablauf, Dateien und Exit-Codes: `docs/image-und-releases.md`, «Basis
   über `systemd-run` an `allow_active` kommt, kann eine anstehende Liste ohne Kernel und Entfernungen früher
   installieren, sonst nichts. Häufigeres `apt-get update` heisst häufigere Abfragen an die Paketquellen und über
   esm-cache an `contracts.canonical.com` (oben, «Unterbau»). Gegen root schützt nichts.
+
+## zen Installer (Software aus dem Netz)
+
+Der zen Installer installiert eine heruntergeladene `.deb` (Wunsch Zeno, Oktober 2026; Ablauf und Dateien in
+`docs/module/installer.md`). Bedrohung: Ein fremdes Paket läuft bei der Installation als root. Seine Skripte
+(preinst, postinst …) können alles, auch Dienste starten, Paketquellen eintragen oder Rechte ändern. Das verhindert
+kein Installer, auch `sudo apt install ./datei.deb` nicht. zenOS sorgt dafür, dass das nur mit Zenos Passwort
+geschieht, nur für genau die Datei, die er gesehen hat, und dass er vorher sieht, was kommt.
+
+- **Ansehen ohne Rechte:** `zenos-installer ansehen` läuft als Benutzer. Es liest das Paket nur: `dpkg-deb
+  --ctrl-tarfile` und `--fsys-tarfile` als Datenstrom in Pythons `tarfile`, nichts wird entpackt oder ausgeführt,
+  auch kein Skript des Pakets. apt rechnet nur (`apt-get -s install`). Nur das Symbol landet als Datei in
+  `$XDG_RUNTIME_DIR/zenos-installer/` (0700), mit Grenzen für Grösse und Anzahl. Texte aus dem Paket (Name,
+  Beschreibung, Herausgeber, Webseite) sind nicht vertrauenswürdig: Das Programm entfernt Steuerzeichen und kürzt sie,
+  die Oberfläche zeigt sie nur als reinen Text, die Webseite nicht als Link.
+- **Hinweise statt Verbote:** Was ein Paket mitbringt, steht ruhig unter «Beim Installieren»: eigene Skripte als root,
+  Systemdienste (Units im Paket oder ein Skript, das `systemctl` ruft), Dienste der Sitzung, Autostart, Paketquellen,
+  setuid/setgid, Dateien ausserhalb von `/usr` und `/opt`, Kernel-Module, Änderungen an sudo, polkit oder PAM, ein
+  ersetztes Paket, das nicht über den zen Installer kam, ein Rückschritt. Was ein Skript wirklich tut, sieht der
+  Installer nicht; ein Skript, das sich tarnt, fällt durch die Muster.
+- **Ablehnen:** grösser als 2 GiB, beschädigt, falsche Architektur (nur die von `dpkg --print-architecture` und
+  `all`), `Essential: yes`, ein Paketname, den schon zenOS oder ein geschütztes Ubuntu-Paket trägt (die Liste aus
+  `scripts/lib/aufraeumen.sh` wie bei den Basis-Updates und `scripts/pakete/*.txt`), Abhängigkeiten, die apt nicht
+  erfüllen kann, und jede Entfernung eines geschützten Pakets (dazu alles manuell Installierte, ausser es kam selbst
+  über den zen Installer). Eine erlaubte Entfernung steht als einziger Hinweis in `warnung` da.
+- **Passwort jedes Mal:** «Installieren» startet `pkexec /opt/zenos/scripts/bin/zenos-installer-bedienen installieren
+  PFAD SHA256 PLAN` (Argumentliste, keine Shell). Die polkit-Aktionen in `system/polkit/org.zenos.installer.policy` (→
+  `/usr/share/polkit-1/actions/`, Modul `76-installer`):
+
+  | Aktion | aktive Sitzung am Gerät | inaktive Sitzung | sonst (z. B. SSH) |
+  |---|---|---|---|
+  | `org.zenos.installer.installieren` | nur mit Passwort (`auth_admin`), jedes Mal | nein | nein |
+  | `org.zenos.installer.entfernen` | nur mit Passwort (`auth_admin`), jedes Mal | nein | nein |
+
+  `auth_admin` statt `auth_admin_keep`: Ein zweites Paket kurz danach fragt neu. Ohne Passwort gibt es keinen Weg zu
+  root, auch nicht über IPC (`installer oeffnen` öffnet nur das Fenster, Installieren geht nur über den Knopf). Für
+  Programme der systemd-Benutzerinstanz gilt dieselbe Grenze wie bei der Firewall: Wer per SSH als Zeno angemeldet ist,
+  kann den Dialog am Gerät auslösen, das Passwort muss trotzdem dort eingetippt werden. Aus SSH geht `zen install`:
+  die Ansicht als Text, ein getipptes «ja» und sudo mit Passwort.
+- **Genau diese Datei:** Der Helfer (root) nimmt nur `installieren PFAD SHA256 PLAN` und `entfernen PAKET` an (Pfad
+  absolut, `.deb`, ohne Steuerzeichen; SHA-256 und Plan als feste Länge `0-9a-f`; Paketname wie dpkg ihn erlaubt), hat
+  einen festen `PATH` und trägt jeden Aufruf ins Journal ein (`journalctl -t zenos-installer-bedienen`, mit Weg und
+  uid). `zenos-installer auftrag-installieren` (root-eigene Kopie unter `/usr/local/libexec/zenos`) öffnet die Datei
+  effektiv als der aufrufende Benutzer (`PKEXEC_UID` bzw. `SUDO_UID`, mit seinen Gruppen): kein Verweis am Ende
+  (`O_NOFOLLOW`), eine reguläre Datei, die ihm gehört, höchstens 2 GiB. So kann root über den Helfer nichts lesen,
+  was Zeno nicht selbst lesen kann, und keine Datei eines anderen Kontos installieren. Es kopiert sie in die
+  root-eigene Ablage `/var/lib/zenos/installer/ablage/SHA256.deb` und prüft dabei die SHA-256: Hat sich die Datei
+  seit dem Ansehen geändert (oder wurde sie ausgetauscht), Exit 3, nichts geschieht. Ab da arbeitet nur noch die
+  Kopie.
+- **Genau dieser Plan:** `zenos-installer-installieren@SHA256.service` wertet die Kopie unter den Sperren noch einmal
+  aus. Nur wenn sie «bereit» ist und der Plan gleich blieb (Hauptpaket, Zustand und die Namen aller Pakete, die apt
+  installiert oder entfernt), läuft `apt-get install -y` (noninteractive, confdef und confold, ohne autoremove; bei
+  einem Rückschritt `--allow-downgrades`). Kam inzwischen ein Update dazwischen, das den Plan ändert, Exit 3 und
+  «Noch einmal ansehen».
+- **Nie zwei Paketvorgänge:** dieselbe Sperre wie Kanal und Basis-Updates (`/run/zenos-sperre/kanal.lock`, nur root),
+  nicht neben einem `install.sh` von Hand, die Sperre der Paketlisten (kein `apt-get update` dazwischen) und die
+  Sperren von dpkg; auf apt-daily und unattended-upgrades wartet es höchstens 20 Minuten (sonst Exit 75). Solange apt
+  läuft, hält ein Block-Inhibitor Ausschalten und Ruhezustand auf (auch das Ausschalten nach langer Sperre, das
+  Hemmer nie übergeht). Ein Stopp vor apt beginnt apt nicht mehr (Exit 10), ein laufendes dpkg bricht keiner ab
+  (`KillMode=mixed`). Schliesst Zeno das Fenster oder startet die Oberfläche neu, läuft die Unit zu Ende.
+- **Entfernen nur, was so kam:** `zenos-installer-entfernen@PAKET.service` entfernt nur Pakete aus
+  `/var/lib/zenos/installer/installiert.json` (root-eigen; ein Benutzer kann die Liste nicht ändern), nie ein
+  geschütztes, und nur, wenn `apt-get -s remove` nichts anderes entfernte; `apt-get remove` ohne purge (die
+  Konfiguration bleibt). Alles andere bleibt bei `sudo apt remove`.
+- **Zustand und Log root-eigen:** `installiert.json` und `letzte.json` (0644, für alle lesbar, die Oberfläche liest sie
+  ohne Rechte), Log `/var/log/zenos/installer.log` (0640, Gruppe adm: Paketstand vorher und nachher, Exit von apt).
+  Das Journal nennt nur den Dateinamen, nie den Ordner.
+- **Sperre, Einrichtung, Freigabe:** Während Sperre und Einrichtung öffnet das Fenster nicht, ein offener
+  Passwortdialog bricht beim Sperren ab (Abschnitt «polkit-Agent»). Während einer Bildschirmfreigabe zeigt das
+  Fenster nur, was Zeno selbst geöffnet hat (Dateiname, Paket); die Mitteilung am Ende hält die Freigabe wie jede
+  andere zurück.
+- **Danach:** Bringt ein Paket eine eigene Paketquelle mit (Chrome, VS Code, viele andere), kommen seine Updates mit
+  den Basis-Updates (`zenos-basis`), signiert vom Hersteller und von apt geprüft. Eine solche Quelle gilt für apt danach
+  wie die von Ubuntu: Sie könnte auch Pakete fremden Namens in höherer Version anbieten, die Basis-Updates nähmen sie.
+  Deshalb steht «Fügt eine Paketquelle hinzu» vor dem Installieren da. Ohne eigene Quelle (etwa ein Download von
+  GitHub) bleibt die Software auf ihrer Version, bis Zeno eine neuere `.deb` öffnet («Aktualisieren»); auch
+  Sicherheitsfixes kommen dann nicht von selbst.
+- **Grenzen:** Ein Paket, das Zeno mit Passwort installiert, kann das System übernehmen; dagegen helfen nur die
+  Hinweise und die Quelle der Datei. Root liest die Kopie nach dem Passwort mit `dpkg-deb` (wie apt danach ohnehin).
+  Abhängigkeiten aktualisiert apt wie bei Ubuntu und startet ihre Dienste neu; ein Update von greetd als Abhängigkeit
+  hält der zen Installer nicht auf (anders als die Basis-Updates), es ist bei einer fremden `.deb` aber kaum
+  denkbar. Gegen root schützt nichts.
