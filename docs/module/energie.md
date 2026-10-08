@@ -58,11 +58,13 @@ nicht warten:
 - **Sperre** (`shell/sperre/Sperre.qml`): Ein IdleMonitor ab der Sperre (ohne Rücksicht auf Idle-Hemmer) schaltet
   den Bildschirm B Min. nach der Sperre aus, auch nach Super+L und hinter einem Video. Jede Eingabe weckt ihn. Die
   Sperre verwirft die Taste, die weckt (`Eingabe.vorTaste`): genau eine Taste, solange es dunkel ist oder bis 300 ms
-  nach dem Wecken, nie mehr (sonst könnte ein hängender Zustand die Passworteingabe blockieren). Weckt die Maus, das
-  Touchpad, die Ein/Aus-Taste oder das Aufklappen, kommt ein Passwort danach ganz an. Startet die Oberfläche neu,
-  während es gesperrt und dunkel ist, fragt die Sperre `zenos-bildschirm status` und weiss dann, dass es dunkel ist
-  (Eingaben wecken); Entsperren schaltet den Bildschirm immer an. Während der Vorwarnung zeigt sie eine ruhige Zeile
-  mit der Uhrzeit (Abschnitt «Ausschalten nach langer Sperre»). IPC `sperre bildschirm aus|an` und `sperre taste`.
+  nach dem Wecken, nie mehr (sonst könnte ein hängender Zustand die Passworteingabe blockieren). Hält man sie fest,
+  verwirft das Passwortfeld auch ihre Wiederholungen, bis sie losgelassen wird (Abschnitt «Gehaltene Wecktaste in der
+  Sperre»). Weckt die Maus, das Touchpad, die Ein/Aus-Taste oder das Aufklappen, kommt ein Passwort danach ganz an.
+  Startet die Oberfläche neu, während es gesperrt und dunkel ist, fragt die Sperre `zenos-bildschirm status` und
+  weiss dann, dass es dunkel ist (Eingaben wecken); Entsperren schaltet den Bildschirm immer an. Während der
+  Vorwarnung zeigt sie eine ruhige Zeile mit der Uhrzeit (Abschnitt «Ausschalten nach langer Sperre»). IPC
+  `sperre bildschirm aus|an` und `sperre taste`.
 - **Dienst `shell/dienste/Energie.qml`:** `aus()` (Sofort-Aktion über `zen energie aus`), `bildschirm(aus|an)` mit
   Argumentliste (immer nur ein Aufruf, der letzte Wunsch gilt), die Höchstdauer der Sperre trotz Idle-Hemmer, das
   Ausschalten nach langer Sperre, der Deckel und die Mitteilung nach einem automatischen Aus. IPC `energie aus`,
@@ -215,6 +217,29 @@ lesbar.
   im Journal (`journalctl -t zenos-greeter`).
 - **Notfall-Login** (`shell/greeter/notfall/`): unverändert, ohne Ausschalten des Bildschirms (sichere Richtung).
 
+### Gehaltene Wecktaste in der Sperre
+
+Wer die Taste, die den dunklen Bildschirm weckt, festhält, bis er hell ist, bekommt sie unter Wayland vom Client
+wiederholt (QtWayland, nach 600 ms 25 je Sekunde, labwc-Vorgabe). Früher verwarf die Sperre nur den ersten Druck: Die
+Wiederholungen landeten im Passwortfeld, und ein gehaltenes Return prüfte das halbe Passwort (ein Fehlversuch bei
+PAM, die Sperre blieb). Behoben wie am Login, mit derselben Logik:
+
+- **Ein Weg für alles:** Die Sperre hat keinen eigenen Wecker, jede Taste geht durch das Passwortfeld. `Sperre.qml`
+  reicht deshalb jedes Drücken (`Eingabe.vorTaste`) und jedes Loslassen (`Eingabe.vorLoslassen`) an
+  `wecktasteSperre` in `shell/dienste/energie.js`. Die verbindet die Wecktaste (`wecktasteVerwerfen`, genau ein Druck,
+  unverändert) mit dem Halten (`wecktasteGehalten`, wie im Login).
+- **Gemerkt wird der Code der Taste** (`nativeScanCode`), nur wenn ihr Druck als Wecktaste verworfen wurde. Danach
+  verwirft das Feld jede Wiederholung (`isAutoRepeat`) genau dieser Taste, bis sie losgelassen wird.
+- **Nie eine andere Taste:** Jeder echte Druck, auch derselben Taste, die Wiederholung einer anderen Taste und das
+  Loslassen der gehaltenen Taste beenden es. Das Loslassen einer anderen Taste (etwa Shift) ändert nichts. Ein
+  Loslassen allein ist nie die Wecktaste. Ohne gültigen Code bleibt es beim einen Druck.
+- **Neu beginnen:** Sperren, Entsperren und eine von labwc beendete Sperre setzen den gemerkten Code zurück, zusammen
+  mit dem Weckzustand.
+- **Folgen:** Ein gehaltenes Return entsperrt nicht mit dem halben Passwort, eine gehaltene Rücktaste oder Escape
+  löscht nichts. Ist der Bildschirm hell (ohne Wecken, nach der Schonfrist von 300 ms, während der Vorwarnung),
+  wird nichts verworfen, auch keine Wiederholung. Der Weg zu PAM ist unverändert: Das Passwort geht nur über
+  `PamContext` (Dienst `zenos-sperre`), zenOS prüft es nicht selbst.
+
 ### Ein/Aus-Taste
 
 `einAusTaste`: `sperren` (Standard), `menue` oder `ausschalten`. Ausser bei `ausschalten` hält zenos-idle den
@@ -348,7 +373,10 @@ hergeleitet und am Gerät zu prüfen («Am Gerät prüfen», Punkt 5).
     Akkubetrieb nur bei sicherer Messung (auch am Login-Bildschirm), Zeitleiste, Zustandsautomat der Vorwarnung
     (60 Takte, ein Sprung der Uhr verkürzt nichts, Abbruch durch eine Eingabe, Blockade und neuer Versuch nach 5 Min.,
     Ablehnung durch logind erst nach einer Eingabe), Zeile der Vorwarnung, Wecktaste (genau eine Taste, 300 ms; nach
-    dem Wecken mit der Maus und während der Vorwarnung geht kein Zeichen verloren), Ein/Aus-Taste gesperrt, Abgleich
+    dem Wecken mit der Maus und während der Vorwarnung geht kein Zeichen verloren), gehaltene Wecktaste in der Sperre
+    (`wecktasteSperre`: Wiederholungen verworfen bis zum Loslassen, auch Return; eine andere Taste kommt an und beendet
+    es; hell, nach der Schonfrist und ohne gültigen Code nie mehr als der eine Druck) und ihre Verdrahtung in
+    `Sperre.qml` (Drücken und Loslassen, Neubeginn beim Sperren und Entsperren), Ein/Aus-Taste gesperrt, Abgleich
     mit `Einstellungen.qml`, `Leitplanken.qml` und dem Schema, neutrales Beispiel.
     `test/einheiten/zustaende.test.mjs`: Zustände können die vier Schlüssel nicht setzen.
   - `test/einheiten/idle.test.py` (25 Tests): Reihenfolge und Sekunden der swayidle-Argumente, `resume`, «an» beim
@@ -392,6 +420,8 @@ hergeleitet und am Gerät zu prüfen («Am Gerät prüfen», Punkt 5).
   - `install.sh` zweimal hintereinander ohne Fehler, der zweite Lauf mit 0 Änderungen.
   - Login-Bildschirm: `test/container/login-e2e.sh` (als tester, labwc ohne Bildschirm, Attrappe von greetd), Abschnitt
     «Login-Bildschirm im Container» unten.
+  - Wecktaste der Sperre: `test/container/sperre-e2e.sh` (als tester, labwc ohne Bildschirm, echte Sperre und PAM),
+    Abschnitt «Wecktaste der Sperre im Container» unten.
 - **Nicht prüfbar im Container:** ein echtes Panel und sein Hintergrundlicht, die echte Ein/Aus-Taste, der Deckel,
   ein echtes Ausschalten und ob das Gerät danach stromlos ist.
 
@@ -400,7 +430,11 @@ hergeleitet und am Gerät zu prüfen («Am Gerät prüfen», Punkt 5).
 1. **wlopm am eingebauten Bildschirm:** `zen energie aus` macht das Panel wirklich dunkel (auch das
    Hintergrundlicht), ohne Flackern oder Moduswechsel. Eine Eingabe bringt es zurück, die Fenster bleiben am Platz.
 2. **Wecken:** Shift, eine Buchstabentaste und das Touchpad wecken. Die Sperre bleibt, kein Zeichen landet im
-   Passwortfeld, das erste Passwort klappt.
+   Passwortfeld, das erste Passwort klappt. Gehalten: gesperrt drei Zeichen des Passworts tippen, `zen energie aus`
+   (oder Super+Shift+L), eine Buchstabentaste 2 s halten, bis der Bildschirm hell ist, den Rest tippen und Enter: Es
+   entsperrt beim ersten Versuch. Dasselbe mit gehaltenem Enter zum Wecken: Es bleibt gesperrt ohne «Das Passwort
+   stimmt nicht.», der Rest und Enter entsperren. `journalctl -b | grep 'zenos-sperre:auth'` zeigt dabei keine Zeile
+   «authentication failure».
 3. **Video in Chrome und Firefox:** Halten sie einen Idle-Hemmer (ungesperrt: keine Sperre, nicht dunkel)? Lassen sie
    ihn im Hintergrund-Tab oder minimiert los? Gesperrt geht der Bildschirm nach B trotzdem aus. Nach 60 Min. ohne
    Eingabe sperrt zenOS auch mit laufendem Video.
@@ -508,12 +542,32 @@ Bildschirm mit `system/greeter/labwc`, `shell/greeter.qml`, dazu eine Attrappe v
   Bildschirm (labwc ohne Bildschirm legt zur Laufzeit keinen neuen Ausgang an), ein echtes Panel und ein echter greetd
   mit PAM.
 
+## Wecktaste der Sperre im Container
+
+`test/container/sperre-e2e.sh` in `zenos-test:installiert` mit wlopm und wtype, Oktober 2026: labwc ohne Bildschirm
+mit der Oberfläche aus `~/zenOS` (`oberflaeche.sh start`), die echte Sperre (ext-session-lock) und PAM (Dienst
+`zenos-sperre`, Passwort `tester`). Dunkel über `scripts/bin/zenos-bildschirm aus` (Quittung der Sperre, dann wlopm).
+Jeden Fehlversuch meldet pam_unix im Journal («pam_unix(zenos-sperre:auth): authentication failure»); der Test zählt
+diese Zeilen.
+
+- **taste:** gesperrt, «tes», dunkel. «q» weckt, die Sperre bleibt; «ter» und Return entsperren beim ersten Versuch,
+  kein Fehlversuch.
+- **halten:** gesperrt, «tes», dunkel, «q» 1,5 s gehalten (`wtype -P q -s 1500 -p q`): hell, weiter gesperrt, kein
+  Fehlversuch; «ter» und Return entsperren beim ersten Versuch. Dann gesperrt, «tes», dunkel, Return 1,5 s gehalten:
+  hell, nach 3 s weiter gesperrt, PAM hat nichts geprüft; «ter» und Return entsperren beim ersten Versuch.
+- **andere:** gesperrt, «tes», dunkel, «q» gehalten und nach 800 ms (schon wiederholt) «t» gedrückt
+  (`wtype -P q -s 800 -k t -s 700 -p q`): «t» kommt an, «er» und Return entsperren beim ersten Versuch.
+- **hell:** gesperrt und hell, «x» 1,5 s gehalten und Return: genau ein Fehlversuch (die Wiederholungen kamen an,
+  ohne Wecken wird nichts verworfen); «tester» und Return entsperren.
+- **Gegenprobe** auf dem Stand vor der Behebung (`Sperre.qml` von `37306f4` im Container): «taste» gelingt; «halten»
+  scheitert (mit gehaltenem «q» entsperrt «ter» nicht, ein Fehlversuch; mit gehaltenem Return prüft PAM das halbe
+  Passwort, danach entsperrt «ter» nicht); «andere» scheitert ebenso.
+- Nicht prüfbar im Container: eine echte Tastatur und ein Monitor, der erst nach 1–3 s hell ist («Am Gerät prüfen»,
+  Punkt 2). Die Wiederholung macht auch dort der Client, mit der Vorgabe von labwc (600 ms, 25 je Sekunde; zenOS
+  stellt sie in `rc.xml` nicht um).
+
 ## Offen
 
-- **Gehaltene Wecktaste in der Sperre:** `Sperre.qml` verwirft wie früher der Login nur das erste Ereignis
-  (`_wecktaste` über `onVorTaste`). Hält man die Taste über 600 ms, landen ihre Wiederholungen im Passwortfeld, ein
-  gehaltenes Return prüft das halbe Passwort (ein Fehlversuch, die Sperre bleibt). Vorgemerkt: dieselbe Behebung wie
-  am Login (`wecktasteGehalten` in `energie.js`, über `Eingabe.vorTaste` und `vorLoslassen`), als eigener Schritt.
 - **Ein/Aus-Taste am dunklen Login-Bildschirm:** Dort gilt weiter logind, ein kurzer Druck schaltet sofort aus. Wer
   einen dunklen Login mit der Ein/Aus-Taste wecken will, schaltet aus (verloren geht nichts, angemeldet ist niemand,
   aber es folgt ein Kaltstart). Ein Hemmer «handle-power-key» im Greeter hielte das auf; das berührt logind und polkit

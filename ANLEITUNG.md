@@ -396,6 +396,9 @@ systemctl --user start zenos-shell.service
 - [ ] `Super + Shift + L` sperrt und macht den Bildschirm dunkel, wirklich dunkel (auch das Hintergrundlicht).
   Dasselbe mit «Bildschirm aus» im System-Menü. Shift, eine Buchstabentaste oder das Touchpad wecken ihn, die Sperre
   bleibt, im Passwortfeld steht kein Punkt, und das Passwort klappt beim ersten Versuch.
+- [ ] Gesperrt drei Zeichen des Passworts tippen, `Super + Shift + L`, dann eine Buchstabentaste 2 s halten, bis der
+  Bildschirm hell ist: kein Punkt dazu, den Rest tippen und Enter, es entsperrt beim ersten Versuch. Dasselbe, aber
+  mit gehaltenem Enter wecken: Es bleibt gesperrt, ohne «Das Passwort stimmt nicht.»; der Rest und Enter entsperren.
 - [ ] Ohne Eingabe: nach 5 Minuten gesperrt, eine Minute später dunkel. Eine Eingabe weckt, nach einer Minute ohne
   Eingabe wird es wieder dunkel.
 - [ ] Ein Video in Chrome (Vollbild, ohne Eingabe): zenOS sperrt nicht nach 5 Minuten, aber spätestens nach

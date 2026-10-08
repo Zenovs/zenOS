@@ -603,8 +603,8 @@ Passwort (`shell/polkit/Polkit.qml`).
   Symbol `akku-leer` in `warnung`: «Akku fast leer: zenOS schaltet um 22:41 aus · Netzteil anschliessen bricht ab».
   Sie ist ein Systemzustand, kein Inhalt.
 - Bildschirm aus: Der Bildschirm wird ohne Übergang dunkel und beim Wecken ohne Übergang hell (keine Animation, die
-  ruckeln könnte). Die Taste, die weckt, erscheint nicht als Punkt im Passwortfeld. Während der Vorwarnung landet
-  jede Taste im Feld (es ist zu sehen).
+  ruckeln könnte). Die Taste, die weckt, erscheint nicht als Punkt im Passwortfeld, auch nicht, wenn sie gehalten
+  wird. Während der Vorwarnung landet jede Taste im Feld (es ist zu sehen).
 - Der Login sieht aus wie der Sperrbildschirm und ist immer dunkel. Unten mittig steht das Zeichen 48 px
   (unterer Stein `salbei`), rechts Neustart und Ausschalten. Die Pille der Vorwarnung (Leerlauf im Akkubetrieb oder
   leerer Akku) steht dort wie auf der Sperre unter dem Datum, auf jedem Bildschirm. Übernimmt ein Update aus dem Kanal

@@ -283,9 +283,12 @@ sparen darf die Sperre nie schwächen.
 - **Wecktaste:** Die Taste, die einen dunklen Bildschirm weckt, landet nicht im Passwortfeld (vorher ergab sie einen
   Fehlversuch bei PAM). Verworfen wird genau eine Taste, nie mehr, damit ein hängender Zustand nie die
   Passworteingabe blockiert, und nur bis 300 ms nach dem Wecken (weckt die Maus, kommt das Passwort ganz an). Während
-  der sichtbaren Vorwarnung wird nichts verworfen. Es entsteht kein neuer Weg zu PAM. Offen: Wird die Wecktaste in
-  der Sperre gehalten (über 600 ms), landen ihre Wiederholungen im Feld; das gibt höchstens einen Fehlversuch. Am
-  Login ist das behoben (`docs/module/energie.md`, «Offen»).
+  der sichtbaren Vorwarnung wird nichts verworfen. Wird die Wecktaste gehalten (über 600 ms wiederholt sie der
+  Client), verwirft das Passwortfeld auch ihre Wiederholungen, bis sie losgelassen wird: Ein gehaltenes Return
+  prüft kein halbes Passwort, es gibt keinen Fehlversuch. Nie eine andere Taste, jeder andere Druck und das
+  Loslassen beenden es (`wecktasteSperre` in `shell/dienste/energie.js`, dieselbe Logik wie am Login). Es entsteht
+  kein neuer Weg zu PAM: zenOS verwirft nur Tasten, bevor sie das Feld erreichen, das Passwort geht wie bisher nur
+  über `PamContext` an PAM (`docs/module/energie.md`, «Gehaltene Wecktaste in der Sperre»).
 - **Login-Bildschirm dunkel nach 1 Minute** (Zenos Entscheid vom 06.10.2026, `shell/greeter/Bildschirm.qml`): Dort
   ist niemand angemeldet, deshalb geht der Bildschirm ohne Sperre aus. Das ist die einzige Ausnahme von «dunkel heisst
   gesperrt», und sie steht nur in der Oberfläche des Logins (Benutzer `_greetd`, eigenes labwc), nicht in
