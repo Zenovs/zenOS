@@ -3,9 +3,10 @@
 # gesperrt und dunkel, weckt ihn die erste Taste und wird verworfen; hält man sie fest, auch ihre Wiederholungen, bis
 # sie losgelassen wird. Läuft im Testcontainer als tester: labwc ohne Bildschirm mit der Oberfläche aus ~/zenOS
 # (oberflaeche.sh start), die echte Sperre (ext-session-lock) und PAM (Dienst zenos-sperre, Passwort «tester»).
-# Dunkel wird es über scripts/bin/zenos-bildschirm aus (Quittung der Sperre, dann wlopm, wie bei Super+Shift+L),
-# Eingaben kommen über wtype, der Bildschirm wird mit wlopm abgefragt. Jeder Fehlversuch steht im Journal (pam_unix,
-# «authentication failure»): So zeigt sich, dass PAM nur das vollständige Passwort bekommt.
+# Dunkel wird es über scripts/bin/zenos-bildschirm aus (Quittung der Sperre, dann wlopm; so macht es gesperrt auch
+# `zen energie aus` per SSH, Super+Shift+L wirkt in der Sperre nicht), Eingaben kommen über wtype, der Bildschirm wird
+# mit wlopm abgefragt. Jeder Fehlversuch steht im Journal (pam_unix, «authentication failure»): So zeigt sich, dass
+# PAM nur das vollständige Passwort bekommt.
 #
 # Vorbereitung auf dem Mac (Container aus dem installierten Image, ~/zenOS auf dem Stand dieses Codes):
 #   ZENOS_TESTBILD=zenos-test:installiert test/container/starten.sh zenos-sperre-e2e
@@ -133,7 +134,8 @@ sperren() {
   sleep 1
 }
 
-# Dunkel wie bei Super+Shift+L: zenos-bildschirm fragt die Sperre («sperre bildschirm aus»), dann wlopm --off
+# Dunkel wie gesperrt mit `zen energie aus`: zenos-bildschirm fragt die Sperre («sperre bildschirm aus»), dann
+# wlopm --off. Was im Feld steht, bleibt (die Sperre besteht schon, sperren ändert nichts).
 dunkel() {
   WAYLAND_DISPLAY=$(anzeige) "$REPO/scripts/bin/zenos-bildschirm" aus > /dev/null 2>&1 || return 1
   warte_bildschirm aus 10 || return 1

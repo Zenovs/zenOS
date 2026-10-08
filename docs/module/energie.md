@@ -444,11 +444,14 @@ hergeleitet und am Gerät zu prüfen («Am Gerät prüfen», Punkt 5).
 1. **wlopm am eingebauten Bildschirm:** `zen energie aus` macht das Panel wirklich dunkel (auch das
    Hintergrundlicht), ohne Flackern oder Moduswechsel. Eine Eingabe bringt es zurück, die Fenster bleiben am Platz.
 2. **Wecken:** Shift, eine Buchstabentaste und das Touchpad wecken. Die Sperre bleibt, kein Zeichen landet im
-   Passwortfeld, das erste Passwort klappt. Gehalten: gesperrt drei Zeichen des Passworts tippen, `zen energie aus`
-   (oder Super+Shift+L), eine Buchstabentaste 2 s halten, bis der Bildschirm hell ist, den Rest tippen und Enter: Es
-   entsperrt beim ersten Versuch. Dasselbe mit gehaltenem Enter zum Wecken, und während Enter gehalten ist, kurz
-   Shift drücken: Es bleibt gesperrt ohne «Das Passwort stimmt nicht.», der Rest und Enter entsperren.
-   `journalctl -b | grep 'zenos-sperre:auth'` zeigt dabei keine Zeile «authentication failure».
+   Passwortfeld, das erste Passwort klappt. Gehalten: gesperrt drei Zeichen des Passworts tippen, dann den Bildschirm
+   dunkel machen, ohne die Sperre neu zu beginnen: eine Minute warten (Standard «Bildschirm aus» nach 1 Min.), die
+   Ein/Aus-Taste kurz drücken oder per SSH `zen energie aus`. Super+Shift+L wirkt in der Sperre nicht (kein
+   `allowWhenLocked` in `rc.xml`), der Bildschirm bliebe hell. Dann eine Buchstabentaste 2 s halten, bis der
+   Bildschirm hell ist, den Rest tippen und Enter: Es entsperrt beim ersten Versuch. Dasselbe mit gehaltenem Enter
+   zum Wecken, und während Enter gehalten ist, kurz Shift drücken: Es bleibt gesperrt ohne «Das Passwort stimmt
+   nicht.», der Rest und Enter entsperren. `journalctl -b | grep 'zenos-sperre:auth'` zeigt dabei keine Zeile
+   «authentication failure».
 3. **Video in Chrome und Firefox:** Halten sie einen Idle-Hemmer (ungesperrt: keine Sperre, nicht dunkel)? Lassen sie
    ihn im Hintergrund-Tab oder minimiert los? Gesperrt geht der Bildschirm nach B trotzdem aus. Nach 60 Min. ohne
    Eingabe sperrt zenOS auch mit laufendem Video.
@@ -564,9 +567,9 @@ Bildschirm mit `system/greeter/labwc`, `shell/greeter.qml`, dazu eine Attrappe v
 
 `test/container/sperre-e2e.sh` in `zenos-test:installiert` mit wlopm und wtype, Oktober 2026: labwc ohne Bildschirm
 mit der Oberfläche aus `~/zenOS` (`oberflaeche.sh start`), die echte Sperre (ext-session-lock) und PAM (Dienst
-`zenos-sperre`, Passwort `tester`). Dunkel über `scripts/bin/zenos-bildschirm aus` (Quittung der Sperre, dann wlopm).
-Jeden Fehlversuch meldet pam_unix im Journal («pam_unix(zenos-sperre:auth): authentication failure»); der Test zählt
-diese Zeilen.
+`zenos-sperre`, Passwort `tester`). Dunkel über `scripts/bin/zenos-bildschirm aus` (Quittung der Sperre, dann wlopm;
+so macht es gesperrt auch `zen energie aus`). Jeden Fehlversuch meldet pam_unix im Journal
+(«pam_unix(zenos-sperre:auth): authentication failure»); der Test zählt diese Zeilen.
 
 - **taste:** gesperrt, «tes», dunkel. «q» weckt, die Sperre bleibt; «ter» und Return entsperren beim ersten Versuch,
   kein Fehlversuch.

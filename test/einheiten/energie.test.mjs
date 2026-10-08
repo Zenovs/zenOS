@@ -407,6 +407,38 @@ test("Sperre.qml: jedes Drücken und Loslassen im Passwortfeld geht durch weckta
   assert.match(eingabe, /Keys\.onReleased: event => root\.vorLoslassen\(event\)\n/);
 });
 
+// Punkte einer Liste in Markdown («- [ ] …», «- …» oder «2. …» samt eingerückten Folgezeilen), ohne Zeilenumbrüche
+function listenpunkte(text) {
+  const punkte = [];
+  for (const zeile of text.split("\n")) {
+    if (/^(- |\d+\. )/.test(zeile)) punkte.push(zeile);
+    else if (/^ +\S/.test(zeile) && punkte.length > 0) punkte[punkte.length - 1] += " " + zeile.trim();
+    else punkte.push("");
+  }
+  return punkte.filter((p) => p !== "");
+}
+
+test("Abnahme der gehaltenen Wecktaste: dunkel nur auf Wegen, die in der Sperre wirken", () => {
+  // In der Sperre wertet labwc nur Kürzel mit allowWhenLocked aus: Super+Shift+L hat keines, die Ein/Aus-Taste schon
+  const rc = lesen("system", "labwc", "rc.xml.in");
+  const kuerzel = [...rc.matchAll(/<keybind key="([^"]+)"([^>]*)>/g)];
+  const gesperrt = kuerzel.filter((m) => /\ballowWhenLocked="yes"/.test(m[2])).map((m) => m[1]);
+  assert.ok(kuerzel.some((m) => m[1] === "W-S-l"), "W-S-l fehlt");
+  assert.ok(!gesperrt.includes("W-S-l"), "Super+Shift+L wirkt gesperrt: Doku und dieser Test anpassen");
+  assert.ok(gesperrt.includes("XF86PowerOff"));
+  // Jeder Schritt der Abnahme, der gesperrt eine Taste hält, macht den Bildschirm auf einem Weg dunkel, der in der
+  // Sperre wirkt. Super+Shift+L darf dort nur mit dem Hinweis stehen, dass es in der Sperre nicht wirkt.
+  for (const datei of [["ANLEITUNG.md"], ["docs", "module", "energie.md"]]) {
+    const punkte = listenpunkte(lesen(...datei)).filter((p) => /gesperrt/i.test(p) && /2 s halten/.test(p));
+    assert.ok(punkte.length > 0, `${datei.join("/")}: kein Schritt mit gehaltener Wecktaste in der Sperre`);
+    for (const p of punkte) {
+      assert.match(p, /Ein\/Aus-Taste|zen energie aus|von selbst dunkel/, `${datei.join("/")}: ${p}`);
+      for (const m of p.matchAll(/Super ?\+ ?Shift ?\+ ?L`?(.{0,30})/g))
+        assert.match(m[1], /^ wirkt in der Sperre nicht/, `${datei.join("/")}: ${p}`);
+    }
+  }
+});
+
 test("Vorwarnung: Wer das Passwort tippt, verliert kein Zeichen", () => {
   // Der Bildschirm war dunkel, die Vorwarnung schaltet ihn ohne Eingabe an (Meldung «an»). Das Feld ist zu sehen:
   // Eine Taste nach mehr als 300 ms landet im Feld, auch die erste.
