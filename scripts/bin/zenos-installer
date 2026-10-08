@@ -1,0 +1,2108 @@
+#!/usr/bin/python3 -I
+"""zenos-installer: der zen Installer. Heruntergeladene Software (.deb) so einfach installieren wie auf dem Mac: ansehen,
+«Installieren», Passwort, fertig. Die Oberfläche (Fenster «zen Installer») und «zen install» nutzen dieses Programm.
+
+Aufruf:
+  zenos-installer ansehen DATEI [--json]
+                        ohne Rechte: liest das Paket (dpkg-deb, nichts wird ausgeführt), simuliert die Installation
+                        («apt-get -s install DATEI»), wertet aus und nennt Hinweise und Ablehnungen. Das Symbol des
+                        Pakets landet in $XDG_RUNTIME_DIR/zenos-installer/. --json: ein JSON-Objekt (siehe unten)
+  zenos-installer liste [--json]
+                        ohne Rechte: was über den zen Installer kam (installiert.json) und ob es noch installiert ist
+  zenos-installer status [--json|--kurz]
+                        ohne Rechte: läuft gerade etwas, die letzte Installation bzw. Entfernung, Ablage. --kurz: eine
+                        Zeile «Ergebnis Text» (zen doctor)
+  zenos-installer oeffnen DATEI
+                        Doppelklick auf eine .deb (zenos-installer.desktop, Standard für .deb): prüft den Pfad und gibt
+                        ihn als Argument an die Oberfläche weiter (zenos-ipc installer oeffnen PFAD)
+  zenos-installer auftrag-installieren PFAD SHA256 PLAN
+                        root, über scripts/bin/zenos-installer-bedienen (pkexec, Passwort bei jedem Aufruf) oder sudo:
+                        öffnet die Datei sicher als der aufrufende Benutzer (PKEXEC_UID bzw. SUDO_UID; kein Verweis,
+                        reguläre Datei, gehört ihm, höchstens 2 GiB), kopiert sie nach /var/lib/zenos/installer/ablage/
+                        SHA256.deb und prüft dort die SHA-256 gegen das Argument (genau die angezeigte Datei, kein
+                        Tausch zwischen Ansehen und Installieren). Dann startet es zenos-installer-installieren@SHA256
+                        .service und wartet auf ihr Ende (Exit der Unit). PLAN: der Plan aus «ansehen» (40 Zeichen)
+  zenos-installer auftrag-entfernen PAKET
+                        root, wie oben: startet zenos-installer-entfernen@PAKET.service (nur Pakete aus der Liste)
+  zenos-installer installieren SHA256
+                        root, in zenos-installer-installieren@.service: unter der gemeinsamen Sperre mit Kanal und Basis
+                        (/run/zenos-sperre/kanal.lock, kein install.sh von Hand, kein anderer Paketvorgang, Sperre der
+                        Paketlisten) noch einmal auswerten; nur wenn das Ergebnis «bereit» ist und der Plan gleich
+                        geblieben ist (dieselben Pakete kommen und gehen), «apt-get install -y» mit Block-Inhibitor.
+                        Danach steht das Paket in installiert.json, das Ergebnis in letzte.json; die Ablage ist leer
+  zenos-installer entfernen PAKET
+                        root, in zenos-installer-entfernen@.service: «apt-get remove» (ohne purge) für ein Paket aus
+                        installiert.json, nur wenn apt dabei nichts anderes entfernte; nie ein geschütztes Paket
+
+Auswertung (ansehen und vor dem Installieren noch einmal als root):
+  ergebnis    bereit (installierbar), installiert (diese Version ist schon da), abgelehnt (mit «ablehnung»: zu_gross,
+              endung, fremd, beschaedigt, architektur, essentiell, geschuetzt, abhaengigkeiten) oder fehler
+  zustand     neu, update, rueckschritt, gleich
+  hinweise    je {art, stufe, text}; stufe «warnung» nur für Entfernungen, sonst «hinweis». Arten: skripte (eigene
+              Skripte als root), dienste (Systemdienste), autostart, paketquellen, setuid, ausserhalb (Dateien
+              ausserhalb von /usr und /opt), kernel (Kernel-Module, DKMS), rechte (sudo, polkit-Regeln, PAM), ersetzt
+              (ersetzt ein Paket, das nicht über den zen Installer kam), rueckschritt, entfernen
+  plan        Hash (40 Zeichen) über das Hauptpaket mit Zustand und die Namen aller Pakete, die apt installieren oder
+              entfernen würde. Die Installation läuft nur mit genau diesem Plan.
+Geschützt (nie entfernen, nie durch ein Paket gleichen Namens ersetzen): die Liste aus scripts/lib/aufraeumen.sh (wie
+zenos-basis) und die Pakete von zenOS (scripts/pakete/*.txt). Entfernen würde apt ausserdem nie, was als manuell
+installiert gilt (ausser es kam selbst über den zen Installer). Texte aus dem Paket sind nicht vertrauenswürdig: Die
+Oberfläche zeigt sie nur als reinen Text.
+
+JSON von «ansehen --json»: version, ergebnis, grund, ablehnung, pfad, datei, groesse, sha256, plan, name (Anzeigename),
+paket {name, version, architektur, herausgeber, homepage, zusammenfassung, beschreibung, installiert_groesse,
+abschnitt}, zustand, installierte_version, ueber_installer, symbol (Pfad oder null), programme [{id, name}],
+zusaetzlich [{name, version, alt}], entfernen [Name], hinweise [{art, stufe, text}], dateien (Anzahl).
+
+Dateien: /var/lib/zenos/installer/{installiert.json, letzte.json} (root, 0644, für alle lesbar), ablage/ (root 0755,
+nur während einer Installation: SHA256.deb und SHA256.json), /run/zenos-installer/laeuft-*.json (solange eine Unit
+arbeitet), /var/log/zenos/installer.log (root, 0640, Gruppe adm).
+
+Exit: 0 in Ordnung (bereit, installiert, entfernt) · 1 Fehler · 2 Aufruf · 3 abgelehnt (auch: Datei seit dem Ansehen
+geändert, Plan geändert) · 10 Stopp vor apt (nichts geändert) · 75 belegt (ein Update, eine Prüfung, ein install.sh von
+Hand oder ein anderer Paketvorgang nach 20 Minuten).
+"""
+
+import contextlib
+import datetime
+import errno
+import fcntl
+import grp
+import hashlib
+import io
+import json
+import os
+import pwd
+import re
+import signal
+import stat
+import subprocess
+import sys
+import tarfile
+import tempfile
+import threading
+import time
+import traceback
+
+NAME = "zenos-installer"
+SYSTEM_PATH = "/usr/bin:/bin"
+APT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+USER_PATH = "/usr/local/bin:/usr/bin:/bin"
+
+# Pfade. Nur die Einheitentests setzen andere Werte (nach dem Laden als Modul); einen Schalter gibt es nicht.
+CODE_DIR = "/opt/zenos"
+STATE_DIR = "/var/lib/zenos/installer"
+DROP_DIR = "/var/lib/zenos/installer/ablage"
+RUNTIME_DIR = "/run/zenos-installer"
+LOG_FILE = "/var/log/zenos/installer.log"
+# Gemeinsame Sperre mit Kanal und Basis (nur root, /run/zenos-sperre 0700) und Vermerk eines install.sh von Hand
+LOCK_FILE = "/run/zenos-sperre/kanal.lock"
+HAND_MARK = "/run/zenos-sperre/hand"
+LISTS_LOCK = "/var/lib/apt/lists/lock"
+APT_LOCKS = (LISTS_LOCK, "/var/cache/apt/archives/lock", "/var/lib/dpkg/lock-frontend", "/var/lib/dpkg/lock")
+DPKG_UPDATES = "/var/lib/dpkg/updates"
+APT_UNITS = ("apt-daily.service", "apt-daily-upgrade.service")
+SYSTEMD_RUN_DIR = "/run/systemd/system"
+PROC = "/proc"
+RUN_USER = "/run/user"
+TRUSTED_UIDS = (0,)
+PATH_CHECK_TOP = "/"
+# Wo «oeffnen» die Oberfläche erreicht
+IPC = "/opt/zenos/scripts/bin/zenos-ipc"
+# Wurzel für die Starter eines installierten Pakets (dpkg-query -L nennt Pfade ab /)
+FS_ROOT = ""
+
+PYTHON = "/usr/bin/python3"
+APT_GET = "/usr/bin/apt-get"
+APT_MARK = "/usr/bin/apt-mark"
+DPKG = "/usr/bin/dpkg"
+DPKG_DEB = "/usr/bin/dpkg-deb"
+DPKG_QUERY = "/usr/bin/dpkg-query"
+SYSTEMCTL = "/usr/bin/systemctl"
+LOGGER = "/usr/bin/logger"
+SYSTEMD_INHIBIT = "/usr/bin/systemd-inhibit"
+SLEEP = "/usr/bin/sleep"
+
+# Grenzen
+MAX_DEB = 2 << 30
+MAX_CONTROL_MEMBER = 1 << 20
+MAX_DESKTOP = 64 << 10
+MAX_DESKTOPS = 50
+MAX_IMAGE = 1 << 20
+MAX_IMAGES_TOTAL = 24 << 20
+MAX_SMALL_FILE = 4 << 20
+MAX_PATH = 4096
+MAX_LOG = 2 << 20
+KEEP_LOG = 512 << 10
+KEEP_ICONS = 20
+# Zeitlimits (Sekunden)
+DEB_TIMEOUT = 300
+SIMULATE_TIMEOUT = 300
+CHECK_TIMEOUT = 120
+INSTALL_TIMEOUT = 3600
+# Auf die Sperre und andere Paketvorgänge warten (wie zenos-basis), Takt
+LOCK_WAIT = 1200
+APT_WAIT = 1200
+POLL = 2
+# Ablage: Reste (etwa nach einem Abbruch zwischen Kopieren und Unit) gehen nach einer Stunde
+DROP_MAX_AGE = 3600
+
+EXIT_OK = 0
+EXIT_ERROR = 1
+EXIT_USAGE = 2
+EXIT_REFUSED = 3
+EXIT_WAIT = 10
+EXIT_BUSY = 75
+
+INSTALLED = "installiert.json"
+LAST = "letzte.json"
+
+UNIT_INSTALL = "zenos-installer-installieren@{}.service"
+UNIT_REMOVE = "zenos-installer-entfernen@{}.service"
+
+# Geschützt (nie entfernen, nie ersetzen): dieselbe Liste wie _aufraeumen_geschuetzt in scripts/lib/aufraeumen.sh und
+# PROTECTED in zenos-basis (ein Einheitentest hält alle gleich); dazu kommen die zenOS-Pakete
+PROTECTED = ("ubuntu-minimal", "ubuntu-standard", "ubuntu-server", "ubuntu-server-raspi", "ubuntu-pro-client",
+             "lsb-release", "distro-info-data", "python3-distro-info", "update-notifier-common",
+             "ubuntu-release-upgrader-core", "motd-news-config", "apport", "fonts-ubuntu-console", "lxd-installer",
+             "ubuntu-keyring", "base-files")
+
+PACKAGE_RE = re.compile(r"[a-z0-9][a-z0-9+.-]{0,127}")
+VERSION_RE = re.compile(r"(?:[0-9]{1,9}:)?[A-Za-z0-9][A-Za-z0-9.+~:-]{0,127}")
+ARCH_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
+SHA_RE = re.compile(r"[0-9a-f]{64}")
+PLAN_RE = re.compile(r"[0-9a-f]{40}")
+FIELD_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,63}")
+TIME_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
+URL_RE = re.compile(r"https?://[^\s<>\"']{1,300}")
+# «Inst NAME[:ARCH] [ALT] (NEU QUELLE … [ARCH]) […]», «Remv NAME[:ARCH] [ALT] […]»
+INST_RE = re.compile(r"Inst (?P<name>[a-z0-9][a-z0-9+.-]*(?::[a-z0-9-]+)?) (?:\[(?P<old>[^\]\s]+)\] )?"
+                     r"\((?P<new>[^\s()]+)(?: [^()]*)?\)(?: \[[^\]]*\])?")
+REMV_RE = re.compile(r"(?:Remv|Purg) (?P<name>[a-z0-9][a-z0-9+.-]*(?::[a-z0-9-]+)?)(?: \[(?P<old>[^\]\s]+)\])?"
+                     r"(?: \[[^\]]*\])?")
+
+# Merged /usr: /lib, /bin … zeigen auf /usr; Dateien dort zählen wie /usr
+USR_TOPS = ("usr", "opt", "lib", "lib32", "lib64", "libx32", "bin", "sbin")
+UNIT_DIRS = ("/lib/systemd/system", "/usr/lib/systemd/system", "/etc/systemd/system")
+USER_UNIT_DIRS = ("/lib/systemd/user", "/usr/lib/systemd/user", "/etc/systemd/user")
+UNIT_SUFFIXES = (".service", ".socket", ".timer", ".path")
+RIGHTS_PREFIXES = ("/etc/sudoers.d/", "/etc/polkit-1/rules.d/", "/usr/share/polkit-1/rules.d/", "/etc/pam.d/",
+                   "/usr/lib/pam.d/", "/etc/security/")
+SOURCES_PREFIXES = ("/etc/apt/sources.list.d/", "/etc/apt/trusted.gpg.d/", "/etc/apt/keyrings/")
+KERNEL_RE = re.compile(r"/(?:usr/)?lib/modules/.+\.ko(?:\.(?:xz|zst|gz))?|/usr/src/[^/]+/dkms\.conf")
+SCRIPTS = ("preinst", "postinst", "prerm", "postrm", "config")
+# In den Skripten: Dienste und Paketquellen (nur Hinweise, eine Heuristik)
+SCRIPT_SERVICE_RE = re.compile(r"\b(?:systemctl|deb-systemd-invoke|deb-systemd-helper|invoke-rc\.d|update-rc\.d)\b|"
+                               r"(?:^|[\s;&|])service\s+\S+\s+(?:start|restart)\b", re.M)
+SCRIPT_SOURCES_RE = re.compile(r"sources\.list|/etc/apt/|\bapt-key\b|trusted\.gpg|\.sources\b")
+ICON_DIRS = ("/usr/share/icons/", "/usr/share/pixmaps/")
+IMAGE_SUFFIXES = (".png", ".svg")
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+
+ART_TEXT = {"installieren": "Installation", "entfernen": "Entfernen"}
+RESULT_TEXT = {"installiert": "installiert", "gleich": "schon installiert", "entfernt": "entfernt",
+               "abgelehnt": "abgelehnt", "fehler": "Fehler", "wartet": "wartet"}
+
+
+class Failure(Exception):
+    """Fehler mit einer Meldung für Menschen."""
+
+
+class Refusal(Exception):
+    """Ablehnung beim Lesen des Pakets: (Art, Grund)."""
+
+    def __init__(self, kind, reason):
+        super().__init__(reason)
+        self.kind = kind
+        self.reason = reason
+
+
+# --- Allgemein -------------------------------------------------------------------------------------------------
+
+
+def now():
+    return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+
+
+def iso(t):
+    return t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def parse_iso(text):
+    if not isinstance(text, str) or not TIME_RE.fullmatch(text):
+        return None
+    try:
+        return datetime.datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+    except ValueError:
+        return None
+
+
+def local_time(text):
+    t = parse_iso(text)
+    return t.astimezone().strftime("%Y-%m-%d %H:%M") if t else "–"
+
+
+def clean(text, length=200, lines=False):
+    """Text aus dem Paket (nicht vertrauenswürdig): ohne Steuerzeichen (lines: Zeilenumbrüche bleiben), gekürzt."""
+    text = str(text)
+    if lines:
+        text = "\n".join("".join(c for c in z if c.isprintable()) for z in text.split("\n"))
+    else:
+        text = "".join(c if c.isprintable() else " " for c in text)
+    text = text.strip()
+    return text if len(text) <= length else text[: length - 1] + "…"
+
+
+def first_line(text):
+    for line in str(text).splitlines():
+        line = line.strip()
+        if line:
+            return clean(line, 200)
+    return ""
+
+
+def names_text(names, limit=5):
+    names = list(names)
+    text = ", ".join(names[:limit])
+    return text + (f" und {len(names) - limit} weitere" if len(names) > limit else "")
+
+
+def plural(n, one, many):
+    return f"{n} {one if n == 1 else many}"
+
+
+def size_text(n):
+    if n is None:
+        return "–"
+    for unit, factor in (("GB", 1 << 30), ("MB", 1 << 20), ("kB", 1 << 10)):
+        if n >= factor:
+            return f"{n / factor:.1f} {unit}".replace(".", ",")
+    return f"{n} Byte"
+
+
+def run(argv, env, timeout=CHECK_TIMEOUT, cwd="/"):
+    """Startet ein Programm mit Argumentliste (nie über eine Shell), Ausgabe gesammelt. Zeitlimit → Exit 124, fehlt es
+    → 127."""
+    try:
+        return subprocess.run(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                              errors="replace", timeout=timeout, check=False)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(argv, 124, "", f"Zeitlimit von {timeout} s überschritten")
+    except OSError as e:
+        return subprocess.CompletedProcess(argv, 127, "", f"{argv[0]}: {e.strerror}")
+
+
+def run_tee(argv, env, timeout=None, keep=40):
+    """Startet ein Programm mit Argumentliste; die Ausgabe geht durch (Journal) und die letzten KEEP Zeilen kommen
+    zurück: (Exit, Zeilen). Zeitlimit → 124, fehlt es → 127."""
+    sys.stdout.flush()
+    sys.stderr.flush()
+    try:
+        proc = subprocess.Popen(argv, cwd="/", env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT)
+    except OSError as e:
+        return 127, [f"{argv[0]}: {e.strerror}"]
+    timer = threading.Timer(timeout, proc.kill) if timeout else None
+    if timer:
+        timer.start()
+    last = []
+    try:
+        for raw in proc.stdout:
+            line = raw.decode("utf-8", "replace").rstrip("\n")
+            print(line, flush=True)
+            last.append(line)
+            del last[:-keep]
+    finally:
+        if timer:
+            timer.cancel()
+        proc.stdout.close()
+        rc = proc.wait()
+    return (124 if rc == -signal.SIGKILL and timer else rc), last
+
+
+def systemd_env():
+    return {"PATH": SYSTEM_PATH, "LANG": "C.UTF-8", "SYSTEMD_PAGER": "", "SYSTEMD_COLORS": "0"}
+
+
+def apt_env(simulate=False):
+    """Umgebung für apt-get und dpkg: nicht-interaktiv, needrestart nur auflisten, ucf und dpkg behalten geänderte
+    Konfigurationsdateien (wie zenos-basis). Zum Auswerten LC_ALL=C."""
+    env = {"PATH": APT_PATH, "HOME": "/root" if os.geteuid() == 0 else os.environ.get("HOME", "/"), "LANG": "C.UTF-8",
+           "DEBIAN_FRONTEND": "noninteractive", "NEEDRESTART_MODE": "l", "NEEDRESTART_SUSPEND": "1",
+           "APT_LISTCHANGES_FRONTEND": "none", "UCF_FORCE_CONFFOLD": "1"}
+    if simulate:
+        env["LC_ALL"] = "C"
+    return env
+
+
+def tool_env():
+    return {"PATH": SYSTEM_PATH, "LANG": "C.UTF-8", "LC_ALL": "C"}
+
+
+def journal(text):
+    """Eine Zeile ins Journal (logger -t zenos-installer), still, wenn das nicht geht."""
+    if os.access(LOGGER, os.X_OK):
+        run([LOGGER, "-t", NAME, "--", clean(text, 400)], env={"PATH": SYSTEM_PATH, "LANG": "C.UTF-8"}, timeout=10)
+
+
+def state_path(*parts):
+    return os.path.join(STATE_DIR, *parts)
+
+
+def is_root():
+    return os.geteuid() in TRUSTED_UIDS
+
+
+def path_problem(path):
+    """Grund, warum PATH (und jeder Ordner darüber bis PATH_CHECK_TOP) nicht sicher ist, sonst None: kein Verweis,
+    Besitzer root, für Gruppe und andere nicht schreibbar."""
+    path = os.path.abspath(path)
+    top = os.path.abspath(PATH_CHECK_TOP)
+    while True:
+        try:
+            st = os.lstat(path)
+        except OSError as e:
+            return f"{path}: {e.strerror}"
+        if stat.S_ISLNK(st.st_mode):
+            return f"{path} ist ein Verweis"
+        if st.st_uid not in TRUSTED_UIDS:
+            return f"{path} gehört nicht root"
+        if st.st_mode & 0o022:
+            return f"{path} ist für andere schreibbar"
+        if path in (top, "/"):
+            return None
+        path = os.path.dirname(path)
+
+
+def read_small(path, trusted=False, limit=MAX_SMALL_FILE):
+    """Liest eine kleine reguläre Datei ohne Verweis zu folgen. trusted: Besitzer root, für andere nicht schreibbar.
+    FileNotFoundError, wenn sie fehlt; Failure bei allem anderen."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except FileNotFoundError:
+        raise
+    except OSError as e:
+        raise Failure(f"{path}: {e.strerror}") from e
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise Failure(f"{path} ist keine Datei")
+        if trusted and st.st_uid not in TRUSTED_UIDS:
+            raise Failure(f"{path} gehört nicht root")
+        if trusted and st.st_mode & 0o022:
+            raise Failure(f"{path} ist für andere schreibbar")
+        data = os.read(fd, limit + 1)
+        if len(data) > limit:
+            raise Failure(f"{path} ist zu gross")
+    finally:
+        os.close(fd)
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise Failure(f"{path} ist kein UTF-8") from e
+
+
+def write_atomic(path, data, mode=0o644):
+    """Schreibt PATH atomar: .PATH.neu im selben Ordner, fsync, rename, fsync des Ordners."""
+    folder = os.path.dirname(path)
+    tmp = os.path.join(folder, "." + os.path.basename(path) + ".neu")
+    with contextlib.suppress(FileNotFoundError):
+        os.unlink(tmp)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, mode)
+    try:
+        if isinstance(data, str):
+            data = data.encode("utf-8")
+        while data:
+            data = data[os.write(fd, data):]
+        os.fchmod(fd, mode)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.replace(tmp, path)
+    dfd = os.open(folder, os.O_RDONLY)
+    try:
+        os.fsync(dfd)
+    finally:
+        os.close(dfd)
+
+
+def write_json(path, data, mode=0o644):
+    write_atomic(path, json.dumps(data, ensure_ascii=False, indent=1) + "\n", mode)
+
+
+def load_json(path, trusted=True):
+    """JSON-Objekt aus PATH, None wenn es fehlt oder unlesbar ist (trusted: nur root-eigen und für andere nicht
+    schreibbar)."""
+    try:
+        data = json.loads(read_small(path, trusted=trusted))
+    except (FileNotFoundError, Failure, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def prepare_state():
+    """Zustandsordner und Ablage (root, 0755) anlegen und prüfen."""
+    for folder in (STATE_DIR, DROP_DIR):
+        os.makedirs(folder, mode=0o755, exist_ok=True)
+        problem = path_problem(folder)
+        if problem:
+            raise Failure(f"Zustand unsicher: {problem}")
+
+
+def sha256_fd(fd, limit=MAX_DEB):
+    """SHA-256 einer offenen Datei ab dem Anfang (höchstens LIMIT Byte, sonst Failure)."""
+    h = hashlib.sha256()
+    total = 0
+    os.lseek(fd, 0, os.SEEK_SET)
+    while True:
+        chunk = os.read(fd, 1 << 20)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > limit:
+            raise Failure(f"Die Datei ist grösser als {size_text(limit)}.")
+        h.update(chunk)
+    return h.hexdigest(), total
+
+
+# --- Paket lesen (dpkg-deb, ohne etwas auszuführen) ---------------------------------------------------------------
+
+
+def member_path(raw):
+    """Pfad eines Eintrags im Archiv als absoluter Pfad («./usr/bin/x» → «/usr/bin/x», «./» → «/»). Refusal bei
+    absoluten Pfaden, «..» oder Steuerzeichen."""
+    p = raw
+    while p.startswith("./"):
+        p = p[2:]
+    if p in (".", ""):
+        return "/"
+    p = p.rstrip("/")
+    if p.startswith("/") or ".." in p.split("/") or any(not c.isprintable() for c in p):
+        raise Refusal("beschaedigt", "Das Paket enthält einen ungültigen Pfad.")
+    return "/" + p
+
+
+class TarReader:
+    """«dpkg-deb --ctrl-tarfile|--fsys-tarfile DATEI» als Datenstrom in tarfile (Modus «r|»): nichts wird entpackt
+    oder ausgeführt, nur gelesen. Ein Zeitlimit beendet dpkg-deb; dann und bei jedem Fehler von dpkg-deb oder tar:
+    Refusal «beschaedigt»."""
+
+    def __init__(self, path, what, timeout=DEB_TIMEOUT):
+        self.path = path
+        self.what = what
+        self.timeout = timeout
+
+    def __iter__(self):
+        errors = tempfile.TemporaryFile()
+        try:
+            proc = subprocess.Popen([DPKG_DEB, self.what, "--", self.path], stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE, stderr=errors, env=tool_env(), cwd="/")
+        except OSError as e:
+            errors.close()
+            raise Failure(f"dpkg-deb: {e.strerror}") from e
+        timer = threading.Timer(self.timeout, proc.kill)
+        timer.start()
+        problem = None
+        try:
+            try:
+                with tarfile.open(fileobj=proc.stdout, mode="r|") as tf:
+                    for member in tf:
+                        yield member, tf
+                # tar füllt mit Nullen auf: den Rest lesen, sonst endete dpkg-deb an der geschlossenen Leitung
+                while proc.stdout.read(1 << 16):
+                    pass
+            except (tarfile.TarError, EOFError, OSError, ValueError) as e:
+                problem = f"tar: {e}"
+        finally:
+            timer.cancel()
+            with contextlib.suppress(OSError):
+                proc.stdout.close()
+            rc = proc.wait()
+            errors.seek(0)
+            detail = first_line(errors.read(4096).decode("utf-8", "replace"))
+            errors.close()
+        if rc == -signal.SIGKILL:
+            raise Refusal("beschaedigt", f"Das Paket liess sich nicht in {self.timeout} s lesen.")
+        if rc != 0 or problem:
+            raise Refusal("beschaedigt", "Die Datei ist kein gültiges Paket oder beschädigt"
+                                         f" ({detail or problem or f'dpkg-deb Exit {rc}'}).")
+
+
+def read_member(tf, member, limit):
+    """Inhalt eines regulären Eintrags (höchstens LIMIT Byte), sonst None."""
+    if not member.isreg() or member.size > limit:
+        return None
+    f = tf.extractfile(member)
+    if f is None:
+        return None
+    data = f.read(limit + 1)
+    return data if len(data) <= limit else None
+
+
+def parse_control(text):
+    """Felder des ersten Absatzes einer control-Datei (Schlüssel klein geschrieben; Folgezeilen ohne das erste
+    Leerzeichen). Refusal bei kaputtem Aufbau."""
+    fields = {}
+    key = None
+    for line in text.split("\n"):
+        if not line.strip():
+            if fields:
+                break
+            continue
+        if line[0] in " \t":
+            if key is None:
+                raise Refusal("beschaedigt", "Die Paketbeschreibung (control) ist kaputt.")
+            fields[key] += "\n" + line[1:]
+            continue
+        name, sep, value = line.partition(":")
+        if not sep or not FIELD_RE.fullmatch(name) or name.lower() in fields:
+            raise Refusal("beschaedigt", "Die Paketbeschreibung (control) ist kaputt.")
+        key = name.lower()
+        fields[key] = value.strip()
+    return fields
+
+
+def read_control(path):
+    """Felder und Skripte aus dem Steuerteil: (Felder, {Skript: Text})."""
+    control = None
+    scripts = {}
+    for member, tf in TarReader(path, "--ctrl-tarfile"):
+        name = member_path(member.name).lstrip("/")
+        if name == "control":
+            data = read_member(tf, member, MAX_CONTROL_MEMBER)
+            if data is None:
+                raise Refusal("beschaedigt", "Die Paketbeschreibung (control) fehlt oder ist zu gross.")
+            control = data.decode("utf-8", "replace")
+        elif name in SCRIPTS and (member.isreg() or member.issym()):
+            data = read_member(tf, member, MAX_CONTROL_MEMBER) if member.isreg() else b""
+            scripts[name] = (data or b"").decode("utf-8", "replace")
+    if control is None:
+        raise Refusal("beschaedigt", "Die Paketbeschreibung (control) fehlt.")
+    return parse_control(control), scripts
+
+
+def image_wanted(path):
+    return path.startswith(ICON_DIRS) and path.endswith(IMAGE_SUFFIXES)
+
+
+def read_contents(path, extra=()):
+    """Ein Durchgang durch den Datenteil: alle Einträge [(Pfad, Art, Modus, Grösse, Ziel)], die Starter in
+    /usr/share/applications und Bilder unter /usr/share/icons und /usr/share/pixmaps (mit Grenzen), dazu die Pfade aus
+    EXTRA. Art: d Ordner, f Datei, l Verweis, h harter Verweis, o anderes."""
+    entries = []
+    desktops = {}
+    images = {}
+    total = 0
+    extra = set(extra)
+    for member, tf in TarReader(path, "--fsys-tarfile"):
+        p = member_path(member.name)
+        kind = "d" if member.isdir() else "f" if member.isreg() else "l" if member.issym() else \
+            "h" if member.islnk() else "o"
+        entries.append((p, kind, member.mode, member.size, member.linkname if kind in "lh" else ""))
+        if kind != "f":
+            continue
+        if (os.path.dirname(p) == "/usr/share/applications" and p.endswith(".desktop")
+                and len(desktops) < MAX_DESKTOPS) or p in extra:
+            data = read_member(tf, member, max(MAX_DESKTOP, MAX_IMAGE) if p in extra else MAX_DESKTOP)
+            if data is not None:
+                desktops[p] = data
+        elif image_wanted(p) and member.size <= MAX_IMAGE and total + member.size <= MAX_IMAGES_TOTAL:
+            data = read_member(tf, member, MAX_IMAGE)
+            if data is not None:
+                images[p] = data
+                total += len(data)
+    return entries, desktops, images
+
+
+def resolve_link(path, links, depth=8):
+    """Folgt Verweisen innerhalb des Archivs (höchstens DEPTH), Pfad des Ziels."""
+    for _ in range(depth):
+        target = links.get(path)
+        if target is None:
+            return path
+        target = target if target.startswith("/") else os.path.join(os.path.dirname(path), target)
+        path = os.path.normpath(target)
+    return path
+
+
+def parse_desktop(data):
+    """Werte aus der Gruppe [Desktop Entry] eines Starters (Name deutsch, wenn vorhanden)."""
+    values = {}
+    group = None
+    for line in data.decode("utf-8", "replace").split("\n"):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("["):
+            group = line
+            continue
+        if group != "[Desktop Entry]":
+            continue
+        key, sep, value = line.partition("=")
+        if sep:
+            values.setdefault(key.strip(), value.strip())
+    name = values.get("Name[de_CH]") or values.get("Name[de]") or values.get("Name") or ""
+    return {"name": clean(name, 80), "icon": clean(values.get("Icon", ""), 300),
+            "sichtbar": values.get("Type", "Application") == "Application"
+            and values.get("NoDisplay", "").lower() != "true" and values.get("Hidden", "").lower() != "true"}
+
+
+def png_size(data):
+    """Breite eines PNG aus dem IHDR (0, wenn es keins ist)."""
+    if len(data) < 24 or not data.startswith(PNG_MAGIC) or data[12:16] != b"IHDR":
+        return 0
+    return int.from_bytes(data[16:20], "big")
+
+
+def image_kind(data):
+    if data.startswith(PNG_MAGIC):
+        return "png"
+    head = data[:512].lstrip()
+    if head.startswith(b"<?xml") or head.startswith(b"<svg") or head.startswith(b"<!--"):
+        return "svg" if b"<svg" in data[:4096] else None
+    return None
+
+
+def choose_icon(icon, images, links, package):
+    """Bestes Bild für das Symbol: (Daten, Endung) oder None. ICON aus dem Starter (Name oder absoluter Pfad), sonst
+    der Paketname. PNG zwischen 64 und 256 Pixeln geht vor, dann das grösste PNG, dann SVG."""
+    if icon.startswith("/"):
+        p = resolve_link(icon, links)
+        data = images.get(p)
+        kind = image_kind(data) if data else None
+        return (data, kind) if kind else None
+    stem = icon or package
+    for suffix in IMAGE_SUFFIXES + (".xpm",):
+        if stem.endswith(suffix):
+            stem = stem[: -len(suffix)]
+    found = []
+    for p in sorted(set(images) | {k for k in links if image_wanted(k)}):
+        if os.path.splitext(os.path.basename(p))[0] != stem:
+            continue
+        data = images.get(resolve_link(p, links))
+        kind = image_kind(data) if data else None
+        if kind == "png":
+            width = png_size(data)
+            found.append(((0 if 64 <= width <= 256 else 1, -width), data, "png"))
+        elif kind == "svg":
+            found.append(((2, 0), data, "svg"))
+    if not found:
+        return None
+    found.sort(key=lambda f: f[0])
+    return found[0][1], found[0][2]
+
+
+def icon_folder():
+    """Ordner für Symbole: $XDG_RUNTIME_DIR/zenos-installer (0700), sonst None."""
+    base = os.environ.get("XDG_RUNTIME_DIR") or os.path.join(RUN_USER, str(os.getuid()))
+    try:
+        st = os.stat(base)
+    except OSError:
+        return None
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
+        return None
+    folder = os.path.join(base, "zenos-installer")
+    with contextlib.suppress(FileExistsError):
+        os.mkdir(folder, 0o700)
+    try:
+        st = os.lstat(folder)
+    except OSError:
+        return None
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
+        return None
+    return folder
+
+
+def save_icon(icon, sha):
+    """Schreibt das Symbol nach icon_folder()/SHA.png|svg und hält dort höchstens KEEP_ICONS Dateien. Pfad oder None."""
+    folder = icon_folder()
+    if not folder or not icon:
+        return None
+    data, kind = icon
+    path = os.path.join(folder, f"{sha[:32]}.{kind}")
+    try:
+        write_atomic(path, data, 0o600)
+        names = sorted((os.lstat(os.path.join(folder, n)).st_mtime, n) for n in os.listdir(folder)
+                       if re.fullmatch(r"[0-9a-f]{32}\.(png|svg)", n))
+        for _, n in names[:-KEEP_ICONS]:
+            with contextlib.suppress(OSError):
+                os.unlink(os.path.join(folder, n))
+    except OSError:
+        return None
+    return path
+
+
+# --- System befragen ---------------------------------------------------------------------------------------------
+
+
+def native_arch():
+    """Architektur des Systems (dpkg --print-architecture), Failure, wenn unbekannt."""
+    r = run([DPKG, "--print-architecture"], env=tool_env())
+    arch = r.stdout.strip()
+    if r.returncode != 0 or not ARCH_RE.fullmatch(arch):
+        raise Failure("Architektur des Systems unbekannt (dpkg --print-architecture)")
+    return arch
+
+
+def installed_version(package):
+    """(Status, Version) eines Pakets nach dpkg (Status «installed», «half-configured» …), (None, None), wenn es nicht
+    installiert ist (auch: nur noch Konfigurationsdateien)."""
+    r = run([DPKG_QUERY, "-W", "-f=${db:Status-Status}\t${Version}\n", "--", package], env=tool_env())
+    if r.returncode != 0:
+        return None, None
+    for line in r.stdout.split("\n"):
+        parts = line.split("\t")
+        if len(parts) == 2 and parts[0] not in ("not-installed", "config-files", ""):
+            return parts[0], parts[1]
+    return None, None
+
+
+def compare_versions(a, op, b):
+    """dpkg --compare-versions A OP B."""
+    return run([DPKG, "--compare-versions", a, op, b], env=tool_env()).returncode == 0
+
+
+def zenos_packages():
+    """Pakete aus /opt/zenos/scripts/pakete/*.txt (wie zenos-basis)."""
+    folder = os.path.join(CODE_DIR, "scripts", "pakete")
+    found = set()
+    try:
+        names = sorted(n for n in os.listdir(folder) if n.endswith(".txt"))
+    except OSError:
+        return found
+    for name in names:
+        try:
+            text = read_small(os.path.join(folder, name), limit=1 << 20)
+        except (FileNotFoundError, Failure):
+            continue
+        for line in text.split("\n"):
+            for word in line.split("#", 1)[0].split():
+                word = word.split(":", 1)[0]
+                if PACKAGE_RE.fullmatch(word):
+                    found.add(word)
+    return found
+
+
+def manual_packages():
+    """Als manuell installiert markierte Pakete (apt-mark showmanual). Failure, wenn apt-mark scheitert."""
+    r = run([APT_MARK, "showmanual"], env=apt_env(simulate=True), timeout=SIMULATE_TIMEOUT)
+    if r.returncode != 0:
+        raise Failure(f"apt-mark showmanual endete mit Exit {r.returncode}: {first_line(r.stderr)}")
+    return {w.split(":", 1)[0] for w in r.stdout.split() if PACKAGE_RE.fullmatch(w.split(":", 1)[0])}
+
+
+def load_installed_list():
+    """Einträge aus installiert.json {Name: Eintrag} (nur root-eigen zählt)."""
+    data = load_json(state_path(INSTALLED)) or {}
+    result = {}
+    for entry in data.get("pakete") or []:
+        if isinstance(entry, dict) and isinstance(entry.get("name"), str) and PACKAGE_RE.fullmatch(entry["name"]):
+            result[entry["name"]] = entry
+    return result
+
+
+def parse_simulation(text):
+    """Zeilen «Inst» und «Remv»/«Purg» aus «LC_ALL=C apt-get -s …»: ([{name, alt, neu}], [{name, alt}]). Eine Zeile, die
+    so beginnt, aber nicht passt: Failure."""
+    installs, removals = [], []
+    for line in text.split("\n"):
+        line = line.rstrip()
+        if line.startswith("Inst "):
+            m = INST_RE.fullmatch(line)
+            if not m:
+                raise Failure(f"Zeile von apt nicht verstanden: {clean(line, 120)}")
+            installs.append({"name": m.group("name"), "alt": m.group("old"), "neu": m.group("new")})
+        elif line.startswith(("Remv ", "Purg ")):
+            m = REMV_RE.fullmatch(line)
+            if not m:
+                raise Failure(f"Zeile von apt nicht verstanden: {clean(line, 120)}")
+            removals.append({"name": m.group("name"), "alt": m.group("old")})
+    return installs, removals
+
+
+def base_name(name):
+    return name.split(":", 1)[0]
+
+
+def apt_problem(r):
+    """Kurzer Grund aus einer gescheiterten Simulation: die Zeilen unter «unmet dependencies» bzw. die erste «E:»."""
+    lines = (r.stdout + "\n" + r.stderr).split("\n")
+    unmet = []
+    taking = False
+    for line in lines:
+        if "unmet dependencies" in line:
+            taking = True
+            continue
+        if taking:
+            if not line.startswith(" ") or not line.strip():
+                break
+            unmet.append(clean(line.strip(), 160))
+    if unmet:
+        return "; ".join(unmet[:3])
+    errors = [clean(z[2:].strip(), 200) for z in lines if z.startswith("E:")]
+    return errors[0] if errors else f"apt-get endete mit Exit {r.returncode}"
+
+
+def simulate(argv):
+    """«apt-get -s …» (sperrt nichts, ohne Netz). CompletedProcess."""
+    return run([APT_GET, "-s", "-o", "APT::Get::AutomaticRemove=false", *argv], env=apt_env(simulate=True),
+               timeout=SIMULATE_TIMEOUT)
+
+
+def plan_hash(package, state, installs, removals):
+    """Hash des Plans: Hauptpaket mit Zustand und die Namen dessen, was apt installiert oder entfernt (ohne Versionen,
+    unabhängig von der Reihenfolge), die ersten 40 Zeichen von SHA-256."""
+    entries = [f"haupt {package} {state}"] + [f"inst {base_name(p['name'])}" for p in installs] \
+        + [f"remv {base_name(r['name'])}" for r in removals]
+    return hashlib.sha256("\n".join(sorted(entries)).encode("utf-8")).hexdigest()[:40]
+
+
+# --- Auswertung --------------------------------------------------------------------------------------------------
+
+
+def hint(art, text, level="hinweis"):
+    return {"art": art, "stufe": level, "text": text}
+
+
+def content_hints(entries, scripts):
+    """Hinweise aus Inhalt und Skripten (ohne Entfernungen)."""
+    hints = []
+    files = [(p, k, m) for p, k, m, _, _ in entries if k != "d"]
+    present = [s for s in SCRIPTS if s in scripts]
+    if present:
+        hints.append(hint("skripte", "Führt bei der Installation eigene Skripte als root aus "
+                                     f"({', '.join(present)})."))
+    units = sorted({os.path.basename(p) for p, _, _ in files
+                    if os.path.dirname(p) in UNIT_DIRS and p.endswith(UNIT_SUFFIXES)})
+    initd = sorted({os.path.basename(p) for p, _, _ in files if os.path.dirname(p) == "/etc/init.d"})
+    user_units = sorted({os.path.basename(p) for p, _, _ in files
+                         if os.path.dirname(p) in USER_UNIT_DIRS and p.endswith(UNIT_SUFFIXES)})
+    script_service = any(SCRIPT_SERVICE_RE.search(scripts.get(s, "")) for s in ("postinst", "preinst"))
+    if units or initd:
+        hints.append(hint("dienste", f"Startet Systemdienste: {names_text(units + initd)}."))
+    elif script_service:
+        hints.append(hint("dienste", "Startet bei der Installation Systemdienste (Skript postinst)."))
+    if user_units:
+        hints.append(hint("dienste", f"Bringt Hintergrunddienste für deine Sitzung mit: {names_text(user_units)}."))
+    autostart = sorted({os.path.basename(p) for p, _, _ in files if os.path.dirname(p) == "/etc/xdg/autostart"})
+    if autostart:
+        hints.append(hint("autostart", f"Startet bei jeder Anmeldung mit ({names_text(autostart)})."))
+    sources = sorted({p for p, _, _ in files if p.startswith(SOURCES_PREFIXES)})
+    script_sources = any(SCRIPT_SOURCES_RE.search(scripts.get(s, "")) for s in SCRIPTS)
+    if sources or script_sources:
+        hints.append(hint("paketquellen", "Fügt eine Paketquelle hinzu: Updates dieser Software kommen danach mit den "
+                                          "Basis-Updates von zenOS."))
+    special = sorted(p for p, k, m in files if k == "f" and m & (stat.S_ISUID | stat.S_ISGID))
+    if special:
+        hints.append(hint("setuid", f"Bringt Programme mit erhöhten Rechten mit (setuid/setgid): {names_text(special)}."))
+    outside = {}
+    for p, _, _ in files:
+        top = p.split("/")[1] if p.count("/") >= 1 else ""
+        if top not in USR_TOPS:
+            outside[f"/{top}"] = outside.get(f"/{top}", 0) + 1
+    if outside:
+        parts = [f"{d} ({n})" for d, n in sorted(outside.items())]
+        hints.append(hint("ausserhalb", f"Legt Dateien ausserhalb von /usr und /opt ab: {', '.join(parts)}."))
+    if any(KERNEL_RE.fullmatch(p) for p, _, _ in files):
+        hints.append(hint("kernel", "Bringt Kernel-Module mit."))
+    rights = sorted({p for p, _, _ in files if p.startswith(RIGHTS_PREFIXES)})
+    if rights:
+        hints.append(hint("rechte", f"Ändert Anmeldung oder Rechte (sudo, polkit, PAM): {names_text(rights, 3)}."))
+    return hints
+
+
+def description_parts(text):
+    """(Zusammenfassung, lange Beschreibung) aus dem Feld Description."""
+    lines = text.split("\n")
+    summary = clean(lines[0], 200)
+    body = []
+    for line in lines[1:]:
+        body.append("" if line.strip() == "." else line.rstrip())
+    return summary, clean("\n".join(body), 4000, lines=True)
+
+
+class Evaluation:
+    """Auswertung einer .deb-Datei (ohne Rechte; als root vor dem Installieren noch einmal)."""
+
+    def __init__(self, path, *, as_root=False, with_icon=False, owner=None):
+        self.path = path
+        self.as_root = as_root
+        self.with_icon = with_icon
+        self.owner = os.getuid() if owner is None else owner
+        self.data = {"version": 1, "ergebnis": None, "grund": "", "ablehnung": None, "pfad": path,
+                     "datei": clean(os.path.basename(path), 200), "groesse": None, "sha256": None, "plan": None,
+                     "name": None, "paket": None, "zustand": None, "installierte_version": None,
+                     "ueber_installer": False, "symbol": None, "programme": [], "zusaetzlich": [], "entfernen": [],
+                     "hinweise": [], "dateien": None}
+
+    def refuse(self, kind, reason):
+        self.data.update(ergebnis="abgelehnt", ablehnung=kind, grund=reason)
+        return self.data
+
+    def run(self):
+        try:
+            return self.evaluate()
+        except Refusal as r:
+            return self.refuse(r.kind, r.reason)
+        except Failure as e:
+            self.data.update(ergebnis="fehler", grund=str(e))
+            return self.data
+
+    def open_file(self):
+        """Datei prüfen und SHA-256 berechnen (ohne Verweis am Ende, reguläre Datei, höchstens 2 GiB)."""
+        if not self.path.endswith(".deb"):
+            raise Refusal("endung", "Der zen Installer nimmt nur Pakete mit der Endung .deb.")
+        try:
+            fd = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+        except FileNotFoundError as e:
+            raise Failure("Die Datei gibt es nicht (mehr).") from e
+        except OSError as e:
+            raise Failure(f"Die Datei lässt sich nicht öffnen: {e.strerror}.") from e
+        try:
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode):
+                raise Failure("Das ist keine Datei.")
+            self.data["groesse"] = st.st_size
+            if st.st_size > MAX_DEB:
+                raise Refusal("zu_gross", f"Die Datei ist grösser als {size_text(MAX_DEB)}.")
+            if not self.as_root and st.st_uid != self.owner:
+                raise Refusal("fremd", "Die Datei gehört nicht dir. Kopiere sie zuerst in deine Ablage.")
+            try:
+                sha, size = sha256_fd(fd)
+            except Failure as e:
+                raise Refusal("zu_gross", str(e)) from e
+            self.data.update(sha256=sha, groesse=size)
+        finally:
+            os.close(fd)
+
+    def evaluate(self):
+        self.open_file()
+        fields, scripts = read_control(self.path)
+        package = fields.get("package", "")
+        version = fields.get("version", "")
+        arch = fields.get("architecture", "")
+        if not PACKAGE_RE.fullmatch(package) or not VERSION_RE.fullmatch(version) or not ARCH_RE.fullmatch(arch):
+            raise Refusal("beschaedigt", "Name, Version oder Architektur des Pakets fehlen oder sind ungültig.")
+        summary, body = description_parts(fields.get("description", ""))
+        size = fields.get("installed-size", "")
+        homepage = fields.get("homepage", "")
+        self.data["paket"] = {
+            "name": package, "version": version, "architektur": arch,
+            "herausgeber": clean(fields.get("maintainer", ""), 200) or None,
+            "homepage": homepage if URL_RE.fullmatch(homepage) else None,
+            "zusammenfassung": summary or None, "beschreibung": body or None,
+            "installiert_groesse": int(size) * 1024 if size.isdigit() and len(size) < 12 else None,
+            "abschnitt": clean(fields.get("section", ""), 60) or None,
+        }
+        self.data["name"] = package
+        native = native_arch()
+        if arch not in (native, "all"):
+            raise Refusal("architektur", f"Das Paket ist für {arch}, dieser Rechner braucht {native}.")
+        if fields.get("essential", "").lower() == "yes":
+            raise Refusal("essentiell", "Das Paket gibt sich als unverzichtbarer Teil des Systems aus (Essential).")
+        entries, desktops, images = self.contents(package)
+        self.data["dateien"] = sum(1 for e in entries if e[1] != "d")
+        self.data["hinweise"] = content_hints(entries, scripts)
+        protected_names = set(PROTECTED) | zenos_packages()
+        if package in protected_names:
+            raise Refusal("geschuetzt", f"Das Paket hiesse wie ein Teil von zenOS oder Ubuntu ({package}) und "
+                                        "ersetzte ihn. Das macht der zen Installer nicht.")
+        self.state(package, version)
+        self.simulation(package, protected_names)
+        if self.data["ergebnis"] is None:
+            if self.data["zustand"] == "gleich":
+                self.data.update(ergebnis="installiert", grund=f"{self.data['name']} {version} ist schon installiert.")
+            else:
+                self.data.update(ergebnis="bereit", grund=f"{self.data['name']} {version} ist bereit zum Installieren.")
+        return self.data
+
+    def contents(self, package):
+        entries, desktops, images = read_contents(self.path)
+        links = {p: t for p, k, _, _, t in entries if k == "l"}
+        programs = []
+        icon_name = ""
+        # Starter, die Verweise sind (etwa nach /opt), in einem zweiten Durchgang
+        wanted = [resolve_link(p, links) for p, k, _, _, _ in entries
+                  if k == "l" and os.path.dirname(p) == "/usr/share/applications" and p.endswith(".desktop")]
+        wanted = [w for w in wanted if w not in desktops]
+        parsed = {}
+        for p in sorted(desktops):
+            parsed[p] = parse_desktop(desktops[p])
+        for p, k, _, _, _ in sorted(entries):
+            if k == "l" and os.path.dirname(p) == "/usr/share/applications" and p.endswith(".desktop"):
+                target = resolve_link(p, links)
+                if target in parsed:
+                    parsed[p] = parsed[target]
+        if wanted:
+            _, more, _ = read_contents(self.path, extra=wanted[:MAX_DESKTOPS])
+            for p, k, _, _, _ in sorted(entries):
+                if k == "l" and resolve_link(p, links) in more:
+                    parsed[p] = parse_desktop(more[resolve_link(p, links)])
+        for p in sorted(parsed):
+            if os.path.dirname(p) != "/usr/share/applications":
+                continue
+            entry = parsed[p]
+            if entry["sichtbar"]:
+                programs.append({"id": os.path.basename(p), "name": entry["name"] or package})
+        # Der Starter, der wie das Paket heisst, geht vor
+        programs.sort(key=lambda e: (e["id"] != f"{package}.desktop", e["id"]))
+        if programs:
+            self.data["name"] = programs[0]["name"]
+            first = next(v for p, v in parsed.items() if os.path.basename(p) == programs[0]["id"])
+            icon_name = first["icon"]
+        self.data["programme"] = programs
+        if self.with_icon and self.data["sha256"]:
+            icon = choose_icon(icon_name, images, links, package)
+            if icon is None and icon_name.startswith("/"):
+                target = resolve_link(icon_name, links)
+                _, more, _ = read_contents(self.path, extra=[target])
+                data = more.get(target)
+                kind = image_kind(data) if data else None
+                icon = (data, kind) if kind else None
+            self.data["symbol"] = save_icon(icon, self.data["sha256"])
+        return entries, desktops, images
+
+    def state(self, package, version):
+        status, old = installed_version(package)
+        listed = load_installed_list()
+        self.data["installierte_version"] = old
+        self.data["ueber_installer"] = package in listed
+        if old is None:
+            self.data["zustand"] = "neu"
+            return
+        if status == "installed" and compare_versions(version, "eq", old):
+            self.data["zustand"] = "gleich"
+        elif compare_versions(version, "lt", old):
+            self.data["zustand"] = "rueckschritt"
+            self.data["hinweise"].append(hint("rueckschritt", f"Ältere Version als die installierte ({clean(old, 60)})."))
+        else:
+            self.data["zustand"] = "update"
+        if package not in listed and self.data["zustand"] != "gleich":
+            self.data["hinweise"].append(hint("ersetzt", f"Ersetzt die installierte Version {clean(old, 60)}, die nicht "
+                                                         "über den zen Installer kam."))
+
+    def simulation(self, package, protected_names):
+        r = simulate(["install", self.path])
+        if r.returncode != 0:
+            raise Refusal("abhaengigkeiten", f"apt kann das Paket so nicht installieren: {apt_problem(r)}")
+        installs, removals = parse_simulation(r.stdout)
+        main = [p for p in installs if base_name(p["name"]) == package]
+        if self.data["zustand"] != "gleich" and not main:
+            raise Failure(f"apt würde {package} nicht installieren (apt-get -s install).")
+        self.data["zusaetzlich"] = [{"name": base_name(p["name"]), "version": clean(p["neu"], 100),
+                                     "alt": clean(p["alt"], 100) if p["alt"] else None}
+                                    for p in installs if base_name(p["name"]) != package]
+        removed = sorted({base_name(r["name"]) for r in removals})
+        self.data["entfernen"] = removed
+        self.data["plan"] = plan_hash(package, self.data["zustand"], installs, removals)
+        if removed:
+            listed = set(load_installed_list())
+            protected = protected_names | (manual_packages() - listed)
+            blocked = [n for n in removed if n in protected]
+            if blocked:
+                raise Refusal("geschuetzt", f"apt müsste dafür {names_text(blocked)} entfernen. Das macht der zen "
+                                            "Installer nicht.")
+            self.data["hinweise"].append(hint("entfernen", f"Entfernt dafür: {names_text(removed)}.", "warnung"))
+
+
+def evaluate_file(path, **kwargs):
+    return Evaluation(path, **kwargs).run()
+
+
+def view_lines(ev):
+    """Ansicht für das Terminal (zen install)."""
+    p = ev.get("paket") or {}
+    lines = []
+    if p:
+        lines.append(f"{ev.get('name') or p.get('name')} {p.get('version')} ({p.get('name')}, {p.get('architektur')})")
+        if p.get("zusammenfassung"):
+            lines.append(f"  {p['zusammenfassung']}")
+    else:
+        lines.append(ev.get("datei") or ev.get("pfad"))
+    rows = [("Datei", f"{ev.get('datei')} ({size_text(ev.get('groesse'))})")]
+    if ev.get("sha256"):
+        rows.append(("SHA-256", ev["sha256"]))
+    if p.get("herausgeber"):
+        rows.append(("Herausgeber", p["herausgeber"]))
+    if p.get("homepage"):
+        rows.append(("Webseite", p["homepage"]))
+    if p.get("installiert_groesse"):
+        rows.append(("Braucht", size_text(p["installiert_groesse"])))
+    state = {"neu": "neu", "update": f"Update von {ev.get('installierte_version')}",
+             "rueckschritt": f"ältere Version (installiert: {ev.get('installierte_version')})",
+             "gleich": "diese Version ist schon installiert"}.get(ev.get("zustand"))
+    if state:
+        rows.append(("Zustand", state))
+    if ev.get("zusaetzlich"):
+        rows.append(("Dazu", f"{plural(len(ev['zusaetzlich']), 'Paket', 'Pakete')}: "
+                             f"{names_text([z['name'] for z in ev['zusaetzlich']], 8)}"))
+    if ev.get("programme"):
+        rows.append(("Programme", names_text([z["name"] for z in ev["programme"]])))
+    for title, value in rows:
+        lines.append(f"  {title:<12} {value}")
+    for h in ev.get("hinweise") or []:
+        lines.append(f"  {'!' if h['stufe'] == 'warnung' else '·'} {h['text']}")
+    lines.append(f"Ergebnis: {ev.get('grund')}")
+    return lines
+
+
+# --- Befehle ohne Rechte -----------------------------------------------------------------------------------------
+
+
+def cmd_view(argv):
+    as_json = "--json" in argv
+    rest = [a for a in argv if a != "--json"]
+    if len(rest) != 1 or len(argv) - len(rest) > 1 or not rest[0] or rest[0].startswith("-"):
+        print(f"{NAME} ansehen DATEI [--json]", file=sys.stderr)
+        return EXIT_USAGE
+    raw = rest[0]
+    if len(raw) > MAX_PATH or any(not c.isprintable() for c in raw):
+        ev = {"version": 1, "ergebnis": "fehler", "grund": "Ungültiger Dateiname.", "pfad": None}
+    else:
+        path = os.path.realpath(raw)
+        ev = evaluate_file(path, with_icon=as_json)
+    if as_json:
+        print(json.dumps(ev, ensure_ascii=False, indent=1))
+    else:
+        for line in view_lines(ev):
+            print(line)
+    return {"bereit": EXIT_OK, "installiert": EXIT_OK, "abgelehnt": EXIT_REFUSED}.get(ev.get("ergebnis"), EXIT_ERROR)
+
+
+def list_entries():
+    """Einträge aus installiert.json mit dem Stand von jetzt (installierte Version oder None)."""
+    result = []
+    for name, entry in sorted(load_installed_list().items()):
+        status, version = installed_version(name)
+        result.append({"name": name, "anzeigename": clean(entry.get("anzeigename") or name, 80),
+                       "version": clean(entry.get("version") or "", 100), "installierte_version": version,
+                       "status": status, "zeit": entry.get("zeit"), "datei": clean(entry.get("datei") or "", 200),
+                       "programme": [p for p in entry.get("programme") or [] if isinstance(p, dict)]})
+    return result
+
+
+def cmd_list(argv):
+    if argv not in ([], ["--json"]):
+        print(f"{NAME} liste [--json]", file=sys.stderr)
+        return EXIT_USAGE
+    entries = list_entries()
+    if argv == ["--json"]:
+        print(json.dumps({"version": 1, "pakete": entries}, ensure_ascii=False, indent=1))
+        return EXIT_OK
+    if not entries:
+        print("Über den zen Installer kam noch nichts.")
+        return EXIT_OK
+    for e in entries:
+        now_text = e["installierte_version"] or "nicht mehr installiert"
+        print(f"{e['anzeigename']:<24} {e['name']:<24} {now_text:<16} seit {local_time(e['zeit'])}")
+    return EXIT_OK
+
+
+def pid_alive(pid):
+    try:
+        with open(os.path.join(PROC, str(pid), "cmdline"), "rb") as f:
+            return NAME.encode() in f.read(1 << 16)
+    except OSError:
+        return False
+
+
+def running_jobs():
+    """Was gerade läuft (laeuft-*.json in /run/zenos-installer, nur mit lebendem Prozess)."""
+    jobs = []
+    try:
+        names = sorted(os.listdir(RUNTIME_DIR))
+    except OSError:
+        return jobs
+    for n in names:
+        if not re.fullmatch(r"laeuft-[0-9]+\.json", n):
+            continue
+        data = load_json(os.path.join(RUNTIME_DIR, n))
+        if data and isinstance(data.get("pid"), int) and pid_alive(data["pid"]):
+            jobs.append({k: data.get(k) for k in ("art", "paket", "phase", "seit")})
+    return jobs
+
+
+def drop_files():
+    try:
+        return sorted(n for n in os.listdir(DROP_DIR) if not n.startswith("."))
+    except OSError:
+        return []
+
+
+def cmd_status(argv):
+    mode = argv[0] if len(argv) == 1 else None
+    if len(argv) > 1 or (argv and mode not in ("--json", "--kurz")):
+        print(f"{NAME} status [--json|--kurz]", file=sys.stderr)
+        return EXIT_USAGE
+    last = load_json(state_path(LAST))
+    jobs = running_jobs()
+    count = len(load_installed_list())
+    drop = drop_files()
+    if mode == "--json":
+        print(json.dumps({"version": 1, "laeuft": jobs, "letzte": last, "anzahl": count, "ablage": len(drop)},
+                         ensure_ascii=False, indent=1))
+        return EXIT_OK
+    if mode == "--kurz":
+        if jobs:
+            print(f"laeuft {ART_TEXT.get(jobs[0].get('art'), '')} läuft: {jobs[0].get('paket') or ''}".rstrip())
+        elif last is None:
+            print("keine noch nichts über den zen Installer")
+        else:
+            result = last.get("ergebnis") if last.get("ergebnis") in RESULT_TEXT else "fehler"
+            print(f"{result} {local_time(last.get('ende'))}: {ART_TEXT.get(last.get('art'), '')} "
+                  f"{last.get('paket') or ''}: {clean(last.get('grund') or '', 240)}")
+        return EXIT_OK
+    rows = [("Läuft", ", ".join(f"{ART_TEXT.get(j.get('art'), '')} {j.get('paket') or ''}" for j in jobs) or "nichts")]
+    if last:
+        rows.append(("Zuletzt", f"{local_time(last.get('ende'))} · {ART_TEXT.get(last.get('art'), '')} "
+                                f"{last.get('paket') or ''}: {RESULT_TEXT.get(last.get('ergebnis'), 'Fehler')} – "
+                                f"{clean(last.get('grund') or '', 240)}"))
+    rows.append(("Installiert", f"{count} über den zen Installer (zen install --liste)"))
+    rows.append(("Ablage", "leer" if not drop else plural(len(drop), "Datei", "Dateien")))
+    for title, value in rows:
+        print(f"{title:<12} {value}")
+    return EXIT_OK
+
+
+def check_user_path(raw):
+    """Grund, warum RAW kein brauchbarer Pfad zu einer .deb ist, sonst None (absolut, ohne Steuerzeichen, Endung)."""
+    if not raw or len(raw) > MAX_PATH or any(not c.isprintable() for c in raw):
+        return "Ungültiger Dateiname."
+    if not raw.startswith("/"):
+        return "Der Pfad muss absolut sein."
+    if not raw.endswith(".deb"):
+        return "Der zen Installer nimmt nur Pakete mit der Endung .deb."
+    return None
+
+
+def cmd_open(argv):
+    """Doppelklick bzw. «Öffnen mit zen Installer»: den Pfad prüfen und an die Oberfläche geben."""
+    if len(argv) != 1:
+        print(f"{NAME} oeffnen DATEI", file=sys.stderr)
+        return EXIT_USAGE
+    raw = argv[0]
+    if raw.startswith("file://"):
+        print(f"{NAME}: nur Pfade, keine Adressen", file=sys.stderr)
+        return EXIT_USAGE
+    path = os.path.realpath(raw) if raw and all(c.isprintable() for c in raw) else raw
+    problem = check_user_path(path)
+    if problem is None and not os.path.isfile(path):
+        problem = "Die Datei gibt es nicht."
+    if problem:
+        print(f"{NAME}: {problem}", file=sys.stderr)
+        return EXIT_USAGE
+    env = {"PATH": USER_PATH, "LANG": "C.UTF-8", "HOME": os.environ.get("HOME", "/")}
+    for key in ("XDG_RUNTIME_DIR", "WAYLAND_DISPLAY"):
+        if os.environ.get(key):
+            env[key] = os.environ[key]
+    r = run([IPC, "installer", "oeffnen", path], env=env, timeout=30)
+    if r.returncode != 0:
+        print(f"{NAME}: Die Oberfläche hat den zen Installer nicht geöffnet (zenos-ipc Exit {r.returncode}"
+              f"{': ' + first_line(r.stderr) if first_line(r.stderr) else ''}). Im Terminal: zen install {path}",
+              file=sys.stderr)
+        return EXIT_ERROR
+    return EXIT_OK
+
+
+# --- Sperren und Warten (root) ------------------------------------------------------------------------------------
+
+
+class Stopped(BaseException):
+    """Stopp der Unit (SIGTERM) während des Wartens: Nichts wurde geändert."""
+
+
+class Stop:
+    """SIGTERM (KillMode=mixed: nur an dieses Programm): Während des Wartens endet es sofort (Stopped), ein laufendes apt
+    läuft zu Ende, danach beginnt nichts mehr."""
+
+    def __init__(self):
+        self.requested = False
+        self.open = False
+
+    def __call__(self, _signum, _frame):
+        self.requested = True
+        if self.open:
+            self.open = False
+            raise Stopped()
+        print(f"{NAME}: Stopp verlangt; was läuft, läuft zu Ende …", file=sys.stderr)
+
+    @contextlib.contextmanager
+    def interruptible(self):
+        if self.requested:
+            raise Stopped()
+        self.open = True
+        try:
+            yield
+        finally:
+            self.open = False
+
+
+def take_lock(path):
+    """Sperre wie zenos-basis (Ordner 0700 und Datei gehören root): fd oder None, wenn belegt."""
+    folder = os.path.dirname(path)
+    with contextlib.suppress(FileExistsError):
+        os.mkdir(folder, 0o700)
+    problem = path_problem(folder)
+    if problem:
+        raise Failure(f"Ordner der Sperren unsicher: {problem}")
+    if os.lstat(folder).st_mode & 0o077:
+        os.chmod(folder, 0o700)
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    except OSError as e:
+        raise Failure(f"Sperre {path}: {e.strerror}") from e
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_uid not in TRUSTED_UIDS:
+            raise Failure(f"Sperre {path} gehört nicht root")
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        return None
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def hand_run():
+    """PID eines laufenden install.sh von Hand (Vermerk HAND_MARK, nur root schreibt ihn), sonst None."""
+    try:
+        text = read_small(HAND_MARK, trusted=True, limit=64)
+    except (FileNotFoundError, Failure):
+        return None
+    pid = text.strip()
+    if not re.fullmatch(r"[1-9][0-9]{0,9}", pid):
+        return None
+    try:
+        with open(os.path.join(PROC, pid, "cmdline"), "rb") as f:
+            argv = f.read(1 << 16).split(b"\0")
+    except OSError:
+        return None
+    return int(pid) if any(a.endswith(b"/install.sh") or a == b"install.sh" for a in argv) else None
+
+
+def lock_held(path):
+    """Hält ein anderer Prozess die fcntl-Sperre PATH (wie apt und dpkg sperren)? Ohne Datei oder Zugriff: nein."""
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError:
+        return False
+    try:
+        fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.lockf(fd, fcntl.LOCK_UN)
+        return False
+    except OSError:
+        return True
+    finally:
+        os.close(fd)
+
+
+def apt_busy():
+    """Wer gerade einen Paketvorgang hält (apt-daily, apt-daily-upgrade, eine Sperre von apt oder dpkg)."""
+    who = []
+    if os.path.isdir(SYSTEMD_RUN_DIR):
+        for unit in APT_UNITS:
+            r = run([SYSTEMCTL, "show", "--property=ActiveState", "--value", unit], env=systemd_env())
+            if r.returncode == 0 and r.stdout.strip() in ("activating", "active", "deactivating", "reloading"):
+                who.append(unit)
+    who += [p for p in APT_LOCKS if lock_held(p)]
+    return who
+
+
+class Session:
+    """Ein Lauf einer Unit: Laufzeit-Vermerk, gemeinsame Sperre mit Kanal und Basis, Warten auf andere Paketvorgänge,
+    Sperre der Paketlisten (wie zenos-basis: kein apt-get update zwischen Auswertung und apt)."""
+
+    def __init__(self, art, package, stop):
+        self.art = art
+        self.package = package
+        self.stop = stop
+        self.lock = None
+        self.lists = None
+        self.mark = None
+        self.made_runtime = False
+
+    def note(self, phase):
+        """/run/zenos-installer/laeuft-PID.json: Die Oberfläche zeigt, was läuft (auch nach neuem Öffnen)."""
+        try:
+            if not os.path.isdir(RUNTIME_DIR):
+                os.mkdir(RUNTIME_DIR, 0o755)
+            if path_problem(RUNTIME_DIR):
+                return
+            self.mark = os.path.join(RUNTIME_DIR, f"laeuft-{os.getpid()}.json")
+            write_json(self.mark, {"version": 1, "art": self.art, "paket": self.package, "phase": phase,
+                                   "seit": iso(now()), "pid": os.getpid()})
+        except OSError:
+            self.mark = None
+
+    def acquire(self):
+        """Wartet höchstens LOCK_WAIT bzw. APT_WAIT Sekunden auf Sperre, install.sh von Hand und andere Paketvorgänge.
+        None, wenn alles gehalten wird, sonst der Grund. Stopped bei einem Stopp."""
+        self.note("wartet")
+        end = time.monotonic() + LOCK_WAIT
+        said = False
+        while True:
+            with self.stop.interruptible():
+                if self.lock is None:
+                    self.lock = take_lock(LOCK_FILE)
+                if self.lock is not None:
+                    pid = hand_run()
+                    if pid is None:
+                        break
+                    os.close(self.lock)
+                    self.lock = None
+                if not said:
+                    print("Warte auf ein laufendes Update, eine Prüfung oder ein install.sh von Hand …")
+                    said = True
+                if time.monotonic() >= end:
+                    return (f"Nach {LOCK_WAIT // 60} Minuten läuft noch immer ein Update oder eine Prüfung. Später "
+                            "noch einmal.")
+                time.sleep(POLL)
+        end = time.monotonic() + APT_WAIT
+        said = False
+        while True:
+            with self.stop.interruptible():
+                who = apt_busy()
+                if not who:
+                    lists = ListsLock()
+                    if lists.acquire():
+                        self.lists = lists
+                        return None
+                    who = [LISTS_LOCK]
+                if not said:
+                    print(f"Warte auf einen anderen Paketvorgang: {', '.join(who)} …")
+                    said = True
+                if time.monotonic() >= end:
+                    return (f"Nach {APT_WAIT // 60} Minuten läuft noch immer ein anderer Paketvorgang "
+                            f"({', '.join(who)}). Später noch einmal.")
+                time.sleep(POLL)
+
+    def release_lists(self):
+        if self.lists:
+            self.lists.release()
+            self.lists = None
+
+    def close(self):
+        self.release_lists()
+        if self.lock is not None:
+            os.close(self.lock)
+            self.lock = None
+        if self.mark:
+            with contextlib.suppress(OSError):
+                os.unlink(self.mark)
+            self.mark = None
+
+
+class ListsLock:
+    """Die Sperre der Paketlisten (/var/lib/apt/lists/lock, fcntl wie apt), wie in zenos-basis. Solange sie gehalten
+    ist, nie lock_held oder apt_busy (die öffnen und schliessen sie, und das gäbe sie frei)."""
+
+    def __init__(self):
+        self.fd = None
+
+    def acquire(self):
+        if self.fd is not None:
+            return True
+        try:
+            fd = os.open(LISTS_LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o640)
+        except OSError as e:
+            raise Failure(f"Sperre {LISTS_LOCK}: {e.strerror}") from e
+        try:
+            fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(fd)
+            return False
+        self.fd = fd
+        return True
+
+    def release(self):
+        if self.fd is not None:
+            os.close(self.fd)
+            self.fd = None
+
+
+def dpkg_interrupted():
+    try:
+        names = os.listdir(DPKG_UPDATES)
+    except OSError:
+        return False
+    return any(re.fullmatch(r"[0-9]+", n) for n in names)
+
+
+@contextlib.contextmanager
+def inhibitor(why):
+    """Block-Inhibitor für Ausschalten und Ruhezustand, solange der Block läuft. Ohne logind geht es ohne."""
+    if not os.path.isdir(SYSTEMD_RUN_DIR) or not os.access(SYSTEMD_INHIBIT, os.X_OK):
+        yield False
+        return
+    proc = subprocess.Popen([SYSTEMD_INHIBIT, "--what=shutdown:sleep", "--mode=block", "--who=zenOS", f"--why={why}",
+                             SLEEP, "infinity"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL, env={"PATH": SYSTEM_PATH, "LANG": "C.UTF-8"})
+    time.sleep(0.5)
+    if proc.poll() is not None:
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+
+
+def package_state():
+    """Installierte Pakete {Name: Version} (dpkg-query)."""
+    r = run([DPKG_QUERY, "-W", "-f=${binary:Package}\t${Version}\t${db:Status-Status}\n"], env=tool_env())
+    state = {}
+    for line in r.stdout.split("\n"):
+        parts = line.split("\t")
+        if len(parts) == 3 and parts[2] not in ("not-installed", "config-files", ""):
+            state[parts[0]] = parts[1]
+    return state
+
+
+def package_programs(package):
+    """Sichtbare Starter eines installierten Pakets (dpkg-query -L): [{id, name}]."""
+    r = run([DPKG_QUERY, "-L", "--", package], env=tool_env())
+    programs = []
+    for path in sorted(set(r.stdout.split("\n"))):
+        if not re.fullmatch(r"/usr/(?:local/)?share/applications/[^/]+\.desktop", path):
+            continue
+        try:
+            with open(FS_ROOT + path, "rb") as f:
+                data = f.read(MAX_DESKTOP + 1)
+        except OSError:
+            continue
+        if len(data) > MAX_DESKTOP:
+            continue
+        entry = parse_desktop(data)
+        if entry["sichtbar"]:
+            programs.append({"id": os.path.basename(path), "name": entry["name"] or package})
+    programs.sort(key=lambda e: (e["id"] != f"{package}.desktop", e["id"]))
+    return programs
+
+
+class RunLog:
+    """/var/log/zenos/installer.log: root-eigen (0640, Gruppe adm), nur zum Nachsehen. Über 2 MiB bleiben die letzten
+    512 KiB."""
+
+    def __init__(self):
+        self.ok = False
+        with contextlib.suppress(OSError, Failure):
+            self.prepare()
+            self.ok = True
+
+    def prepare(self):
+        folder = os.path.dirname(LOG_FILE)
+        os.makedirs(folder, mode=0o755, exist_ok=True)
+        if path_problem(folder):
+            raise Failure(path_problem(folder))
+        with contextlib.suppress(FileNotFoundError):
+            st = os.lstat(LOG_FILE)
+            if not stat.S_ISREG(st.st_mode) or st.st_uid not in TRUSTED_UIDS:
+                os.unlink(LOG_FILE)
+            elif st.st_size > MAX_LOG:
+                with open(LOG_FILE, "rb") as f:
+                    f.seek(-KEEP_LOG, os.SEEK_END)
+                    rest = f.read()
+                write_atomic(LOG_FILE, rest, 0o640)
+        fd = os.open(LOG_FILE, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o640)
+        try:
+            os.fchmod(fd, 0o640)
+            if os.geteuid() == 0:
+                gid = 0
+                with contextlib.suppress(KeyError):
+                    gid = grp.getgrnam("adm").gr_gid
+                os.fchown(fd, 0, gid)
+        finally:
+            os.close(fd)
+
+    def write(self, *lines):
+        if not self.ok:
+            return
+        try:
+            fd = os.open(LOG_FILE, os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC)
+        except OSError:
+            return
+        try:
+            data = "".join(f"{z}\n" for z in lines).encode("utf-8", "replace")
+            while data:
+                data = data[os.write(fd, data):]
+        finally:
+            os.close(fd)
+
+
+def log_stamp():
+    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def changes_between(before, after):
+    return [(n, before.get(n), after.get(n)) for n in sorted(set(before) | set(after)) if before.get(n) != after.get(n)]
+
+
+def write_installed_list(entries):
+    write_json(state_path(INSTALLED), {"version": 1, "pakete": [entries[k] for k in sorted(entries)]})
+
+
+# --- Installieren und Entfernen (root, in den Units) -------------------------------------------------------------
+
+
+class Job:
+    """Ein Lauf von installieren oder entfernen. Schreibt letzte.json am Ende (auch bei Ablehnung)."""
+
+    def __init__(self, art, package):
+        self.art = art
+        self.stop = Stop()
+        self.session = Session(art, package, self.stop)
+        self.result = {"version": 1, "art": art, "ergebnis": None, "grund": "", "paket": package, "anzeigename": None,
+                       "version_neu": None, "version_alt": None, "sha256": None, "datei": None, "beginn": iso(now()),
+                       "ende": None, "programme": [], "hinweise": [], "von": None}
+
+    def finish(self, result, reason, code):
+        self.result.update(ergebnis=result, grund=reason, ende=iso(now()))
+        return code
+
+    def run(self, work):
+        old_term = signal.signal(signal.SIGTERM, self.stop)
+        old_hup = signal.signal(signal.SIGHUP, signal.SIG_IGN)
+        try:
+            try:
+                code = work()
+            except Stopped:
+                code = self.finish("wartet", "Stopp verlangt (Ausschalten?), bevor apt begann; nichts geändert.",
+                                   EXIT_WAIT)
+            except Failure as e:
+                code = self.finish("fehler", f"{ART_TEXT[self.art]} abgebrochen: {e}", EXIT_ERROR)
+            except Exception as e:  # noqa: BLE001 – Meldung statt Absturz, letzte.json zeigt es
+                traceback.print_exc()
+                code = self.finish("fehler", f"{ART_TEXT[self.art]} abgebrochen: {type(e).__name__}: {clean(e, 120)}",
+                                   EXIT_ERROR)
+        finally:
+            self.session.close()
+            signal.signal(signal.SIGTERM, old_term)
+            signal.signal(signal.SIGHUP, old_hup)
+        with contextlib.suppress(OSError):
+            write_json(state_path(LAST), self.result)
+        print(f"Ergebnis: {RESULT_TEXT.get(self.result['ergebnis'], self.result['ergebnis'])} – {self.result['grund']}")
+        journal(f"{self.art}: {self.result['ergebnis']} – {self.result['grund']}")
+        return code
+
+
+def cmd_install(argv):
+    if len(argv) != 1 or not SHA_RE.fullmatch(argv[0]):
+        print(f"{NAME} installieren SHA256 (64 Zeichen 0-9a-f)", file=sys.stderr)
+        return EXIT_USAGE
+    if not is_root():
+        print(f"{NAME} installieren: nur als root (zenos-installer-installieren@.service)", file=sys.stderr)
+        return EXIT_USAGE
+    os.umask(0o022)
+    try:
+        prepare_state()
+    except Failure as e:
+        print(f"{NAME}: {e}", file=sys.stderr)
+        return EXIT_ERROR
+    sha = argv[0]
+    deb = os.path.join(DROP_DIR, f"{sha}.deb")
+    order_path = os.path.join(DROP_DIR, f"{sha}.json")
+    order = load_json(order_path)
+    job = Job("installieren", None)
+    try:
+        if not order or order.get("sha256") != sha or not PLAN_RE.fullmatch(str(order.get("plan"))):
+            return job.run(lambda: job.finish("abgelehnt", "Kein Auftrag für diese Datei (zen Installer: noch einmal "
+                                                           "«Installieren»).", EXIT_REFUSED))
+        job.result.update(sha256=sha, datei=clean(order.get("datei") or "", 200), von=order.get("von"))
+        return job.run(lambda: install_work(job, deb, order))
+    finally:
+        for p in (deb, order_path):
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(p)
+
+
+def install_work(job, deb, order):
+    sha = order["sha256"]
+    try:
+        st = os.lstat(deb)
+    except FileNotFoundError:
+        return job.finish("abgelehnt", "Die Datei liegt nicht mehr in der Ablage.", EXIT_REFUSED)
+    if not stat.S_ISREG(st.st_mode) or st.st_uid not in TRUSTED_UIDS:
+        return job.finish("abgelehnt", "Die Datei in der Ablage ist unsicher.", EXIT_REFUSED)
+    busy = job.session.acquire()
+    if busy:
+        return job.finish("wartet", busy, EXIT_BUSY)
+    if dpkg_interrupted():
+        return job.finish("fehler", "dpkg ist unterbrochen (ein abgebrochenes Update). Erst reparieren: zen update "
+                                    "oder sudo dpkg --configure -a.", EXIT_ERROR)
+    fd = os.open(deb, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        now_sha, _ = sha256_fd(fd)
+    finally:
+        os.close(fd)
+    if now_sha != sha:
+        return job.finish("abgelehnt", "Die Datei in der Ablage passt nicht zur angezeigten.", EXIT_REFUSED)
+    job.session.note("prueft")
+    ev = evaluate_file(deb, as_root=True)
+    p = ev.get("paket") or {}
+    job.result.update(paket=p.get("name"), anzeigename=ev.get("name"), version_neu=p.get("version"),
+                      version_alt=ev.get("installierte_version"))
+    job.session.package = p.get("name")
+    if ev["ergebnis"] in ("abgelehnt", "fehler"):
+        return job.finish("abgelehnt" if ev["ergebnis"] == "abgelehnt" else "fehler", ev["grund"],
+                          EXIT_REFUSED if ev["ergebnis"] == "abgelehnt" else EXIT_ERROR)
+    if ev["plan"] != order["plan"]:
+        return job.finish("abgelehnt", "Seit dem Ansehen hat sich geändert, was die Installation mitbrächte oder "
+                                       "entfernte. Noch einmal ansehen und bestätigen.", EXIT_REFUSED)
+    if ev["ergebnis"] == "installiert":
+        job.result["programme"] = package_programs(p["name"])
+        return job.finish("gleich", ev["grund"], EXIT_OK)
+    if job.stop.requested:
+        raise Stopped()
+    return install_apt(job, deb, ev)
+
+
+def install_apt(job, deb, ev):
+    p = ev["paket"]
+    package = p["name"]
+    job.session.note("installiert")
+    log = RunLog()
+    before = package_state()
+    log.write("", f"== Beginn {log_stamp()} · installieren {package} {p['version']} · Datei {job.result['datei']} · "
+                  f"SHA-256 {ev['sha256']} · von {job.result['von']}")
+    options = ["-o", "DPkg::Lock::Timeout=300", "-o", "Dpkg::Options::=--force-confdef",
+               "-o", "Dpkg::Options::=--force-confold", "-o", "APT::Get::AutomaticRemove=false"]
+    if ev["zustand"] == "rueckschritt":
+        options.append("--allow-downgrades")
+    print(f"apt-get install {package} {p['version']} …")
+    journal(f"installiere {package} {p['version']} (SHA-256 {ev['sha256']})")
+    with inhibitor(f"zen Installer installiert {package}"):
+        rc, tail = run_tee([APT_GET, "-q", "-y", *options, "install", deb], apt_env(), timeout=INSTALL_TIMEOUT)
+    job.session.release_lists()
+    after = package_state()
+    changes = changes_between(before, after)
+    log.write(f"-- apt-get install: Exit {rc}", f"-- Änderungen ({len(changes)})",
+              *[f"{n} {old or '(neu)'} → {new or '(entfernt)'}" for n, old, new in changes])
+    status, version = installed_version(package)
+    protected = set(PROTECTED) | zenos_packages()
+    lost = [n for n, _, new in changes if new is None and base_name(n) in protected]
+    if lost:
+        job.result["hinweise"].append(f"Entfernt wurden geschützte Pakete: {names_text(lost)}")
+    if rc != 0 or status != "installed" or version != p["version"]:
+        detail = next((clean(z[2:].strip(), 200) for z in reversed(tail) if z.startswith("E:")), "")
+        half = f" {package} ist nur halb installiert ({status}): sudo apt-get -f install oder entfernen." \
+            if status not in (None, "installed") else ""
+        code = job.finish("fehler", f"Die Installation ist gescheitert (apt-get Exit {rc}"
+                                    f"{': ' + detail if detail else ''}).{half} Einzelheiten: journalctl -u "
+                                    f"zenos-installer-installieren@*, /var/log/zenos/installer.log.", EXIT_ERROR)
+    else:
+        programs = package_programs(package)
+        job.result["programme"] = programs
+        entries = load_installed_list()
+        entries[package] = {"name": package, "anzeigename": ev.get("name") or package, "version": p["version"],
+                            "architektur": p["architektur"], "datei": job.result["datei"], "sha256": ev["sha256"],
+                            "herausgeber": p.get("herausgeber"), "zeit": iso(now()), "programme": programs}
+        write_installed_list(entries)
+        more = [n for n, _, _ in changes if base_name(n) != package]
+        code = job.finish("installiert", f"{ev.get('name') or package} {p['version']} ist installiert"
+                                         f"{' (dazu ' + plural(len(more), 'Paket', 'Pakete') + ')' if more else ''}.",
+                          EXIT_OK)
+    log.write(*[f"-- Hinweis: {h}" for h in job.result["hinweise"]],
+              f"== Ende {log_stamp()} · {job.result['ergebnis']}")
+    return code
+
+
+def cmd_remove(argv):
+    if len(argv) != 1 or not PACKAGE_RE.fullmatch(argv[0]):
+        print(f"{NAME} entfernen PAKET", file=sys.stderr)
+        return EXIT_USAGE
+    if not is_root():
+        print(f"{NAME} entfernen: nur als root (zenos-installer-entfernen@.service)", file=sys.stderr)
+        return EXIT_USAGE
+    os.umask(0o022)
+    try:
+        prepare_state()
+    except Failure as e:
+        print(f"{NAME}: {e}", file=sys.stderr)
+        return EXIT_ERROR
+    job = Job("entfernen", argv[0])
+    return job.run(lambda: remove_work(job, argv[0]))
+
+
+def remove_work(job, package):
+    entries = load_installed_list()
+    if package not in entries:
+        return job.finish("abgelehnt", f"{package} kam nicht über den zen Installer; entfernen im Terminal: sudo apt "
+                                       f"remove {package}", EXIT_REFUSED)
+    job.result.update(anzeigename=entries[package].get("anzeigename"), version_alt=entries[package].get("version"))
+    if package in set(PROTECTED) | zenos_packages():
+        return job.finish("abgelehnt", f"{package} ist ein Teil von zenOS oder Ubuntu und bleibt.", EXIT_REFUSED)
+    busy = job.session.acquire()
+    if busy:
+        return job.finish("wartet", busy, EXIT_BUSY)
+    if dpkg_interrupted():
+        return job.finish("fehler", "dpkg ist unterbrochen (ein abgebrochenes Update). Erst reparieren: zen update "
+                                    "oder sudo dpkg --configure -a.", EXIT_ERROR)
+    status, version = installed_version(package)
+    if status is None:
+        del entries[package]
+        write_installed_list(entries)
+        return job.finish("entfernt", f"{package} war schon entfernt; aus der Liste genommen.", EXIT_OK)
+    job.result["version_alt"] = version
+    r = simulate(["remove", package])
+    if r.returncode != 0:
+        return job.finish("abgelehnt", f"apt kann {package} so nicht entfernen: {apt_problem(r)}", EXIT_REFUSED)
+    _, removals = parse_simulation(r.stdout)
+    others = sorted({base_name(x["name"]) for x in removals} - {package})
+    if others:
+        return job.finish("abgelehnt", f"Mit {package} gingen auch {names_text(others)}. Das macht der zen Installer "
+                                       f"nicht; im Terminal: sudo apt remove {package}", EXIT_REFUSED)
+    if job.stop.requested:
+        raise Stopped()
+    job.session.note("entfernt")
+    log = RunLog()
+    log.write("", f"== Beginn {log_stamp()} · entfernen {package} {version}")
+    print(f"apt-get remove {package} …")
+    journal(f"entferne {package} {version}")
+    with inhibitor(f"zen Installer entfernt {package}"):
+        rc, tail = run_tee([APT_GET, "-q", "-y", "-o", "DPkg::Lock::Timeout=300", "-o",
+                            "APT::Get::AutomaticRemove=false", "remove", package], apt_env(), timeout=INSTALL_TIMEOUT)
+    job.session.release_lists()
+    status, _ = installed_version(package)
+    log.write(f"-- apt-get remove: Exit {rc}")
+    if rc != 0 or status is not None:
+        detail = next((clean(z[2:].strip(), 200) for z in reversed(tail) if z.startswith("E:")), "")
+        code = job.finish("fehler", f"Entfernen ist gescheitert (apt-get Exit {rc}{': ' + detail if detail else ''}).",
+                          EXIT_ERROR)
+    else:
+        entries = load_installed_list()
+        entries.pop(package, None)
+        write_installed_list(entries)
+        code = job.finish("entfernt", f"{entries_name(job)} ist entfernt.", EXIT_OK)
+    log.write(f"== Ende {log_stamp()} · {job.result['ergebnis']}")
+    return code
+
+
+def entries_name(job):
+    return job.result.get("anzeigename") or job.result["paket"]
+
+
+# --- Aufträge über pkexec bzw. sudo (root) ---------------------------------------------------------------------------
+
+
+def caller_uid():
+    """Wer es ausgelöst hat: PKEXEC_UID (pkexec) bzw. SUDO_UID (sudo), sonst 0 (root selbst)."""
+    for key in ("PKEXEC_UID", "SUDO_UID"):
+        value = os.environ.get(key, "")
+        if re.fullmatch(r"[0-9]{1,10}", value):
+            return int(value), "pkexec" if key == "PKEXEC_UID" else "sudo"
+    return 0, "root"
+
+
+@contextlib.contextmanager
+def as_user(uid):
+    """Effektiv als UID (mit seinen Gruppen), solange der Block läuft; danach wieder root. Nur als root; für die eigene
+    UID (Tests ohne root) ohne Wechsel."""
+    if os.geteuid() != 0 or uid == os.geteuid():
+        if uid != os.geteuid():
+            raise Failure("Wechsel zum Benutzer nur als root")
+        yield
+        return
+    account = pwd.getpwuid(uid)
+    groups = os.getgroups()
+    egid = os.getegid()
+    os.setgroups(os.getgrouplist(account.pw_name, account.pw_gid))
+    os.setegid(account.pw_gid)
+    os.seteuid(uid)
+    try:
+        yield
+    finally:
+        os.seteuid(0)
+        os.setegid(egid)
+        os.setgroups(groups)
+
+
+def open_as_user(path, uid):
+    """Öffnet PATH als Benutzer UID (er muss sie lesen können): kein Verweis am Ende, reguläre Datei, gehört ihm,
+    höchstens 2 GiB. fd; Refusal bzw. Failure mit Grund."""
+    try:
+        with as_user(uid):
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOCTTY | os.O_CLOEXEC)
+    except KeyError as e:
+        raise Failure(f"Benutzer {uid} unbekannt") from e
+    except FileNotFoundError as e:
+        raise Refusal("fehlt", "Die Datei gibt es nicht (mehr).") from e
+    except OSError as e:
+        if e.errno == errno.ELOOP:
+            raise Refusal("verweis", "Die Datei ist ein Verweis. Bitte die Datei selbst wählen.") from e
+        raise Refusal("lesen", f"Die Datei lässt sich nicht lesen: {e.strerror}.") from e
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise Refusal("lesen", "Das ist keine Datei.")
+        if st.st_uid != uid:
+            raise Refusal("fremd", "Die Datei gehört nicht dir. Kopiere sie zuerst in deine Ablage.")
+        if st.st_size > MAX_DEB:
+            raise Refusal("zu_gross", f"Die Datei ist grösser als {size_text(MAX_DEB)}.")
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def clean_drop(keep=None):
+    """Reste in der Ablage (älter als eine Stunde) wegräumen, nie die von KEEP."""
+    try:
+        names = os.listdir(DROP_DIR)
+    except OSError:
+        return
+    limit = time.time() - DROP_MAX_AGE
+    for n in names:
+        if keep and n.lstrip(".").startswith(keep):
+            continue
+        p = os.path.join(DROP_DIR, n)
+        with contextlib.suppress(OSError):
+            st = os.lstat(p)
+            if stat.S_ISREG(st.st_mode) or stat.S_ISLNK(st.st_mode):
+                if st.st_mtime < limit:
+                    os.unlink(p)
+
+
+def copy_to_drop(src_fd, sha):
+    """Kopiert die offene Datei nach DROP_DIR/SHA.deb (root, 0644) und prüft unterwegs SHA-256 und Grösse. Refusal,
+    wenn die SHA-256 nicht passt (die Datei hat sich seit dem Ansehen geändert). Pfad."""
+    target = os.path.join(DROP_DIR, f"{sha}.deb")
+    fd, tmp = tempfile.mkstemp(prefix=f".{sha}.", suffix=".neu", dir=DROP_DIR)
+    try:
+        h = hashlib.sha256()
+        total = 0
+        os.lseek(src_fd, 0, os.SEEK_SET)
+        while True:
+            chunk = os.read(src_fd, 1 << 20)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_DEB:
+                raise Refusal("zu_gross", f"Die Datei ist grösser als {size_text(MAX_DEB)}.")
+            h.update(chunk)
+            while chunk:
+                chunk = chunk[os.write(fd, chunk):]
+        if h.hexdigest() != sha:
+            raise Refusal("geaendert", "Die Datei hat sich seit dem Ansehen geändert. Noch einmal ansehen.")
+        os.fchmod(fd, 0o644)
+        os.fsync(fd)
+        os.close(fd)
+        fd = None
+        os.replace(tmp, target)
+        tmp = None
+        return target, total
+    finally:
+        if fd is not None:
+            os.close(fd)
+        if tmp:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(tmp)
+
+
+def start_unit(unit):
+    """Startet UNIT, wartet auf ihr Ende und gibt den Exit des Programms (ExecMainStatus) zurück; lief sie gar nicht, 1.
+    Danach immer reset-failed: Das Ergebnis steht in letzte.json, ein gescheitertes Paket ist kein Ausfall des
+    Systems."""
+    env = systemd_env()
+    r = run([SYSTEMCTL, "start", "--", unit], env=env, timeout=None)
+    status = run([SYSTEMCTL, "show", "--property=ExecMainStatus", "--value", "--", unit], env=env).stdout.strip()
+    run([SYSTEMCTL, "reset-failed", "--", unit], env=env)
+    if r.returncode != 0 and (not status.isdigit() or int(status) == 0):
+        print(f"{NAME}: {unit}: {first_line(r.stderr) or 'Start gescheitert'}", file=sys.stderr)
+        return EXIT_ERROR
+    if status.isdigit():
+        return int(status)
+    return EXIT_OK if r.returncode == 0 else EXIT_ERROR
+
+
+def unit_escape(text):
+    """Wie «systemd-escape»: alles ausser [A-Za-z0-9_.] als \\xNN (auch «-»; ein Punkt am Anfang ebenso)."""
+    out = []
+    for i, c in enumerate(text):
+        if (c.isascii() and c.isalnum()) or c == "_" or (c == "." and i > 0):
+            out.append(c)
+        else:
+            out.append(f"\\x{ord(c):02x}")
+    return "".join(out)
+
+
+def cmd_order_install(argv):
+    if len(argv) != 3 or check_user_path(argv[0]) or not SHA_RE.fullmatch(argv[1]) or not PLAN_RE.fullmatch(argv[2]):
+        print(f"{NAME} auftrag-installieren PFAD SHA256 PLAN (absoluter Pfad zu einer .deb, SHA-256 und Plan aus "
+              "«ansehen»)", file=sys.stderr)
+        return EXIT_USAGE
+    if not is_root():
+        print(f"{NAME} auftrag-installieren: nur als root (pkexec oder sudo)", file=sys.stderr)
+        return EXIT_USAGE
+    path, sha, plan = argv
+    uid, way = caller_uid()
+    os.umask(0o022)
+    try:
+        prepare_state()
+    except Failure as e:
+        print(f"{NAME}: {e}", file=sys.stderr)
+        return EXIT_ERROR
+    clean_drop(keep=sha)
+    journal(f"Installieren angefragt ({way}, uid {uid}): {os.path.basename(path)}, SHA-256 {sha}")
+    try:
+        fd = open_as_user(path, uid)
+        try:
+            target, size = copy_to_drop(fd, sha)
+        finally:
+            os.close(fd)
+    except Refusal as r:
+        print(f"{NAME}: {r.reason}", file=sys.stderr)
+        journal(f"abgelehnt: {r.reason}")
+        return EXIT_REFUSED
+    except Failure as e:
+        print(f"{NAME}: {e}", file=sys.stderr)
+        return EXIT_ERROR
+    order = os.path.join(DROP_DIR, f"{sha}.json")
+    write_json(order, {"version": 1, "sha256": sha, "plan": plan, "datei": clean(os.path.basename(path), 200),
+                       "groesse": size, "uid": uid, "von": way, "zeit": iso(now())})
+    code = start_unit(UNIT_INSTALL.format(sha))
+    # Lief die Unit nicht, bleibt nichts liegen
+    for p in (target, order):
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(p)
+    return code
+
+
+def cmd_order_remove(argv):
+    if len(argv) != 1 or not PACKAGE_RE.fullmatch(argv[0]):
+        print(f"{NAME} auftrag-entfernen PAKET", file=sys.stderr)
+        return EXIT_USAGE
+    if not is_root():
+        print(f"{NAME} auftrag-entfernen: nur als root (pkexec oder sudo)", file=sys.stderr)
+        return EXIT_USAGE
+    uid, way = caller_uid()
+    if argv[0] not in load_installed_list():
+        print(f"{NAME}: {argv[0]} kam nicht über den zen Installer.", file=sys.stderr)
+        return EXIT_REFUSED
+    journal(f"Entfernen angefragt ({way}, uid {uid}): {argv[0]}")
+    return start_unit(UNIT_REMOVE.format(unit_escape(argv[0])))
+
+
+def main(argv):
+    sys.dont_write_bytecode = True
+    if not argv or argv[0] in ("-h", "--hilfe", "--help"):
+        print(__doc__.strip())
+        return EXIT_OK if argv else EXIT_USAGE
+    commands = {"ansehen": cmd_view, "liste": cmd_list, "status": cmd_status, "oeffnen": cmd_open,
+                "auftrag-installieren": cmd_order_install, "auftrag-entfernen": cmd_order_remove,
+                "installieren": cmd_install, "entfernen": cmd_remove}
+    command = commands.get(argv[0])
+    if not command:
+        print(f"{NAME}: unbekannter Befehl «{clean(argv[0], 30)}» (--hilfe)", file=sys.stderr)
+        return EXIT_USAGE
+    return command(argv[1:])
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
