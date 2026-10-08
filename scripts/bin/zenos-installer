@@ -1242,7 +1242,8 @@ class Evaluation:
             self.data["zustand"] = "neu"
             return
         if status in HALF_STATES:
-            remove = "in Einstellungen › Apps entfernen" if package in listed else f"entfernen: sudo apt remove {package}"
+            remove = ("in Einstellungen › Apps entfernen" if package in listed
+                      else f"entfernen: sudo apt remove {package}")
             raise Refusal("halb", f"{package} {clean(old, 60)} ist nur halb installiert ({status}; ein Skript des "
                                   f"Pakets scheiterte). Erst reparieren: sudo apt-get -f install, oder {remove}.")
         if status in INSTALLED_STATES and compare_versions(version, "eq", old):
