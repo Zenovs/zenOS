@@ -83,7 +83,8 @@ erscheint erst nach dem Neustart, und eine SSH-Verbindung bleibt während der In
 - **Oberflächen:** `leiste/`, `heute/`, `befehlsfeld/`, `mitteilungen/`, `appleiste/` (App-Leiste am rechten
   Rand, Fenster über `ToplevelManager` aus Quickshell.Wayland, wlr-foreign-toplevel), `uebersicht/`
   (Fensterübersicht auf Super+Tab, Karten ohne Vorschaubilder, dieselbe Fensterliste), `sperre/`, `freigabe/`, `modi/`
-  (Modus- und Zustand-Wahl), `einstellungen/`, `einrichtung/`, `polkit/` (Passwortdialog als polkit-Agent), dazu `komponenten/Hinweise.qml` (Toast) und
+  (Modus- und Zustand-Wahl), `einstellungen/`, `einrichtung/`, `polkit/` (Passwortdialog als polkit-Agent),
+  `installer/` (zen Installer: Fenster für eine heruntergeladene .deb), dazu `komponenten/Hinweise.qml` (Toast) und
   `greeter.qml` mit `greeter/` für den Login.
 - **Apps aus der Oberfläche** starten über `zenos-oeffnen` in eigenen Einheiten
   (`app-zenos-<name>-<zeit>.scope` in `app.slice`). Ein Neustart von `zenos-shell.service` beendet sie nicht.
@@ -150,6 +151,7 @@ selbst endet in v0.3.1 auch bei Fehlern mit 0; `zenos-ipc` wertet die Ausgabe au
 | `uebersicht` | `umschalten`, `oeffnen`, `schliessen` (Fensterübersicht; öffnet nie während Sperre, Einrichtung und polkit-Dialog), `status` (`offen`/`zu`, `zu` erst nach dem Ausblenden), `fenster` (eine Zeile je Kachel: Index, appId, «Titel» bzw. bei Freigabe «Titel verborgen», dazu `aktiv`, `minimiert`, `vollbild`, `gewaehlt`) |
 | `schreibtisch` | `umschalten` (Schreibtisch zeigen bzw. die gemerkten Fenster zurück; nicht während Sperre und Einrichtung), `status` (`frei`/`normal`) |
 | `gesten` | `status` (`verbunden`/`getrennt`: liest die Oberfläche den Dienst `zenos-gesten`?) |
+| `installer` | `oeffnen(pfad)` (zen Installer für eine .deb, vom Starter `zenos-installer.desktop` über `zenos-installer oeffnen`: `offen`, `laeuft` (eine Installation läuft, das Fenster zeigt sie), `gesperrt`, `einrichtung` oder `ungueltig`), `status` (`zu`, `ansehen`, `bereit`, `installiert`, `abgelehnt`, `fehler`, `laeuft`, `fertig`, `gescheitert`), `schliessen`. Installieren nur über den Knopf im Fenster |
 
 Die Tastenkürzel von labwc rufen dieselben Ziele auf (Liste in `docs/module/m9.md`).
 

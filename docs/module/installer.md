@@ -9,7 +9,8 @@ hat dafür nichts (nur `sudo apt install ./datei.deb` im Terminal).
 1. **Öffnen:** Doppelklick in Thunar, ein Download aus Chrome oder Firefox (beide über `xdg-open` bzw. GIO) oder
    «Öffnen mit»: Standard für `application/vnd.debian.binary-package` und `application/x-deb` ist
    `zenos-installer.desktop` (`/etc/xdg/labwc-mimeapps.list`, nur in der zenOS-Sitzung; eine eigene Wahl in
-   `~/.config/mimeapps.list` geht vor). Der Starter ruft `zenos-installer oeffnen %f`: Pfad prüfen (absolut nach
+   `~/.config/mimeapps.list` geht vor). In Thunar steht zudem im Kontextmenü einer .deb «Mit zen Installer öffnen»
+   (`system/thunar/uca.xml`, 48-ablage). Der Starter ruft `zenos-installer oeffnen %f`: Pfad prüfen (absolut nach
    `realpath`, ohne Steuerzeichen, Endung `.deb`, vorhanden) und als Argument an die Oberfläche geben
    (`zenos-ipc installer oeffnen PFAD`).
 2. **Ansehen, ohne Rechte:** `zenos-installer ansehen PFAD --json` liest das Paket nur: `dpkg-deb --ctrl-tarfile` und
@@ -49,8 +50,54 @@ hat dafür nichts (nur `sudo apt install ./datei.deb` im Terminal).
    `installiert.json`, nie ein geschütztes, und nur, wenn `apt-get -s remove` nichts anderes entfernte. Dann
    `apt-get remove` ohne purge (die Konfiguration bleibt).
 
-`zen install` im Terminal (ohne Oberfläche) nutzt dieselben Teile: `zenos-installer ansehen` für die Ansicht,
-`sudo zenos-installer-bedienen installieren …` nach «ja».
+## Oberfläche: Fenster «zen Installer»
+
+`shell/installer/Installer.qml` ist Dienst und Fenster zugleich (geladen von `shell.qml`): Phasen, Prozesse, IPC
+`installer` und ein `FloatingWindow` wie die Einstellungen (Titel «zen Installer», 640 px breit). Den Inhalt zeichnet
+`InstallerInhalt.qml` nach dem, was `installer.js` beschreibt; die Logik ist mit node getestet
+(`test/einheiten/installer.test.mjs`). Design: `docs/design.md`, «zen Installer».
+
+1. **Öffnen:** `zenos-installer oeffnen PFAD` → IPC `installer oeffnen PFAD`. Die Oberfläche prüft den Pfad noch
+   einmal (absolut, `.deb`, ohne Steuerzeichen) und antwortet `offen`; nicht während der Sperre (`gesperrt`) und der
+   Einrichtung (`einrichtung`), denn dort läge das Fenster unsichtbar dahinter. Läuft gerade eine Installation, zeigt
+   das Fenster sie (`laeuft`); eine zweite Datei öffnet erst danach (noch einmal doppelklicken). `zenos-installer oeffnen` endet nur bei
+   `offen` und `laeuft` mit Exit 0.
+2. **Ansehen:** «Wird angesehen …», dann `zenos-installer ansehen PFAD --json` ohne Rechte (aus dem Arbeitsstand,
+   `ZENOS_CODE`). Jedes neue Öffnen macht ein laufendes Ansehen ungültig.
+3. **Ansicht:** Kopf (Symbol des Pakets, Name aus dem Starter, Zusammenfassung, Paket und Version), Lage («Bereit zum
+   Installieren», «Update bereit», «Schon installiert», «Lässt sich nicht installieren» mit dem Grund), Beschreibung,
+   Werte (Version mit Zustand, Paket, Herausgeber, Webseite, Platzbedarf, Datei, zusätzliche Pakete, Programme,
+   SHA-256) und die Hinweise unter «Beim Installieren». Der Knopf heisst «Installieren», bei einem Update
+   «Aktualisieren», bei einem Rückschritt «Ältere Version installieren».
+4. **Installieren:** `pkexec /opt/zenos/scripts/bin/zenos-installer-bedienen installieren PFAD SHA256 PLAN`, genau
+   mit Pfad, SHA-256 und Plan der Ansicht (fester Pfad: Die polkit-Aktion gilt nur für ihn). Während der Helfer läuft,
+   fragt der Dienst alle 1,5 s `zenos-installer status --json` nach der Phase: «Wartet auf dein Passwort …» (solange
+   der polkit-Dialog offen ist), «Wartet auf ein laufendes Update …», «Prüft das Paket noch einmal …», «Wird
+   installiert …».
+5. **Ende:** Der Exit des Helfers zählt, Einzelheiten kommen aus `letzte.json` (nur wenn sie zu genau dieser Datei
+   gehört und nach dem Klick entstand). Erfolg: «RustDesk ist installiert», «Du findest es im Befehlsfeld.», Knöpfe
+   «Öffnen» (der erste Starter wie im Befehlsfeld in eigener Einheit; kennt die Oberfläche ihn noch nicht, über
+   `gio launch /usr/share/applications/…`) und «Fertig». Abgebrochene Passwortabfrage (126): zurück zur Ansicht, ohne
+   Meldung. Datei oder Plan geändert (3), Stopp (10) und belegt (75): «Noch einmal ansehen». Sonst «Installation
+   gescheitert» mit dem Grund.
+6. **Fenster zu:** Während einer Installation läuft sie weiter; an ihrem Ende kommt eine ruhige Mitteilung
+   (`notify-send`, App «zen Installer», nach Erfolg mit niedriger Dringlichkeit). Mit offenem Fenster keine
+   Mitteilung: Das Fenster sagt es.
+
+IPC `installer`: `oeffnen(pfad)` (siehe oben), `status` (`zu`, `ansehen`, `bereit`, `installiert`, `abgelehnt`,
+`fehler`, `laeuft`, `fertig`, `gescheitert`), `schliessen`. Installieren geht nur über den Knopf; IPC startet nie pkexec.
+Der Rundgang in `scripts/pruefen.sh` (Teil start) prüft die Pfade, sieht eine selbst gebaute .deb bis «bereit» an,
+öffnet sie ein zweites Mal, schliesst und prüft «nicht während der Einrichtung».
+
+## zen install
+
+`zen install DATEI.deb` öffnet in der Sitzung (Terminal in zenOS, `WAYLAND_DISPLAY` gesetzt) das Fenster, wie ein
+Doppelklick. Ohne Sitzung (etwa über SSH) oder mit `--text` zeigt es die Ansicht im Terminal
+(`zenos-installer ansehen DATEI --auftrag`: der Text und zuletzt `auftrag SHA256 PLAN`) und installiert erst nach der
+Eingabe «ja»: `sudo zenos-installer-bedienen installieren PFAD SHA256 PLAN`. Danach steht der Grund aus `letzte.json`
+da (nur wenn er zu dieser Datei und diesem Lauf gehört). Ohne Terminal fragt es nicht und installiert nichts.
+`zen install --liste` zeigt, was über den zen Installer kam, `zen install --status` was läuft und das letzte Ergebnis.
+Tests: `test/einheiten/zen-install.test.py`.
 
 ## Dateien
 
@@ -77,7 +124,8 @@ vertrauenswürdig: Das Programm entfernt Steuerzeichen und kürzt sie, die Oberf
 ## Prüfen
 
 - `zen doctor`, Abschnitt «zen Installer»: eingerichtet, Standard für .deb, Ablage leer, letztes Ergebnis.
-- Einheitentests `test/einheiten/installer.test.py` (selbst gebaute Test-.deb, als Benutzer und als root).
+- Einheitentests `test/einheiten/installer.test.py` (selbst gebaute Test-.deb, als Benutzer und als root),
+  `zen-install.test.py` und für die Oberfläche `installer.test.mjs` (node).
 - Ende zu Ende im Container: `test/container/installer-e2e.sh alle` (echtes systemd, apt und dpkg, über sudo).
 
 ## Rückweg

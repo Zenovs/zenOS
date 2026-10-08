@@ -22,6 +22,7 @@ Modul (`import qs.<ordner>`).
 | `einstellungen/` | Einstellungen-Fenster, eine Datei pro Seite, Bausteine unter `teile/` |
 | `einrichtung/` | Erster Start und Zustimmung zu den Apps |
 | `polkit/` | polkit-Agent der Sitzung: Passwortdialog für Administratorrechte (z. B. «Firewall ausschalten») |
+| `installer/` | zen Installer: Fenster für eine heruntergeladene .deb (Doppelklick, IPC `installer`), `Installer.qml` (Dienst, IPC, Fenster), `InstallerInhalt.qml` (Inhalt), `installer.js` (Logik, auch mit node getestet) |
 
 Regeln:
 

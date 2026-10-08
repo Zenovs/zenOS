@@ -593,6 +593,35 @@ Passwort (`shell/polkit/Polkit.qml`).
   Fehlversuch rund 2 s).
 - Ein- und Ausblenden 120 ms, nur die Deckkraft. Ein Klick daneben schliesst nicht.
 
+### zen Installer
+
+Fenster für eine heruntergeladene .deb (`shell/installer/`), mit labwc-Titelzeile «zen Installer» wie die
+Einstellungen, 640 px breit. Es öffnet nur, wenn Zeno es selbst öffnet (Doppelklick, «Öffnen mit», `zen install`), nie
+während Sperre und Einrichtung. Ruhig wie die Updates-Seite: dieselben Bausteine, keine Animation zwischen den Phasen.
+
+- **Kopf:** das Symbol des Pakets 64 px (ohne eigenes: `paket` 30 px in `gedaempft` auf `flaeche2`, Radius 12), daneben
+  der Name in Instrument Serif 36 (zu lang: bis 24 kleiner, dann gekürzt), darunter die Zusammenfassung in Geist 14
+  (`text2`, höchstens zwei Zeilen) und Paket mit Version in Geist Mono 12 (`gedaempft`).
+- **Lage:** Symbol 16 px und Titel in `text` wie auf der Updates-Seite: «Wird angesehen …» (`paket`, `gedaempft`),
+  «Bereit zum Installieren», «Update bereit», «Ältere Version bereit» (Info im Akzent), «Schon installiert» (Haken im
+  Akzent), «Lässt sich nicht installieren» und «Lässt sich nicht ansehen» (Warnung in `warnung`), während der
+  Installation «Wartet auf dein Passwort …», «Wartet auf ein laufendes Update …», «Prüft das Paket noch einmal …»,
+  «Wird installiert …» (Info im Akzent), danach «Fernzugriff ist installiert» (Haken im Akzent) oder «Installation
+  gescheitert». Darunter ein Satz in 13 px, Zeilenhöhe 1,45: ruhig in `gedaempft`, bei einer Ablehnung der Grund in
+  `text2`.
+- **Beschreibung** aus dem Paket in `text2` 13 px, höchstens fünf Zeilen; von Hand umbrochene Zeilen fliessen zusammen,
+  Absätze und Aufzählungen bleiben. **Werte** zweispaltig wie die Updates-Seite (Titel 96 px in `gedaempft`, Werte in
+  Geist Mono 13): Version mit Zustand («1.4.2 · neu», «· ersetzt 1.4.1»), Paket, Herausgeber, Webseite (nur Text, kein
+  Link), Braucht, Datei, Dazu, Programme (fehlt, wenn der Inhalt nicht gelesen wurde), SHA-256 (umbrochen, ganz).
+- **Hinweise** unter dem Abschnittstitel «Beim Installieren»: Symbol `info` 14 px in `gedaempft`, Text 13 px in
+  `text2`, gut lesbar und ohne Alarm. Nur Entfernungen («Entfernt dafür: …») stehen in `warnung` (Symbol und Text).
+- **Fuss:** Trennlinie, links «Esc schliessen» in Geist Mono 12 (`gedaempft`), rechts der eine Primärknopf
+  («Installieren» mit Schloss, «Aktualisieren», «Öffnen», «Noch einmal ansehen») und daneben sekundär «Abbrechen»,
+  «Schliessen» oder «Fertig». Mit Tab kommt zuerst der Primärknopf; von selbst hat keiner den Fokus (auch nicht nach
+  einem neuen Öffnen), Enter installiert nie aus Versehen. Während der Installation steht der Primärknopf als «Läuft …»
+  still da («Wartet …», solange der polkit-Dialog fragt).
+- Alles aus dem Paket ist reiner Text. Nach dem Ende zeigt das Fenster nur noch Kopf und Ergebnis.
+
 ### Sperrbildschirm und Login
 
 - Grosse Uhrzeit (Instrument Serif 180 px), Datum, Anzahl Mitteilungen ohne Inhalt, Passwortfeld.
