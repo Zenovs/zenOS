@@ -213,6 +213,15 @@ und nur, wenn apt dabei nichts anderes entfernte. `oeffnen DATEI` gibt den gepr�
 nutzt `ansehen --auftrag` (die Ansicht als Text, zuletzt `auftrag SHA256 PLAN`). Tests: `test/einheiten/installer.test.py`,
 `zen-install.test.py`, Oberfläche `installer.test.mjs`.
 
+- Modul `76-installer` legt die root-eigene Kopie, die zwei Units, die polkit-Aktionen, den Starter
+  `zenos-installer.desktop` und `/var/lib/zenos/installer` an (keine Pakete, auch im Image); den Standard für .deb setzt
+  `system/xdg/labwc-mimeapps.list` (`48-ablage`). Der zweite Lauf meldet 0 Änderungen. Rückweg im Kopf des Moduls.
+- `doctor.d/76-installer.sh` (ohne root, nur lesend): eingerichtet und nur für root schreibbar, Standard für .deb (über
+  `gio mime` wie in der Sitzung), Ablage leer, letztes Ergebnis. Nennt Paketnamen, keine Dateinamen aus dem Home.
+- `pruefen.sh start` sieht im Rundgang eine selbst gebaute .deb an (nie installieren). Ende zu Ende mit echtem
+  systemd, apt, dpkg und pkexec: `test/container/installer-e2e.sh`. Rechte und Restrisiko: `docs/sicherheit.md`,
+  «zen Installer».
+
 ## zenos-gesten
 
 `bin/zenos-gesten` (Python 3, nur Standardbibliothek, `python3 -I`) bindet `libinput.so.10` aus Ubuntu per ctypes

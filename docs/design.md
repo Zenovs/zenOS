@@ -635,6 +635,10 @@ während Sperre und Einrichtung. Ruhig wie die Updates-Seite: dieselben Baustein
   einem neuen Öffnen), Enter installiert nie aus Versehen. Während der Installation steht der Primärknopf als «Läuft …»
   still da («Wartet …», solange der polkit-Dialog fragt).
 - Alles aus dem Paket ist reiner Text. Nach dem Ende zeigt das Fenster nur noch Kopf und Ergebnis.
+- **Fenster zu während der Installation:** Am Ende kommt eine Mitteilung (App «zen Installer», Symbol `zenos`) mit
+  denselben Worten wie das Fenster: nach Erfolg mit niedriger, sonst mit normaler Dringlichkeit, nie dringend. Sie
+  wartet also gebündelt wie andere Mitteilungen. Ist das Fenster offen, kommt keine; das Fenster sagt es. Der Passwortdialog von polkit
+  ist das Einzige, was nach «Installieren» von selbst aufgeht, und nur, weil Zeno geklickt hat.
 
 ### Sperrbildschirm und Login
 
