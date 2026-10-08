@@ -833,6 +833,10 @@ START_RUNDGANG=(
   "installer status ~> bereit"
   "installer schliessen"
   "installer status → zu"
+  # Liste in Einstellungen › Apps (Dienst InstallerListe): ohne Erwartung (auf dem Pi, was über den zen Installer kam,
+  # in Container und CI «keine»). Entfernen geht nur über den Knopf dort.
+  "installer liste"
+  "einstellungen oeffnen apps/installer"
   "einrichtung oeffnen"
   "einrichtung status → offen 1"
   # Während der Einrichtung öffnet der zen Installer nicht

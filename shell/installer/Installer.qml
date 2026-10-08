@@ -26,7 +26,7 @@ import "../appleiste/fenster.mjs" as Fenster
 //   nur, was ohnehin auf dem Bildschirm steht (Dateiname, Paket); Mitteilungen hält die Freigabe zurück.
 // - IPC «installer»: oeffnen(pfad) → offen, laeuft (eine Installation läuft, das Fenster zeigt sie), gesperrt,
 //   einrichtung, ungueltig; status → zu, ansehen, bereit, installiert, abgelehnt, fehler, laeuft, fertig, gescheitert;
-//   schliessen.
+//   schliessen; liste → was Einstellungen › Apps zeigt (Dienst InstallerListe: dort auch «Entfernen …»).
 Scope {
     id: root
 
@@ -227,6 +227,15 @@ Scope {
 
         function schliessen(): void {
             root.schliessen();
+        }
+
+        // Was Einstellungen › Apps unter «Über den zen Installer» zeigt: die Paketnamen mit Leerzeichen, sonst
+        // «keine». Liest neu ein; das Ergebnis zählt erst für den nächsten Aufruf (wie IPC basis). Entfernen geht nur
+        // über den Knopf dort.
+        function liste(): string {
+            Dienste.InstallerListe.aktualisieren();
+            const namen = Dienste.InstallerListe.liste.map(e => e.paket);
+            return namen.length > 0 ? namen.join(" ") : "keine";
         }
     }
 

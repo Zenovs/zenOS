@@ -10,11 +10,80 @@ import qs.dienste as Dienste
 
 // Seite «Apps»: Stand der proprietären Apps (installiert, Version, Herkunft) und der gleiche Ablauf
 // wie beim ersten Start: «Installieren …» öffnet ein Terminal mit «zen apps installieren …», das
-// vorher genau zeigt, was passiert, und einmal nachfragt. Dazu der SSH-Agent von 1Password.
+// vorher genau zeigt, was passiert, und einmal nachfragt. Dazu der SSH-Agent von 1Password und, was über
+// den zen Installer kam (Dienst InstallerListe), mit «Entfernen …» (jedes Mal mit Passwort). unterauswahl
+// «installer» scrollt dorthin.
 Item {
     id: root
 
     property string unterauswahl
+
+    // Ein Programm, das über den zen Installer kam (Zeile aus InstallerListe.zeilen): Symbol, Name, darunter Paket,
+    // Version und seit wann, rechts «Entfernen …» (sekundär mit Schloss). Alles aus dem Paket als reiner Text.
+    component InstallerZeile: Item {
+        id: zeile
+
+        required property var modelData
+
+        implicitHeight: 60
+
+        Trenner {
+            anchors.top: parent.top
+            width: parent.width
+        }
+
+        Symbol {
+            id: zeichen
+
+            x: 16
+            anchors.verticalCenter: parent.verticalCenter
+            name: "paket"
+            groesse: 18
+            farbe: Theme.gedaempft
+        }
+
+        Column {
+            x: zeichen.x + 18 + 14
+            width: knopf.x - x - 16
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 3
+
+            Text {
+                width: parent.width
+                text: zeile.modelData.name
+                color: Theme.text
+                font.family: Theme.schriftText
+                font.pixelSize: 15
+                elide: Text.ElideRight
+                textFormat: Text.PlainText
+            }
+
+            Text {
+                width: parent.width
+                text: zeile.modelData.unter
+                color: Theme.gedaempft
+                font.family: Theme.schriftMono
+                font.pixelSize: Theme.groesseKlein
+                elide: Text.ElideRight
+                textFormat: Text.PlainText
+            }
+        }
+
+        Knopf {
+            id: knopf
+
+            anchors.right: parent.right
+            anchors.rightMargin: 8
+            anchors.verticalCenter: parent.verticalCenter
+            implicitHeight: 38
+            variante: "sekundaer"
+            text: zeile.modelData.knopf.text
+            symbol: zeile.modelData.knopf.symbol
+            enabled: zeile.modelData.knopf.aktiv
+            Accessible.name: zeile.modelData.knopf.text + " " + zeile.modelData.name
+            onClicked: Dienste.InstallerListe.entfernen(zeile.modelData.paket)
+        }
+    }
 
     readonly property var einsPasswort: katalog.apps.find(a => a.id === "1password") ?? null
 
@@ -37,14 +106,68 @@ Item {
         id: nachladen
 
         interval: 1500
-        onTriggered: katalog.nachladen()
+        onTriggered: {
+            katalog.nachladen();
+            Dienste.InstallerListe.aktualisieren();
+        }
     }
 
     Timer {
         interval: 15000
         repeat: true
         running: root.visible
-        onTriggered: katalog.nachladen()
+        onTriggered: {
+            katalog.nachladen();
+            Dienste.InstallerListe.aktualisieren();
+        }
+    }
+
+    Component.onCompleted: {
+        Dienste.InstallerListe.aktualisieren();
+        _scrollen();
+    }
+
+    // «einstellungen oeffnen apps/installer»: der Abschnitt des zen Installers oben im sichtbaren Bereich. Die Liste der
+    // Apps darüber kommt erst nach und nach; solange (höchstens 3 s) folgt die Lage jeder neuen Höhe des Inhalts.
+    property bool _scrollFolgt: false
+
+    function _zuInstaller(): void {
+        if (root.unterauswahl !== "installer")
+            return;
+        const p = installerFeld.mapToItem(seite.flick.contentItem, 0, 0);
+        seite.flick.contentY = Math.max(0, Math.min(seite.flick.contentHeight - seite.flick.height, p.y - 12));
+    }
+
+    function _scrollen(): void {
+        _scrollFolgt = root.unterauswahl === "installer";
+        scrollen.restart();
+        scrollEnde.restart();
+    }
+
+    onUnterauswahlChanged: _scrollen()
+
+    Connections {
+        target: seite.flick
+
+        function onContentHeightChanged(): void {
+            if (root._scrollFolgt)
+                scrollen.restart();
+        }
+    }
+
+    Timer {
+        id: scrollen
+
+        interval: 100
+        running: true
+        onTriggered: root._zuInstaller()
+    }
+
+    Timer {
+        id: scrollEnde
+
+        interval: 3000
+        onTriggered: root._scrollFolgt = false
     }
 
     Seite {
@@ -177,9 +300,60 @@ Item {
             }
         }
 
+        // Was über den zen Installer kam (heruntergeladene .deb): je Zeile «Entfernen …» mit Passwort
+        Feld {
+            id: installerFeld
+
+            width: parent.width
+            beschriftung: "Über den zen Installer"
+
+            Column {
+                width: parent.width
+                spacing: 10
+
+                Column {
+                    visible: Dienste.InstallerListe.zeilen.length > 0
+                    width: parent.width
+
+                    Repeater {
+                        model: Dienste.InstallerListe.zeilen
+
+                        InstallerZeile {
+                            width: parent.width
+                        }
+                    }
+
+                    Trenner {
+                        width: parent.width
+                    }
+                }
+
+                Text {
+                    width: Math.min(parent.width, 720)
+                    text: {
+                        const l = Dienste.InstallerListe;
+                        if (l.zeilen.length > 0)
+                            return "«Entfernen …» verlangt jedes Mal dein Passwort und entfernt nur das Programm; seine Einstellungen bleiben. Nähme apt dabei weitere Pakete mit, lässt der zen Installer es stehen.";
+                        if (!l.gelesen)
+                            return "Einen Moment …";
+                        if (l.fehlgeschlagen)
+                            return "Die Liste liess sich nicht lesen. «zen install --liste» im Terminal zeigt mehr.";
+                        return "Noch nichts. Ein Doppelklick auf eine heruntergeladene .deb öffnet den zen Installer; was du damit installierst, steht dann hier.";
+                    }
+                    color: Theme.gedaempft
+                    font.family: Theme.schriftText
+                    font.pixelSize: Theme.groesseLabel
+                    lineHeightMode: Text.FixedHeight
+                    lineHeight: Math.round(font.pixelSize * 1.45)
+                    wrapMode: Text.WordWrap
+                    textFormat: Text.PlainText
+                }
+            }
+        }
+
         fuss: SeitenFuss {
             width: seite.width - 88
-            pfad: "zen apps · Quellen in /etc/apt/sources.list.d/zenos-*.sources"
+            pfad: "zen apps · zen install --liste · Quellen in /etc/apt/sources.list.d/zenos-*.sources"
             onFertig: Dienste.Oberflaeche.einstellungenOffen = false
         }
     }

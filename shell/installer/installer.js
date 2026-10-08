@@ -2,7 +2,9 @@
 // Logik des zen Installers in der Oberfläche (installer/Installer.qml, Fenster in InstallerInhalt.qml) ohne QML: Pfad
 // prüfen, die Antwort von «zenos-installer ansehen --json» lesen, das Fenster in jeder Phase beschreiben (Kopf, Lage,
 // Werte, Hinweise, Knöpfe), die Argumentliste für pkexec, das Ergebnis einer Installation aus Exit und letzte.json und
-// die Mitteilung, wenn das Fenster inzwischen zu ist. Getestet mit test/einheiten/installer.test.mjs (node).
+// die Mitteilung, wenn das Fenster inzwischen zu ist. Dazu die Liste in Einstellungen › Apps (dienste/InstallerListe.qml):
+// «zenos-installer liste --json» lesen, die Zeilen mit «Entfernen …» und die Rückmeldung danach. Getestet mit
+// test/einheiten/installer.test.mjs (node).
 //
 // Phasen des Dienstes: "" (nichts offen), "ansehen" (zenos-installer liest das Paket), "ansicht" (Ergebnis da),
 // "laeuft" (pkexec und die Unit arbeiten), "ende" (Ergebnis der Installation).
@@ -474,13 +476,16 @@ function statusLesen(json) {
     return aus;
 }
 
-// Phase der laufenden Installation aus status --json («wartet», «prueft», «installiert») oder ""
-function laufPhase(status) {
+// Phase der laufenden Installation aus status --json («wartet», «prueft», «installiert») oder ""; mit art «entfernen»
+// die einer laufenden Entfernung («wartet», «entfernt»), mit paket nur die dieses Pakets
+function laufPhase(status, art, paket) {
+    var gesucht = art === "entfernen" ? "entfernen" : "installieren";
     if (!status || !Array.isArray(status.laeuft))
         return "";
     for (var i = 0; i < status.laeuft.length; i++) {
-        if (status.laeuft[i].art === "installieren")
-            return status.laeuft[i].phase;
+        var j = status.laeuft[i];
+        if (j.art === gesucht && (typeof paket !== "string" || paket === "" || j.paket === paket))
+            return j.phase;
     }
     return "";
 }
@@ -576,4 +581,118 @@ function programmZiel(programme) {
     if (liste.length === 0)
         return null;
     return { id: liste[0].id.replace(/\.desktop$/, ""), pfad: "/usr/share/applications/" + liste[0].id };
+}
+
+// --- Liste in Einstellungen › Apps (dienste/InstallerListe.qml) ----------------------
+
+var MONATE = ["Jan.", "Feb.", "März", "Apr.", "Mai", "Juni", "Juli", "Aug.", "Sept.", "Okt.", "Nov.", "Dez."];
+// So viele Einträge zeigt die Liste höchstens (installiert.json kommt von root; nur zur Sicherheit begrenzt)
+var LISTE_MAX = 200;
+
+// «zenos-installer liste --json»: [{ paket, name, version, zustand, seitMs }] nach Name sortiert, null, wenn die
+// Antwort unlesbar ist. zustand: «installiert», «halb» (dpkg kennt es, aber nicht fertig installiert) oder «weg»
+// (inzwischen ohne den zen Installer entfernt). version: die installierte, sonst die damals installierte.
+function listeLesen(json) {
+    var d = _objekt(json);
+    if (d === null || d.version !== 1 || !Array.isArray(d.pakete))
+        return null;
+    var aus = [];
+    var gesehen = {};
+    for (var i = 0; i < d.pakete.length && aus.length < LISTE_MAX; i++) {
+        var p = d.pakete[i];
+        if (!p || typeof p.name !== "string" || !PAKET_RE.test(p.name) || gesehen[p.name] === true)
+            continue;
+        gesehen[p.name] = true;
+        var jetzt = text(p.installierte_version, 100);
+        var zustand = jetzt === "" || p.status === null || p.status === undefined ? "weg" : p.status === "installed" ? "installiert" : "halb";
+        aus.push({
+            paket: p.name,
+            name: text(p.anzeigename, 80) || p.name,
+            version: zustand === "weg" ? text(p.version, 100) : jetzt,
+            zustand: zustand,
+            seitMs: zeitMs(p.zeit)
+        });
+    }
+    aus.sort(function (a, b) {
+        var n = a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+        return n !== 0 ? n : a.paket < b.paket ? -1 : 1;
+    });
+    return aus;
+}
+
+// «seit heute», «seit gestern», «seit 3. Okt.», in einem anderen Jahr «seit 3. Okt. 2025» (Ortszeit); "" ohne Zeit
+function seitText(ms, jetztMs) {
+    if (typeof ms !== "number" || !isFinite(ms) || typeof jetztMs !== "number" || !isFinite(jetztMs))
+        return "";
+    var d = new Date(ms);
+    var j = new Date(jetztMs);
+    var tage = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() - new Date(j.getFullYear(), j.getMonth(), j.getDate()).getTime()) / 86400000);
+    if (tage === 0)
+        return "seit heute";
+    if (tage === -1)
+        return "seit gestern";
+    return "seit " + d.getDate() + ". " + MONATE[d.getMonth()] + (d.getFullYear() !== j.getFullYear() ? " " + d.getFullYear() : "");
+}
+
+// Zeilen der Liste. z: { laeuft (Paket, das gerade entfernt wird, sonst ""), laufPhase, polkitOffen, frei (eine
+// Bedienung ist möglich: nichts läuft, nicht gesperrt), jetztMs }.
+// Ergebnis: [{ paket, name, unter, knopf {text, aktiv, symbol} }]; unter: zweite Zeile (Paket, Version, seit wann
+// oder warum nicht mehr installiert)
+function listeZeilen(liste, z) {
+    var lage = z || {};
+    var laeuft = typeof lage.laeuft === "string" ? lage.laeuft : "";
+    if (!Array.isArray(liste))
+        return [];
+    return liste.map(function (e) {
+        var teile = [e.paket + (e.version !== "" ? " " + e.version : "")];
+        if (e.zustand === "weg")
+            teile.push("nicht mehr installiert");
+        else if (e.zustand === "halb")
+            teile.push("nur halb installiert");
+        var seit = seitText(e.seitMs, lage.jetztMs);
+        if (seit !== "" && e.zustand !== "weg")
+            teile.push(seit);
+        var knopf = { text: e.zustand === "weg" ? "Aus der Liste …" : "Entfernen …", aktiv: lage.frei === true && laeuft === "", symbol: "schloss" };
+        if (laeuft !== "" && laeuft === e.paket) {
+            knopf.aktiv = false;
+            knopf.symbol = "";
+            knopf.text = lage.polkitOffen === true ? "Wartet …" : lage.laufPhase === "wartet" ? "Wartet auf ein Update …" : "Wird entfernt …";
+        }
+        return { paket: e.paket, name: e.name, unter: teile.join(" · "), knopf: knopf };
+    });
+}
+
+// pkexec-Aufruf für «Entfernen …», null bei einem ungültigen Paketnamen
+function entfernenBefehl(helfer, paket) {
+    if (typeof helfer !== "string" || helfer.charAt(0) !== "/" || typeof paket !== "string" || !PAKET_RE.test(paket))
+        return null;
+    return ["pkexec", helfer, "entfernen", paket];
+}
+
+// Rückmeldung nach «Entfernen …» als Hinweis (Toast, wie bei den Basis-Updates): { text, art } oder null (abgebrochene
+// Passwortabfrage bleibt still). code: Exit von pkexec bzw. dem Helfer (-1: liess sich nicht starten); info: { letzte
+// (letzteLesen), paket, name, beginnMs, fehler (stderr) }. letzte.json zählt nur, wenn sie zu genau diesem Paket gehört
+// und nach dem Klick entstand.
+function entfernenRueckmeldung(code, info) {
+    var i = info || {};
+    var l = i.letzte || null;
+    var passt = l !== null && l.art === "entfernen" && l.paket !== "" && l.paket === i.paket && isFinite(l.endeMs) && typeof i.beginnMs === "number" && l.endeMs >= Math.floor(i.beginnMs / 1000) * 1000 - 2000;
+    var name = (passt && l.anzeigename) || text(i.name, 80) || (typeof i.paket === "string" && PAKET_RE.test(i.paket) ? i.paket : "") || "Die Software";
+    var grund = passt ? l.grund.replace(/\.$/, "") : "";
+    var meldung = _meldung(i.fehler).replace(/\.$/, "");
+    if (code === 126)
+        return null;
+    if (code === 0)
+        return { text: grund || name + " ist entfernt", art: "" };
+    if (code === -1)
+        return { text: "Entfernen: pkexec lässt sich nicht starten (install.sh ausführen)", art: "warnung" };
+    if (code === 127)
+        return { text: /authentication agent/i.test(i.fehler || "") ? "Entfernen: keine Bestätigung möglich (polkit-Agent nicht angemeldet)" : "Entfernen: nicht erlaubt (nur in der aktiven Sitzung am Gerät)", art: "warnung" };
+    if (code === 75)
+        return { text: "Gerade läuft ein Update oder ein anderer Paketvorgang. Später noch einmal.", art: "warnung" };
+    if (code === 10)
+        return { text: name + " ist noch da: abgebrochen, bevor sich etwas änderte", art: "warnung" };
+    if (code === 3)
+        return { text: "Nicht entfernt: " + (grund || meldung || name + " kam nicht über den zen Installer"), art: "warnung" };
+    return { text: "Entfernen gescheitert: " + (grund || meldung || "Exit " + code), art: "warnung" };
 }

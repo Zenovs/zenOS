@@ -1,7 +1,8 @@
 // Einheitentests für shell/installer/installer.js (zen Installer in der Oberfläche: Pfad prüfen, Antwort von
 // «zenos-installer ansehen --json» lesen, das Fenster je Phase, pkexec-Aufruf, Ergebnis aus Exit und letzte.json,
-// Mitteilung) und den Abgleich mit Installer.qml, InstallerInhalt.qml, shell.qml, dem Programm zenos-installer, dem
-// Helfer, der polkit-Richtlinie, dem Starter, den mimeapps, «zen install» und dem Rundgang in pruefen.sh.
+// Mitteilung, Liste in Einstellungen › Apps mit «Entfernen …») und den Abgleich mit Installer.qml,
+// InstallerInhalt.qml, dienste/InstallerListe.qml, SeiteApps.qml, shell.qml, dem Programm zenos-installer, dem Helfer,
+// der polkit-Richtlinie, dem Starter, den mimeapps, «zen install» und dem Rundgang in pruefen.sh.
 // Läuft ohne Abhängigkeiten: node --test test/einheiten/
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -282,6 +283,9 @@ test("letzteLesen, statusLesen, laufPhase", () => {
   assert.deepEqual(roh(s.laeuft), [{ art: "entfernen", paket: "x", phase: "entfernt" }, { art: "installieren", paket: "beispiel", phase: "prueft" }]);
   assert.equal(s.letzte.paket, "beispiel");
   assert.equal(L.laufPhase(s), "prueft");
+  assert.equal(L.laufPhase(s, "entfernen"), "entfernt");
+  assert.equal(L.laufPhase(s, "entfernen", "x"), "entfernt");
+  assert.equal(L.laufPhase(s, "entfernen", "beispiel"), "");
   assert.equal(L.laufPhase(L.statusLesen("")), "");
   assert.deepEqual(roh(L.statusLesen("kaputt")), { laeuft: [], letzte: null });
 });
@@ -342,6 +346,104 @@ test("programmZiel: erster gültiger Starter", () => {
   assert.equal(L.programmZiel(null), null);
 });
 
+// Antwort von «zenos-installer liste --json» (Felder wie list_entries)
+function listeAntwort(pakete) {
+  return JSON.stringify({ version: 1, pakete });
+}
+function eintrag(teile = {}) {
+  return Object.assign({ name: "beispiel", anzeigename: "Beispiel", version: "1.4.2", installierte_version: "1.4.2", status: "installed", zeit: "2026-10-08T12:00:40Z", datei: "beispiel_1.4.2_arm64.deb", programme: [{ id: "beispiel.desktop", name: "Beispiel" }] }, teile);
+}
+
+test("listeLesen: Einträge nach Name, Zustand aus dpkg, Unbrauchbares fällt weg", () => {
+  const l = L.listeLesen(listeAntwort([
+    eintrag(),
+    eintrag({ name: "zweites", anzeigename: "Alpha\u202e\nApp", version: "2.0", installierte_version: "2.1", zeit: "kaputt" }),
+    eintrag({ name: "weg", anzeigename: "", version: "0.9", installierte_version: null, status: null }),
+    eintrag({ name: "halb", anzeigename: "Halb", installierte_version: "1.0", status: "half-configured" }),
+    eintrag({ name: "../boese" }),
+    eintrag({ name: "beispiel", anzeigename: "Doppelt" }),
+    null,
+    "x",
+  ]));
+  assert.deepEqual(roh(l), [
+    { paket: "zweites", name: "Alpha? App", version: "2.1", zustand: "installiert", seitMs: null },
+    { paket: "beispiel", name: "Beispiel", version: "1.4.2", zustand: "installiert", seitMs: Date.parse("2026-10-08T12:00:40Z") },
+    { paket: "halb", name: "Halb", version: "1.0", zustand: "halb", seitMs: Date.parse("2026-10-08T12:00:40Z") },
+    { paket: "weg", name: "weg", version: "0.9", zustand: "weg", seitMs: Date.parse("2026-10-08T12:00:40Z") },
+  ]);
+  assert.deepEqual(roh(L.listeLesen(listeAntwort([]))), []);
+  for (const kaputt of ["", "{", JSON.stringify({ version: 2, pakete: [] }), JSON.stringify({ version: 1 }), JSON.stringify([eintrag()])])
+    assert.equal(L.listeLesen(kaputt), null, kaputt);
+  // Höchstens LISTE_MAX Einträge
+  const viele = Array.from({ length: L.LISTE_MAX + 5 }, (_, i) => eintrag({ name: `paket${i}` }));
+  assert.equal(L.listeLesen(listeAntwort(viele)).length, L.LISTE_MAX);
+});
+
+test("seitText: heute, gestern, Datum, anderes Jahr (Ortszeit)", () => {
+  const jetzt = new Date(2026, 9, 8, 9, 30).getTime();
+  assert.equal(L.seitText(new Date(2026, 9, 8, 0, 5).getTime(), jetzt), "seit heute");
+  assert.equal(L.seitText(new Date(2026, 9, 7, 23, 55).getTime(), jetzt), "seit gestern");
+  assert.equal(L.seitText(new Date(2026, 9, 3, 12, 0).getTime(), jetzt), "seit 3. Okt.");
+  assert.equal(L.seitText(new Date(2026, 2, 1, 12, 0).getTime(), jetzt), "seit 1. März");
+  assert.equal(L.seitText(new Date(2025, 11, 24, 12, 0).getTime(), jetzt), "seit 24. Dez. 2025");
+  assert.equal(L.seitText(NaN, jetzt), "");
+  assert.equal(L.seitText(null, jetzt), "");
+});
+
+test("listeZeilen: zweite Zeile, «Entfernen …» mit Schloss, eine Bedienung zur Zeit", () => {
+  const jetzt = Date.parse("2026-10-08T12:00:40Z");
+  const liste = L.listeLesen(listeAntwort([eintrag(), eintrag({ name: "weg", anzeigename: "Weg", version: "0.9", installierte_version: null, status: null }), eintrag({ name: "halb", anzeigename: "Halb", installierte_version: "1.0", status: "half-configured" })]));
+  const frei = L.listeZeilen(liste, { laeuft: "", frei: true, jetztMs: jetzt });
+  assert.deepEqual(roh(frei), [
+    { paket: "beispiel", name: "Beispiel", unter: "beispiel 1.4.2 · seit heute", knopf: { text: "Entfernen …", aktiv: true, symbol: "schloss" } },
+    { paket: "halb", name: "Halb", unter: "halb 1.0 · nur halb installiert · seit heute", knopf: { text: "Entfernen …", aktiv: true, symbol: "schloss" } },
+    { paket: "weg", name: "Weg", unter: "weg 0.9 · nicht mehr installiert", knopf: { text: "Aus der Liste …", aktiv: true, symbol: "schloss" } },
+  ]);
+  // Gesperrt oder ohne Angabe: kein Knopf bedienbar
+  assert.ok(L.listeZeilen(liste, { laeuft: "", frei: false, jetztMs: jetzt }).every((z) => z.knopf.aktiv === false));
+  assert.ok(L.listeZeilen(liste, {}).every((z) => z.knopf.aktiv === false));
+  // Während «beispiel» entfernt wird: dort die Phase, alle anderen warten
+  const lauf = (teile) => L.listeZeilen(liste, Object.assign({ laeuft: "beispiel", frei: true, jetztMs: jetzt }, teile));
+  assert.deepEqual(roh(lauf({ polkitOffen: true })[0].knopf), { text: "Wartet …", aktiv: false, symbol: "" });
+  assert.equal(lauf({ laufPhase: "wartet" })[0].knopf.text, "Wartet auf ein Update …");
+  assert.equal(lauf({ laufPhase: "entfernt" })[0].knopf.text, "Wird entfernt …");
+  assert.equal(lauf({ laufPhase: "" })[0].knopf.text, "Wird entfernt …");
+  assert.deepEqual(roh(lauf({}).slice(1).map((z) => [z.knopf.text, z.knopf.aktiv])), [["Entfernen …", false], ["Aus der Liste …", false]]);
+  assert.deepEqual(roh(L.listeZeilen(null, {})), []);
+});
+
+test("entfernenBefehl: pkexec nur mit fester Helfer-Stelle und einem gültigen Paketnamen", () => {
+  assert.deepEqual(roh(L.entfernenBefehl(L.HELFER, "beispiel")), ["pkexec", L.HELFER, "entfernen", "beispiel"]);
+  assert.deepEqual(roh(L.entfernenBefehl(L.HELFER, "lib.x+y-1")), ["pkexec", L.HELFER, "entfernen", "lib.x+y-1"]);
+  for (const paket of ["", "-r", "Beispiel", "a b", "a;b", "../x", "x\n", null, 3, "a".repeat(129)])
+    assert.equal(L.entfernenBefehl(L.HELFER, paket), null, String(paket));
+  assert.equal(L.entfernenBefehl("zenos-installer-bedienen", "beispiel"), null);
+});
+
+test("entfernenRueckmeldung: Hinweis nach dem eigenen Klick, still nach Abbruch", () => {
+  const beginn = Date.parse("2026-10-08T12:00:00Z");
+  const fertig = (teile = {}) => L.letzteLesen(JSON.stringify(Object.assign({ version: 1, art: "entfernen", ergebnis: "entfernt", grund: "Beispiel ist entfernt.", paket: "beispiel", anzeigename: "Beispiel", ende: "2026-10-08T12:00:09Z" }, teile)));
+  const info = (teile = {}) => Object.assign({ letzte: fertig(), paket: "beispiel", name: "Beispiel", beginnMs: beginn, fehler: "" }, teile);
+  assert.deepEqual(roh(L.entfernenRueckmeldung(0, info())), { text: "Beispiel ist entfernt", art: "" });
+  assert.equal(L.entfernenRueckmeldung(0, info({ letzte: fertig({ grund: "weg war schon entfernt; aus der Liste genommen." }) })).text, "weg war schon entfernt; aus der Liste genommen");
+  // letzte.json eines anderen Pakets, einer Installation oder von vorher zählt nicht
+  for (const anders of [fertig({ paket: "zweites" }), fertig({ art: "installieren" }), fertig({ ende: "2026-10-08T11:59:00Z" }), null])
+    assert.equal(L.entfernenRueckmeldung(0, info({ letzte: anders, name: "Mein Programm" })).text, "Mein Programm ist entfernt");
+  assert.equal(L.entfernenRueckmeldung(0, info({ letzte: null, name: "" })).text, "beispiel ist entfernt");
+  assert.equal(L.entfernenRueckmeldung(126, info()), null);
+  const abgelehnt = L.entfernenRueckmeldung(3, info({ letzte: fertig({ ergebnis: "abgelehnt", grund: "Mit beispiel gingen auch libfoo. Das macht der zen Installer nicht; im Terminal: sudo apt remove beispiel" }) }));
+  assert.deepEqual(roh(abgelehnt), { text: "Nicht entfernt: Mit beispiel gingen auch libfoo. Das macht der zen Installer nicht; im Terminal: sudo apt remove beispiel", art: "warnung" });
+  assert.equal(L.entfernenRueckmeldung(3, info({ letzte: null, fehler: "zenos-installer: beispiel kam nicht über den zen Installer.\n" })).text, "Nicht entfernt: beispiel kam nicht über den zen Installer");
+  assert.equal(L.entfernenRueckmeldung(75, info({ letzte: null })).art, "warnung");
+  assert.match(L.entfernenRueckmeldung(75, info({ letzte: null })).text, /^Gerade läuft ein Update/);
+  assert.equal(L.entfernenRueckmeldung(10, info({ letzte: null })).text, "Beispiel ist noch da: abgebrochen, bevor sich etwas änderte");
+  assert.match(L.entfernenRueckmeldung(127, info({ fehler: "Error executing command as another user: No authentication agent found." })).text, /polkit-Agent/);
+  assert.equal(L.entfernenRueckmeldung(127, info()).text, "Entfernen: nicht erlaubt (nur in der aktiven Sitzung am Gerät)");
+  assert.equal(L.entfernenRueckmeldung(-1, info()).art, "warnung");
+  assert.equal(L.entfernenRueckmeldung(1, info({ letzte: fertig({ ergebnis: "fehler", grund: "Entfernen ist gescheitert (apt-get Exit 100)." }) })).text, "Entfernen gescheitert: Entfernen ist gescheitert (apt-get Exit 100)");
+  assert.equal(L.entfernenRueckmeldung(1, info({ letzte: null })).text, "Entfernen gescheitert: Exit 1");
+});
+
 test("Abgleich mit zenos-installer: Felder, Ergebnisse, Phasen, Pfadprüfung", () => {
   const py = lesen("scripts", "bin", "zenos-installer");
   // Felder der Antwort von ansehen (Evaluation.data): installer.js liest jedes, das das Fenster braucht
@@ -359,6 +461,13 @@ test("Abgleich mit zenos-installer: Felder, Ergebnisse, Phasen, Pfadprüfung", (
   // Dieselben Texte wie check_user_path
   for (const satz of ["Ungültiger Dateiname.", "Der Pfad muss absolut sein.", "Der zen Installer nimmt nur Pakete mit der Endung .deb."])
     assert.ok(py.includes(`"${satz}"`), satz);
+  // Felder von «liste --json» (list_entries): listeLesen liest jedes, das die Liste braucht
+  const eintraege = py.match(/result\.append\(\{([\s\S]*?)\}\)/)[1];
+  const listenFelder = [...eintraege.matchAll(/"([a-z_]+)":/g)].map((m) => m[1]);
+  assert.deepEqual(listenFelder, ["name", "anzeigename", "version", "installierte_version", "status", "zeit", "datei", "programme"]);
+  for (const f of ["name", "anzeigename", "version", "installierte_version", "status", "zeit"])
+    assert.match(js, new RegExp(`p\\.${f}\\b`), `listeLesen liest ${f}`);
+  assert.match(py, /print\(json\.dumps\(\{"version": 1, "pakete": entries\}/);
   // Antworten der Oberfläche, die «oeffnen» kennt
   for (const wort of ["offen", "laeuft", "gesperrt", "einrichtung", "ungueltig"])
     assert.ok(py.includes(`"${wort}"`), `zenos-installer kennt die Antwort ${wort}`);
@@ -370,6 +479,10 @@ test("Abgleich mit Helfer, polkit und Starter", () => {
   assert.match(policy, /exec\.argv1">installieren</);
   assert.match(policy, /<action id="org\.zenos\.installer\.installieren">[\s\S]*?<allow_active>auth_admin<\/allow_active>/);
   assert.match(lesen("scripts", "bin", "zenos-installer-bedienen"), /^  installieren\)$/m);
+  // Entfernen (Einstellungen › Apps): eigene Aktion, ebenfalls jedes Mal mit Passwort
+  assert.match(policy, /exec\.argv1">entfernen</);
+  assert.match(policy, /<action id="org\.zenos\.installer\.entfernen">[\s\S]*?<allow_active>auth_admin<\/allow_active>/);
+  assert.match(lesen("scripts", "bin", "zenos-installer-bedienen"), /^  entfernen\)$/m);
   const starter = lesen("system", "applications", "zenos-installer.desktop");
   assert.match(starter, /^Name=zen Installer$/m);
   assert.match(starter, /^Exec=\/opt\/zenos\/scripts\/bin\/zenos-installer oeffnen %f$/m);
@@ -416,6 +529,31 @@ test("Abgleich mit der Oberfläche: shell.qml, IPC, Fenster, Rundgang, zen insta
   assert.match(zen, /^# hilfe: install /m);
   assert.match(zen, /"\$programm" ansehen "\$pfad" --auftrag/);
   assert.match(zen, /\$SUDO "\$helfer" installieren "\$pfad" "\$sha" "\$plan"/);
+  // Liste in Einstellungen › Apps: Dienst InstallerListe mit pkexec nur über entfernenBefehl, IPC «installer liste»
+  // ohne Entfernen, die Seite ruft nur den Dienst
+  const dienst = lesen("shell", "dienste", "InstallerListe.qml");
+  assert.match(dienst, /^pragma Singleton$/m);
+  assert.match(dienst, /import "\.\.\/installer\/installer\.js" as Logik/);
+  assert.match(dienst, /const argv = Logik\.entfernenBefehl\(helfer, paket\);/);
+  assert.match(dienst, /readonly property string helfer: Logik\.HELFER/);
+  assert.match(dienst, /command: \[root\.programm, "liste", "--json"\]/);
+  assert.match(dienst, /Oberflaeche\.hinweis\(antwort\.text, antwort\.art\)/);
+  assert.match(dienst, /if \(_laeuft !== "" \|\| Oberflaeche\.gesperrt \|\| !_liste\.some\(e => e\.paket === paket\)\)\s+return false;/);
+  assert.doesNotMatch(dienst, /notify-send/);
+  assert.match(qml, /function liste\(\): string \{/);
+  assert.doesNotMatch(qml, /InstallerListe\.entfernen/);
+  const seite = lesen("shell", "einstellungen", "SeiteApps.qml");
+  assert.match(seite, /onClicked: Dienste\.InstallerListe\.entfernen\(zeile\.modelData\.paket\)/);
+  assert.match(seite, /model: Dienste\.InstallerListe\.zeilen/);
+  assert.match(seite, /beschriftung: "Über den zen Installer"/);
+  for (const [name, t] of [["InstallerListe.qml", dienst], ["SeiteApps.qml", seite]]) {
+    assert.doesNotMatch(t, /"(?:ba|da|z|fi)?sh",\s*"-c"/, name);
+    assert.doesNotMatch(t, /#[0-9a-fA-F]{6}\b/, name);
+  }
+  // Was aus dem Paket kommt (Name), steht als reiner Text da
+  const zeile = seite.match(/component InstallerZeile: Item \{([\s\S]*?)\n    \}\n/)[1];
+  assert.equal((zeile.match(/^\s+Text \{$/gm) || []).length, (zeile.match(/textFormat: Text\.PlainText/g) || []).length);
+  assert.ok(pruefen.includes('  "installer liste"'), "Rundgang: installer liste");
   // Symbol «paket» gibt es
   assert.match(lesen("shell", "komponenten", "symbole.js"), /^    "paket": \{ d: "/m);
 });
