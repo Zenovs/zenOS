@@ -407,7 +407,7 @@ systemctl --user start zenos-shell.service
   60 Minuten. Mit dem Video im Hintergrund-Tab oder minimiert: sperrt es nach 5 Minuten? Gesperrt geht der Bildschirm
   auch mit laufendem Video nach einer Minute aus.
 - [ ] Die Ein/Aus-Taste kurz drücken: zenOS sperrt und macht dunkel, das Gerät bleibt an. Nochmals kurz: hell.
-  `systemd-inhibit --list` zeigt «zenOS» mit handle-power-key. Am Login-Bildschirm schaltet ein kurzer Druck aus.
+  `systemd-inhibit --list` zeigt «zenOS» mit handle-power-key. Am Login-Bildschirm: der Punkt dazu weiter unten.
   Mit Ctrl+Alt+F3 auf eine Textkonsole wechseln (die Sitzung läuft weiter) und kurz drücken: Was passiert? Notieren
   und melden (zurück mit Ctrl+Alt+F7).
 - [ ] Ausschalten: Einstellungen → Energie → «Immer», «Nach 30 Min.». Sperren und 30 Minuten warten (ohne SSH,
@@ -432,7 +432,13 @@ systemctl --user start zenos-shell.service
   Bildschirm wird von selbst hell, das erste Zeichen landet im Feld. Kurz nach einer Eingabe zuklappen und nach
   50 s aufklappen: Er bleibt danach eine Minute hell.
 - [ ] Am dunklen Login den Monitor aus- und wieder anstecken: Er wird hell, das erste Zeichen landet im Feld.
-- [ ] `journalctl -b -t zenos-greeter` zeigt «Bildschirm aus» und «Wecktaste verworfen», keine Zeile «gescheitert».
+- [ ] Ein/Aus-Taste am Login-Bildschirm: Abmelden, eine Minute warten (dunkel), kurz drücken. Der Bildschirm wird
+  hell, im Passwortfeld steht kein Punkt, das Gerät bleibt an. Am hellen Login kurz drücken: Nichts passiert. Per SSH
+  zeigt `systemd-inhibit --list` dabei «zenOS» mit handle-power-key und dem Benutzer `_greetd`; nach der Anmeldung
+  nicht mehr. «Ausschalten» unten rechts zweimal klicken: Das Gerät schaltet aus. Einschalten, am Login die Taste
+  gedrückt halten: Es schaltet hart aus.
+- [ ] `journalctl -b -t zenos-greeter` zeigt «Bildschirm aus», «Wecktaste verworfen» und «Ein/Aus-Taste weckt nur»,
+  keine Zeile «gescheitert» und keine «Hemmer für die Ein/Aus-Taste beendet».
 - [ ] Login-Bildschirm im Akkubetrieb (nur Argon ONE UP): Abmelden, Netzteil ab, 30 Minuten nichts tun. Die Zeile
   «zenOS schaltet um HH:MM aus · Eine Taste bricht ab» erscheint, eine Taste bricht ab. Ohne Eingabe schaltet das
   Gerät 60 s später aus.

@@ -72,11 +72,14 @@ nicht warten:
 - **`scripts/bin/zenos-energie`** (als Benutzer, nie als root): `darf-ausschalten` («ja» oder «nein: Grund», mit
   Journal; bei «ja» legt es den Marker an), `status` (dasselbe ohne Journal und Marker), `ausschalten` (Exit 4: noch
   keine 60 s, Exit 3: logind hat abgelehnt), `darf-ausschalten-login` und `ausschalten-login` (Login-Bildschirm),
-  `taste` (Ein/Aus-Taste) und `meldung` (Mitteilung nach dem nächsten Start).
+  `taste` (Ein/Aus-Taste), `hemmer-login` (Ein/Aus-Taste am Login-Bildschirm) und `meldung` (Mitteilung nach dem
+  nächsten Start).
 - **Login-Bildschirm** (`shell/greeter/Leerlauf.qml`, Benutzer `_greetd`): liest `/run/zenos/geraet.json` selbst
   (`dienste/geraet.js`) und zeigt die Zeile der Vorwarnung wie die Sperre, auch bei leerem Akku. Im Akkubetrieb
   schaltet es nach 30 Min. ohne Eingabe aus (Abschnitt «Ausschalten am Login-Bildschirm»). Nach 1 Min. ohne Eingabe
-  geht dort der Bildschirm aus (`shell/greeter/Bildschirm.qml`, Abschnitt «Bildschirm aus am Login-Bildschirm»).
+  geht dort der Bildschirm aus (`shell/greeter/Bildschirm.qml`, Abschnitt «Bildschirm aus am Login-Bildschirm»). Ein
+  kurzer Druck auf die Ein/Aus-Taste weckt dort nur (`shell/greeter/EinAusTaste.qml`, Abschnitt «Ein/Aus-Taste am
+  Login-Bildschirm»).
 - **Sofort-Aktion:** System-Menü «Bildschirm aus» unter «Sperren» (ohne Rückfrage), Befehlsfeld «Bildschirm aus»
   und «Energie» (öffnet die Seite), Super+Shift+L (`system/labwc/rc.xml.in`), `zen energie aus`, die Ein/Aus-Taste und
   das Zuklappen. Immer über `zen lock` und `zenos-bildschirm aus`; geweckt wird über die Sperre (jede Eingabe, ohne
@@ -186,6 +189,9 @@ lesbar.
   neuer Druck derselben Taste und die Wiederholung einer anderen beenden es, jede andere Taste kommt an (Abschnitt
   «Gehaltene Wecktaste in der Sperre», auch zu Shift, Ctrl, Alt, AltGr und Super). Ein gehaltenes Return meldet also
   nicht mit dem halben Passwort an, auch nicht mit Shift dazu, eine gehaltene Rücktaste oder Escape löscht nichts.
+- **Ein/Aus-Taste:** Ein kurzer Druck ist eine Wecktaste wie jede andere (`XF86PowerOff`, labwc des Logins belegt sie
+  nicht); logind schaltet nicht aus, solange der Login seinen Hemmer hält (Abschnitt «Ein/Aus-Taste am
+  Login-Bildschirm»).
 - **Zeichen im Feld:** Was schon im Passwortfeld stand, bleibt unverändert; die Wecktaste kommt nicht dazu. Das
   Passwort reicht weiterhin nur greetd an PAM weiter (`Ablauf.qml`), der Anmeldeablauf ist unverändert.
 - **Vorwarnung vor dem Ausschalten** (30 Min. im Akkubetrieb, `Leerlauf.qml`): Sie schaltet den Bildschirm an und hält
@@ -264,12 +270,53 @@ mit zenos-idle, auch nach SIGKILL (`tail --pid`). labwc gibt `XF86PowerOff` (`al
 - gesperrt: Bildschirm an, solange er dunkel ist oder bis 2 s nach dem Wecken, sonst aus,
 - bei `ausschalten`: nichts, logind schaltet aus wie bisher.
 
-Ohne zenos-idle gilt logind: Ein kurzer Druck schaltet sofort aus, ohne Vorwarnung und ohne Wächter. Das betrifft den
-Login-Bildschirm, die ersten Sekunden nach dem Anmelden und die Pause zwischen zwei Läufen von zenos-idle (1 s,
-`RestartSec`). Gedrückt halten schaltet immer hart aus (Hardware). Der Hemmer läuft im Benutzerdienst, also ausserhalb
-einer Sitzung; logind zählt ihn dann vermutlich auch auf einer Textkonsole (Ctrl+Alt+F3), während die grafische
-Sitzung im Hintergrund weiterläuft. Ein kurzer Druck bewirkt dort dann nichts. Das ist aus dem Quelltext von logind
-hergeleitet und am Gerät zu prüfen («Am Gerät prüfen», Punkt 5).
+Ohne zenos-idle gilt logind: Ein kurzer Druck schaltet sofort aus, ohne Vorwarnung und ohne Wächter. Das betrifft die
+ersten Sekunden nach dem Anmelden und die Pause zwischen zwei Läufen von zenos-idle (1 s, `RestartSec`); am
+Login-Bildschirm hält der Login einen eigenen Hemmer (nächster Abschnitt). Gedrückt halten schaltet immer hart aus
+(Hardware). Der Hemmer von zenos-idle läuft im Benutzerdienst, also ausserhalb einer Sitzung; logind zählt ihn dann
+vermutlich auch auf einer Textkonsole (Ctrl+Alt+F3), während die grafische Sitzung im Hintergrund weiterläuft. Ein
+kurzer Druck bewirkt dort dann nichts. Das ist aus dem Quelltext von logind hergeleitet und am Gerät zu prüfen («Am
+Gerät prüfen», Punkt 5).
+
+### Ein/Aus-Taste am Login-Bildschirm
+
+Zenos Entscheid vom 08.10.2026: Am Login-Bildschirm (greetd mit dem zenOS-Login) weckt ein kurzer Druck nur. Fest,
+unabhängig von der Einstellung `einAusTaste` (die Einstellungen der Sitzung sind für `_greetd` nicht lesbar).
+
+- **Dunkel:** Der Bildschirm geht an. Die Taste ist die Wecktaste wie jede andere (Wecker im Anmeldefenster, Abschnitt
+  «Bildschirm aus am Login-Bildschirm»): verworfen, nichts im Passwortfeld, nichts ausgelöst.
+- **Hell:** nichts. Es öffnet sich kein Menü (ruhig, nichts springt auf; `docs/design.md`). Eine laufende Vorwarnung
+  vor dem Ausschalten im Akkubetrieb bricht der Druck ab wie jede Eingabe.
+- **Ausschalten** geht über «Ausschalten» unten rechts (zweiter Klick innert 5 s, `shell/greeter/Energie.qml`) und
+  über langes Drücken (Hardware, hart).
+- **Hemmer:** `shell/greeter/EinAusTaste.qml` startet `zenos-energie hemmer-login` (Argumentliste). Der Helfer prüft,
+  dass er als `_greetd` läuft (sonst «kein Login-Bildschirm unter greetd …», Exit 0: Start-Test von `pruefen.sh`,
+  `oberflaeche.sh`, `login-e2e.sh`), und wird zu
+  `systemd-inhibit --what=handle-power-key --mode=block --who=zenOS --why=… tail --pid=<Quickshell> -f /dev/null`.
+  Er gilt, solange die Oberfläche des Logins läuft: Nach der Anmeldung endet Quickshell und mit ihm der Hemmer, nach
+  einem Absturz endet `tail --pid` spätestens 1 s danach. greetd startet den Login neu und mit ihm einen neuen Hemmer.
+  In `systemd-inhibit --list` steht er als «zenOS» mit dem Benutzer `_greetd`.
+- **polkit:** `org.freedesktop.login1.inhibit-handle-power-key` hat bei systemd die Vorgabe `allow_active yes`
+  (`allow_inactive yes`, `allow_any no`). greetd startet den Login über PAM (`greetd-greeter` → `login` →
+  `pam_systemd`) als Sitzung der Klasse `greeter` auf seat0 (VT 7); sie ist lokal und aktiv. Eine eigene polkit-Regel
+  braucht es nicht, zenOS legt keine an (im Container belegt, Abschnitt «Ein/Aus-Taste am Login im Container»).
+- **Wo der Knopf herkommt:** Raspberry Pi 5 und Compute Module 5 melden den Ein/Aus-Knopf als `KEY_POWER` über ein
+  eigenes Eingabegerät (gpio-keys im Gerätebaum von Raspberry Pi, `pwr_button`). Beim Argon ONE UP geht der Knopf am
+  Gehäuse vermutlich an diesen Ein/Aus-Eingang des Compute Module 5 (nicht am Gerät gelesen). labwc liest das Gerät wie
+  eine Tastatur und gibt `XF86PowerOff` an den Login; logind liest es ebenfalls (udev-Tag `power-switch`). `zenos-argon` wertet den Knopf am ONE UP nicht aus
+  (nur Akku, Lüfter und Deckel) und schaltet deshalb bei einem Druck nicht aus; nur bei 3 % Akku. Den Power-Button
+  über GPIO4 (Doppeltipp: Neustart, Halten: Ausschalten) gibt es nur beim Argon ONE V3 (`docs/module/m13.md`), er
+  bleibt unverändert. Am Gerät zu prüfen (`sudo evtest`, «Am Gerät prüfen», Punkt 17).
+- **Textkonsole:** logind zählt einen Hemmer nur, solange seine Sitzung aktiv ist. Wechselt man vor dem Anmelden mit
+  Ctrl+Alt+F2 auf eine Textkonsole, ist der Login nicht aktiv, und ein kurzer Druck schaltet dort wie bisher aus (aus
+  dem Quelltext von logind hergeleitet).
+- **Ausfallsicher:** Bekommt der Helfer den Hemmer nicht (polkit, logind, `systemd-inhibit` fehlt) oder endet er,
+  schaltet logind wie bisher aus. Das Journal meldet es einmal («Hemmer für die Ein/Aus-Taste beendet (Exit …) · ein
+  kurzer Druck schaltet aus», `journalctl -b -t zenos-greeter`), alle 60 s folgt still ein neuer Versuch. Hält er,
+  steht dort «Ein/Aus-Taste weckt nur (Hemmer handle-power-key)». Der Notfall-Login (`shell/greeter/notfall/`) nimmt
+  keinen Hemmer, dort schaltet ein kurzer Druck aus. Hängt die Oberfläche des Logins, ohne abzustürzen, bleibt der
+  Hemmer: Dann weckt die Taste nicht, und ausschalten geht nur noch mit langem Drücken oder per SSH. Langes Drücken
+  schaltet immer aus.
 
 ### Dateien
 
@@ -331,8 +378,15 @@ hergeleitet und am Gerät zu prüfen («Am Gerät prüfen», Punkt 5).
   `auth_admin_keep` und kommt nicht vor. Anders beim leeren Akku: Das entscheidet `zenos-argon` als Systemdienst,
   damit es auch am Login-Bildschirm gilt, und SSH oder tmux halten es nicht auf, weil das harte Aus schlimmer wäre.
 - **Ein/Aus-Taste über einen Hemmer statt `logind.conf`:** Ein Drop-in `HandlePowerKey=` wäre ein Eingriff ins System
-  und gälte auch am Login-Bildschirm. Der Hemmer gilt nur in der eigenen, aktiven Sitzung (polkit
-  `inhibit-handle-power-key`: `allow_active yes`) und verschwindet mit ihr.
+  und gälte überall, auch im Notfall-Login und ohne laufende Oberfläche. Ein Hemmer gilt nur in der eigenen, aktiven
+  Sitzung (polkit `inhibit-handle-power-key`: `allow_active yes`) und verschwindet mit dem Prozess, der ihn hält
+  (zenos-idle in der Sitzung, die Oberfläche des Logins am Login-Bildschirm). Fällt etwas aus, schaltet logind wie
+  gewohnt aus.
+- **Ein/Aus-Taste am Login-Bildschirm weckt nur** (Zenos Entscheid vom 08.10.2026, war offen): Vorher schaltete ein
+  kurzer Druck dort sofort aus (logind); wer den dunklen Login mit der Taste wecken wollte, bekam einen Kaltstart. Am
+  hellen Login bewirkt der Druck nichts, statt ein Menü zu öffnen: Ausschalten steht unten rechts, und nichts soll
+  aufspringen. Der Hemmer hängt an der Oberfläche des Logins und nicht an `zenos-greeter`, damit der Notfall-Login
+  (dort sieht niemand die Taste) bei logind bleibt.
 - **Deckel über GPIO27 statt logind:** logind kennt keinen Deckel (kein `SW_LID`-Gerät) und zählt HDMI als externen
   Bildschirm («Docked»). Argons Software liest den Deckel genauso; zenOS sperrt aber, statt auszuschalten
   (`docs/module/m13.md`).
@@ -402,18 +456,20 @@ hergeleitet und am Gerät zu prüfen («Am Gerät prüfen», Punkt 5).
   - `test/einheiten/bildschirm.test.py` (21 Tests): ohne bestätigte Sperre nie `wlopm --off`, ohne Quittung «aus» der
     erreichbaren Sperre ebenso nicht, ohne Oberfläche mit Eintrag im Journal, wlopm-Fehler trotz Exit 0, zweimal «an»
     zugleich ohne Fehler, `status`, kein `sh -c`.
-  - `test/einheiten/energie.test.py` (37 Tests): jeder Wächter einzeln, `CanPowerOff`, nicht Prüfbares gilt als
+  - `test/einheiten/energie.test.py` (41 Tests): jeder Wächter einzeln, `CanPowerOff`, nicht Prüfbares gilt als
     blockiert, Marker fehlt, zu jung, zu alt (nach Laufzeit, nicht nach der Uhr), aus einem anderen Start, fremd oder
     Verweis, Löschen bis zuletzt bricht ab, `poweroff` nur mit genau `--no-ask-password poweroff
     --check-inhibitors=yes` (abgelehnt: Exit 3), Login-Bildschirm (nur im Akkubetrieb, keine andere Sitzung, ohne
-    Mitteilung), Ein/Aus-Taste gesperrt und ungesperrt, Mitteilung nur nach einem neuen Start.
+    Mitteilung), Ein/Aus-Taste gesperrt und ungesperrt, Mitteilung nur nach einem neuen Start, Hemmer am
+    Login-Bildschirm (`hemmer-login`: nur als `_greetd`, genau `handle-power-key` im Modus block, gebunden an den
+    aufrufenden Prozess, endet nach SIGKILL der Oberfläche, eine Ablehnung kommt als Exit zurück, nie ein Ausschalten).
   - `test/einheiten/zen-energie.test.py` (10 Tests): `zen energie status` und `aus` (immer direkt, nie über SIGUSR1,
     ohne Sperre bleibt es hell), Höchstdauer trotz Hemmer wie die Leitplanke, Super+Shift+L ruft `zen energie aus`.
   - `test/einheiten/energie-modul.test.py` (16 Tests): Neustart von zenos-idle nach einem Update nur gesperrt, mit
     neuerem Code und hellem Bildschirm, ein zweiter Lauf startet nichts neu; `zen doctor`, Abschnitt «Energie» (Zeiten,
     Ausschalten mit und ohne Akku, Login-Bildschirm, Stand von zenos-idle, Hemmer der Ein/Aus-Taste, nur lesend).
   - `test/einheiten/raster.test.py`: Super+Shift+L und `XF86PowerOff` ohne Shell, Programme vorhanden.
-  - `test/einheiten/login-bildschirm.test.mjs` (15 Tests): Bildschirm am Login-Bildschirm (`greeter/bildschirm.js`):
+  - `test/einheiten/login-bildschirm.test.mjs` (16 Tests): Bildschirm am Login-Bildschirm (`greeter/bildschirm.js`):
     Ablauf aus und an, die Wecktaste steht schon vor dem Abschalten aus, genau eine Eingabe wird verworfen,
     Schonfrist, jede Eingabe beginnt die Minute neu (auch während des Ausschaltens), nach einem Wecken ohne Eingabe
     eine eigene Minute (Deckel 2 s vor dem Ende der alten Minute aufgeklappt: erst eine Minute später aus), neuer
@@ -422,7 +478,10 @@ hergeleitet und am Gerät zu prüfen («Am Gerät prüfen», Punkt 5).
     Fehlschlägen nie mehr; wlopm unbrauchbar: aufgeben ohne Neustart; sicher dunkel und geht nicht an: Neustart des
     Logins), Vorwarnung und Deckel ohne Wecktaste, Antworten von wlopm, Argumentliste ohne Shell, Verdrahtung in
     `Bildschirm.qml` (Wachminute, neue Bildschirme), `Anmeldefenster.qml` (Wecker, Klickfang, Wiederholungen),
-    `Formular.qml`, `Eingabe.qml` und `greeter.qml`, Notfall-Login ohne Ausschalten.
+    `Formular.qml`, `Eingabe.qml` und `greeter.qml`, Notfall-Login ohne Ausschalten. Ein/Aus-Taste am Login:
+    `EinAusTaste.qml` startet `zenos-energie hemmer-login` als Argumentliste, neuer Versuch nach 60 s, labwc des Logins
+    belegt `XF86PowerOff` nicht, der Wecker nimmt jede Taste, nichts im Login reagiert auf die Taste, der Notfall-Login
+    nimmt keinen Hemmer.
   - Deckel und leerer Akku: `argon.test.py` und `geraet.test.mjs` (`docs/module/m13.md`).
 - **Start-Test** (`pruefen.sh start`): Rundgang mit `einstellungen oeffnen energie`, `energie status`,
   `sperre bildschirm aus → an` und `sperre bildschirm an → an` (ungesperrt bleibt es hell), `energie vorwarnung →
@@ -437,8 +496,12 @@ hergeleitet und am Gerät zu prüfen («Am Gerät prüfen», Punkt 5).
     «Login-Bildschirm im Container» unten.
   - Wecktaste der Sperre: `test/container/sperre-e2e.sh` (als tester, labwc ohne Bildschirm, echte Sperre und PAM),
     Abschnitt «Wecktaste der Sperre im Container» unten.
+  - Ein/Aus-Taste am Login: `test/container/einaus-e2e.sh` (als root, der Login als `_greetd` in einer Sitzung der
+    Klasse `greeter` auf seat0), Abschnitt «Ein/Aus-Taste am Login im Container» unten.
 - **Nicht prüfbar im Container:** ein echtes Panel und sein Hintergrundlicht, die echte Ein/Aus-Taste, der Deckel,
-  ein echtes Ausschalten und ob das Gerät danach stromlos ist.
+  ein echtes Ausschalten und ob das Gerät danach stromlos ist. Auch kein Gerät mit `KEY_POWER` über uinput: Der Kernel
+  gehört der colima-VM, die alle Container trägt; deren udev markiert jedes Gerät mit `KEY_POWER` als `power-switch`,
+  und logind der VM schaltete bei einem Druck womöglich die VM samt allen Containern aus.
 
 ## Am Gerät prüfen
 
@@ -458,12 +521,11 @@ hergeleitet und am Gerät zu prüfen («Am Gerät prüfen», Punkt 5).
    Eingabe sperrt zenOS auch mit laufendem Video.
 4. **swayidle in der echten Sitzung:** `journalctl --user -u zenos-idle` ohne «Failed to parse get BlockInhibited
    property» und ohne «Failed to find session».
-5. **Ein/Aus-Taste:** `systemd-inhibit --list` zeigt «zenOS» mit handle-power-key. Ein kurzer Druck sperrt und
-   schaltet den Bildschirm aus, aber nicht das Gerät. Am Login-Bildschirm schaltet ein kurzer Druck weiter aus,
-   Halten schaltet hart aus. Kommt `XF86PowerOff` nicht in labwc an, melden (dann Rückfrage zu
-   `HandlePowerKey=lock` in `logind.conf`). Dazu: Sitzung offen, mit Ctrl+Alt+F3 auf eine Textkonsole, dort kurz
-   drücken. Schaltet es aus oder bewirkt der Druck nichts? `systemd-inhibit --list` notieren und die Doku hier und in
-   `docs/sicherheit.md` danach richtigstellen.
+5. **Ein/Aus-Taste:** `systemd-inhibit --list` zeigt «zenOS» mit handle-power-key. Ein kurzer Druck sperrt und schaltet
+   den Bildschirm aus, aber nicht das Gerät. Am Login-Bildschirm: Punkt 17. Halten schaltet hart aus. Kommt
+   `XF86PowerOff` nicht in labwc an, melden (dann Rückfrage zu `HandlePowerKey=lock` in `logind.conf`). Dazu: Sitzung
+   offen, mit Ctrl+Alt+F3 auf eine Textkonsole, dort kurz drücken. Schaltet es aus oder bewirkt der Druck nichts?
+   `systemd-inhibit --list` notieren und die Doku hier und in `docs/sicherheit.md` danach richtigstellen.
 6. **Tastatur:** Sendet eine Taste `KEY_POWER` oder `KEY_SLEEP` (logind würde ausschalten bzw. vergeblich in
    Bereitschaft gehen)? Prüfen mit `sudo evtest` auf «System Control».
 7. **Ausschalten:** «Immer, 30 Min.» einstellen, sperren, 30 Min. warten. Dann geht der Bildschirm an, die Zeile der
@@ -497,6 +559,14 @@ hergeleitet und am Gerät zu prüfen («Am Gerät prüfen», Punkt 5).
 16. **Update:** `install.sh` zweimal hintereinander ohne Fehler. Nach `zen update` in einer gesperrten Sitzung läuft
     die neue Leerlauf-Logik ohne neues Anmelden (`journalctl --user -u zenos-idle`: neu gestartet); ungesperrt erst
     nach der nächsten Sperre.
+17. **Ein/Aus-Taste am Login-Bildschirm:** Abmelden. Per SSH zeigt `systemd-inhibit --list` «zenOS» mit
+    handle-power-key und dem Benutzer `_greetd`; `journalctl -b -t zenos-greeter` zeigt «Ein/Aus-Taste weckt nur».
+    Eine Minute warten (dunkel), dann kurz drücken: hell, im Passwortfeld kein Punkt, das Gerät bleibt an. Am hellen
+    Login kurz drücken: nichts. Danach mit dem Passwort anmelden: klappt beim ersten Versuch, und `systemd-inhibit
+    --list` zeigt keinen Hemmer von `_greetd` mehr. Abmelden, «Ausschalten» unten rechts zweimal: schaltet aus. Am
+    Login gedrückt halten: schaltet hart aus. Dazu einmal `sudo evtest`: Der Knopf meldet `KEY_POWER` (Gerät
+    «pwr_button» o. ä.) und `journalctl -b -u zenos-argon` zeigt beim Drücken nichts (am ONE UP wertet zenos-argon
+    den Knopf nicht aus).
 
 ## Proben im Container (Befunde der Prüfung)
 
@@ -598,12 +668,33 @@ so macht es gesperrt auch `zen energie aus`). Jeden Fehlversuch meldet pam_unix 
   Punkt 2). Die Wiederholung macht auch dort der Client, mit der Vorgabe von labwc (600 ms, 25 je Sekunde; zenOS
   stellt sie in `rc.xml` nicht um).
 
+## Ein/Aus-Taste am Login im Container
+
+`test/container/einaus-e2e.sh` (als root) in `zenos-test:installiert` mit wlopm und wtype, 08.10.2026, systemd 259,
+polkit 127, greetd 0.10.3: Der Login läuft als `_greetd` über `scripts/bin/zenos-greeter` (labwc ohne Bildschirm, `-S`)
+in einer über PAM (`greetd-greeter`) gestellten Sitzung der Klasse `greeter` auf seat0, mit der Attrappe von greetd.
+logind hat `HandlePowerKey=lock` als Drop-in (nur im Container), `/dev/tty0` liegt beiseite (seat0 ohne VT).
+
+- **hemmer:** Sitzung `greeter`, seat0, `Remote=no`, `Active=yes`. `systemd-inhibit --list` zeigt «zenOS · 100 ·
+  _greetd · systemd-inhibit · handle-power-key · Ein/Aus-Taste am Login-Bildschirm: kurzer Druck weckt nur · block»,
+  `BlockInhibited` nennt `handle-power-key`. systemd-inhibit liegt im Scope der Sitzung und wartet auf
+  `tail --pid=<Quickshell mit greeter.qml> -f /dev/null`. Im Journal «Login: Ein/Aus-Taste weckt nur (Hemmer
+  handle-power-key)», keine Meldung «beendet». polkit mit der Vorgabe (`allow_active yes`), keine Regel von zenOS.
+  Gegenprobe: tester ohne Sitzung bekommt denselben Hemmer nicht («Failed to inhibit: Access denied»). In den
+  xkb-Daten ist `KEY_POWER` (116) `<POWR>` = 124 und `XF86PowerOff`.
+- **wecken:** Am hellen Login `XF86PowerOff` (wtype): bleibt hell, keine Wecktaste, der Login und der Hemmer laufen
+  weiter. «tes» getippt, nach 60 s dunkel; `XF86PowerOff` macht ihn hell, «Wecktaste verworfen (Taste)», greetd hat
+  nichts bekommen; «ter» und Return: greetd bekommt genau «tester» (keine der beiden Tasten kam ins Feld). Nach der
+  Anmeldung endet Quickshell, nach höchstens 3 s hat `_greetd` keinen Hemmer mehr.
+- **absturz:** `kill -9` auf Quickshell des Logins (nach 40 s): kein Hemmer nach höchstens 3 s, der Login endet mit
+  labwc, kein Notfall-Login.
+- **notfall:** Quickshell endet in den ersten 30 s (wie wenn `greeter.qml` nicht lädt): Der Notfall-Login läuft
+  («starte den Notfall-Login»), 5 s später ohne Hemmer.
+- Nicht geprüft: ein echtes `KEY_POWER` und dass logind dann nicht ausschaltet (Abschnitt «Tests», «Nicht prüfbar im
+  Container»); hergeleitet aus `BlockInhibited` und der aktiven Sitzung, am Gerät Punkt 17.
+
 ## Offen
 
-- **Ein/Aus-Taste am dunklen Login-Bildschirm:** Dort gilt weiter logind, ein kurzer Druck schaltet sofort aus. Wer
-  einen dunklen Login mit der Ein/Aus-Taste wecken will, schaltet aus (verloren geht nichts, angemeldet ist niemand,
-  aber es folgt ein Kaltstart). Ein Hemmer «handle-power-key» im Greeter hielte das auf; das berührt logind und polkit
-  für `_greetd` und ist nicht gebaut (Rückfrage an Zeno).
 - **Ein/Aus-Taste während Updates:** Ohne zenos-idle schaltet ein kurzer Druck sofort aus, auch während `zen update`
   per SSH. Ein Hemmer «shutdown» um `install.sh` (`systemd-inhibit --what=shutdown --mode=block`, braucht sudo) hielte
   logind davon ab; das wäre ein Eingriff in den Ablauf von `install.sh` und ist nicht gebaut.

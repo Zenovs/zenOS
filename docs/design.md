@@ -614,6 +614,8 @@ Passwort (`shell/polkit/Polkit.qml`).
   Übergang hell, ohne Hinweis und ohne Animation. Die erste Taste, der erste Klick oder die erste Berührung weckt nur:
   kein Punkt im Passwortfeld (auch wenn die Taste gehalten wird), kein gedrückter Knopf, der Fokus bleibt, wo er war.
   Was im Feld stand, bleibt stehen.
+- Ein/Aus-Taste am Login, kurz gedrückt: Am dunklen Login weckt sie wie jede Taste. Am hellen Login geschieht nichts,
+  kein Menü und kein Hinweis springt auf; ausgeschaltet wird mit «Ausschalten» unten rechts.
 
 ### Erster Start
 

@@ -302,7 +302,7 @@ sparen darf die Sperre nie schwächen.
   Alt, AltGr oder Super dazu; jede andere Taste kommt an. Ein neuer Bildschirm (angesteckt) weckt ohne Wecktaste,
   damit auf einem hellen Bildschirm kein Zeichen verloren geht. Das Passwort geht weiter nur über greetd an PAM. Was
   scheitert, lässt den Bildschirm an; geht ein sicher dunkler Bildschirm nicht mehr an, startet der Login neu
-  (greetd). Ein kurzer Druck auf die Ein/Aus-Taste schaltet dort wie bisher aus (logind), auch wenn es dunkel ist.
+  (greetd). Ein kurzer Druck auf die Ein/Aus-Taste weckt dort nur (nächster Punkt, «Ein/Aus-Taste»).
 - **Keine Shell:** Helfer und Aufrufe aus der Oberfläche nutzen Argumentlisten, IPC und Helfer nehmen nur feste
   Wörter an. swayidle führt seine Befehle über `sh -c` aus; zenos-idle gibt ihm deshalb nur feste, per Muster
   geprüfte Pfade mit festen Wörtern (`sperrbefehl`, `bildschirmbefehl`).
@@ -319,11 +319,23 @@ sparen darf die Sperre nie schwächen.
   ausgeschaltet. Am Login-Bildschirm gilt dasselbe (fest nach 30 Min. im Akkubetrieb, `shell/greeter/Leerlauf.qml`),
   statt «gesperrt» darf keine andere Sitzung offen sein.
 - **Ein/Aus-Taste:** Den Hemmer «handle-power-key» darf nur die aktive Sitzung nehmen (polkit
-  `inhibit-handle-power-key`: `allow_active yes`), er endet mit zenos-idle. Ohne zenos-idle (Login-Bildschirm, erste
-  Sekunden nach dem Anmelden, 1 s zwischen zwei Läufen) schaltet ein kurzer Druck wie bei logind üblich sofort aus,
-  ohne Vorwarnung und Wächter. Weil der Hemmer im Benutzerdienst läuft, zählt logind ihn vermutlich auch auf einer
-  Textkonsole, solange die grafische Sitzung im Hintergrund läuft (dort bewirkt ein kurzer Druck dann nichts; am Gerät
-  zu prüfen). Kein Drop-in in `logind.conf`, kein Eingriff ins System. Halten schaltet weiter hart aus.
+  `inhibit-handle-power-key`: `allow_active yes`), er endet mit zenos-idle. Ohne zenos-idle (erste Sekunden nach dem
+  Anmelden, 1 s zwischen zwei Läufen) schaltet ein kurzer Druck wie bei logind üblich sofort aus, ohne Vorwarnung und
+  Wächter. Weil der Hemmer im Benutzerdienst läuft, zählt logind ihn vermutlich auch auf einer Textkonsole, solange die
+  grafische Sitzung im Hintergrund läuft (dort bewirkt ein kurzer Druck dann nichts; am Gerät zu prüfen). Kein Drop-in
+  in `logind.conf`, kein Eingriff ins System. Halten schaltet weiter hart aus.
+- **Ein/Aus-Taste am Login-Bildschirm** (Zenos Entscheid vom 08.10.2026): Ein kurzer Druck weckt dort nur. Dafür hält
+  die Oberfläche des Logins (Benutzer `_greetd`) einen eigenen Hemmer «handle-power-key»
+  (`zenos-energie hemmer-login`: `systemd-inhibit … tail --pid=<Quickshell>`), solange sie läuft; nach der Anmeldung
+  oder einem Absturz ist er nach höchstens 1 s weg. polkit erlaubt das mit der Vorgabe von systemd: greetd führt den
+  Login als lokale, aktive Sitzung der Klasse `greeter` auf seat0 (PAM `greetd-greeter` mit `pam_systemd`), und
+  `inhibit-handle-power-key` hat `allow_active yes`. zenOS legt **keine eigene polkit-Regel** an. Neue Rechte bekommt
+  `_greetd` damit nicht: Mit derselben Vorgabe hätte jeder Prozess des Logins den Hemmer schon vorher nehmen können.
+  Er hält nur die Behandlung der Taste durch logind auf, nicht das Ausschalten selbst (kein Hemmer «shutdown»):
+  «Ausschalten» im Login, `systemctl poweroff` und das Ausschalten bei leerem Akku gehen weiter, langes Drücken schaltet
+  hart aus (Hardware). Der Helfer nimmt den Hemmer nur als `_greetd`, als Argumentliste ohne Shell. Ausfallsicher:
+  Bekommt er ihn nicht, schaltet logind wie bisher aus (Meldung im Journal). Der Notfall-Login nimmt keinen. Hängt die
+  Oberfläche des Logins, ohne abzustürzen, bleibt der Hemmer; dann schaltet nur langes Drücken oder SSH aus.
 - **Deckel und leerer Akku** (Argon ONE UP): Abschnitt «Hardware (Argon ONE)».
 - **Keine Telemetrie:** Zustände bleiben lokal (`$XDG_RUNTIME_DIR/zenos`, `/run/zenos`,
   `~/.local/state/zenos/energie.json` mit Zeit, Minuten und Art des letzten Ausschaltens). Nichts verlässt den

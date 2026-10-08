@@ -99,6 +99,13 @@ Abnahme in einer echten VM (lima/Apple Virtualization, Ubuntu 26.04 arm64, virti
   `shell/greeter/Bildschirm.qml` mit wlopm direkt aus dem Login; in der Sitzung bleibt «dunkel heisst gesperrt».
   Ausfallsicher: Was scheitert, lässt den Bildschirm an. Im Container mit `test/container/login-e2e.sh` geprüft, am
   Gerät abzunehmen (`docs/module/energie.md`, «Bildschirm aus am Login-Bildschirm»).
+- **Ein/Aus-Taste am Login-Bildschirm weckt nur** (Zenos Entscheid vom 08.10.2026, war ein offener Punkt): Die
+  Oberfläche des Logins hält einen logind-Hemmer «handle-power-key», solange sie läuft (`zenos-energie hemmer-login`,
+  `shell/greeter/EinAusTaste.qml`); polkit erlaubt ihn der Sitzung des Logins ohne eigene Regel. Dunkel weckt ein
+  kurzer Druck, hell bewirkt er nichts; ausgeschaltet wird über «Ausschalten» oder langes Drücken. Ausfallsicher:
+  Ohne Hemmer schaltet logind wie bisher aus, der Notfall-Login nimmt keinen. Im Container mit
+  `test/container/einaus-e2e.sh` geprüft (ohne echtes `KEY_POWER`), am Gerät abzunehmen (`docs/module/energie.md`,
+  «Ein/Aus-Taste am Login-Bildschirm»).
 - **Leerer Akku: kontrolliert ausschalten auch während SSH und tmux** (Zenos Bestätigung vom 08.10.2026): Bei 3 %
   wartet `zenos-argon` auf Updates höchstens 5 Min. und warnt alle Terminals über `wall` (`docs/module/energie.md`,
   «Entscheidungen»).
@@ -151,6 +158,3 @@ Abnahme in einer echten VM (lima/Apple Virtualization, Ubuntu 26.04 arm64, virti
   «passwordlessSudo») oder kam der Benutzer `ubuntu` aus Ubuntus Vorgabe, gibt es eine Regel ohne Passwort
   (`/etc/sudoers.d/90-cloud-init-users`). `zen doctor` warnt dann («sudo geht ohne Passwort»); zenOS ändert sie nicht.
   Entfernen oder lassen.
-- **Ein/Aus-Taste am dunklen Login-Bildschirm:** Dort schaltet ein kurzer Druck wie bisher sofort aus (logind). Wer
-  den dunklen Login damit wecken will, schaltet aus. Abhilfe wäre ein Hemmer «handle-power-key» im Greeter (berührt
-  logind und polkit für `_greetd`, nicht gebaut). Bauen oder lassen.
