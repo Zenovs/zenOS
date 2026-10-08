@@ -504,15 +504,15 @@ Rückweg für diesen Schritt: `zen rollback` auf einen Stand davor; hat das neue
 vorige Fassung zurück (`zenos-kanal.vorher`, ANLEITUNG F); zuletzt der git-Notweg in `ANLEITUNG.md`, Abschnitt F
 (signierter Tag gegen den Anker des Geräts geprüft, `dev` nur ohne Anker, ohne `zen` und ohne den Kanal).
 
-Geprüft im Testcontainer mit `test/container/kanal-e2e.sh` (echtes systemd, eigenes origin über https mit
-Wegwerf-CA, Wegwerf-Schlüssel): Übergang mit dem alten `zen update`; dev ohne Anker mit «nein» und «ja»; install.sh
-zweimal als root aus der Bereitstellung (zweiter Lauf 0 Änderungen); signierter Tag auf vorschau ohne Frage; ein
-Modul, das abbricht, und ein leeres `scripts/zen` (Rückweg, gesperrt); ein kleines tmpfs (wartet, Exit 10); ein
-Rückfrage-Pfad; SIGKILL mitten im Lauf mit nachgestellter halber Übernahme, Neustart (nachstart vor greetd), Fortsetzen;
-zwei Abbrüche (Rückweg schon beim Start); SIGTERM während install.sh (läuft zu Ende); Rollback signiert und unsigniert;
-fehlendes zenos-kanal und Notweg (signierter Tag gegen den Anker); Sperren nur für root (ein Benutzer hält die alten
-Sperren in `/run/lock`, `zen update` läuft trotzdem; ein `install.sh` von Hand hält den Kanal an); eine
-zurückgebliebene `index.lock`.
+Geprüft im Testcontainer mit `test/container/kanal-e2e.sh` (echtes systemd, eigenes origin über https mit Wegwerf-CA,
+Wegwerf-Schlüssel): Übergang mit dem alten `zen update` auf einem Gerät, das den Kanal nie hatte (`v0.1.0-rc3`); dev
+ohne Anker mit «nein» und «ja»; install.sh zweimal als root aus der Bereitstellung (zweiter Lauf 0 Änderungen);
+signierter Tag auf vorschau ohne Frage; ein Modul, das abbricht, und ein leeres `scripts/zen` (Rückweg, gesperrt); ein
+kleines tmpfs (wartet, Exit 10); ein Rückfrage-Pfad; SIGKILL mitten im Lauf mit nachgestellter halber Übernahme,
+Neustart (nachstart vor greetd), Fortsetzen; zwei Abbrüche (Rückweg schon beim Start); SIGTERM während install.sh (läuft
+zu Ende); Rollback signiert und unsigniert; fehlendes zenos-kanal und Notweg (signierter Tag gegen den Anker); Sperren
+nur für root (ein Benutzer hält die alten Sperren in `/run/lock`, `zen update` läuft trotzdem; ein `install.sh` von Hand
+hält den Kanal an); eine zurückgebliebene `index.lock`.
 
 #### In der Oberfläche (Einstellungen › System › Updates)
 
