@@ -948,7 +948,10 @@ erwarte_lauf() { # ERGEBNIS MUSTER TEXT – automatik.json nach dem letzten Lauf
 # die Sperre der Bedienung mitten in einem Schritt. Der Test startet die Units von Hand.
 automatik_timer_zahm() {
   local timer
-  for timer in zenos-kanal.timer zenos-kanal-gelegenheit.timer; do
+  # Auch die Timer der Basis: Sie hängen am selben Notschalter, und ein echter Lauf mit apt hielte die gemeinsame
+  # Sperre (spätere Schritte endeten dann mit Exit 75)
+  for timer in zenos-kanal.timer zenos-kanal-gelegenheit.timer zenos-basis-automatik.timer \
+    zenos-basis-gelegenheit.timer; do
     install -d -m 0755 "/run/systemd/system/$timer.d"
     printf '# Nur im Ende-zu-Ende-Test: kein Lauf von selbst\n[Timer]\nOnBootSec=\nOnCalendar=\nOnCalendar=2099-01-01 00:00:00\n' \
       > "/run/systemd/system/$timer.d/e2e.conf"
