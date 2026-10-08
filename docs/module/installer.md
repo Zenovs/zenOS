@@ -152,6 +152,23 @@ vertrauenswürdig: Das Programm entfernt Steuerzeichen und kürzt sie, die Oberf
   `test/container/README.md`). xdg-open (Chrome) erkennt den Dateityp unter labwc nur mit `file`; auf Ubuntu Server
   ist es da (ubuntu-standard).
 
+## Am Pi prüfen
+
+Die Testliste für Zeno steht in `ANLEITUNG.md`, Teil E, «zen Installer». Dazu für die Doku:
+
+- `zen doctor`, Abschnitt «zen Installer»: «zen Installer eingerichtet», «.deb-Pakete öffnet der zen Installer».
+- `XDG_CURRENT_DESKTOP=labwc:wlroots gio mime application/vnd.debian.binary-package` nennt `zenos-installer.desktop`.
+  `xdg-mime query filetype DATEI.deb` (so erkennt xdg-open, also Chrome, den Typ) nennt
+  `application/vnd.debian.binary-package`.
+- Ein Download in Chrome: Klick auf die Datei in der Download-Liste öffnet den zen Installer. Fragt Chrome vorher,
+  ob die Datei behalten werden soll, ist das Chromes eigene Warnung für Programme.
+- RustDesk (`rustdesk-…-aarch64.deb` von GitHub): Welche Hinweise kommen (eigene Skripte, Systemdienst aus dem
+  postinst, Dateien ausserhalb von `/usr`), wie viele Pakete «Dazu» nennt, wie lange Ansehen und Installieren dauern.
+  Ergebnis an Claude.
+- `journalctl -t zenos-installer-bedienen -t zenos-installer` zeigt Anfrage, Weg (pkexec, uid), Paket und Ergebnis,
+  ohne Ordner; `sudo tail /var/log/zenos/installer.log` den Paketstand vorher und nachher.
+- Ablage leer nach jeder Installation: `ls /var/lib/zenos/installer/ablage` ohne Ausgabe.
+
 ## Rückweg
 
 Siehe Kopf von `scripts/module/76-installer.sh`: die Dateien oben entfernen und die zwei Zeilen für .deb aus

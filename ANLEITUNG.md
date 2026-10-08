@@ -779,6 +779,51 @@ systemctl --user start zenos-shell.service
 - [ ] `zen luefter 3` (mit sudo) und `zen luefter auto` wirken wie das Menü. `zen doctor` zeigt im Abschnitt «Argon
   ONE» den Lüfterwunsch und den Regler ohne Warnung.
 
+**zen Installer (ab `v0.1.0-rc7`, Einzelheiten in `docs/module/installer.md`)**
+
+Am Gerät prüfen, mit der RustDesk-Datei für den Pi (`rustdesk-<version>-aarch64.deb` von GitHub, in Chrome
+heruntergeladen, liegt in `~/Ablage`). Ob RustDesk selbst unter labwc gut läuft (etwa Fernsteuerung unter Wayland),
+ist eine Frage an RustDesk, nicht an den Installer; notiere trotzdem, was du siehst.
+
+- [ ] `zen doctor`, Abschnitt «zen Installer»: «zen Installer eingerichtet» und «.deb-Pakete öffnet der zen
+  Installer», keine Warnung. Einstellungen → Apps zeigt unten «Über den zen Installer», noch ohne Einträge, mit
+  einem Satz, wie etwas dazukommt.
+- [ ] Ablage in Thunar öffnen (Ordner-Knopf in der Leiste), Doppelklick auf die RustDesk-Datei: Das Fenster «zen
+  Installer» geht auf, kurz «Wird angesehen …», dann die Ansicht. Sonst springt nichts auf, kein Terminal.
+- [ ] Die Ansicht, in hell und dunkel: oben das RustDesk-Symbol, der Name «RustDesk» gross, darunter Paket und
+  Version; «Bereit zum Installieren»; die Werte zweispaltig (Version mit «neu», Paket, Herausgeber, Webseite, Braucht,
+  Datei, Dazu, Programme, SHA-256). Unter «Beim Installieren» ruhig, ohne Rot und ohne Gelb: eigene Skripte als root
+  und ein **Systemdienst** («Startet … Systemdienste …»). Kein Knopf hat den Fokus; Enter installiert nicht.
+- [ ] «Installieren» (mit Schloss): Der Passwortdialog erscheint mittig mit «Die angezeigte Software installieren. Das
+  Paket läuft dabei mit allen Rechten.» Mit Esc abbrechen: zurück zur Ansicht, ohne Meldung, nichts installiert.
+- [ ] Sperre: noch einmal «Installieren», dann bei offenem Passwortdialog `Super + L`. Nach dem Entsperren ist der
+  Dialog weg, das Fenster zeigt wieder die Ansicht, nichts ist installiert.
+- [ ] Noch einmal «Installieren», jetzt mit Passwort: Solange der Dialog fragt, steht «Wartet auf dein Passwort …» da,
+  dann «Wird installiert …», am Ende «RustDesk ist installiert», «Du findest es im Befehlsfeld.» und die Knöpfe
+  «Öffnen» und «Fertig». Notiere, wie lange es dauerte.
+- [ ] «Öffnen» startet RustDesk in einem eigenen Fenster. Im Befehlsfeld findet «rust» RustDesk (das Symbol kann wie
+  bei VS Code erst nach dem nächsten Anmelden kommen). Per SSH zeigt `systemctl is-active rustdesk` «active»: Der
+  Hinweis auf den Systemdienst stimmte.
+- [ ] Noch einmal Doppelklick auf dieselbe Datei: «Schon installiert», Knopf «Öffnen».
+- [ ] Ohne Doppelklick: Rechtsklick auf die Datei → «Mit zen Installer öffnen» öffnet dasselbe Fenster. Die Aktion
+  kommt mit `zen update` im Terminal, sonst mit dem nächsten Anmelden; ein schon offenes Thunar vorher schliessen.
+  Fehlt sie dann noch, zeigt `zen doctor` bei «Ablage und Dateimanager» warum.
+- [ ] Aus Chrome: In der Download-Liste von Chrome auf die RustDesk-Datei klicken: Der zen Installer geht auf.
+  Fragt Chrome vorher, ob du die Datei behalten willst, ist das Chromes eigene Warnung.
+- [ ] Ablehnung: die Fassung für PCs herunterladen (`rustdesk-<version>-x86_64.deb`) und doppelklicken: «Lässt sich
+  nicht installieren» mit Warnsymbol, darunter der Grund (Architektur), nur der Knopf «Schliessen».
+- [ ] Einstellungen → Apps → «Über den zen Installer»: eine Zeile RustDesk mit Paket, Version und «seit …».
+  «Entfernen …» fragt nach dem Passwort, der Knopf zeigt «Wird entfernt …», danach der Hinweis «RustDesk ist
+  entfernt», und die Zeile ist weg. RustDesk steht nicht mehr im Befehlsfeld, `systemctl is-active rustdesk` zeigt
+  nicht mehr «active» (sonst melden: Dann räumt RustDesk seinen Dienst beim Entfernen nicht ab).
+- [ ] Fenster zu während der Installation: RustDesk noch einmal per Doppelklick installieren und bei «Wird
+  installiert …» das Fenster schliessen. Am Ende kommt eine ruhige Mitteilung «RustDesk ist installiert», keine
+  dringende Karte: Sie wartet wie andere Mitteilungen, die Glocke → «Jetzt zustellen» holt sie.
+- [ ] Per SSH: `zen install --liste` zeigt RustDesk. `zen install ~/Ablage/rustdesk-<version>-aarch64.deb` zeigt
+  dieselbe Ansicht als Text (bei «Zustand»: «diese Version ist schon installiert») und fragt nichts.
+  `journalctl -t zenos-installer-bedienen` nennt jeden Aufruf mit Weg (pkexec, uid) und Dateiname.
+- [ ] `ls /var/lib/zenos/installer/ablage` ist leer, `zen doctor` zeigt «zen Installer zuletzt …» ohne Warnung.
+
 **Flüssigkeit**
 - [ ] Befehlsfeld, Hell/Dunkel, Fensterwechsel (`Alt + Tab`, App-Leiste und Fensterübersicht) und Einrasten laufen
   flüssig (60 fps). Nichts ruckelt, nichts blinkt.
