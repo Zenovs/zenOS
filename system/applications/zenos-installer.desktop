@@ -1,0 +1,15 @@
+# zenOS: der zen Installer für .deb-Pakete (Doppelklick in Thunar, Downloads aus Chrome und Firefox, «Öffnen mit»).
+# Installiert nach /usr/local/share/applications/ (76-installer); Standard für .deb über /etc/xdg/labwc-mimeapps.list.
+# Nicht im Befehlsfeld (NoDisplay). Das Startprogramm prüft den Pfad und gibt ihn als Argument an die Oberfläche
+# (zenos-ipc installer oeffnen PFAD); nichts läuft über eine Shell.
+[Desktop Entry]
+Type=Application
+Name=zen Installer
+Comment=Heruntergeladene Software installieren
+Exec=/opt/zenos/scripts/bin/zenos-installer oeffnen %f
+TryExec=/opt/zenos/scripts/bin/zenos-installer
+Icon=package-x-generic
+Terminal=false
+NoDisplay=true
+MimeType=application/vnd.debian.binary-package;application/x-deb;
+Categories=System;PackageManager;
