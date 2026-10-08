@@ -15,7 +15,7 @@
 #   zenos-energie taste              Ein/Aus-Taste kurz gedrückt (labwc: XF86PowerOff, auch gesperrt)
 #   zenos-energie hemmer-login       am Login-Bildschirm (nur als _greetd): hält den logind-Hemmer «handle-power-key»,
 #                                    solange der aufrufende Prozess (die Oberfläche des Logins) läuft; ein kurzer
-#                                    Druck weckt dort nur. Sonst «kein Login-Bildschirm …» und Exit 0
+#                                    Druck weckt dort nur. Sonst (auch als root) «kein Login-Bildschirm …», Exit 0
 #   zenos-energie meldung            nach einem automatischen Aus: Titel und Text der Mitteilung (je eine Zeile),
 #                                    einmal, beim ersten Aufruf nach dem nächsten Start
 #
@@ -541,8 +541,11 @@ befehl_taste() {
 # von systemd-inhibit, und logind schaltet wie bisher aus. Gedrückt halten schaltet immer hart aus (Hardware).
 
 befehl_hemmer_login() {
-  local benutzer
-  benutzer=$(id -un 2>/dev/null) || benutzer=""
+  # root ist nie der Login unter greetd (Start-Test von pruefen.sh als root): wie jeder andere Benutzer Exit 0
+  local benutzer=root
+  if (( EUID != 0 )); then
+    benutzer=$(id -un 2>/dev/null) || benutzer=""
+  fi
   if [[ "$benutzer" != _greetd ]]; then
     printf 'kein Login-Bildschirm unter greetd (Benutzer %s), kein Hemmer\n' "${benutzer:-unbekannt}"
     return 0
@@ -605,6 +608,13 @@ case "$1" in
   -h | --hilfe | --help) sed -n '2,37p' "$selbst" | sed 's/^# \{0,1\}//'; exit 0 ;;
   *) meldung "unbekannter Befehl «$1» (erlaubt: $erlaubt)"; exit 2 ;;
 esac
+# hemmer-login vor der Prüfung auf root: Der Start-Test von pruefen.sh startet greeter.qml auch als root. Dort gibt es
+# keinen Login unter greetd, also «kein Login-Bildschirm …» und Exit 0 ohne Hemmer statt Exit 2 (EinAusTaste.qml
+# meldete sonst einen Fehler und versuchte es alle 60 s erneut)
+if [[ "$1" == hemmer-login ]]; then
+  befehl_hemmer_login
+  exit
+fi
 if (( EUID == 0 )); then
   meldung "läuft als normaler Benutzer in der Sitzung, nicht als root"
   exit 2
@@ -621,6 +631,5 @@ case "$1" in
   darf-ausschalten-login) befehl_darf_ausschalten login ;;
   ausschalten-login) befehl_ausschalten login ;;
   taste) befehl_taste ;;
-  hemmer-login) befehl_hemmer_login ;;
   meldung) befehl_meldung ;;
 esac

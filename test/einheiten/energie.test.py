@@ -916,6 +916,30 @@ class EnergieTest(unittest.TestCase):
                 self.assertEqual(self.aufruf("hemmer-login")[0], 0)
                 self.assertEqual(self.aufrufe("systemd-inhibit"), [])
 
+    @unittest.skipUnless(os.geteuid() == 0, "nur als root (CI, Testcontainer als root)")
+    def test_hemmer_login_als_root(self):
+        # Start-Test von pruefen.sh als root startet greeter.qml und damit hemmer-login als echter root (ohne setpriv):
+        # kein Hemmer, Exit 0 wie unter jedem anderen Benutzer, nicht Exit 2 wie die übrigen Befehle
+        def als_root(*args):
+            lauf = subprocess.run([self.programm, *args], capture_output=True, text=True, env=self.umgebung,
+                                  timeout=60, check=False)
+            return lauf.returncode, lauf.stdout, lauf.stderr
+
+        self.attrappe(os.path.join(self.fake, "systemd-inhibit"), "systemd-inhibit")
+        self.assertEqual(als_root("hemmer-login"),
+                         (0, "kein Login-Bildschirm unter greetd (Benutzer root), kein Hemmer\n", ""))
+        # Auch wenn «id -un» _greetd meldete: root nimmt nie einen Hemmer
+        self.als_greetd()
+        self.assertEqual(als_root("hemmer-login")[0], 0)
+        self.assertEqual(self.aufrufe("systemd-inhibit"), [])
+        # Alle anderen Befehle verweigern root weiter, ohne etwas aufzurufen
+        verweigert = "zenos-energie: läuft als normaler Benutzer in der Sitzung, nicht als root\n"
+        for befehl in ("darf-ausschalten", "status", "ausschalten", "darf-ausschalten-login", "ausschalten-login",
+                       "taste", "meldung"):
+            with self.subTest(befehl=befehl):
+                self.assertEqual(als_root(befehl), (2, "", verweigert))
+        self.assertEqual([e["wer"] for e in self.ereignisse()], [])
+
     def test_hemmer_login_haelt_hemmer_an_der_oberflaeche(self):
         self.als_greetd()
         self.attrappe(os.path.join(self.fake, "systemd-inhibit"), "systemd-inhibit")
