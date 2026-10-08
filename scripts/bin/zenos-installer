@@ -149,6 +149,9 @@ APT_WAIT = 1200
 POLL = 2
 # Ablage: Reste (etwa nach einem Abbruch zwischen Kopieren und Unit) gehen nach einer Stunde
 DROP_MAX_AGE = 3600
+# Nach einem abgebrochenen Start auf das Ende des Programms warten (TimeoutStopSec der Units: 20 Minuten), Takt
+UNIT_EXIT_WAIT = 1260
+UNIT_POLL = 0.5
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -2023,13 +2026,28 @@ def copy_to_drop(src_fd, sha):
                 os.unlink(tmp)
 
 
+def main_process(unit, env):
+    """(MainPID, ExecMainStatus) der Unit als Texte: MainPID «0», sobald das Programm nicht mehr läuft (ExecMainPID
+    bliebe stehen)."""
+    r = run([SYSTEMCTL, "show", "--property=MainPID", "--property=ExecMainStatus", "--", unit], env=env)
+    values = dict(line.split("=", 1) for line in r.stdout.split("\n") if "=" in line)
+    return values.get("MainPID", "").strip(), values.get("ExecMainStatus", "").strip()
+
+
 def start_unit(unit):
     """Startet UNIT, wartet auf ihr Ende und gibt den Exit des Programms (ExecMainStatus) zurück; lief sie gar nicht, 1.
-    Danach immer reset-failed: Das Ergebnis steht in letzte.json, ein gescheitertes Paket ist kein Ausfall des
-    Systems."""
+    Ein Stopp (Ausschalten, systemctl stop) bricht den Start-Auftrag sofort ab («Job … canceled»), das Programm endet
+    erst danach (Exit 10; ein laufendes apt läuft zu Ende): Dann wartet es, bis das Programm weg ist, sonst stünde hier
+    der Exit eines früheren Laufs. Danach immer reset-failed: Das Ergebnis steht in letzte.json, ein gescheitertes Paket
+    ist kein Ausfall des Systems."""
     env = systemd_env()
     r = run([SYSTEMCTL, "start", "--", unit], env=env, timeout=None)
-    status = run([SYSTEMCTL, "show", "--property=ExecMainStatus", "--value", "--", unit], env=env).stdout.strip()
+    pid, status = main_process(unit, env)
+    if r.returncode != 0:
+        end = time.monotonic() + UNIT_EXIT_WAIT
+        while pid not in ("", "0") and time.monotonic() < end:
+            time.sleep(UNIT_POLL)
+            pid, status = main_process(unit, env)
     run([SYSTEMCTL, "reset-failed", "--", unit], env=env)
     if r.returncode != 0 and (not status.isdigit() or int(status) == 0):
         print(f"{NAME}: {unit}: {first_line(r.stderr) or 'Start gescheitert'}", file=sys.stderr)

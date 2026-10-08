@@ -1233,6 +1233,58 @@ class Units(unittest.TestCase):
                 self.assertEqual(I.unit_escape(name), r.stdout.strip())
 
 
+class UnitStarten(unittest.TestCase):
+    """start_unit: der Exit des Programms (ExecMainStatus), auch nach einem Stopp, der den Start-Auftrag abbricht, bevor
+    das Programm zu Ende ist (im Container gesehen: «Job … canceled», ExecMainStatus noch 0). Gewartet wird auf
+    MainPID 0: ExecMainPID bleibt nach dem Ende stehen."""
+
+    def lauf(self, start_rc, antworten):
+        aufrufe = []
+        offen = list(antworten)
+
+        def run(argv, env, timeout=None, cwd="/"):
+            aufrufe.append(argv[1])
+            if argv[1] == "start":
+                return subprocess.CompletedProcess(argv, start_rc, "", "Job for x.service canceled.\n" if start_rc else "")
+            if argv[1] == "show":
+                pid, status = offen.pop(0) if len(offen) > 1 else offen[0]
+                return subprocess.CompletedProcess(argv, 0, f"MainPID={pid}\nExecMainStatus={status}\n", "")
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        with mock.patch.object(I, "run", side_effect=run) as lauf, mock.patch.object(I.time, "sleep") as schlafen, \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as fehler:
+            code = I.start_unit("zenos-installer-installieren@x.service")
+        for c in lauf.call_args_list:
+            if c.args[0][1] == "show":
+                self.assertIn("--property=MainPID", c.args[0])
+                self.assertNotIn("--property=ExecMainPID", c.args[0])
+        return code, aufrufe, schlafen.call_count, fehler.getvalue()
+
+    def test_erfolg_und_exit_des_programms(self):
+        self.assertEqual(self.lauf(0, [("0", "0")])[:2], (0, ["start", "show", "reset-failed"]))
+        # Gescheitert (failed): systemctl start endet mit 1, der Exit des Programms zählt
+        self.assertEqual(self.lauf(1, [("0", "3")])[0], 3)
+        self.assertEqual(self.lauf(1, [("0", "75")])[0], 75)
+
+    def test_stopp_waehrend_des_wartens(self):
+        code, aufrufe, geschlafen, fehler = self.lauf(1, [("4711", "0"), ("4711", "0"), ("0", "10")])
+        self.assertEqual(code, 10)
+        self.assertEqual(aufrufe, ["start", "show", "show", "show", "reset-failed"])
+        self.assertEqual(geschlafen, 2)
+        self.assertEqual(fehler, "")
+
+    def test_lief_gar_nicht(self):
+        code, _, _, fehler = self.lauf(1, [("0", "0")])
+        self.assertEqual(code, I.EXIT_ERROR)
+        self.assertIn("canceled", fehler)
+
+    def test_wartet_nicht_ewig(self):
+        with mock.patch.object(I, "UNIT_EXIT_WAIT", 0):
+            code, aufrufe, _, _ = self.lauf(1, [("4711", "0")])
+        self.assertEqual(code, I.EXIT_ERROR)
+        self.assertEqual(aufrufe, ["start", "show", "reset-failed"])
+
+
 class Gleichlauf(unittest.TestCase):
     def test_geschuetzt_wie_basis(self):
         with open(BASIS, encoding="utf-8") as f:
