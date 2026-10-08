@@ -1020,7 +1020,8 @@ bis 2.0.10 oder Benutzer `ubuntu`); ob sie bleibt, entscheidest du (`docs/baufor
 sudo rm /etc/sudoers.d/zenos-bau
 ```
 
-**G2 bis G5: GitHub absichern** (einmalig, im Browser; das kannst nur du einstellen). Tags `v*` und `vertrauen/*`
+**G2 bis G5: GitHub absichern** (einmalig, im Browser; das kannst nur du einstellen. Am 08.10.2026 per `gh`
+eingerichtet, G5 prüft es). Tags `v*` und `vertrauen/*`
 lassen sich danach nicht mehr verschieben oder löschen, ausser von dir als Admin, auf `dev` und `main` gibt es keinen
 Force-Push mehr, und ein veröffentlichtes Release bleibt, wie es ist. Die Geräte prüfen die Signatur ohnehin selbst;
 das hier ist die zweite Schicht (`docs/sicherheit.md`, «Repo und Releases»).

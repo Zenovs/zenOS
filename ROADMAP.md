@@ -9,7 +9,8 @@ Jeder Checkpoint endet mit einem Tag und einer Abnahme durch Zeno auf echter Har
 ## C0 · Grundlagen
 
 - [x] Manifest, CLAUDE.md und Doku
-- [ ] Repo öffentlich, Issues deaktiviert, 2FA auf GitHub aktiv
+- [ ] Repo öffentlich, Issues deaktiviert, 2FA auf GitHub aktiv (0.1: öffentlich und Issues aus seit 08.10.2026,
+  dazu Rulesets für Tags und Branches und unveränderliche Releases; 2FA prüft Zeno)
 - [x] gitleaks als Pre-Commit-Hook (dazu gitleaks in GitHub Actions)
 
 ## C1 · Basis auf dem Pi

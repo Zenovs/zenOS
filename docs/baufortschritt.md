@@ -133,7 +133,9 @@ Abnahme in einer echten VM (lima/Apple Virtualization, Ubuntu 26.04 arm64, virti
 - **Chrome `AutofillCreditCardEnabled`** ist ab Chrome 156 veraltet; Nachfolger `AutofillSettings` in
   `docs/sicherheit.md` festhalten und übernehmen.
 - **`esm-cache` von ubuntu-pro-client** fragt bei `apt update` `contracts.canonical.com` ab; abschalten oder lassen.
-- **GitHub:** Issues sind im Repo noch eingeschaltet (ANLEITUNG A6 sah vor, sie auszuschalten), 2FA prüfen.
+- **GitHub:** 2FA im Konto prüfen. Erledigt am 08.10.2026 (per `gh`, mit Zenos Ja): Issues aus, Rulesets
+  «Release-Tags» (`v*`, `vertrauen/*`: nicht verschieben, nicht löschen, Ausnahme Admin) und «dev und main» (nicht
+  löschen, kein Force-Push), unveränderliche Releases an (ANLEITUNG G2 bis G5).
 - **Festplattenverschlüsselung und Backups** auf dem Pi sind Ziel, in 0.1 nicht umgesetzt.
 - **Name und Marke vor der ersten Weitergabe:** die Markenrecherche zu «zenOS» und bei Canonical schriftlich anfragen
   oder sich auf die Klausel der IPR-Policy zu den Open-Source-Lizenzen stützen (`docs/image-und-releases.md`, «Name
