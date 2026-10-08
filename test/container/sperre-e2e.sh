@@ -12,7 +12,7 @@
 #   docker exec zenos-sperre-e2e bash -c 'apt-get update -qq && apt-get install -y -qq wlopm wtype'
 #   docker exec zenos-sperre-e2e loginctl enable-linger tester
 # Dann: docker exec -u tester -w /home/tester/zenOS zenos-sperre-e2e test/container/sperre-e2e.sh [schritt …]
-# Ohne Angabe laufen alle (rund 2 Minuten). Exit 0 nur, wenn alles stimmt.
+# Ohne Angabe laufen alle (rund 3 Minuten). Exit 0 nur, wenn alles stimmt.
 #
 #   taste    gesperrt, «tes» getippt, dunkel; «q» weckt und ist verworfen; «ter» und Return entsperren beim ersten
 #            Versuch (kein Fehlversuch bei PAM)
@@ -21,6 +21,12 @@
 #            weiter gesperrt, PAM hat nichts geprüft (kein halbes Passwort); «ter» und Return entsperren.
 #   andere   nie eine andere Taste: gesperrt, «tes», dunkel, «q» gehalten und währenddessen «t» gedrückt: «t» kommt
 #            an, «er» und Return entsperren beim ersten Versuch
+#   modifikator  Shift, Alt, AltGr oder Super während des Haltens: Sie wiederholen sich nicht (xkb) und übernehmen
+#            die Wiederholung im Client nicht, die gehaltene Taste wiederholt sich weiter. Gesperrt, «tes», dunkel,
+#            Return gehalten und nach 900 ms Shift dazu: weiter gesperrt, PAM hat nichts geprüft; «ter» und Return
+#            entsperren. Dann «q» gehalten, nacheinander Alt, AltGr und Super dazu: «ter» und Return entsperren beim
+#            ersten Versuch. (Ctrl wiederholt sich in der Keymap von wtype, anders als in den Belegungen ch und us,
+#            und übernimmt dort die Wiederholung: Ihn prüfen nur die Einheitentests.)
 #   hell     ohne Wecken wird nichts verworfen: gesperrt und hell, «x» 1,5 s gehalten und Return: PAM lehnt «xx…» ab
 #            (genau ein Fehlversuch, die Wiederholungen kamen an); «tester» und Return entsperren
 #
@@ -201,6 +207,32 @@ schritt_andere() {
   entsperrt_beim_ersten "«t» kam an, «er» und Return:"
 }
 
+schritt_modifikator() {
+  echo "Schritt modifikator: Shift, Alt, AltGr oder Super während des Haltens beenden das Verwerfen nicht"
+  vorbereiten || return
+  # Return gedrückt, nach 900 ms (schon wiederholt) Shift dazu, 600 ms später Shift los, Return 100 ms danach
+  WAYLAND_DISPLAY=$(anzeige) wtype -P Return -s 900 -P Shift_L -s 600 -p Shift_L -s 100 -p Return
+  pruefe "Return (mit Shift dazu gehalten) weckt" "Return weckt nicht" warte_bildschirm an 5
+  # pam_unix antwortet auf ein falsches Passwort erst nach rund 2 s: abwarten, was ein halbes Passwort ergäbe
+  sleep 3
+  pruefe "weiter gesperrt" "gehaltenes Return hat entsperrt" ist_sperre gesperrt
+  pruefe "PAM hat nichts geprüft (kein halbes Passwort nach dem Shift)" \
+    "PAM sah $(fehlversuche) Fehlversuch(e): Return wiederholte sich nach dem Shift ins Feld" keine_fehlversuche
+  tippe ter
+  entsperrt_beim_ersten "danach «ter» und Return:"
+
+  vorbereiten || return
+  # «q» gedrückt, nach 900 ms nacheinander Alt, AltGr und Super je 300 ms, dazwischen 200 ms nur «q»
+  WAYLAND_DISPLAY=$(anzeige) wtype -P q -s 900 -P Alt_L -s 300 -p Alt_L -s 200 \
+    -P ISO_Level3_Shift -s 300 -p ISO_Level3_Shift -s 200 -P Super_L -s 300 -p Super_L -s 200 -p q
+  pruefe "«q» (mit Alt, AltGr und Super dazu gehalten) weckt" "«q» weckt nicht" warte_bildschirm an 5
+  sleep 1
+  pruefe "weiter gesperrt, PAM hat nichts geprüft" "gesperrt: $(sperre), Fehlversuche: $(fehlversuche)" \
+    gesperrt_ohne_fehlversuch
+  tippe ter
+  entsperrt_beim_ersten "keine Wiederholung von «q» im Feld, «ter» und Return:"
+}
+
 schritt_hell() {
   echo "Schritt hell: ohne Wecken wird nichts verworfen"
   sperren || { schlecht "Sperre greift nicht ($(sperre))"; return; }
@@ -228,11 +260,11 @@ done
 [[ -d "$XDG_RUNTIME_DIR" ]] || { meldung "$XDG_RUNTIME_DIR fehlt (loginctl enable-linger tester)"; exit 2; }
 
 schritte=("$@")
-(( ${#schritte[@]} > 0 )) || schritte=(taste halten andere hell)
+(( ${#schritte[@]} > 0 )) || schritte=(taste halten andere modifikator hell)
 for s in "${schritte[@]}"; do
   case "$s" in
-    taste | halten | andere | hell) ;;
-    *) meldung "unbekannter Schritt «$s» (taste, halten, andere, hell)"; exit 2 ;;
+    taste | halten | andere | modifikator | hell) ;;
+    *) meldung "unbekannter Schritt «$s» (taste, halten, andere, modifikator, hell)"; exit 2 ;;
   esac
 done
 trap oberflaeche_stoppen EXIT

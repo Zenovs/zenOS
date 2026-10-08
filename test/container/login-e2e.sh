@@ -10,7 +10,7 @@
 #   docker exec zenos-login-e2e bash -c 'apt-get update -qq && apt-get install -y -qq wlopm wtype wlrctl'
 #   docker exec zenos-login-e2e loginctl enable-linger tester
 # Dann: docker exec -u tester -w /home/tester/zenOS zenos-login-e2e test/container/login-e2e.sh [schritt …]
-# Ohne Angabe laufen alle (rund 12 Minuten: Jede Minute ohne Eingabe wird abgewartet). Exit 0 nur, wenn alles stimmt.
+# Ohne Angabe laufen alle (rund 15 Minuten: Jede Minute ohne Eingabe wird abgewartet). Exit 0 nur, wenn alles stimmt.
 #
 #   minute   nach dem Start an; ein Zeichen im Passwortfeld nach 40 s beginnt die Minute neu (nach 80 s noch an),
 #            danach aus, frühestens 55 s nach dieser Eingabe. Die Maus weckt.
@@ -19,6 +19,11 @@
 #   halten   die Wecktaste gehalten (1,5 s, der Client wiederholt sie nach 600 ms): «tes», dunkel, «q» gehalten,
 #            «ter» und Return: greetd bekommt genau «tester». Dann «tes», dunkel, Return gehalten: greetd hört nichts
 #            (kein halbes Passwort an PAM), «ter» und Return melden mit «tester» an.
+#   modifikator  Shift, Alt, AltGr oder Super während des Haltens (sie wiederholen sich nicht und übernehmen die
+#            Wiederholung im Client nicht): «tes», dunkel, Return gehalten und nach 900 ms Shift dazu: greetd hört
+#            nichts, «ter» und Return melden mit «tester» an. Dann «tes», dunkel, «q» gehalten, nacheinander Alt,
+#            AltGr und Super dazu: greetd bekommt genau «tester». (Ctrl wiederholt sich in der Keymap von wtype und
+#            übernimmt dort die Wiederholung: Ihn prüfen nur die Einheitentests.)
 #   klick    «tester» getippt, Zeiger auf «Anmelden», dunkel: Der erste Klick weckt nur (greetd hört nichts), der
 #            zweite meldet an
 #   fehler   wlopm (Attrappe vorn im PATH) schaltet ab, meldet aber einen Fehler: Der Login schaltet sofort wieder an
@@ -238,6 +243,45 @@ schritt_halten() {
   fi
 }
 
+# Erwartet nach Return eine Antwort an PAM, genau «tester»
+meldet_mit_tester_an() { # TEXT
+  local antwort
+  if antwort=$(warte_antwort 10) && [[ "$antwort" == tester ]]; then
+    gut "$1 greetd bekommt genau «tester»"
+  else
+    schlecht "$1 greetd bekommt «${antwort:-nichts}» statt «tester»"
+  fi
+}
+
+schritt_modifikator() {
+  echo "Schritt modifikator: Shift, Alt, AltGr oder Super während des Haltens beenden das Verwerfen nicht"
+  login_starten || { schlecht "Login startet nicht"; return; }
+  "$O" tippe tes
+  if warte_bildschirm aus 75; then gut "mit «tes» im Feld nach $((SECONDS - START)) s aus"; else schlecht "nicht aus ($(bildschirm))"; return; fi
+  # Return gedrückt, nach 900 ms (schon wiederholt) Shift dazu, 600 ms später Shift los, Return 100 ms danach
+  WAYLAND_DISPLAY=$(cat "$ZUSTAND/wayland") wtype -P Return -s 900 -P Shift_L -s 600 -p Shift_L -s 100 -p Return
+  pruefe "Return (mit Shift dazu gehalten) weckt" "Return weckt nicht" warte_bildschirm an 5
+  sleep 1.5
+  pruefe "greetd hat nichts bekommen (kein halbes Passwort nach dem Shift)" \
+    "Return wiederholte sich nach dem Shift ins Feld: $(anfragen | tr '\n' ' ')" keine_anfragen
+  "$O" tippe ter
+  "$O" taste Return
+  meldet_mit_tester_an "danach «ter» und Return:"
+
+  login_starten || { schlecht "Login startet nicht"; return; }
+  "$O" tippe tes
+  if warte_bildschirm aus 75; then gut "mit «tes» im Feld nach $((SECONDS - START)) s aus"; else schlecht "nicht aus ($(bildschirm))"; return; fi
+  # «q» gedrückt, nach 900 ms nacheinander Alt, AltGr und Super je 300 ms, dazwischen 200 ms nur «q»
+  WAYLAND_DISPLAY=$(cat "$ZUSTAND/wayland") wtype -P q -s 900 -P Alt_L -s 300 -p Alt_L -s 200 \
+    -P ISO_Level3_Shift -s 300 -p ISO_Level3_Shift -s 200 -P Super_L -s 300 -p Super_L -s 200 -p q
+  pruefe "«q» (mit Alt, AltGr und Super dazu gehalten) weckt" "«q» weckt nicht" warte_bildschirm an 5
+  sleep 1
+  pruefe "greetd hat nichts bekommen" "greetd hat schon etwas bekommen" keine_anfragen
+  "$O" tippe ter
+  "$O" taste Return
+  meldet_mit_tester_an "keine Wiederholung von «q» im Feld:"
+}
+
 schritt_klick() {
   echo "Schritt klick: der erste Klick weckt nur, der zweite meldet an"
   login_starten || { schlecht "Login startet nicht"; return; }
@@ -367,11 +411,11 @@ mkdir -p -- "$E2E" || exit 1
 trap login_stoppen EXIT
 
 schritte=("$@")
-(( ${#schritte[@]} > 0 )) || schritte=(minute taste halten klick fehler neustart)
+(( ${#schritte[@]} > 0 )) || schritte=(minute taste halten modifikator klick fehler neustart)
 for s in "${schritte[@]}"; do
   case "$s" in
-    minute | taste | halten | klick | fehler | neustart) "schritt_$s" ;;
-    *) meldung "unbekannter Schritt «$s» (minute, taste, halten, klick, fehler, neustart)"; exit 2 ;;
+    minute | taste | halten | modifikator | klick | fehler | neustart) "schritt_$s" ;;
+    *) meldung "unbekannter Schritt «$s» (minute, taste, halten, modifikator, klick, fehler, neustart)"; exit 2 ;;
   esac
 done
 login_stoppen
