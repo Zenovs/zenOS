@@ -90,7 +90,9 @@ _ubuntu_updates() {
   case "$zustand" in
     ungeprueft | "") hinweis "Basis-Updates noch nie geprüft (zen update)" ;;
     aktuell) ok "Basis-Updates: keine ausstehend" ;;
-    bereit | zustimmung | veraltet) hinweis "Basis-Updates ausstehend: $text (zen update)" ;;
+    bereit | zustimmung) hinweis "Basis-Updates ausstehend: $text (zen update)" ;;
+    # Seit der Prüfung änderten sich Pakete (meist unattended-upgrades): Was ansteht, weiss erst eine neue Prüfung
+    veraltet) hinweis "Basis-Updates: letzte Prüfung $text; neu prüfen: zen update" ;;
     laeuft) hinweis "Ein Basis-Update läuft gerade" ;;
     gesperrt) warnung "Basis-Updates gesperrt: $text (apt-get -s full-upgrade)" ;;
     fehler) warnung "Basis-Updates: $text" ;;
@@ -103,7 +105,8 @@ _ubuntu_updates() {
   case "$zustand" in
     keine | "") ;;
     installiert) ok "Letztes Basis-Update $text" ;;
-    kaputt) fehler "Letztes Basis-Update kaputt $text" ;;
+    kaputt) fehler "Letztes Basis-Update kaputt $text (behoben? sudo $_UBUNTU_PROGRAMM quittieren)" ;;
+    behoben) ok "Letztes Basis-Update $text" ;;
     fehler) warnung "Letztes Basis-Update brach ab $text" ;;
     *) warnung "Letztes Basis-Update: unbekanntes Ergebnis «$zustand»" ;;
   esac

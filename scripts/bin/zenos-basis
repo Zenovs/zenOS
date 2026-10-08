@@ -32,12 +32,17 @@ Aufruf:
                                        (Timer alle 6 h), prüfen und, wenn erlaubt, installieren; gelegenheit:
                                        zenos-basis-gelegenheit.service (alle 15 Min., nur mit automatik-bereit), ohne
                                        Netz
+  zenos-basis quittieren               ein «kaputt» als behoben vermerken (root, von Hand, nachdem Zeno es behoben
+                                       hat): prüft nach, was sich prüfen lässt (wie die Gesundheit, ohne install.sh),
+                                       gegen die Ausgangslage vor jenem Update; noch schlechter: Exit 5, nichts vermerkt
 
 Prüfen: Auf einen anderen Paketvorgang (apt-daily, apt-daily-upgrade mit unattended-upgrades, eine Sperre von apt oder
 dpkg) wartet es höchstens 20 Minuten, sonst Exit 75. Ein unterbrochenes dpkg (Abbruch mitten in einem Update) holt es
 zuerst nach («dpkg --configure -a» wie unattended-upgrades; bleibt es unterbrochen: «fehler», Exit 1): apt-get -s sähe
-den halb konfigurierten Stand sonst als «aktuell», und nichts holte ihn je nach. Ausgewertet werden die Zeilen «Inst»
-und «Remv» von apt-get -s (LC_ALL=C, ohne autoremove): je Paket Name, alt, neu, Tasche und Herkunft. Daraus:
+den halb konfigurierten Stand sonst als «aktuell», und nichts holte ihn je nach. Ein Stopp der Unit (KillMode=mixed)
+lässt dpkg zu Ende laufen und beendet Warten, apt-get update und Auswertung sofort (Exit 10, stand.json unverändert).
+Ausgewertet werden die Zeilen «Inst» und «Remv» von apt-get -s (LC_ALL=C, ohne autoremove): je Paket Name, alt, neu,
+Tasche und Herkunft. Daraus:
   sicherheit   Pakete aus einer Tasche …-security
   heikel       Kernel, Firmware, Bootloader (HEIKEL: linux-image-*, linux-modules-*, linux-raspi, flash-kernel,
                piboot-try, rpi-eeprom, u-boot*, grub*, shim* …)
@@ -53,12 +58,15 @@ stehen nicht in der Liste. Auswerten und Installieren laufen darum ohne Sandbox 
 mehr zu apt-get full-upgrade.
 
 Installieren: Sperre wie der Kanal (/run/zenos-sperre/kanal.lock, nie zwei Paketvorgänge zugleich; ein install.sh von
-Hand läuft: Exit 75). Nicht, solange eine Installation des Kanals unterbrochen ist oder «kaputt» meldet (Exit 10). Der
+Hand läuft: Exit 75). Nicht, solange eine Installation des Kanals unterbrochen ist oder «kaputt» meldet (Exit 10). Nach
+dem Warten auf andere Paketvorgänge hält es die Sperre der Paketlisten (/var/lib/apt/lists/lock) bis zum Ende von
+apt-get full-upgrade: Kein apt-get update (apt-daily) tauscht die Listen zwischen Auswertung und Installation aus. Der
 Hash des Auftrags muss der letzten Prüfung und einer Auswertung von jetzt gleichen (sonst Exit 3, stand.json zeigt dann
 die neue Liste). Heikle Pakete und Entfernungen nur mit Zustimmung («ja» in zen update, Passwort in den
 Einstellungen), sonst Exit 10. Ein unterbrochenes dpkg repariert es vorher wie beim Prüfen (falls es seit der Prüfung
 unterbrochen wurde). Dann, unter einem Block-Inhibitor für Ausschalten und Ruhezustand und mit dem Übernahme-Marker
-/run/zenos-basis/uebernahme (die Oberfläche zeigt «Update läuft» und lädt nicht nach):
+/run/zenos-basis/uebernahme (die Oberfläche zeigt «Update läuft» und lädt nicht nach), zuerst die Ausgangslage der
+Gesundheitsprüfung (zen doctor …), dann:
   1. apt-get full-upgrade -y (DEBIAN_FRONTEND=noninteractive, NEEDRESTART_MODE=l, NEEDRESTART_SUSPEND=1, confdef und
      confold, kein autoremove). Dienste starten wie bei Ubuntu neu, nur greetd nicht (beendete die Sitzung): eine
      eigene policy-rc.d nur für diesen Lauf (apt setzt sie vor dpkg ein und nimmt sie danach weg). Bringt das Update
@@ -67,8 +75,12 @@ unterbrochen wurde). Dann, unter einem Block-Inhibitor für Ausschalten und Ruhe
      eigenem Ergebnis (install-ergebnis): baut Quickshell neu, wenn sich Qt geändert hat, und zieht zenos-kennung nach.
 Gesundheit: Es zählt nur, was schlechter ist als vor apt: dpkg unterbrochen, install.sh nicht Exit 0 oder ohne «== Ende
 … ok», «quickshell --version» scheitert, greetd ausgefallen, neu ausgefallene Units, mehr Fehler in «zen doctor» (als
-root). Scheitert sie, steht in letzte.json, was kaputt ist; zurückgerollt wird nichts. Das Log /var/log/zenos/basis.log
-(root) hält den Paketstand vorher und die Änderungen fest, nur zur Diagnose.
+root). Dazu, was apt über die Liste hinaus tat und nicht durfte: ohne Zustimmung Kernel, Firmware, Bootloader oder eine
+Entfernung, ein geschütztes Paket entfernen nie. Scheitert sie, steht in letzte.json, was kaputt ist (mit der
+Ausgangslage für quittieren); zurückgerollt wird nichts. Ein Stopp (SIGTERM, KillMode=mixed) vor apt beendet das
+Warten sofort, lässt dpkg --configure -a und zen doctor zu Ende laufen und beginnt apt nicht mehr (Exit 10); apt und
+install.sh laufen zu Ende. Das Log /var/log/zenos/basis.log (root) hält den Paketstand vorher und die Änderungen fest,
+nur zur Diagnose.
 
 zen update: zenos-basis update hält die Sperre der Bedienung wie zenos-kanal (/run/zenos-sperre/bedienung.lock; zen
 update, die Automatik und die Knöpfe der Einstellungen laufen nie gleichzeitig). Das «ja» des Kanals ersetzt es nie.
@@ -87,9 +99,9 @@ zenos-basis-installieren.service), /var/log/zenos/basis.log (root, 0640).
 
 Exit: 0 in Ordnung (geprüft, aktuell, installiert und gesund) · 1 Fehler (apt-get update oder full-upgrade scheiterte) ·
 2 Aufruf · 3 abgelehnt (gesperrt durch ein geschütztes Paket, Liste veraltet, kein Auftrag) · 5 kaputt (nach dem
-Update schlechter als vorher, nichts zurückgerollt) · 10 wartet (Zustimmung nötig oder «nein», Kanal unterbrochen
-oder kaputt, Stopp) · 75 läuft schon (Sperre, install.sh von Hand, ein anderer Paketvorgang nach 20 Minuten) · 130
-abgebrochen (Ctrl+C in zen update; eine laufende Installation läuft zu Ende).
+Update schlechter als vorher, nichts zurückgerollt; quittieren: noch nicht behoben) · 10 wartet (Zustimmung nötig oder
+«nein», Kanal unterbrochen oder kaputt, Stopp) · 75 läuft schon (Sperre, install.sh von Hand, ein anderer
+Paketvorgang nach 20 Minuten) · 130 abgebrochen (Ctrl+C in zen update; eine laufende Installation läuft zu Ende).
 """
 
 import contextlib
@@ -139,9 +151,10 @@ REBOOT_PKGS = "/run/reboot-required.pkgs"
 POLICY_FILE = "/usr/sbin/policy-rc.d"
 DPKG_STATUS = "/var/lib/dpkg/status"
 DPKG_UPDATES = "/var/lib/dpkg/updates"
-# Sperren von apt und dpkg (fcntl, wie apt_warten in scripts/lib/gemeinsam.sh)
-APT_LOCKS = ("/var/lib/apt/lists/lock", "/var/cache/apt/archives/lock", "/var/lib/dpkg/lock-frontend",
-             "/var/lib/dpkg/lock")
+# Sperren von apt und dpkg (fcntl, wie apt_warten in scripts/lib/gemeinsam.sh). Die Sperre der Paketlisten hält das
+# Installieren selbst von der Auswertung bis zum Ende von apt-get full-upgrade (ListsLock)
+LISTS_LOCK = "/var/lib/apt/lists/lock"
+APT_LOCKS = (LISTS_LOCK, "/var/cache/apt/archives/lock", "/var/lib/dpkg/lock-frontend", "/var/lib/dpkg/lock")
 DPKG_LOCKS = ("/var/lib/dpkg/lock-frontend", "/var/lib/dpkg/lock")
 APT_UNITS = ("apt-daily.service", "apt-daily-upgrade.service")
 SYSTEMD_RUN_DIR = "/run/systemd/system"
@@ -614,9 +627,10 @@ def apt_busy():
     return who
 
 
-def wait_for_apt(limit=None):
+def wait_for_apt(limit=None, should_stop=None):
     """Wartet höchstens LIMIT Sekunden (20 Minuten), bis kein anderer Paketvorgang mehr läuft (unattended-upgrades
-    über apt-daily-upgrade, apt-daily, eine Sperre von apt oder dpkg). None, wenn frei; sonst der Grund."""
+    über apt-daily-upgrade, apt-daily, eine Sperre von apt oder dpkg). None, wenn frei; sonst der Grund. should_stop:
+    sagt es ja (ein Stopp der Unit), endet das Warten sofort mit None; der Aufrufer prüft den Stopp selbst."""
     limit = APT_WAIT if limit is None else limit
     end = time.monotonic() + limit
     who = apt_busy()
@@ -624,6 +638,8 @@ def wait_for_apt(limit=None):
         return None
     print(f"Warte auf einen anderen Paketvorgang: {', '.join(who)} – höchstens {limit // 60} Minuten …")
     while who:
+        if should_stop and should_stop():
+            return None
         if time.monotonic() >= end:
             return (f"Nach {limit // 60} Minuten läuft noch immer ein anderer Paketvorgang ({', '.join(who)}). Später "
                     "noch einmal.")
@@ -631,6 +647,42 @@ def wait_for_apt(limit=None):
         who = apt_busy()
     print("Der andere Paketvorgang ist fertig.")
     return None
+
+
+class ListsLock:
+    """Die Sperre der Paketlisten (/var/lib/apt/lists/lock, fcntl wie apt selbst). Das Installieren hält sie von der
+    Auswertung bis zum Ende von apt-get full-upgrade: Ein «apt-get update» dazwischen (apt-daily nach seinem Timer, von
+    Hand) endet dann mit «Could not get lock» und kann die Paketlisten nicht austauschen. So löst full-upgrade gegen
+    dieselben Listen auf wie die Auswertung, deren Hash Zeno bestätigt hat, und bringt nichts, was nie angezeigt wurde
+    (Kernel, Entfernungen). full-upgrade selbst nimmt diese Sperre nicht (nur dpkg und den Archiv-Ordner), und
+    apt-daily.service endet trotz gescheitertem Update erfolgreich; beides im Container geprüft.
+    Vorsicht: fcntl-Sperren gehören dem Prozess, und jedes Schliessen irgendeiner Datei auf diese Sperre gibt sie frei.
+    Solange sie gehalten ist, darum nie lock_held oder apt_busy (die öffnen und schliessen sie)."""
+
+    def __init__(self):
+        self.fd = None
+
+    def acquire(self):
+        """Nimmt die Sperre, ohne zu warten: True, wenn gehalten, False, wenn ein anderer Prozess sie hält. Failure,
+        wenn sich die Datei nicht öffnen lässt."""
+        if self.fd is not None:
+            return True
+        try:
+            fd = os.open(LISTS_LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0), 0o640)
+        except OSError as e:
+            raise Failure(f"Sperre {LISTS_LOCK}: {e.strerror}") from e
+        try:
+            fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(fd)
+            return False
+        self.fd = fd
+        return True
+
+    def release(self):
+        if self.fd is not None:
+            os.close(self.fd)
+            self.fd = None
 
 
 def dpkg_interrupted():
@@ -826,9 +878,11 @@ def verdict(stand):
     return "bereit", f"{count_text(stand)} bereit."
 
 
-def evaluate_now(checked=None, error=None):
-    """Auswertung von jetzt (ohne Netz). Failure, wenn apt oder apt-mark scheitern."""
-    return evaluate(simulate(), protected_packages(), checked, error)
+def evaluate_now(checked=None, error=None, protected=None):
+    """Auswertung von jetzt (ohne Netz). protected: die geschützten Pakete, wenn der Aufrufer sie schon kennt. Failure,
+    wenn apt oder apt-mark scheitern."""
+    text = simulate()
+    return evaluate(text, protected_packages() if protected is None else protected, checked, error)
 
 
 def write_stand(stand):
@@ -865,6 +919,41 @@ def stand_lines(stand):
 # --- Prüfen ----------------------------------------------------------------------------------------------------
 
 
+class Stopped(BaseException):
+    """Stopp von zenos-basis-pruefen.service während des Wartens, von apt-get update oder der Auswertung (CheckStop).
+    BaseException: kein «except Failure» und kein «except Exception» fängt ihn unterwegs ab."""
+
+
+class CheckStop:
+    """SIGTERM beim Prüfen (zenos-basis-pruefen.service mit KillMode=mixed: Das Signal kommt nur hierher, nicht an die
+    Kindprozesse). Ein «dpkg --configure -a» läuft zu Ende (dpkg nie mittendrin abbrechen; die policy-rc.d der Basis
+    räumt dpkg_repair danach weg), danach beginnt nichts mehr. Warten, apt-get update und die Auswertung dagegen enden
+    sofort (interruptible: subprocess.run beendet das laufende Programm), damit ein Ausschalten nicht auf einen
+    langsamen Paketserver wartet. stand.json bleibt dann, wie sie war; Exit 10."""
+
+    def __init__(self):
+        self.requested = False
+        self.open = False
+
+    def __call__(self, _signum, _frame):
+        self.requested = True
+        if self.open:
+            self.open = False
+            raise Stopped()
+        print(f"{NAME}: Stopp verlangt (ein laufendes dpkg --configure -a läuft zu Ende) …", file=sys.stderr)
+
+    @contextlib.contextmanager
+    def interruptible(self):
+        """Ein Block, den ein Stopp sofort beendet (Stopped); kam er schon vorher, beginnt der Block nicht."""
+        if self.requested:
+            raise Stopped()
+        self.open = True
+        try:
+            yield
+        finally:
+            self.open = False
+
+
 def cmd_check(argv):
     if argv:
         print(f"{NAME} pruefen: keine Argumente erwartet", file=sys.stderr)
@@ -878,6 +967,26 @@ def cmd_check(argv):
     except Failure as e:
         print(f"{NAME}: {e}", file=sys.stderr)
         return EXIT_ERROR
+    stop = CheckStop()
+    old_term = signal.signal(signal.SIGTERM, stop)
+    try:
+        stand = check_locked(stop)
+    except Stopped:
+        print(f"{NAME}: Stopp verlangt (Ausschalten?): Prüfung abgebrochen, stand.json unverändert.", file=sys.stderr)
+        journal("Prüfung abgebrochen (Stopp)")
+        return EXIT_WAIT
+    finally:
+        signal.signal(signal.SIGTERM, old_term)
+    if not isinstance(stand, dict):
+        return stand
+    for line in stand_lines(stand):
+        print(line)
+    journal(f"geprüft: {stand['ergebnis']} – {stand['grund']}")
+    return {"fehler": EXIT_ERROR, "gesperrt": EXIT_REFUSED}.get(stand["ergebnis"], EXIT_OK)
+
+
+def check_locked(stop):
+    """Prüfen unter der Sperre: stand.json (geschrieben) oder ein Exit-Code. Stopped bei einem Stopp (CheckStop)."""
     lock = lock_or_exit()
     if not isinstance(lock, Locked):
         return lock
@@ -886,33 +995,37 @@ def cmd_check(argv):
         if pid:
             print(f"{NAME}: Ein install.sh von Hand läuft gerade (PID {pid}); danach noch einmal.", file=sys.stderr)
             return EXIT_BUSY
-        busy = wait_for_apt()
+        with stop.interruptible():
+            busy = wait_for_apt()
         if busy:
             print(f"{NAME}: {busy}", file=sys.stderr)
             return EXIT_BUSY
         previous = load_json(state_path(STAND)) or {}
         # Ein unterbrochenes dpkg zuerst nachholen (wie unattended-upgrades): apt-get -s zeigte den halb konfigurierten
-        # Stand sonst als «aktuell», und weder zen update noch die Automatik holten ihn je nach
+        # Stand sonst als «aktuell», und weder zen update noch die Automatik holten ihn je nach. Ein Stopp währenddessen
+        # wartet, bis dpkg fertig ist (CheckStop); nach einem Stopp beginnt es nicht mehr
+        if stop.requested:
+            raise Stopped()
         problem = dpkg_repair()
+        if stop.requested:
+            raise Stopped()
         if problem:
             stand = failed_stand(problem, previous.get("geprueft"))
         else:
-            t = now()
-            print("Paketlisten aktualisieren (apt-get update) …")
-            rc = run_visible([APT_GET, "-q", "update"], apt_env(), timeout=UPDATE_TIMEOUT)
-            checked = iso(t) if rc == 0 else previous.get("geprueft")
-            error = None if rc == 0 else f"apt-get update endete mit Exit {rc} (Netz oder Paketserver?)"
-            try:
-                stand = evaluate_now(checked, error)
-            except Failure as e:
-                stand = failed_stand(str(e) if not error else f"{error}; {e}", checked)
+            with stop.interruptible():
+                t = now()
+                print("Paketlisten aktualisieren (apt-get update) …")
+                rc = run_visible([APT_GET, "-q", "update"], apt_env(), timeout=UPDATE_TIMEOUT)
+                checked = iso(t) if rc == 0 else previous.get("geprueft")
+                error = None if rc == 0 else f"apt-get update endete mit Exit {rc} (Netz oder Paketserver?)"
+                try:
+                    stand = evaluate_now(checked, error)
+                except Failure as e:
+                    stand = failed_stand(str(e) if not error else f"{error}; {e}", checked)
         write_stand(stand)
+        return stand
     finally:
         lock.release()
-    for line in stand_lines(stand):
-        print(line)
-    journal(f"geprüft: {stand['ergebnis']} – {stand['grund']}")
-    return {"fehler": EXIT_ERROR, "gesperrt": EXIT_REFUSED}.get(stand["ergebnis"], EXIT_OK)
 
 
 # --- Installieren ----------------------------------------------------------------------------------------------
@@ -1203,8 +1316,10 @@ def marks_ok(marks):
     return any(z.startswith("== Ende ") and " · normal · ok · " in z for z in marks[begins[-1] + 1:])
 
 
-def health_problems(baseline, install_rc):
-    """Was nach dem Update schlechter ist als vorher (leer: gesund). install_rc None: install.sh lief nicht."""
+def health_problems(baseline, install_rc, doctor_offset=0):
+    """Was nach dem Update schlechter ist als vorher (leer: gesund). install_rc None: install.sh lief nicht.
+    doctor_offset: so viele Fehler von zen doctor zählen nicht (quittieren: die Zeile «Letztes Basis-Update kaputt»
+    selbst)."""
     problems = []
     if dpkg_interrupted():
         problems.append("dpkg ist unterbrochen (sudo dpkg --configure -a)")
@@ -1224,8 +1339,32 @@ def health_problems(baseline, install_rc):
         if new:
             problems.append(f"neu ausgefallen: {names_text(new)} (systemctl --failed)")
     errors = doctor_errors()
+    if errors is not None:
+        errors = max(0, errors - doctor_offset)
     if errors is not None and baseline.get("doctor_fehler") is not None and errors > baseline["doctor_fehler"]:
         problems.append(f"zen doctor meldet {errors} Fehler statt {baseline['doctor_fehler']} (sudo zen doctor)")
+    return problems
+
+
+def unexpected_problems(changes, shown, consent, protected):
+    """Was apt über die angezeigte Liste hinaus tat und nicht hätte tun dürfen: ohne Zustimmung Kernel, Firmware oder
+    Bootloader installieren oder Pakete entfernen, ein geschütztes Paket entfernen auch mit Zustimmung nicht. Unter der
+    Sperre der Paketlisten bleibt dafür nur ein unattended-upgrades zwischen Auswertung und apt. CHANGES aus
+    changes_between, SHOWN die Namen der angezeigten Liste. Probleme als Text (leer: nichts davon)."""
+    extra = [(n, old, new) for n, old, new in changes if n not in shown]
+    heikel = sorted(n for n, _, new in extra if new is not None and is_heikel(n))
+    removed = sorted(n for n, _, new in extra if new is None)
+    blocked = [n for n in removed if base_name(n) in protected]
+    problems = []
+    if blocked:
+        problems.append(f"apt entfernte geschützte Pakete, die nicht in der Liste standen: {names_text(blocked)}")
+    if not consent:
+        if heikel:
+            problems.append("apt brachte ohne Zustimmung Kernel, Firmware oder Bootloader, die nicht in der Liste "
+                            f"standen: {names_text(heikel)}")
+        rest = [n for n in removed if n not in blocked]
+        if rest:
+            problems.append(f"apt entfernte ohne Zustimmung Pakete, die nicht in der Liste standen: {names_text(rest)}")
     return problems
 
 
@@ -1292,7 +1431,14 @@ def log_stamp():
 
 class Installation:
     """Ein Lauf von «installieren» für einen Auftrag {liste, zustimmung, von}. Schreibt letzte.json nur, wenn apt lief
-    (eine Ablehnung überschriebe sonst ein «kaputt»)."""
+    (eine Ablehnung überschriebe sonst ein «kaputt»).
+
+    Stopp (SIGTERM, KillMode=mixed: nur an dieses Programm): stop_requested. Vor apt beginnt danach nichts mehr (Exit
+    10): Das Warten auf einen anderen Paketvorgang endet sofort, ein «dpkg --configure -a» und zen doctor (Ausgangslage)
+    laufen zu Ende, geprüft wird unmittelbar vor apt noch einmal. Ein begonnenes apt und install.sh laufen zu Ende."""
+
+    # Wie oft Warten und Sperren der Paketlisten versucht werden (ein apt-get update kann genau dazwischen beginnen)
+    LOCK_TRIES = 3
 
     def __init__(self, order):
         self.order = order
@@ -1300,16 +1446,38 @@ class Installation:
         self.stop_requested = False
         self.attempted = False
         self.current = None
+        self.lists = ListsLock()
         self.result = {"version": 1, "ergebnis": None, "grund": "", "beginn": iso(self.t), "ende": None,
                        "liste": order["liste"], "von": order["von"], "zustimmung": order["zustimmung"],
                        "anzahl": None, "sicherheit": None, "heikel": [], "entfernt": [], "geaendert": None,
-                       "mehr": [], "neustart": False, "neustart_wegen": [], "probleme": [], "hinweise": []}
+                       "mehr": [], "neustart": False, "neustart_wegen": [], "probleme": [], "hinweise": [],
+                       "ausgangslage": None}
 
     def finish(self, result, reason, code):
         self.result.update(ergebnis=result, grund=reason, ende=iso(now()))
         return code
 
+    def stopped(self):
+        return self.finish("wartet", "Stopp verlangt (Ausschalten?), bevor apt begann; nichts geändert.", EXIT_WAIT)
+
     def run(self):
+        try:
+            return self.prepare()
+        finally:
+            self.lists.release()
+
+    def wait_and_lock(self):
+        """Wartet auf andere Paketvorgänge (höchstens 20 Minuten, ein Stopp beendet das Warten) und nimmt dann die
+        Sperre der Paketlisten. None, wenn gehalten oder ein Stopp kam (der Aufrufer prüft ihn), sonst der Grund."""
+        for _ in range(self.LOCK_TRIES):
+            busy = wait_for_apt(should_stop=lambda: self.stop_requested)
+            if busy or self.stop_requested:
+                return busy
+            if self.lists.acquire():
+                return None
+        return "Die Paketlisten bleiben gesperrt (ein anderes apt-get update). Später noch einmal."
+
+    def prepare(self):
         problem = channel_problem()
         if problem:
             return self.finish("wartet", problem, EXIT_WAIT)
@@ -1322,13 +1490,19 @@ class Installation:
                                EXIT_REFUSED)
         if stand.get("fehler"):
             return self.finish("abgelehnt", "Die letzte Prüfung ist gescheitert. Noch einmal prüfen.", EXIT_REFUSED)
-        busy = wait_for_apt()
+        busy = self.wait_and_lock()
+        if self.stop_requested:
+            return self.stopped()
         if busy:
             return self.finish("wartet", busy, EXIT_BUSY)
+        # Ab hier gelten bis zum Ende von apt-get full-upgrade dieselben Paketlisten (ListsLock)
         problem = dpkg_repair()
         if problem:
             return self.finish("fehler", problem, EXIT_ERROR)
-        current = evaluate_now(stand.get("geprueft"))
+        if self.stop_requested:
+            return self.stopped()
+        protected = protected_packages()
+        current = evaluate_now(stand.get("geprueft"), protected=protected)
         self.current = current
         if current["liste"] != liste:
             write_stand(current)
@@ -1341,31 +1515,38 @@ class Installation:
         if (current["heikel"] or current["entfernen"]) and not self.order["zustimmung"]:
             return self.finish("wartet", current["grund"], EXIT_WAIT)
         if self.stop_requested:
-            return self.finish("wartet", "Stopp verlangt (Ausschalten?), bevor apt begann; nichts geändert.",
-                               EXIT_WAIT)
-        return self.install(current)
+            return self.stopped()
+        return self.install(current, protected)
 
-    def install(self, current):
+    def install(self, current, protected):
         liste = current["liste"]
-        self.attempted = True
         self.result.update(anzahl=current["anzahl"], sicherheit=current["sicherheit"], heikel=current["heikel"],
                            entfernt=current["entfernen"])
-        baseline = health_baseline()
-        before = package_state()
-        log = RunLog()
-        log.write("", f"== Beginn {log_stamp()} · Liste {liste} · {count_text(current)} · von {self.order['von']}"
-                      f"{' · mit Zustimmung' if self.order['zustimmung'] else ''}",
-                  f"-- Paketstand vorher (dpkg-query, {len(before)} Pakete)",
-                  *[f"{k} {v}" for k, v in sorted(before.items())])
         script = os.path.join(CODE_DIR, "scripts", "install.sh")
         install_rc = None
-        print(f"apt-get full-upgrade: {count_text(current)} …")
-        journal(f"installiere {count_text(current)}, Liste {liste}")
+        # Inhibitor und Übernahme-Marker schon für die Ausgangslage (zen doctor dauert auf dem Pi einige zehn Sekunden):
+        # Ein Neustart aus dem System-Menü wartet so schon jetzt («Update läuft»), statt apt mitten im Herunterfahren
+        # beginnen zu lassen
         with inhibitor(f"Ubuntu-Basis wird aktualisiert ({count_text(current)})"), takeover(liste):
+            baseline = health_baseline()
+            before = package_state()
+            if self.stop_requested:
+                return self.stopped()
+            self.attempted = True
+            self.result["ausgangslage"] = baseline
+            log = RunLog()
+            log.write("", f"== Beginn {log_stamp()} · Liste {liste} · {count_text(current)} · von {self.order['von']}"
+                          f"{' · mit Zustimmung' if self.order['zustimmung'] else ''}",
+                      f"-- Paketstand vorher (dpkg-query, {len(before)} Pakete)",
+                      *[f"{k} {v}" for k, v in sorted(before.items())])
+            print(f"apt-get full-upgrade: {count_text(current)} …")
+            journal(f"installiere {count_text(current)}, Liste {liste}")
             with greetd_policy(self.result["hinweise"]) as policy:
                 apt_rc = run_visible([APT_GET, "-q", "-y", "-o", "DPkg::Lock::Timeout=300",
                                       "-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold",
                                       "-o", "APT::Get::AutomaticRemove=false", *policy, "full-upgrade"], apt_env())
+            # install.sh holt womöglich selbst Paketlisten (Herstellerquellen)
+            self.lists.release()
             after_apt = package_state()
             log.write(f"-- apt-get full-upgrade: Exit {apt_rc}")
             if apt_rc == 0:
@@ -1395,7 +1576,8 @@ class Installation:
                 mark_reboot(GREETD)
             self.result["hinweise"].append("Neue greetd-Version: Sie gilt erst nach einem Neustart (der laufende "
                                            "Login blieb unberührt).")
-        problems = self.result["probleme"] + health_problems(baseline, install_rc)
+        problems = (self.result["probleme"] + unexpected_problems(changes, shown, self.order["zustimmung"], protected)
+                    + health_problems(baseline, install_rc))
         self.result["probleme"] = problems
         reboot, wegen = reboot_state()
         self.result.update(neustart=reboot, neustart_wegen=wegen)
@@ -1479,9 +1661,10 @@ def run_installation(order):
 
     def stop(_signum, _frame):
         # KillMode=mixed: Das Signal kommt nur hierher. apt und install.sh laufen zu Ende (dpkg nie mittendrin
-        # abbrechen), bis systemd nach TimeoutStopSec alles beendet. Vor apt beginnt nichts mehr.
+        # abbrechen), bis systemd nach TimeoutStopSec alles beendet. Vor apt beginnt nichts mehr (Installation prüft
+        # stop_requested nach jedem Schritt und unmittelbar vor apt)
         run_.stop_requested = True
-        print(f"{NAME}: Stopp verlangt, apt und install.sh laufen zu Ende …", file=sys.stderr)
+        print(f"{NAME}: Stopp verlangt; was läuft, läuft zu Ende, apt beginnt nicht mehr …", file=sys.stderr)
 
     old_term = signal.signal(signal.SIGTERM, stop)
     old_hup = signal.signal(signal.SIGHUP, signal.SIG_IGN)
@@ -1630,6 +1813,10 @@ def update_steps(consent):
         return code
     for line in stand_lines(stand):
         print(line)
+    last = load_json(state_path(LAST)) or {}
+    if last.get("ergebnis") == "kaputt" and not parse_iso(last.get("behoben")):
+        print(f"  Das letzte Basis-Update ({local_time(last.get('ende'))}) meldete «kaputt». Behoben? sudo "
+              "/usr/local/libexec/zenos/zenos-basis quittieren")
     result = stand.get("ergebnis")
     if result == "fehler":
         return EXIT_ERROR
@@ -1717,6 +1904,55 @@ def cmd_now(argv, consent):
         return install_now(follow=False)
     finally:
         lock.release()
+
+
+# --- Quittieren ------------------------------------------------------------------------------------------------
+
+
+def cmd_acknowledge(argv):
+    """«kaputt» als behoben vermerken (root, von Hand): Das letzte Basis-Update meldete «kaputt», Zeno hat es behoben
+    (install.sh noch einmal, Neustart …). Geprüft wird nach, was sich prüfen lässt: dpkg, quickshell --version, greetd,
+    ausgefallene Units und die Fehler von zen doctor, gegen die Ausgangslage vor jenem Update (ohne die Zeile
+    «Letztes Basis-Update kaputt» selbst). Ist davon noch etwas schlechter: Exit 5, nichts vermerkt. Sonst steht
+    «behoben» mit der Zeit in letzte.json; zen doctor und die Einstellungen melden es nicht mehr als kaputt. Ob
+    install.sh jetzt gelingt, prüft quittieren nicht (es änderte das System); das sagt Zeno mit dem Aufruf."""
+    if argv:
+        print(f"{NAME} quittieren: keine Argumente erwartet", file=sys.stderr)
+        return EXIT_USAGE
+    if not is_root():
+        print(f"{NAME} quittieren: nur als root (sudo /usr/local/libexec/zenos/zenos-basis quittieren)",
+              file=sys.stderr)
+        return EXIT_USAGE
+    os.umask(0o022)
+    try:
+        prepare_state()
+    except Failure as e:
+        print(f"{NAME}: {e}", file=sys.stderr)
+        return EXIT_ERROR
+    lock = lock_or_exit()
+    if not isinstance(lock, Locked):
+        return lock
+    try:
+        last = load_json(state_path(LAST))
+        if not last or last.get("ergebnis") != "kaputt" or parse_iso(last.get("behoben")):
+            print("Nichts zu quittieren: Das letzte Basis-Update meldete nicht «kaputt».")
+            return EXIT_OK
+        baseline = last.get("ausgangslage") if isinstance(last.get("ausgangslage"), dict) else {}
+        print(f"Letztes Basis-Update ({local_time(last.get('ende'))}): {short(last.get('grund') or '', 300)}")
+        print("Prüfe nach (dpkg, quickshell, greetd, ausgefallene Units, zen doctor) …")
+        # zen doctor zählt «Letztes Basis-Update kaputt» als Fehler, solange es nicht vermerkt ist
+        problems = health_problems(baseline, None, doctor_offset=1)
+        if problems:
+            print(f"Noch schlechter als vor dem Update: {'; '.join(problems)}. Nichts vermerkt.")
+            journal(f"quittieren abgelehnt: {'; '.join(problems)}")
+            return EXIT_BROKEN
+        last["behoben"] = iso(now())
+        write_json(state_path(LAST), last)
+    finally:
+        lock.release()
+    print("Als behoben vermerkt: zen doctor und die Einstellungen melden das Basis-Update nicht mehr als kaputt.")
+    journal("«kaputt» als behoben vermerkt")
+    return EXIT_OK
 
 
 # --- Automatik -------------------------------------------------------------------------------------------------
@@ -1906,9 +2142,14 @@ def short_state(stand, running=False):
 
 
 def installation_line(last):
+    """(Ergebnis, Text) der letzten Installation: keine, installiert, kaputt, behoben (ein «kaputt», das quittieren als
+    behoben vermerkt hat), fehler …"""
     if last is None:
         return "keine", "noch kein Basis-Update über zenOS"
     result = last.get("ergebnis") if last.get("ergebnis") in RESULT_TEXT else "fehler"
+    if result == "kaputt" and parse_iso(last.get("behoben")):
+        return "behoben", (f"{local_time(last.get('ende'))}: kaputt, als behoben vermerkt am "
+                           f"{local_time(last.get('behoben'))} ({short(last.get('grund') or '', 200)})")
     return result, f"{local_time(last.get('ende'))}: {short(last.get('grund') or '', 300)}"
 
 
@@ -1945,7 +2186,8 @@ def cmd_status(argv):
                      ("Entfernen", names_text(stand["entfernen"]) if stand.get("entfernen") else "nichts"),
                      ("Liste", stand["liste"])]
     result, line = installation_line(last)
-    rows.append(("Installation", f"{RESULT_TEXT.get(result, result)} {line}" if last else line))
+    rows.append(("Installation", f"{RESULT_TEXT.get(result, result)} {line}" if last and result != "behoben"
+                 else line))
     rows.append(("Neustart", f"nötig ({names_text(wegen)})" if reboot and wegen else "nötig" if reboot else "nein"))
     rows += automatic_lines()
     for title, value in rows:
@@ -1960,7 +2202,7 @@ def main(argv):
         return EXIT_OK if argv else EXIT_USAGE
     commands = {"pruefen": cmd_check, "installieren": cmd_install, "status": cmd_status, "update": cmd_update,
                 "jetzt": lambda a: cmd_now(a, False), "zustimmen": lambda a: cmd_now(a, True),
-                "automatik": cmd_automatic}
+                "automatik": cmd_automatic, "quittieren": cmd_acknowledge}
     command = commands.get(argv[0])
     if not command:
         print(f"{NAME}: unbekannter Befehl «{short(argv[0], 30)}» (--hilfe)", file=sys.stderr)

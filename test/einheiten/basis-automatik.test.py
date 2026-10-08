@@ -217,6 +217,18 @@ class Update(Bedienung):
         self.assertIn("Die Ubuntu-Basis ist aktuell.", aus)
         self.assertEqual(self.fragen_gestellt, [])
 
+    def test_kaputt_nennt_quittieren(self):
+        """Meldete das letzte Basis-Update «kaputt», sagt zen update, wie Zeno es nach der Behebung quittiert; danach
+        nicht mehr."""
+        self.sim(U.SIM_LEER)
+        letzte = {"version": 1, "ergebnis": "kaputt", "grund": "x", "ende": "2026-10-06T10:00:00Z"}
+        U.schreiben(self.datei(B.LAST), json.dumps(letzte))
+        code, aus = self.update()
+        self.assertEqual(code, 0, aus)
+        self.assertIn("meldete «kaputt». Behoben? sudo /usr/local/libexec/zenos/zenos-basis quittieren", aus)
+        U.schreiben(self.datei(B.LAST), json.dumps({**letzte, "behoben": "2026-10-07T09:00:00Z"}))
+        self.assertNotIn("quittieren", self.update()[1])
+
     def test_gesperrt_ohne_frage(self):
         self.sim(U.SIM_GESCHUETZT)
         code, aus = self.update("--ja")

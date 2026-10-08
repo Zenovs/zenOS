@@ -7,7 +7,8 @@
 //
 // Quellen (von root geschrieben, für alle lesbar; die Oberfläche liest nur):
 //   /var/lib/zenos/basis/stand.json      letzte Prüfung (zenos-basis pruefen; Felder in docs/image-und-releases.md)
-//   /var/lib/zenos/basis/letzte.json     letzte Installation, nur wenn apt lief (installiert, kaputt, fehler)
+//   /var/lib/zenos/basis/letzte.json     letzte Installation, nur wenn apt lief (installiert, kaputt, fehler); ein
+//                                        «kaputt» mit «behoben» (zenos-basis quittieren) gilt als behoben
 //   /var/lib/zenos/basis/automatik.json  letzter Lauf der Automatik (zustimmung, gesperrt: wartet auf Zeno)
 //   /etc/xdg/zenos/kanal-automatik-aus   gemeinsamer Notschalter von Kanal und Basis (es zählt, ob es ihn gibt)
 //   /run/reboot-required(.pkgs)          Neustart nötig (Ubuntu, unattended-upgrades; zenos-basis trägt greetd ein)
@@ -18,7 +19,9 @@ var INSTALLATIONEN = Object.freeze(["installiert", "aktuell", "kaputt", "fehler"
 var AUTOMATIK = Object.freeze(["aus", "nichts", "aktuell", "wartet", "zustimmung", "gesperrt", "installiert", "kaputt", "fehler", "abgelehnt"]);
 // Wer installiert hat (ORIGINS in zenos-basis)
 var HERKUNFT = Object.freeze({ "zen update": "zen update", "einstellungen": "Einstellungen", "automatik": "automatisch", "hand": "von Hand" });
-var INSTALLATION_TEXT = Object.freeze({ installiert: "installiert", aktuell: "aktuell", kaputt: "kaputt", fehler: "gescheitert", abgelehnt: "abgelehnt", wartet: "wartet" });
+var INSTALLATION_TEXT = Object.freeze({ installiert: "installiert", aktuell: "aktuell", kaputt: "kaputt", behoben: "kaputt, behoben", fehler: "gescheitert", abgelehnt: "abgelehnt", wartet: "wartet" });
+// So meldet Zeno ein «kaputt» als behoben (im Terminal; prüft nach, was sich prüfen lässt)
+var QUITTIEREN = "sudo /usr/local/libexec/zenos/zenos-basis quittieren";
 // So viele Paketnamen in einem Satz, dann «und N weitere»
 var NAMEN_SATZ = 3;
 // Ein «installiert», das älter ist, meldet die Oberfläche nicht mehr (wie beim Kanal)
@@ -132,13 +135,14 @@ function standLesen(json) {
     };
 }
 
-// letzte.json: { ergebnis, grund, endeMs, liste, von, anzahl, neustart } oder null
+// letzte.json: { ergebnis, grund, endeMs, liste, von, anzahl, neustart } oder null. Ein «kaputt», das Zeno mit
+// «zenos-basis quittieren» als behoben vermerkt hat, heisst hier «behoben»: keine Warnung, keine Mitteilung mehr
 function letzteLesen(json) {
     var d = _objekt(json);
     if (d === null || d.version !== 1 || INSTALLATIONEN.indexOf(d.ergebnis) < 0)
         return null;
     return {
-        ergebnis: d.ergebnis,
+        ergebnis: d.ergebnis === "kaputt" && isFinite(Kanal.zeitMs(d.behoben)) ? "behoben" : d.ergebnis,
         grund: Kanal.text(d.grund, 400),
         endeMs: Kanal.zeitMs(d.ende),
         liste: _liste(d.liste),
@@ -286,7 +290,7 @@ function grundText(stand, istVeraltet, letzte, laeuft, lage) {
     if (laeuft)
         return "zenOS aktualisiert gerade die Pakete der Ubuntu-Basis (apt, danach install.sh). Ausschalten und Neustart warten, bis es fertig ist; danach lädt die Oberfläche neu, wenn sich etwas geändert hat.";
     if (letzte && letzte.ergebnis === "kaputt")
-        return letzte.grund !== "" ? letzte.grund : "Nach dem Update ist etwas schlechter als vorher. Zurückgerollt wird nichts; Einzelheiten: journalctl -u zenos-basis-installieren.";
+        return (letzte.grund !== "" ? letzte.grund : "Nach dem Update ist etwas schlechter als vorher. Zurückgerollt wird nichts; Einzelheiten: journalctl -u zenos-basis-installieren.") + " Behoben? Im Terminal: " + QUITTIEREN;
     if (!stand)
         return "Mit «Jetzt prüfen» holt zenOS die Paketlisten von Ubuntu und den Herstellerquellen (apt-get update) und zeigt, was ansteht. Installiert wird dabei nichts.";
     if (istVeraltet)

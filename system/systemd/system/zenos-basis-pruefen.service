@@ -4,6 +4,11 @@
 # 20 Minuten auf einen anderen Paketvorgang (unattended-upgrades, apt-daily). Ein unterbrochenes dpkg (Abbruch mitten
 # in einem Update) holt es vorher nach («dpkg --configure -a», wie unattended-upgrades). Gestartet von «zen update»,
 # den Einstellungen und der Automatik.
+#
+# KillMode=mixed: Ein Stopp (Ausschalten durch root, Zeitlimit) schickt SIGTERM nur an zenos-basis. Ein laufendes
+# «dpkg --configure -a» läuft zu Ende (dpkg nie mittendrin abbrechen, die policy-rc.d gegen greetd räumt es danach
+# weg); Warten, apt-get update und die Auswertung bricht zenos-basis sofort ab (Exit 10). TimeoutStartSec deckt
+# Warten (20 Min.), dpkg (1 h), apt-get update (30 Min.) und Auswertung (2 × 10 Min.) ab.
 [Unit]
 Description=zenOS: Ubuntu-Basis prüfen (apt-get update, Auswertung)
 Documentation=file:///opt/zenos/docs/image-und-releases.md
@@ -18,7 +23,9 @@ Environment=HOME=/root LANG=C.UTF-8
 StateDirectory=zenos/basis
 StateDirectoryMode=0755
 UMask=0022
-TimeoutStartSec=45min
+KillMode=mixed
+TimeoutStartSec=3h
+TimeoutStopSec=20min
 Nice=10
 SyslogIdentifier=zenos-basis
 # Ohne Sandbox mit eigenem Mount-Namensraum (PrivateTmp, ProtectHome, ProtectSystem …): apt hält das für ein chroot

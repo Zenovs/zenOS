@@ -236,6 +236,15 @@ class Modul(unittest.TestCase):
                           dienst["TimeoutStopSec"]), ("zenos-basis", "mixed", "3h", "20min"))
         self.assertTrue(dienst["ExecStart"].endswith("/usr/local/libexec/zenos/zenos-basis installieren"))
         self.assertIn("apt-daily-upgrade.service", parser.get("Unit", "After"))
+        # Auch das Prüfen kann «dpkg --configure -a» nachholen: Ein Stopp darf dpkg nicht mittendrin beenden, und das
+        # Zeitlimit deckt Warten (20 Min.), dpkg (1 h), apt-get update (30 Min.) und Auswertung ab
+        parser = configparser.ConfigParser(strict=False, interpolation=None)
+        parser.optionxform = str
+        parser.read(os.path.join(WURZEL, "system", "systemd", "system", "zenos-basis-pruefen.service"),
+                    encoding="utf-8")
+        dienst = parser["Service"]
+        self.assertEqual((dienst["KillMode"], dienst["TimeoutStartSec"], dienst["TimeoutStopSec"]),
+                         ("mixed", "3h", "20min"))
 
     @staticmethod
     def unit(name):
@@ -413,6 +422,13 @@ class DoctorUpdates(unittest.TestCase):
              "warnung: Basis-Updates gesperrt: 1 Update, gesperrt: ubuntu-minimal ginge weg (apt-get -s full-upgrade)"),
             ("fehler Prüfung gescheitert: apt-get update endete mit Exit 100",
              "warnung: Basis-Updates: Prüfung gescheitert: apt-get update endete mit Exit 100"),
+            # Seit der Prüfung änderten sich Pakete (unattended-upgrades): kein «ausstehend: aktuell»
+            ("veraltet aktuell (Stand 2026-10-07 09:00, seither Paketänderungen)",
+             "hinweis: Basis-Updates: letzte Prüfung aktuell (Stand 2026-10-07 09:00, seither Paketänderungen); neu "
+             "prüfen: zen update"),
+            ("veraltet 3 Updates (1 Sicherheit) (Stand 2026-10-07 09:00, seither Paketänderungen)",
+             "hinweis: Basis-Updates: letzte Prüfung 3 Updates (1 Sicherheit) (Stand 2026-10-07 09:00, seither "
+             "Paketänderungen); neu prüfen: zen update"),
         )
         for kurz, erwartet in faelle:
             with self.subTest(kurz=kurz):
@@ -424,7 +440,12 @@ class DoctorUpdates(unittest.TestCase):
                    "ok: Letztes Basis-Update 2026-10-07 12:00: 6 Pakete aktualisiert, gesund."),
                   ("kaputt 2026-10-07 12:00: Nach dem Update schlechter als vorher: greetd ist ausgefallen.",
                    "fehler: Letztes Basis-Update kaputt 2026-10-07 12:00: Nach dem Update schlechter als vorher: "
-                   "greetd ist ausgefallen."),
+                   f"greetd ist ausgefallen. (behoben? sudo {self.ziel}/libexec/zenos-basis quittieren)"),
+                  # Mit zenos-basis quittieren als behoben vermerkt: kein Fehler mehr
+                  ("behoben 2026-10-07 12:00: kaputt, als behoben vermerkt am 2026-10-08 09:00 (Nach dem Update "
+                   "schlechter als vorher: greetd ist ausgefallen.)",
+                   "ok: Letztes Basis-Update 2026-10-07 12:00: kaputt, als behoben vermerkt am 2026-10-08 09:00 (Nach "
+                   "dem Update schlechter als vorher: greetd ist ausgefallen.)"),
                   ("fehler 2026-10-07 12:00: apt-get full-upgrade endete mit Exit 100",
                    "warnung: Letztes Basis-Update brach ab 2026-10-07 12:00: apt-get full-upgrade endete mit Exit 100"))
         for installation, erwartet in faelle:

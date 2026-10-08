@@ -178,6 +178,8 @@ test("zustandTitel und zustandSymbol je Lage", () => {
     [stand({ ergebnis: "fehler", grund: "Prüfung gescheitert: apt-mark showmanual endete mit Exit 1" }), false, null, false, "Prüfung gescheitert", "warnung", "warnung"],
     [stand(), true, letzte("installiert", JETZT), false, "Seit der letzten Prüfung installiert", "info", "gedaempft"],
     [stand(), false, letzte("kaputt", JETZT - 3 * H), false, "Basis-Update kaputt", "warnung", "warnung"],
+    // Mit «zenos-basis quittieren» als behoben vermerkt: wieder die Lage der Prüfung
+    [stand(), false, letzte("kaputt", JETZT - 3 * H, { behoben: iso(JETZT - H) }), false, "3 Updates bereit", "info", "akzent"],
   ];
   for (const [s, v, l, laeuft, titel, symbol, ton] of faelle) {
     const st = B.standLesen(s), le = B.letzteLesen(l);
@@ -210,8 +212,23 @@ test("grundText: knapp und ehrlich, mit dem Wann je Zeitpunkt", () => {
   assert.doesNotMatch(e, /Neustart/);
   assert.match(B.grundText(null, false, null, false, {}), /Installiert wird dabei nichts\.$/);
   assert.match(B.grundText(s, false, null, true, {}), /Ausschalten und Neustart warten/);
-  assert.equal(B.grundText(s, false, B.letzteLesen(letzte("kaputt", JETZT, { grund: "Nach dem Update schlechter als vorher: greetd ausgefallen." })), false, {}), "Nach dem Update schlechter als vorher: greetd ausgefallen.");
+  assert.equal(B.grundText(s, false, B.letzteLesen(letzte("kaputt", JETZT, { grund: "Nach dem Update schlechter als vorher: greetd ausgefallen." })), false, {}), "Nach dem Update schlechter als vorher: greetd ausgefallen. Behoben? Im Terminal: sudo /usr/local/libexec/zenos/zenos-basis quittieren");
   assert.match(B.grundText(B.standLesen(stand({ ergebnis: "gesperrt", grund: "apt würde geschützte Pakete entfernen (ubuntu-minimal)." })), false, null, false, {}), /geschützte Pakete/);
+});
+
+test("letzteLesen: ein quittiertes «kaputt» heisst «behoben», ohne Warnung und ohne Mitteilung", () => {
+  assert.equal(B.letzteLesen(letzte("kaputt", JETZT)).ergebnis, "kaputt");
+  assert.equal(B.letzteLesen(letzte("kaputt", JETZT, { behoben: iso(JETZT + H) })).ergebnis, "behoben");
+  assert.equal(B.letzteLesen(letzte("kaputt", JETZT, { behoben: "gestern" })).ergebnis, "kaputt", "nur eine gültige Zeit");
+  assert.equal(B.letzteLesen(letzte("installiert", JETZT, { behoben: iso(JETZT) })).ergebnis, "installiert");
+  const b = B.letzteLesen(letzte("kaputt", JETZT - 26 * H, { behoben: iso(JETZT - H), von: "zen update" }));
+  const z = roh(B.zeilen(B.standLesen(stand()), b, B.neustartLesen(false, ""), { automatikAn: true, jetztMs: JETZT }));
+  assert.equal(z.find((e) => e.titel === "Letztes Update").wert, "kaputt, behoben · gestern, 12:00 · zen update");
+  // Schon gemeldet oder nie: ein behobenes «kaputt» meldet nichts (mehr)
+  const k = melden(lage(stand(), letzte("kaputt", JETZT - 2 * H)));
+  assert.equal(k.neu.length, 1);
+  assert.equal(melden(lage(stand(), letzte("kaputt", JETZT - 2 * H, { behoben: iso(JETZT - H) })), k.gemeldet).neu.length, 0);
+  assert.equal(melden(lage(stand(), letzte("kaputt", JETZT - 2 * H, { behoben: iso(JETZT - H) }))).neu.length, 0);
 });
 
 test("zeilen: Werte für die Einstellungen", () => {

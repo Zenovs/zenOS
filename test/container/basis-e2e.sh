@@ -26,9 +26,13 @@
 #   schutz       full-upgrade würde ein geschütztes Paket entfernen (Attrappe lxd-installer, automatisch installiert):
 #                gesperrt, zen update --ja Exit 3, auch mit Zustimmung und über die Automatik nichts. Danach eine
 #                Entfernung eines ungeschützten Pakets: nie automatisch, ohne Passwort Exit 10, nur nach «ja»
-#   abbruch      kill der Unit mitten in dpkg (postinst der Attrappe wartet): Marker, Inhibitor und policy-rc.d während
-#                des Laufs; danach dpkg unterbrochen, die policy-rc.d der Basis bleibt liegen, die Sperre ist frei. Das
-#                nächste zen update holt in der Prüfung «dpkg --configure -a» nach (apt-get -s allein sagte «aktuell»)
+#   abbruch      kill der Unit mitten in dpkg (postinst der Attrappe wartet): Marker, Inhibitor, policy-rc.d und die
+#                Sperre der Paketlisten (apt-get update scheitert) während des Laufs; danach dpkg unterbrochen, die
+#                policy-rc.d der Basis bleibt liegen, die Sperren sind frei. Das nächste zen update holt in der Prüfung
+#                «dpkg --configure -a» nach (apt-get -s allein sagte «aktuell»)
+#   stopp        Stopp von zenos-basis-pruefen.service mitten in «dpkg --configure -a» (KillMode=mixed): Die Unit
+#                bleibt «deactivating», dpkg läuft im postinst der Attrappe weiter und zu Ende, danach keine
+#                policy-rc.d, kein apt-get update, Exit 10, stand.json unverändert
 #   sperre       nie zwei Paketvorgänge zugleich: Während eine Basis-Installation läuft, enden zenos-kanal pruefen,
 #                zen update --nur-zenos und ein zweites zenos-basis installieren mit Exit 75, ein install.sh von Hand
 #                (als tester) wartet und läuft erst danach. Hält der Kanal die Sperre (flock auf dieselbe Datei), enden
@@ -36,7 +40,7 @@
 #                install.sh von Hand gilt
 #   aufraeumen   Quellen von Ubuntu zurück, Attrappen weg (greetd bleibt in der Version aus dem Test, gleicher Inhalt),
 #                Timer und Zeitpunkt wie vorher
-#   alle         einrichten automatik zen-update kernel schutz abbruch sperre aufraeumen
+#   alle         einrichten automatik zen-update kernel schutz abbruch stopp sperre aufraeumen
 #
 # Danach braucht apt für die Pakete von Ubuntu wieder ein «apt-get update» (mit Netz). Container danach entfernen.
 
@@ -679,6 +683,11 @@ s_abbruch() {
   enthaelt "Ubuntu-Basis wird aktualisiert" systemd-inhibit --list --no-pager || fehler "Inhibitor fehlt während des Laufs"
   grep -q '^# zenOS-Basis: ' "$POLICY" 2>/dev/null || fehler "$POLICY der Basis fehlt während des Laufs"
   ok "während des Laufs: Marker, Inhibitor, policy-rc.d der Basis"
+  # Sperre der Paketlisten bis zum Ende von full-upgrade: Ein apt-get update (wie apt-daily) tauscht die Listen nicht aus
+  if apt-get -q update > "$E2E/update-waehrend.txt" 2>&1; then fehler "apt-get update lief während der Installation"; fi
+  grep -q "Could not get lock /var/lib/apt/lists/lock" "$E2E/update-waehrend.txt" ||
+    { sed 's/^/      /' "$E2E/update-waehrend.txt" >&2; fehler "apt-get update scheiterte nicht an der Sperre der Paketlisten"; }
+  ok "während des Laufs: apt-get update scheitert an der Sperre der Paketlisten"
   systemctl kill --signal=KILL "$INSTALLIEREN"
   rc=0
   wait "$hinten" || rc=$?
@@ -691,7 +700,9 @@ s_abbruch() {
   grep -q '^# zenOS-Basis: ' "$POLICY" 2>/dev/null || fehler "$POLICY der Basis ist nach dem kill weg (erwartet: bleibt liegen)"
   [[ ! -e /run/zenos-basis ]] || fehler "/run/zenos-basis bleibt nach dem kill"
   flock -n /run/zenos-sperre/kanal.lock true || fehler "kanal.lock bleibt nach dem kill belegt"
-  ok "nach dem kill: policy-rc.d der Basis bleibt liegen, Marker weg, Sperre frei"
+  apt-get -qq update > "$E2E/update-danach.txt" 2>&1 ||
+    { sed 's/^/      /' "$E2E/update-danach.txt" >&2; fehler "apt-get update nach dem kill (Sperre der Paketlisten?)"; }
+  ok "nach dem kill: policy-rc.d der Basis bleibt liegen, Marker weg, Sperren frei (auch die der Paketlisten)"
 
   schritt "abbruch: das nächste zen update repariert"
   # Auswertung von jetzt: apt-get -s sähe den halb konfigurierten Stand als «aktuell» (nur eine Zeile «Conf»)
@@ -715,6 +726,60 @@ s_abbruch() {
   erwarte_version zenos-e2e-halten "$v_halten" "nach der Reparatur"
   [[ "$alt_halten" != "$v_halten" ]] || fehler "Version unverändert"
   danach_sauber "Reparatur"
+}
+
+s_stopp() {
+  schritt "stopp: Stopp der Prüfung mitten in «dpkg --configure -a»"
+  local v_halten beginn zustand journal stand_vorher
+  grundstock zenos-e2e-halten
+  v_halten=$(naechste zenos-e2e-halten)
+  bauen zenos-e2e-halten "$v_halten"
+  quelle "e2e:zenos-e2e-halten=$v_halten"
+  # Unterbrochenes dpkg wie nach einem Abbruch: apt-get mitten im postinst der Attrappe hart beendet
+  rm -f "$E2E/halten.laeuft"
+  : > "$E2E/halten"
+  systemd-run --unit=zenos-e2e-abbruch --collect --quiet --setenv=DEBIAN_FRONTEND=noninteractive \
+    apt-get -qq -y install zenos-e2e-halten
+  for _ in $(seq 1 180); do [[ -e "$E2E/halten.laeuft" ]] && break; sleep 1; done
+  [[ -e "$E2E/halten.laeuft" ]] || { rm -f "$E2E/halten"; fehler "dpkg kam nicht bis zur Attrappe"; }
+  systemctl kill --signal=KILL zenos-e2e-abbruch.service
+  for _ in $(seq 1 30); do systemctl --quiet is-active zenos-e2e-abbruch.service || break; sleep 1; done
+  dpkg_unterbrochen || fehler "dpkg ist nach dem kill nicht unterbrochen"
+  ok "dpkg unterbrochen (zenos-e2e-halten $(dpkg-query -W -f='${db:Status-Status}' zenos-e2e-halten))"
+
+  stand_vorher=$(cat "$STAND/stand.json" 2>/dev/null || true)
+  rm -f "$E2E/halten.laeuft"
+  beginn=$(date +%s)
+  sleep 1
+  systemctl start --no-block zenos-basis-pruefen.service
+  for _ in $(seq 1 180); do [[ -e "$E2E/halten.laeuft" ]] && break; sleep 1; done
+  [[ -e "$E2E/halten.laeuft" ]] || { rm -f "$E2E/halten"; fehler "«dpkg --configure -a» kam nicht bis zur Attrappe"; }
+  ok "die Prüfung holt «dpkg --configure -a» nach, der postinst wartet"
+  systemctl stop --no-block zenos-basis-pruefen.service
+  sleep 4
+  zustand=$(systemctl show -p ActiveState --value zenos-basis-pruefen.service)
+  [[ "$zustand" == deactivating ]] || { rm -f "$E2E/halten"; fehler "Unit nach dem Stopp: $zustand (erwartet deactivating)"; }
+  pgrep -x dpkg > /dev/null || { rm -f "$E2E/halten"; fehler "dpkg wurde beim Stopp beendet"; }
+  grep -q '^# zenOS-Basis: ' "$POLICY" 2>/dev/null || { rm -f "$E2E/halten"; fehler "$POLICY der Basis fehlt während dpkg"; }
+  ok "nach dem Stopp: Unit $zustand, dpkg läuft weiter, policy-rc.d der Basis da"
+  rm -f "$E2E/halten"
+  for _ in $(seq 1 120); do
+    zustand=$(systemctl show -p ActiveState --value zenos-basis-pruefen.service)
+    [[ "$zustand" == active || "$zustand" == activating || "$zustand" == deactivating ]] || break
+    sleep 1
+  done
+  [[ "$(systemctl show -p ExecMainStatus --value zenos-basis-pruefen.service)" == 10 ]] ||
+    fehler "Exit der Prüfung nach dem Stopp: $(systemctl show -p ExecMainStatus --value zenos-basis-pruefen.service)"
+  systemctl reset-failed zenos-basis-pruefen.service 2> /dev/null || true
+  ! dpkg_unterbrochen || fehler "dpkg nach dem Stopp noch unterbrochen"
+  erwarte_version zenos-e2e-halten "$v_halten" "dpkg lief zu Ende"
+  journal=$(journalctl -q -u zenos-basis-pruefen.service --since "@$beginn" -o cat)
+  grep -q "Stopp verlangt (ein laufendes dpkg --configure -a läuft zu Ende)" <<< "$journal" ||
+    fehler "Journal ohne «Stopp verlangt»"
+  if grep -q "Paketlisten aktualisieren" <<< "$journal"; then fehler "apt-get update lief nach dem Stopp"; fi
+  [[ "$(cat "$STAND/stand.json" 2>/dev/null || true)" == "$stand_vorher" ]] || fehler "stand.json hat sich geändert"
+  ok "Exit 10, kein apt-get update nach dem Stopp, stand.json unverändert"
+  danach_sauber "Stopp"
 }
 
 s_sperre() {
@@ -858,13 +923,13 @@ s_aufraeumen() {
 }
 
 if (( $# == 0 )); then
-  sed -n '2,41p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'
   exit 2
 fi
 for arg in "$@"; do
   case "$arg" in
-    einrichten | automatik | zen-update | kernel | schutz | abbruch | sperre | aufraeumen | alle) ;;
-    *) sed -n '2,41p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+    einrichten | automatik | zen-update | kernel | schutz | abbruch | stopp | sperre | aufraeumen | alle) ;;
+    *) sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
   esac
 done
 for arg in "$@"; do
@@ -875,9 +940,10 @@ for arg in "$@"; do
     kernel) s_kernel ;;
     schutz) s_schutz ;;
     abbruch) s_abbruch ;;
+    stopp) s_stopp ;;
     sperre) s_sperre ;;
     aufraeumen) s_aufraeumen ;;
-    alle) s_einrichten; s_automatik; s_zen_update; s_kernel; s_schutz; s_abbruch; s_sperre; s_aufraeumen ;;
+    alle) s_einrichten; s_automatik; s_zen_update; s_kernel; s_schutz; s_abbruch; s_stopp; s_sperre; s_aufraeumen ;;
   esac
 done
 printf '\nalles gut: %s\n' "$*"

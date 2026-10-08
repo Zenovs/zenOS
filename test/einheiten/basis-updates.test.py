@@ -20,9 +20,11 @@ import importlib.util
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -106,6 +108,34 @@ STAND_NACHHER = {**STAND_VORHER, "libssl3t64": "3.5.5-1ubuntu3.7", "sudo": "1.9.
                  "openssl": "3.5.5-1ubuntu3.7", "libheif1": "1.21.2-3ubuntu0.6", "glycin-loaders": "2.1.5+ds-0ubuntu0.2",
                  "example-tool": "1.1-1"}
 
+# Für jede Attrappe: Hält gerade ein anderer Prozess die Sperre der Paketlisten (wie apt sie prüft)? notiz schreibt das
+# mit dem Schritt nach W/listen. stopp sendet dem Aufrufer (zenos-basis im Testprozess) SIGTERM, wenn W/NAME besteht
+# (einmal: die Datei geht dabei weg), wie systemd beim Stopp der Unit.
+HILFEN = r'''
+def listen_gesperrt():
+    import fcntl, os
+    fd = os.open(LISTEN, os.O_RDWR | os.O_CREAT, 0o640)
+    try:
+        fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return False
+    except OSError:
+        return True
+    finally:
+        os.close(fd)
+def notiz(schritt):
+    import json, os
+    with open(os.path.join(W, "listen"), "a", encoding="utf-8") as f:
+        f.write(json.dumps([schritt, listen_gesperrt()]) + "\n")
+def stopp(name):
+    import os, signal
+    try:
+        os.unlink(os.path.join(W, name))
+    except FileNotFoundError:
+        return False
+    os.kill(os.getppid(), signal.SIGTERM)
+    return True
+'''
+
 # Attrappen. W ist der Temp-Ordner des Tests.
 APT_GET = r'''
 import json, os, shutil, subprocess, sys
@@ -120,12 +150,18 @@ with open(os.path.join(W, "apt", "aufrufe"), "a", encoding="utf-8") as f:
     f.write(json.dumps({"args": args, "env": {k: os.environ.get(k) for k in
                         ("DEBIAN_FRONTEND", "NEEDRESTART_MODE", "NEEDRESTART_SUSPEND", "LC_ALL", "PATH")}}) + "\n")
 if "update" in args:
+    notiz("update")
+    if stopp("update-stopp"):
+        import time
+        time.sleep(60)
     sys.exit(int(lies("update.exit", "0")))
 if "-s" in args:
+    notiz("sim")
     gelaufen = os.path.exists(os.path.join(W, "apt", "gelaufen"))
     sys.stdout.write(lies("sim-nachher.txt") if gelaufen and lies("sim-nachher.txt") else lies("sim.txt"))
     sys.exit(int(lies("sim.exit", "0")))
 if "full-upgrade" in args:
+    notiz("full-upgrade")
     optionen = [args[i + 1] for i, a in enumerate(args) if a == "-o"]
     vor = [o.split("::=", 1)[1] for o in optionen if o.startswith("DPkg::Pre-Invoke::=")]
     nach = [o.split("::=", 1)[1] for o in optionen if o.startswith("DPkg::Post-Invoke::=")]
@@ -178,6 +214,7 @@ if sys.argv[1:] == ["--print-architecture"]:
 with open(os.path.join(W, "dpkg-aufrufe"), "a", encoding="utf-8") as f:
     f.write(" ".join(sys.argv[1:]) + "\n")
 if sys.argv[-2:] == ["--configure", "-a"]:
+    stopp("dpkg-stopp")
     # Was gilt beim Nachholen: die policy-rc.d (wie invoke-rc.d sie fragt) und ob apt schon lief
     ergebnis = {"vor_apt": not os.path.exists(os.path.join(W, "apt", "aufrufe")), "policy": None}
     if os.path.exists(POLICY):
@@ -193,6 +230,7 @@ if sys.argv[-2:] == ["--configure", "-a"]:
 
 INSTALL = r'''
 import json, os, sys
+notiz("install.sh")
 with open(os.path.join(W, "install-aufrufe"), "a", encoding="utf-8") as f:
     f.write(json.dumps({"args": sys.argv[1:], "lauf": os.environ.get("ZENOS_KANAL_LAUF"),
                         "ergebnis": os.environ.get("ZENOS_KANAL_ERGEBNIS")}) + "\n")
@@ -210,6 +248,10 @@ ZEN = r'''
 import os, sys
 if sys.argv[1:] != ["doctor", "--kurz"]:
     sys.exit(2)
+notiz("doctor")
+with open(os.path.join(W, "doctor-marker"), "a", encoding="utf-8") as f:
+    f.write(f"{os.path.exists(MARKER)}\n")
+stopp("doctor-stopp")
 datei = os.path.join(W, "doctor-fehler")
 n = open(datei).read().strip() if os.path.exists(datei) else "0"
 print(f"{n} Fehler · 1 Warnung · 2 Hinweise")
@@ -245,6 +287,7 @@ class Umgebung(unittest.TestCase):
             "LOG_FILE": f"{w}/var/log/zenos/basis.log", "REBOOT_FILE": f"{w}/run/reboot-required",
             "REBOOT_PKGS": f"{w}/run/reboot-required.pkgs", "POLICY_FILE": f"{w}/usr/sbin/policy-rc.d",
             "DPKG_STATUS": f"{w}/var/lib/dpkg/status", "DPKG_UPDATES": f"{w}/var/lib/dpkg/updates",
+            "LISTS_LOCK": f"{w}/var/lib/apt/lists/lock",
             "APT_LOCKS": (f"{w}/var/lib/apt/lists/lock", f"{w}/var/cache/apt/archives/lock",
                           f"{w}/var/lib/dpkg/lock-frontend", f"{w}/var/lib/dpkg/lock"),
             "DPKG_LOCKS": (f"{w}/var/lib/dpkg/lock-frontend", f"{w}/var/lib/dpkg/lock"),
@@ -260,7 +303,8 @@ class Umgebung(unittest.TestCase):
                        "usr/sbin", "run", "apt", "proc", "bin"):
             os.makedirs(os.path.join(w, ordner), exist_ok=True)
         # -S: ohne site-packages, die Attrappen starten so schneller
-        kopf = f"#!{sys.executable} -S\nW = {w!r}\nPOLICY = {B.POLICY_FILE!r}\n"
+        kopf = (f"#!{sys.executable} -S\nW = {w!r}\nPOLICY = {B.POLICY_FILE!r}\nLISTEN = {B.LISTS_LOCK!r}\n"
+                f"MARKER = {os.path.join(B.RUNTIME_DIR, B.TAKEOVER)!r}\n{HILFEN}")
         for pfad, text in ((B.APT_GET, APT_GET), (B.APT_MARK, APT_MARK), (B.DPKG_QUERY, DPKG_QUERY), (B.DPKG, DPKG),
                            (f"{B.CODE_DIR}/scripts/install.sh", INSTALL), (f"{B.CODE_DIR}/scripts/zen", ZEN)):
             schreiben(pfad, kopf + text, 0o755)
@@ -270,6 +314,11 @@ class Umgebung(unittest.TestCase):
         schreiben(B.DPKG_STATUS, "")
         os.utime(B.DPKG_STATUS, (JETZT.timestamp() - 3600, JETZT.timestamp() - 3600))
         self.sim(SIM_OHNE_KERNEL)
+        # Ein SIGTERM einer Attrappe (wie systemd beim Stopp) ohne den Handler von zenos-basis beendete sonst den Testlauf
+        self.fremdes_sigterm = []
+        alt = signal.signal(signal.SIGTERM, lambda *_: self.fremdes_sigterm.append(1))
+        self.addCleanup(signal.signal, signal.SIGTERM, alt)
+        self.addCleanup(lambda: self.assertEqual(self.fremdes_sigterm, [], "SIGTERM ohne Handler von zenos-basis"))
 
     @staticmethod
     def zuruecksetzen():
@@ -297,6 +346,21 @@ class Umgebung(unittest.TestCase):
                 return [json.loads(z) for z in f if z.strip()]
         except FileNotFoundError:
             return []
+
+    def listen(self):
+        """[(Schritt, ob ein anderer Prozess die Sperre der Paketlisten hielt)] aus den Attrappen."""
+        try:
+            with open(f"{self.w}/listen", encoding="utf-8") as f:
+                return [tuple(json.loads(z)) for z in f if z.strip()]
+        except FileNotFoundError:
+            return []
+
+    def listen_frei(self):
+        """Ist die Sperre der Paketlisten frei (aus einem anderen Prozess geprüft: fcntl-Sperren gehören dem Prozess)?"""
+        r = subprocess.run([sys.executable, "-S", "-c", "import fcntl, os, sys\nfd = os.open(sys.argv[1], os.O_RDWR | "
+                            "os.O_CREAT)\ntry:\n    fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)\nexcept OSError:\n"
+                            "    sys.exit(1)", B.LISTS_LOCK], check=False)
+        return r.returncode == 0
 
     def install_aufrufe(self):
         try:
@@ -588,6 +652,40 @@ class Pruefen(Umgebung):
         self.assertIn("dpkg ist unterbrochen", s["grund"])
         self.assertIn("sudo dpkg --configure -a", aus)
         self.assertEqual(self.apt_aufrufe(), [], "ohne apt-get update und Auswertung")
+
+    def test_stopp_waehrend_dpkg_nachholen(self):
+        """Ein Stopp der Unit (KillMode=mixed: SIGTERM nur an zenos-basis), während «dpkg --configure -a» läuft: dpkg
+        läuft zu Ende, die policy-rc.d ist danach weg, apt-get update beginnt nicht mehr (Exit 10, stand.json
+        unverändert). Vorher beendete systemd mit KillMode=control-group auch dpkg mittendrin."""
+        vorher = signal.getsignal(signal.SIGTERM)
+        schreiben(f"{B.DPKG_UPDATES}/0000", "")
+        self.setze("dpkg-stopp", "")
+        code, aus = self.pruefen()
+        self.assertEqual(code, 10, aus)
+        self.assertIn("Stopp verlangt (ein laufendes dpkg --configure -a läuft zu Ende)", aus)
+        self.assertEqual(os.listdir(B.DPKG_UPDATES), [], "dpkg lief zu Ende")
+        self.assertEqual(self.nachholen()["policy"]["greetd.service restart"], 101)
+        self.assertFalse(os.path.lexists(B.POLICY_FILE), "die policy-rc.d ist weg")
+        self.assertEqual(self.apt_aufrufe(), [], "kein apt-get update nach dem Stopp")
+        self.assertFalse(os.path.exists(B.state_path(B.STAND)))
+        self.assertIs(signal.getsignal(signal.SIGTERM), vorher, "der Handler ist wieder der alte")
+        self.assertEqual(self.pruefen()[0], 0, "die Sperre ist frei, die nächste Prüfung läuft")
+
+    def test_stopp_waehrend_apt_get_update(self):
+        """Ein Stopp während apt-get update wartet nicht auf den Paketserver: apt-get endet sofort, keine Auswertung,
+        stand.json unverändert (Exit 10)."""
+        self.pruefen()
+        stand = self.json(B.STAND)
+        os.unlink(f"{self.w}/apt/aufrufe")
+        self.setze("update-stopp", "")
+        beginn = time.monotonic()
+        code, aus = self.pruefen()
+        self.assertEqual(code, 10, aus)
+        self.assertLess(time.monotonic() - beginn, 30, "apt-get update wurde beendet, nicht abgewartet (60 s)")
+        self.assertIn("Prüfung abgebrochen, stand.json unverändert", aus)
+        self.assertEqual([a["args"][-1] for a in self.apt_aufrufe()], ["update"], "keine Auswertung danach")
+        self.assertEqual(self.json(B.STAND), stand)
+        self.assertEqual(self.pruefen()[0], 0)
 
     def test_sperre_von_apt_erkannt(self):
         sperre = B.APT_LOCKS[2]
@@ -901,6 +999,114 @@ class Installieren(Umgebung):
         self.assertEqual(self.full_upgrade_aufrufe(), [])
         self.assertFalse(run_.attempted)
 
+    def test_stopp_waehrend_ausgangslage(self):
+        """Ein Neustart aus dem System-Menü, während zen doctor die Ausgangslage misst (auf dem Pi einige zehn
+        Sekunden): Inhibitor und Übernahme-Marker stehen schon («Update läuft»), und danach beginnt apt nicht mehr
+        (Exit 10, keine letzte.json). Vorher kamen beide erst nach zen doctor, und apt begann trotz Stopp."""
+        self.bereit()
+        os.makedirs(B.RUNTIME_DIR)
+        self.setze("doctor-stopp", "")
+        self.auftrag()
+        code, aus = self.installieren()
+        self.assertEqual(code, 10, aus)
+        self.assertIn("Stopp verlangt (Ausschalten?), bevor apt begann; nichts geändert.", aus)
+        self.assertEqual(self.full_upgrade_aufrufe(), [])
+        self.assertEqual(self.install_aufrufe(), [])
+        self.assertFalse(os.path.exists(B.state_path(B.LAST)), "ohne apt keine letzte.json")
+        with open(f"{self.w}/doctor-marker", encoding="utf-8") as f:
+            self.assertEqual(f.read(), "True\n", "der Marker stand schon während zen doctor")
+        self.assertFalse(os.path.exists(os.path.join(B.RUNTIME_DIR, B.TAKEOVER)))
+        self.assertTrue(self.listen_frei())
+        self.auftrag()
+        self.assertEqual(self.installieren()[0], 0, "der nächste Auftrag installiert")
+
+    def test_stopp_beim_warten(self):
+        """Ein Stopp, während es auf einen anderen Paketvorgang wartet (bis 20 Minuten), beendet das Warten sofort: kein
+        «dpkg --configure -a», kein apt (Exit 10)."""
+        self.bereit()
+        schreiben(f"{B.DPKG_UPDATES}/0001", "")
+        gefragt = []
+
+        def belegt():
+            if not gefragt:
+                os.kill(os.getpid(), signal.SIGTERM)
+            gefragt.append(1)
+            return ["apt-daily-upgrade.service"]
+
+        self.auftrag()
+        with mock.patch.object(B, "apt_busy", belegt), mock.patch.object(B.time, "sleep", lambda s: None), \
+                mock.patch.object(B, "APT_WAIT", 1200):
+            code, aus = self.installieren()
+        self.assertEqual(code, 10, aus)
+        self.assertEqual(len(gefragt), 1, "nicht weiter gewartet")
+        self.assertFalse(os.path.exists(f"{self.w}/dpkg-aufrufe"), "kein dpkg --configure -a nach dem Stopp")
+        self.assertEqual(self.full_upgrade_aufrufe(), [])
+
+    def test_sperre_der_paketlisten(self):
+        """Von der Auswertung bis zum Ende von apt-get full-upgrade hält das Installieren die Sperre der Paketlisten: Ein
+        apt-get update von apt-daily dazwischen (etwa während zen doctor) scheitert, full-upgrade löst gegen dieselben
+        Listen auf wie die Auswertung. install.sh und alles danach laufen ohne sie; das Prüfen hält sie nicht."""
+        self.sim(SIM_OHNE_KERNEL, SIM_LEER)
+        self.paketstand(STAND_NACHHER, "nachher.txt")
+        self.assertEqual(self.pruefen()[0], 0)
+        self.assertEqual(self.listen(), [("update", False), ("sim", False)])
+        os.unlink(f"{self.w}/listen")
+        self.auftrag()
+        self.assertEqual(self.installieren()[0], 0)
+        self.assertEqual(self.listen(), [("sim", True), ("doctor", True), ("full-upgrade", True), ("install.sh", False),
+                                         ("doctor", False), ("sim", False)])
+        self.assertTrue(self.listen_frei())
+        # Hält ein anderer Prozess sie (apt-get update), wartet es; bleibt sie belegt: Exit 75, ohne apt
+        self.bereit()
+        self.auftrag()
+        halter = subprocess.Popen([sys.executable, "-S", "-c", "import fcntl, os, sys\nfd = os.open(sys.argv[1], "
+                                   "os.O_RDWR)\nfcntl.lockf(fd, fcntl.LOCK_EX)\nprint('ja', flush=True)\n"
+                                   "sys.stdin.read()", B.LISTS_LOCK], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                  text=True)
+        try:
+            self.assertEqual(halter.stdout.readline().strip(), "ja")
+            code, aus = self.installieren()
+        finally:
+            halter.stdin.close()
+            halter.wait(10)
+            halter.stdout.close()
+        self.assertEqual(code, 75, aus)
+        self.assertIn("läuft noch immer ein anderer Paketvorgang", aus)
+        self.assertEqual(self.full_upgrade_aufrufe(), [])
+
+    def test_mehr_ohne_zustimmung_ist_kaputt(self):
+        """Was apt über die angezeigte Liste hinaus tat und ohne Zustimmung nie darf (Kernel, eine Entfernung), ist ein
+        Problem, kein Hinweis; ein geschütztes Paket zu entfernen auch mit Zustimmung."""
+        vorher = {**STAND_VORHER, "libweg1": "1.0", "ubuntu-minimal": "1.539"}
+        nachher = {**STAND_NACHHER, "linux-image-9-raspi": "9.0", "ubuntu-minimal": "1.539"}
+        self.paketstand(vorher)
+        self.bereit(nachher=nachher)
+        self.auftrag(von="automatik")
+        code, aus = self.installieren()
+        self.assertEqual(code, 5, aus)
+        letzte = self.json(B.LAST)
+        self.assertEqual(letzte["ergebnis"], "kaputt")
+        self.assertEqual(letzte["mehr"], ["libweg1", "linux-image-9-raspi"])
+        self.assertEqual(letzte["probleme"], [
+            "apt brachte ohne Zustimmung Kernel, Firmware oder Bootloader, die nicht in der Liste standen: "
+            "linux-image-9-raspi",
+            "apt entfernte ohne Zustimmung Pakete, die nicht in der Liste standen: libweg1"])
+        # Mit Zustimmung: nur der Hinweis
+        os.unlink(f"{self.w}/apt/gelaufen")
+        self.paketstand(vorher)
+        self.bereit(nachher=nachher)
+        self.auftrag(zustimmung=True)
+        self.assertEqual(self.installieren()[0], 0)
+        self.assertEqual(self.json(B.LAST)["probleme"], [])
+        # Ein geschütztes Paket: nie
+        os.unlink(f"{self.w}/apt/gelaufen")
+        self.paketstand(vorher)
+        self.bereit(nachher={k: v for k, v in nachher.items() if k != "ubuntu-minimal"})
+        self.auftrag(zustimmung=True)
+        self.assertEqual(self.installieren()[0], 5)
+        self.assertEqual(self.json(B.LAST)["probleme"],
+                         ["apt entfernte geschützte Pakete, die nicht in der Liste standen: ubuntu-minimal"])
+
     def test_fremde_und_alte_policy(self):
         self.bereit()
         schreiben(B.POLICY_FILE, "#!/bin/sh\n# fremd\nexit 0\n", 0o755)
@@ -950,6 +1156,73 @@ class Installieren(Umgebung):
         self.assertTrue(os.path.isdir(B.RUNTIME_DIR))
         self.assertFalse(os.path.exists(marker))
         self.assertEqual(os.listdir(B.RUNTIME_DIR), [], "auch der Ordner der policy-rc.d ist weg")
+
+
+class Quittieren(Umgebung):
+    """zenos-basis quittieren: ein «kaputt» als behoben vermerken, nachdem Zeno es behoben hat. Vorher liess es sich nicht
+    aufheben: zen doctor meldete einen Fehler und die Einstellungen «kaputt», bis Ubuntu wieder Pakete brachte."""
+
+    def kaputt(self):
+        self.sim(SIM_OHNE_KERNEL, SIM_LEER)
+        self.paketstand(STAND_NACHHER, "nachher.txt")
+        self.assertEqual(self.pruefen()[0], 0)
+        self.setze("install.exit", "1")
+        self.auftrag()
+        self.assertEqual(self.installieren()[0], 5)
+        os.unlink(f"{self.w}/install.exit")
+
+    def quittieren(self):
+        return self.lauf(B.cmd_acknowledge, [])
+
+    def test_nichts_zu_quittieren(self):
+        self.assertEqual(self.quittieren(), (0, "Nichts zu quittieren: Das letzte Basis-Update meldete nicht «kaputt».\n"))
+
+    def test_behoben(self):
+        self.kaputt()
+        letzte = self.json(B.LAST)
+        self.assertEqual(letzte["ausgangslage"], {"quickshell_exit": None, "greetd_ausgefallen": None,
+                                                  "ausgefallen": None, "doctor_fehler": 0})
+        self.assertEqual(self.lauf(B.cmd_status, ["--installation"])[1].split(" ", 1)[0], "kaputt")
+        # zen doctor zählt jetzt «Letztes Basis-Update kaputt» selbst als Fehler: das zählt nicht
+        self.setze("doctor-fehler", "1")
+        code, aus = self.quittieren()
+        self.assertEqual(code, 0, aus)
+        self.assertIn("Als behoben vermerkt", aus)
+        letzte = self.json(B.LAST)
+        self.assertEqual((letzte["ergebnis"], letzte["behoben"]), ("kaputt", "2026-10-07T10:00:00Z"))
+        zeile = self.lauf(B.cmd_status, ["--installation"])[1].strip()
+        self.assertRegex(zeile, r"^behoben [0-9-]{10} [0-9:]{5}: kaputt, als behoben vermerkt am [0-9-]{10} [0-9:]{5} "
+                                r"\(Nach dem Update schlechter als vorher: install\.sh endete mit Exit 1")
+        self.assertRegex(self.lauf(B.cmd_status, [])[1],
+                         r"\nInstallation [0-9-]{10} [0-9:]{5}: kaputt, als behoben vermerkt am ")
+        self.assertEqual(self.quittieren()[1], "Nichts zu quittieren: Das letzte Basis-Update meldete nicht «kaputt».\n")
+        self.assertEqual(os.stat(B.state_path(B.LAST)).st_mode & 0o777, 0o644)
+
+    def test_noch_schlechter(self):
+        self.kaputt()
+        self.setze("doctor-fehler", "2")
+        code, aus = self.quittieren()
+        self.assertEqual(code, 5, aus)
+        self.assertIn("Noch schlechter als vor dem Update: zen doctor meldet 1 Fehler statt 0", aus)
+        self.assertNotIn("behoben", self.json(B.LAST))
+        self.setze("doctor-fehler", "1")
+        schreiben(f"{B.DPKG_UPDATES}/0001", "")
+        code, aus = self.quittieren()
+        self.assertEqual(code, 5, aus)
+        self.assertIn("dpkg ist unterbrochen", aus)
+        os.unlink(f"{B.DPKG_UPDATES}/0001")
+        self.assertEqual(self.quittieren()[0], 0)
+
+    def test_sperre_und_rechte(self):
+        self.kaputt()
+        with open(B.LOCK_FILE, "w") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            self.assertEqual(self.quittieren()[0], 75)
+        self.assertNotIn("behoben", self.json(B.LAST))
+        self.assertEqual(self.lauf(B.cmd_acknowledge, ["--ja"])[0], 2)
+        if os.geteuid() != 0:
+            B.TRUSTED_UIDS = (0,)
+            self.assertEqual(self.quittieren()[0], 2)
 
 
 class Status(Umgebung):
