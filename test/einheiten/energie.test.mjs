@@ -293,9 +293,13 @@ test("Sperre: gehaltene Wecktaste, ihre Wiederholungen werden verworfen, bis sie
   s = sperrfeld(dunkel(), [[true, RETURN, false], ...halten(RETURN, 2), [true, RETURN, false], ...halten(RETURN, 2)]);
   assert.deepEqual(s.verworfen, [true, true, true, true, true, false, false, false, false, false]);
 
-  // Nie eine andere Taste: Ein Druck während des Haltens kommt an und beendet es
-  s = sperrfeld(dunkel(), [[true, Q, false], ...halten(Q, 2), [true, R, false], ...halten(Q, 1), ...halten(R, 1)]);
+  // Nie eine andere Taste: Ein Druck während des Haltens kommt an. Er übernimmt im Client die Wiederholung, «q»
+  // wiederholt sich danach nicht mehr; das Loslassen von «q» beendet es, die Wiederholung von «r» ebenso.
+  s = sperrfeld(dunkel(), [[true, Q, false], ...halten(Q, 2), [true, R, false], [false, R, false], [false, Q, false], ...tippen(T)]);
   assert.deepEqual(s.verworfen, [true, true, true, true, true, false, false, false, false, false]);
+  assert.equal(s.gehalten, -1);
+  s = sperrfeld(dunkel(), [[true, Q, false], ...halten(Q, 2), [true, R, false], ...halten(R, 2), [false, R, false]]);
+  assert.deepEqual(s.verworfen, [true, true, true, true, true, false, false, false, false, false, false]);
   assert.equal(s.gehalten, -1);
   // Das Loslassen einer anderen Taste (Shift, vor dem Wecken gedrückt) beendet es nicht
   s = sperrfeld(dunkel(), [[true, Q, false], [false, SHIFT, false], ...halten(Q, 2), [false, Q, false]]);
@@ -335,6 +339,53 @@ test("Sperre: gehaltene Wecktaste, ihre Wiederholungen werden verworfen, bis sie
   // Ein kaputter Stand verwirft nichts
   for (const gehalten of [undefined, null, "32", NaN])
     assert.deepEqual(sperrfeld({ z: E.weckzustand(), gehalten }, [[true, Q, true], [false, Q, true]]).verworfen, [false, false]);
+});
+
+// Codes (nativeScanCode, evdev + 8) der Tasten, die sich in xkb nicht wiederholen (Belegungen ch und us, geprüft mit
+// xkb_keymap_key_repeats): Shift, Ctrl, Alt, AltGr (ISO_Level3_Shift), Super, Caps Lock, Num Lock, ISO_Level5_Shift
+// und der Umschalter der Belegung (ISO_Next_Group). Ihr Druck übernimmt die Wiederholung in QtWayland nicht.
+const NICHT_WIEDERHOLT = { LFSH: 50, RTSH: 62, LCTL: 37, RCTL: 105, LALT: 64, RALT: 108, LWIN: 133, RWIN: 134,
+  CAPS: 66, NMLK: 77, LVL3: 92, LVL5: 203, I592: 592 };
+
+test("Sperre: Shift, Ctrl, Alt, AltGr oder Super während des Haltens beenden das Verwerfen nicht", () => {
+  const Q = 32;
+  const T = 28;
+  const RETURN = 36;
+  const dunkel = () => ({ z: E.bildschirmDunkel(E.weckzustand()), gehalten: -1 });
+  const halten = (code, mal) => Array.from({ length: mal }, () => [[false, code, true], [true, code, true]]).flat();
+  const tippen = (...codes) => codes.flatMap((c) => [[true, c, false], [false, c, false]]);
+
+  for (const [name, mod] of Object.entries(NICHT_WIEDERHOLT)) {
+    for (const taste of [Q, RETURN]) {
+      // Dunkel, Taste gedrückt und wiederholt, dann die Modifikatortaste dazu: Die Wiederholungen gehen weiter
+      // (QtWayland) und bleiben verworfen, auch nach ihrem Loslassen. Ihr Drücken und Loslassen kommen an. Erst das
+      // Loslassen der gehaltenen Taste beendet es, danach kommt alles an, auch ein neuer Druck derselben Taste.
+      const s = sperrfeld(dunkel(), [[true, taste, false], ...halten(taste, 2), [true, mod, false], ...halten(taste, 3),
+        [false, mod, false], ...halten(taste, 2), [false, taste, false], ...tippen(T, taste)]);
+      assert.deepEqual(s.verworfen, [true, ...Array(4).fill(true), false, ...Array(6).fill(true), false,
+        ...Array(4).fill(true), false, false, false, false, false], `${name}, Taste ${taste}`);
+      assert.equal(s.gehalten, -1, `${name}, Taste ${taste}`);
+    }
+  }
+
+  // Wie im Befund: q gedrückt, wiederholt, Shift gedrückt, q wiederholt: verworfen
+  let s = sperrfeld(dunkel(), [[true, Q, false], [false, Q, true], [true, Q, true], [true, 50, false], [false, Q, true], [true, Q, true]]);
+  assert.deepEqual(s.verworfen, [true, true, true, false, true, true]);
+  assert.equal(s.gehalten, Q);
+
+  // Nie eine andere Taste: Weckt Shift (verworfen, gemerkt), kommt «q» danach an, auch seine Wiederholungen
+  s = sperrfeld(dunkel(), [[true, 50, false], [true, Q, false], ...halten(Q, 2), [false, Q, false], [false, 50, false], ...tippen(T)]);
+  assert.deepEqual(s.verworfen, [true, false, false, false, false, false, false, false, false, false]);
+  assert.equal(s.gehalten, -1);
+  // Shift schon gedrückt, dann weckt «q» (Shift+q): «q» und seine Wiederholungen verworfen, bis «q» los ist
+  s = sperrfeld(dunkel(), [[true, Q, false], ...halten(Q, 2), [false, 50, false], ...halten(Q, 1), [false, Q, false], ...tippen(T)]);
+  assert.deepEqual(s.verworfen, [true, true, true, true, true, false, true, true, false, false, false]);
+  // Ein Druck ohne gültigen Code lässt sich nicht von der gehaltenen Taste unterscheiden: Er beendet es
+  for (const code of [undefined, null, NaN, -1, "32"]) {
+    s = sperrfeld(dunkel(), [[true, Q, false], ...halten(Q, 1), [true, code, false], ...halten(Q, 1)]);
+    assert.deepEqual(s.verworfen, [true, true, true, false, false, false], String(code));
+    assert.equal(s.gehalten, -1, String(code));
+  }
 });
 
 test("Sperre.qml: jedes Drücken und Loslassen im Passwortfeld geht durch wecktasteSperre", () => {

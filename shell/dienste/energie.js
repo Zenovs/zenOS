@@ -286,9 +286,14 @@ function wecktasteGesehen(z) {
 // Gehaltene Wecktaste: Wer die Taste, die weckt, festhält, bekommt sie vom Client wiederholt (Wayland: QtWayland nach
 // der Verzögerung des Compositors, bei labwc 600 ms, dann 25 je Sekunde, mit isAutoRepeat). Die Wiederholungen gehen
 // an das Feld, das dann den Fokus hat. Sie werden verworfen, bis die Taste losgelassen wird; sonst landeten Zeichen
-// im Passwortfeld, und ein gehaltenes Return meldete mit dem halben Passwort an. Nie eine andere Taste: Jeder echte
-// Druck (auch derselben Taste), das echte Loslassen der gehaltenen Taste und die Wiederholung einer anderen beenden
-// es. Gebraucht im Login (greeter/Anmeldefenster.qml) und in der Sperre (über wecktasteSperre).
+// im Passwortfeld, und ein gehaltenes Return meldete mit dem halben Passwort an. Nie eine andere Taste: Verworfen
+// werden nur Wiederholungen genau dieser Taste. Ihr echtes Loslassen, ein echter Druck derselben Taste und die
+// Wiederholung einer anderen beenden es. Der echte Druck einer anderen Taste kommt an, beendet es aber nicht:
+// QtWayland wiederholt nur die zuletzt gedrückte Taste, die sich wiederholen darf (xkb_keymap_key_repeats). Eine
+// solche Taste übernimmt die Wiederholung, die gehaltene wiederholt sich danach nicht mehr. Shift, Ctrl, Alt, AltGr,
+// Super, Caps Lock, Num Lock und die Umschalter der Tastaturbelegung wiederholen sich nicht: Ihr Druck lässt die
+// gehaltene Taste weiter wiederholen, und die Wiederholungen bleiben verworfen.
+// Gebraucht im Login (greeter/Anmeldefenster.qml) und in der Sperre (über wecktasteSperre).
 //   gehalten:   Code der verworfenen Wecktaste (nativeScanCode), -1: keine
 //   druck:      true beim Drücken, false beim Loslassen
 //   code:       nativeScanCode dieser Taste
@@ -302,7 +307,10 @@ function wecktasteGehalten(gehalten, druck, code, wiederholt) {
             return { verwerfen: true, gehalten: gehalten };
         return { verwerfen: false, gehalten: -1 };
     }
-    if (druck === true || code === gehalten)
+    // Echt gedrückt oder losgelassen: dieselbe Taste (oder eine ohne gültigen Code, sie liesse sich nicht
+    // unterscheiden) beendet es, eine andere nicht
+    var mitCode = typeof code === "number" && isFinite(code) && code >= 0;
+    if (!mitCode || code === gehalten)
         return { verwerfen: false, gehalten: -1 };
     return { verwerfen: false, gehalten: gehalten };
 }
@@ -310,7 +318,8 @@ function wecktasteGehalten(gehalten, druck, code, wiederholt) {
 // Jede Taste im Passwortfeld der Sperre (sperre/Sperre.qml), beim Drücken und Loslassen. Dort gibt es keinen eigenen
 // Wecker wie im Login: Alles geht durch das Feld. Verworfen werden die Wecktaste (genau ein Druck, wecktasteVerwerfen)
 // und, solange sie gehalten wird, ihre Wiederholungen (wecktasteGehalten). Nie eine andere Taste, ihr Loslassen
-// beendet es. Ein Loslassen zählt nie als Wecktaste.
+// beendet es. Ein Loslassen zählt nie als Wecktaste. Ein Druck, der keine Wecktaste ist, lässt das Halten, wie es
+// ist (wecktasteGehalten entscheidet, ob er es beendet).
 //   z:        Weckzustand (weckzustand, bildschirmDunkel, bildschirmHell)
 //   gehalten: Code der verworfenen Wecktaste, solange sie gehalten wird (-1: keine)
 //   druck, code, wiederholt wie bei wecktasteGehalten, jetzt in ms (Date.now())
@@ -322,7 +331,8 @@ function wecktasteSperre(z, gehalten, druck, code, wiederholt, jetzt) {
     var verwerfen = wecktasteVerwerfen(z, jetzt);
     // Ohne gültigen Code lässt sich die Taste nicht wiedererkennen: dann nur dieser eine Druck
     var mitCode = typeof code === "number" && isFinite(code) && code >= 0;
-    return { verwerfen: verwerfen, z: wecktasteGesehen(z), gehalten: verwerfen && mitCode ? code : -1 };
+    var neu = verwerfen ? (mitCode ? code : -1) : g.gehalten;
+    return { verwerfen: verwerfen, z: wecktasteGesehen(z), gehalten: neu };
 }
 
 // --- Ein/Aus-Taste, gesperrt ----------------------------------------------------

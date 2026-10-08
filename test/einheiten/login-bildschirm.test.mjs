@@ -236,10 +236,29 @@ test("Gehaltene Wecktaste: ihre Wiederholungen werden verworfen, bis sie los ist
   [verworfen, gehalten] = feld(36, [[true, 36, true], [true, 36, true], [false, 36, false], [true, 36, false]]);
   assert.deepEqual(verworfen, [true, true, false, false], "derselben Taste neu gedrückt: kommt an");
 
-  // Eine andere Taste während des Haltens: Sie kommt an und beendet es (nie eine andere Taste blockiert)
-  [verworfen, gehalten] = feld(Q, [[true, Q, true], [true, R, false], [true, Q, true], [true, R, true]]);
+  // Eine andere Taste während des Haltens kommt an (nie eine andere Taste blockiert). Sie übernimmt im Client die
+  // Wiederholung: Ihre Wiederholung oder das Loslassen von «q» beendet es.
+  [verworfen, gehalten] = feld(Q, [[true, Q, true], [true, R, false], [true, R, true], [true, Q, true]]);
   assert.deepEqual(verworfen, [true, false, false, false]);
   assert.equal(gehalten, -1);
+  [verworfen, gehalten] = feld(Q, [[true, Q, true], [true, R, false], [false, R, false], [false, Q, false], [true, Q, false]]);
+  assert.deepEqual(verworfen, [true, false, false, false, false]);
+  assert.equal(gehalten, -1);
+  // Shift, Ctrl, Alt, AltGr, Super, Caps Lock, Num Lock und der Umschalter der Belegung wiederholen sich nicht (xkb):
+  // Ihr Druck übernimmt die Wiederholung nicht, «q» bzw. Return wiederholt sich weiter. Sie kommen an, die
+  // Wiederholungen bleiben verworfen bis zum Loslassen (sonst meldete ein gehaltenes Return mit Shift dazu mit dem
+  // halben Passwort an).
+  for (const mod of [50, 62, 37, 105, 64, 108, 133, 134, 66, 77, 92, 203, 592]) {
+    for (const taste of [Q, 36]) {
+      [verworfen, gehalten] = feld(taste, [[true, taste, true], [true, mod, false], [false, taste, true], [true, taste, true],
+        [false, mod, false], [true, taste, true], [false, taste, false], [true, R, false], [true, taste, false]]);
+      assert.deepEqual(verworfen, [true, false, true, true, false, true, false, false, false], `${mod}, ${taste}`);
+      assert.equal(gehalten, -1, `${mod}, ${taste}`);
+    }
+  }
+  // Ein Druck ohne gültigen Code lässt sich nicht von der gehaltenen Taste unterscheiden: Er beendet es
+  for (const code of [undefined, null, NaN, -1, "32"])
+    assert.deepEqual(feld(Q, [[true, code, false], [true, Q, true]]), [[false, false], -1], String(code));
   // Das Loslassen einer anderen Taste (etwa Shift) beendet es nicht, ihre Wiederholung schon
   [verworfen, gehalten] = feld(Q, [[false, 50, false], [true, Q, true], [true, R, true], [true, Q, true]]);
   assert.deepEqual(verworfen, [false, true, false, false]);
