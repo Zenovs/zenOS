@@ -104,10 +104,10 @@ class ZenInstallTest(unittest.TestCase):
         with open(os.path.join(self.wurzel, f"{wer}.{art}"), "w", encoding="utf-8") as f:
             f.write(inhalt)
 
-    def zen(self, *argumente, sitzung=False, eingabe=None, cwd=None):
-        """zen install …; eingabe: Text über ein Pseudo-Terminal (sonst kein Terminal)."""
+    def zen(self, *argumente, sitzung=False, eingabe=None, cwd=None, mehr=None):
+        """zen install …; eingabe: Text über ein Pseudo-Terminal (sonst kein Terminal); mehr: weitere Umgebung."""
         umgebung = {"PATH": self.fake + os.pathsep + self.werkzeuge, "HOME": os.path.join(self.wurzel, "home"),
-                    "INSTALL_TEST": self.wurzel, "LANG": "C.UTF-8"}
+                    "INSTALL_TEST": self.wurzel, "LANG": "C.UTF-8", **(mehr or {})}
         if sitzung:
             umgebung["WAYLAND_DISPLAY"] = "wayland-1"
         befehl = [os.path.join(self.skripte, "zen"), "install", *argumente]
@@ -210,6 +210,24 @@ class ZenInstallTest(unittest.TestCase):
         rc, _, fehler = self.zen(self.deb, eingabe="ja\n")
         self.assertEqual(rc, 75)
         self.assertIn("später noch einmal", fehler)
+
+    def test_nicht_mit_sudo(self):
+        """«sudo zen install DATEI»: Das Ansehen liefe als root und hielte Zenos eigene Datei für fremd (Befund B1).
+        zen install bricht deshalb mit einem klaren Hinweis ab; es fragt selbst nach dem Passwort. Als root ohne sudo
+        (etwa die CI) und als Benutzer mit SUDO_USER in der Umgebung geht es wie sonst."""
+        sudo = {"SUDO_USER": "beispiel", "SUDO_UID": "1000"}
+        rc, aus, fehler = self.zen(self.deb, eingabe="ja\n", mehr=sudo)
+        if os.geteuid() == 0:
+            self.assertEqual(rc, 2, aus)
+            self.assertIn("zen: zen install läuft ohne sudo und fragt selbst nach dem Passwort: zen install ", fehler)
+            self.assertEqual(self.ereignisse(), [])
+        else:
+            self.assertEqual(rc, 0, fehler)
+            self.assertEqual(self.aufrufe("helfer"), [["installieren", self.deb, SHA, PLAN]])
+        # Liste und Status gehen auch mit sudo
+        for argument in ("--liste", "--status"):
+            rc, _, fehler = self.zen(argument, mehr=sudo)
+            self.assertEqual(rc, 0, fehler)
 
     # --- Liste, Status, falsche Aufrufe
 

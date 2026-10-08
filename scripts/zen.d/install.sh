@@ -4,7 +4,7 @@
 # auf die Datei. Ohne Sitzung (etwa über SSH) oder mit --text zeigt es hier, was das Paket mitbringt (Herausgeber,
 # zusätzliche Pakete, Systemdienste, Paketquellen, eigene Skripte als root …), und installiert erst nach der Eingabe
 # «ja» mit sudo: genau die angezeigte Datei (SHA-256) und genau das, was apt dazu angezeigt hat. Ein fremdes Paket
-# läuft bei der Installation mit allen Rechten.
+# läuft bei der Installation mit allen Rechten. Ohne sudo aufrufen: zen install fragt selbst nach dem Passwort.
 #   zen install --liste     was über den zen Installer kam und ob es noch installiert ist
 #   zen install --status    läuft gerade eine Installation, letztes Ergebnis
 # Entfernen: sudo apt remove PAKET (die Konfiguration bleibt).
@@ -46,6 +46,11 @@ befehl_install() {
   done
   if [[ -z "$datei" ]]; then
     zen_fehler "welche Datei? (zen install [--text] DATEI.deb | --liste | --status)"
+    return 2
+  fi
+  # Mit sudo sähe das Ansehen root als Besitzer, und deine eigene Datei «gehörte nicht dir»
+  if (( EUID == 0 )) && [[ -n "${SUDO_USER:-}" ]]; then
+    zen_fehler "zen install läuft ohne sudo und fragt selbst nach dem Passwort: zen install $(printf '%q' "$datei")"
     return 2
   fi
   if [[ "$datei" != *.deb ]]; then
