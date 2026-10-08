@@ -73,7 +73,8 @@ nicht warten:
   Journal; bei «ja» legt es den Marker an), `status` (dasselbe ohne Journal und Marker), `ausschalten` (Exit 4: noch
   keine 60 s, Exit 3: logind hat abgelehnt), `darf-ausschalten-login` und `ausschalten-login` (Login-Bildschirm),
   `taste` (Ein/Aus-Taste), `hemmer-login` (Ein/Aus-Taste am Login-Bildschirm) und `meldung` (Mitteilung nach dem
-  nächsten Start).
+  nächsten Start). Als root endet jeder Befehl mit Exit 2, ausser `hemmer-login`: Exit 0 ohne Hemmer wie unter jedem
+  anderen Benutzer, weil der Start-Test von `pruefen.sh` den Login auch als root startet.
 - **Login-Bildschirm** (`shell/greeter/Leerlauf.qml`, Benutzer `_greetd`): liest `/run/zenos/geraet.json` selbst
   (`dienste/geraet.js`) und zeigt die Zeile der Vorwarnung wie die Sperre, auch bei leerem Akku. Im Akkubetrieb
   schaltet es nach 30 Min. ohne Eingabe aus (Abschnitt «Ausschalten am Login-Bildschirm»). Nach 1 Min. ohne Eingabe
@@ -290,8 +291,8 @@ unabhängig von der Einstellung `einAusTaste` (die Einstellungen der Sitzung sin
 - **Ausschalten** geht über «Ausschalten» unten rechts (zweiter Klick innert 5 s, `shell/greeter/Energie.qml`) und
   über langes Drücken (Hardware, hart).
 - **Hemmer:** `shell/greeter/EinAusTaste.qml` startet `zenos-energie hemmer-login` (Argumentliste). Der Helfer prüft,
-  dass er als `_greetd` läuft (sonst «kein Login-Bildschirm unter greetd …», Exit 0: Start-Test von `pruefen.sh`,
-  `oberflaeche.sh`, `login-e2e.sh`), und wird zu
+  dass er als `_greetd` läuft (sonst, auch als root, «kein Login-Bildschirm unter greetd …», Exit 0: Start-Test von
+  `pruefen.sh`, `oberflaeche.sh`, `login-e2e.sh`), und wird zu
   `systemd-inhibit --what=handle-power-key --mode=block --who=zenOS --why=… tail --pid=<Quickshell> -f /dev/null`.
   Er gilt, solange die Oberfläche des Logins läuft: Nach der Anmeldung endet Quickshell und mit ihm der Hemmer, nach
   einem Absturz endet `tail --pid` spätestens 1 s danach. greetd startet den Login neu und mit ihm einen neuen Hemmer.
@@ -456,13 +457,14 @@ unabhängig von der Einstellung `einAusTaste` (die Einstellungen der Sitzung sin
   - `test/einheiten/bildschirm.test.py` (21 Tests): ohne bestätigte Sperre nie `wlopm --off`, ohne Quittung «aus» der
     erreichbaren Sperre ebenso nicht, ohne Oberfläche mit Eintrag im Journal, wlopm-Fehler trotz Exit 0, zweimal «an»
     zugleich ohne Fehler, `status`, kein `sh -c`.
-  - `test/einheiten/energie.test.py` (41 Tests): jeder Wächter einzeln, `CanPowerOff`, nicht Prüfbares gilt als
+  - `test/einheiten/energie.test.py` (42 Tests): jeder Wächter einzeln, `CanPowerOff`, nicht Prüfbares gilt als
     blockiert, Marker fehlt, zu jung, zu alt (nach Laufzeit, nicht nach der Uhr), aus einem anderen Start, fremd oder
     Verweis, Löschen bis zuletzt bricht ab, `poweroff` nur mit genau `--no-ask-password poweroff
     --check-inhibitors=yes` (abgelehnt: Exit 3), Login-Bildschirm (nur im Akkubetrieb, keine andere Sitzung, ohne
     Mitteilung), Ein/Aus-Taste gesperrt und ungesperrt, Mitteilung nur nach einem neuen Start, Hemmer am
-    Login-Bildschirm (`hemmer-login`: nur als `_greetd`, genau `handle-power-key` im Modus block, gebunden an den
-    aufrufenden Prozess, endet nach SIGKILL der Oberfläche, eine Ablehnung kommt als Exit zurück, nie ein Ausschalten).
+    Login-Bildschirm (`hemmer-login`: nur als `_greetd`, als root Exit 0 ohne Hemmer, genau `handle-power-key` im Modus
+    block, gebunden an den aufrufenden Prozess, endet nach SIGKILL der Oberfläche, eine Ablehnung kommt als Exit
+    zurück, nie ein Ausschalten).
   - `test/einheiten/zen-energie.test.py` (10 Tests): `zen energie status` und `aus` (immer direkt, nie über SIGUSR1,
     ohne Sperre bleibt es hell), Höchstdauer trotz Hemmer wie die Leitplanke, Super+Shift+L ruft `zen energie aus`.
   - `test/einheiten/energie-modul.test.py` (16 Tests): Neustart von zenos-idle nach einem Update nur gesperrt, mit
