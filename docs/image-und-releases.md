@@ -827,6 +827,7 @@ in Einstellungen › System › Updates und die Automatik.
 | `zenos-basis update [--ja]` | root, im Terminal (`zen update`) | Schritt 2 von `zen update`, siehe unten |
 | `zenos-basis jetzt HASH`, `zenos-basis zustimmen HASH` | root (`zenos-kanal-bedienen` über pkexec) | «Jetzt installieren» bzw. «Mit Passwort installieren» in den Einstellungen |
 | `zenos-basis automatik [lauf\|gelegenheit]` | root (Timer); ohne Argument alle | Automatik, siehe unten; ohne Argument: an oder aus, letzter Lauf |
+| `zenos-basis quittieren` | root, von Hand | ein «kaputt» als behoben vermerken, nachdem Zeno es behoben hat (unten) |
 | `zen update [--ja] [--nur-basis]` | Benutzer mit sudo, im Terminal | Schritt 2 startet `zenos-basis update`; `--nur-zenos` lässt ihn aus (unten) |
 | `zen version`, `zen doctor` | alle | Zeile `Pakete` bzw. Abschnitt «Ubuntu-Basis», ohne Netz (unten) |
 | `sudo zen kanal automatik aus\|an` | root | gemeinsamer Notschalter für die Automatik von Kanal und Basis |
@@ -839,7 +840,10 @@ unattended-upgrades: `dpkg --force-confdef --force-confold --configure -a` mit d
 Installieren (greetd startet nicht neu; die eines abgebrochenen Laufs ist danach weg) und unter einem Block-Inhibitor;
 bleibt es unterbrochen, `fehler` (Exit 1) ohne `apt-get update`. Ohne das sähe `apt-get -s full-upgrade` den halb
 konfigurierten Stand als «aktuell» (nur eine Zeile `Conf`), und nichts holte ihn je nach (im Container geprüft,
-`test/container/basis-e2e.sh abbruch`). Ausgewertet werden die Zeilen `Inst` und `Remv` von `apt-get -s full-upgrade`
+`test/container/basis-e2e.sh abbruch`). Ein Stopp der Unit (`KillMode=mixed`, `TimeoutStopSec=20min`; SIGTERM nur an
+zenos-basis) lässt ein laufendes `dpkg --configure -a` zu Ende laufen und räumt danach die `policy-rc.d` weg; Warten,
+`apt-get update` und die Auswertung bricht er sofort ab (Exit 10, `stand.json` bleibt). Ausgewertet werden die Zeilen
+`Inst` und `Remv` von `apt-get -s full-upgrade`
 (`LC_ALL=C`, ohne autoremove): je Paket Name, alt, neu, Tasche und Herkunft. Daraus:
 
 - **Sicherheit:** Pakete aus einer Tasche `…-security`.
@@ -860,18 +864,23 @@ zählte die Auswertung 7 Updates, `apt-get full-upgrade` danach 3, und jede Inst
 
 **Installieren.** Dieselbe Sperre, dasselbe Warten. Nicht, solange eine Installation des Kanals unterbrochen ist
 (`laeuft.json`) oder der Kanal «kaputt» meldet (Exit 10): `install.sh` aus `/opt/zenos` liefe sonst auf einem halb
-übernommenen Stand. Der Hash des Auftrags muss der letzten Prüfung gleichen und einer Auswertung von jetzt (ohne neues
-`apt-get update`); sonst Exit 3, und `stand.json` zeigt die neue Liste. Heikle Pakete und Entfernungen ohne Zustimmung:
-Exit 10. Dann:
+übernommenen Stand. Nach dem Warten nimmt es die Sperre der Paketlisten (`/var/lib/apt/lists/lock`, fcntl wie apt)
+und hält sie bis zum Ende von `apt-get full-upgrade`: Ein `apt-get update` dazwischen (apt-daily nach seinem Timer,
+von Hand) scheitert dann an der Sperre und kann die Paketlisten nicht austauschen, `full-upgrade` löst also gegen
+dieselben Listen auf wie die Auswertung. `full-upgrade` selbst nimmt diese Sperre nicht, und apt-daily endet trotz
+gescheitertem Update erfolgreich (holt es beim nächsten Lauf nach); beides im Container geprüft. Der Hash des Auftrags
+muss der letzten Prüfung gleichen und einer Auswertung von jetzt (ohne neues `apt-get update`); sonst Exit 3, und
+`stand.json` zeigt die neue Liste. Heikle Pakete und Entfernungen ohne Zustimmung: Exit 10. Dann:
 
 1. Ein unterbrochenes dpkg (`/var/lib/dpkg/updates`, seit der Prüfung) repariert es wie beim Prüfen mit
    `dpkg --configure -a`; bleibt es unterbrochen, Exit 1 ohne apt.
-2. Ausgangslage für die Gesundheitsprüfung: `quickshell --version`, greetd ausgefallen, ausgefallene Units (ohne die
-   von Kanal und Basis), Fehlerzahl von `zen doctor --kurz` als root.
-3. Unter einem Block-Inhibitor für Ausschalten und Ruhezustand («Ubuntu-Basis wird aktualisiert») und mit
+2. Ab hier unter einem Block-Inhibitor für Ausschalten und Ruhezustand («Ubuntu-Basis wird aktualisiert») und mit
    `/run/zenos-basis/uebernahme`: Jede Oberfläche auf seat0 bekommt `zenos-ipc kanal uebernahme beginn|ende` wie beim
    Kanal (lädt währenddessen nicht nach, richtet danach die Benutzerteile ein; System-Menü und Login zeigen «Update
    läuft»).
+3. Ausgangslage für die Gesundheitsprüfung: `quickshell --version`, greetd ausgefallen, ausgefallene Units (ohne die
+   von Kanal und Basis), Fehlerzahl von `zen doctor --kurz` als root. Sie steht danach als `ausgangslage` in
+   `letzte.json` (für `quittieren`).
 4. `apt-get -q -y full-upgrade` mit `DEBIAN_FRONTEND=noninteractive`, `NEEDRESTART_MODE=l`, `NEEDRESTART_SUSPEND=1`,
    `--force-confdef`, `--force-confold`, ohne autoremove, `DPkg::Lock::Timeout=300`. Dienste starten wie bei Ubuntu
    neu, nur greetd nicht (ein Neustart beendete die Sitzung): Eine eigene `policy-rc.d` gibt für `greetd` 101 zurück,
@@ -879,17 +888,24 @@ Exit 10. Dann:
    Eine fremde `policy-rc.d` bleibt (Hinweis); einen Rest von zenOS (zenos-basis oder install.sh) entfernen beide.
    Im Container geprüft: `invoke-rc.d: policy-rc.d denied execution of restart` für greetd, cron startete.
 5. Nur nach gelungenem apt: `/opt/zenos/scripts/install.sh --ruhig` als root mit `ZENOS_KANAL_LAUF=1` (die Sperre
-   hält zenos-basis schon) und eigenem Ergebnis `/var/lib/zenos/basis/install-ergebnis`. Es baut Quickshell neu, wenn
-   sich Qt geändert hat, und zieht die Kennung nach.
+   hält zenos-basis schon; die Sperre der Paketlisten ist dann wieder frei) und eigenem Ergebnis
+   `/var/lib/zenos/basis/install-ergebnis`. Es baut Quickshell neu, wenn sich Qt geändert hat, und zieht die Kennung
+   nach.
 6. Bringt das Update eine neue greetd-Version, trägt zenos-basis `greetd` in `/run/reboot-required(.pkgs)` ein.
 7. Gesundheit: Es zählt nur, was schlechter ist als vorher: dpkg unterbrochen, `install.sh` nicht Exit 0 oder ohne
    «== Ende … ok», `quickshell --version` scheitert, greetd ausgefallen, neu ausgefallene Units, mehr Fehler in
-   `zen doctor`. Ergebnis `installiert` (Exit 0), `kaputt` (Exit 5) oder `fehler` (apt scheiterte, Exit 1). Zurückgerollt
-   wird nichts; `letzte.json` nennt, was kaputt ist, dazu das Journal (`journalctl -u zenos-basis-installieren`) und
-   das Log. Danach wertet es `stand.json` neu aus (ohne Netz).
+   `zen doctor`. Dazu, was apt über die angezeigte Liste hinaus tat und nicht durfte (unter der Sperre der Paketlisten
+   bleibt dafür nur ein unattended-upgrades zwischen Auswertung und apt): ohne Zustimmung Kernel, Firmware, Bootloader
+   oder eine Entfernung, ein geschütztes Paket entfernen auch mit Zustimmung nicht. Anderes über die Liste hinaus steht
+   als Hinweis in `mehr`. Ergebnis `installiert` (Exit 0), `kaputt` (Exit 5) oder `fehler` (apt scheiterte, Exit 1).
+   Zurückgerollt wird nichts; `letzte.json` nennt, was kaputt ist, dazu das Journal
+   (`journalctl -u zenos-basis-installieren`) und das Log. Danach wertet es `stand.json` neu aus (ohne Netz).
 
-Ein Stopp (Ausschalten durch root) vor apt beginnt nichts mehr (Exit 10); während apt und `install.sh` laufen beide
-zu Ende (`KillMode=mixed`, `TimeoutStopSec=20min`, SIGHUP ignoriert, ein SSH-Abbruch schadet nicht). Ein harter Abbruch
+Ein Stopp (Ausschalten oder Neustart durch root, SIGTERM; `KillMode=mixed` schickt ihn nur an zenos-basis) vor apt
+beginnt nichts mehr (Exit 10): Das Warten auf einen anderen Paketvorgang endet sofort, ein `dpkg --configure -a` und
+`zen doctor` (Ausgangslage) laufen zu Ende, unmittelbar vor apt prüft es noch einmal. Den Neustart aus dem System-Menü
+hält schon während der Ausgangslage der Inhibitor auf, und das Menü zeigt «Update läuft». Während apt und `install.sh`
+laufen beide zu Ende (`TimeoutStopSec=20min`, SIGHUP ignoriert, ein SSH-Abbruch schadet nicht). Ein harter Abbruch
 (Strom, `kill -9`) hinterlässt ein unterbrochenes dpkg und die `policy-rc.d` der Basis (hält nur greetd ab); die
 nächste Prüfung (`zen update`, «Jetzt prüfen», Automatik) oder Installation holt `dpkg --configure -a` nach und räumt
 die `policy-rc.d` weg (diese räumt auch jedes `install.sh` weg). `letzte.json` nennt einen solchen Abbruch nicht (sie
@@ -899,7 +915,7 @@ zenos-argon wartet bei 3 % Akku, solange `/run/zenos-basis` besteht, bis zu 5 Mi
 | Datei | Inhalt |
 |---|---|
 | `/var/lib/zenos/basis/stand.json` | letzte Auswertung: `zeit`, `geprueft` (letztes gelungenes `apt-get update`), `ergebnis` (`aktuell`, `bereit`, `zustimmung`, `gesperrt`, `fehler`), `grund`, `liste`, `anzahl`, `sicherheit`, `heikel`, `entfernen`, `geschuetzt`, `neustart`, `neustart_wegen`, `pakete` (Name, Architektur, alt, neu, Tasche, Herkunft, Sicherheit, heikel) |
-| `/var/lib/zenos/basis/letzte.json` | letzte Installation, nur wenn apt lief (eine Ablehnung überschreibt kein `kaputt`): `ergebnis`, `grund`, `liste`, `von`, `zustimmung`, `anzahl`, `geaendert`, `mehr` (was apt über die Liste hinaus änderte), `neustart`, `probleme`, `hinweise` |
+| `/var/lib/zenos/basis/letzte.json` | letzte Installation, nur wenn apt lief (eine Ablehnung überschreibt kein `kaputt`): `ergebnis`, `grund`, `liste`, `von`, `zustimmung`, `anzahl`, `geaendert`, `mehr` (was apt über die Liste hinaus änderte), `neustart`, `probleme`, `hinweise`, `ausgangslage` (Gesundheit vor apt), `behoben` (Zeit, wenn `quittieren` ein `kaputt` als behoben vermerkt hat) |
 | `/var/lib/zenos/basis/auftrag.json` | Auftrag für die Unit (root; das Installieren verbraucht ihn) |
 | `/var/log/zenos/basis.log` | root, 0640: je Lauf «== Beginn», Paketstand vorher (dpkg-query), Exit von apt und install.sh, die Änderungen, Probleme, «== Ende». Nur zum Nachsehen, kein Rückweg; über 2 MiB bleiben die letzten 512 KiB |
 
@@ -909,14 +925,27 @@ zenos-argon wartet bei 3 % Akku, solange `/run/zenos-basis` besteht, bis zu 5 Mi
 | 1 | Fehler: `apt-get update` oder `full-upgrade` scheiterte, dpkg bleibt unterbrochen |
 | 2 | Aufruf falsch (oder nicht root) |
 | 3 | abgelehnt: gesperrt (geschütztes Paket), Liste veraltet, kein oder ungültiger Auftrag |
-| 5 | kaputt: nach dem Update schlechter als vorher, nichts zurückgerollt |
-| 10 | wartet: Zustimmung nötig, Kanal unterbrochen oder kaputt, Stopp vor apt |
+| 5 | kaputt: nach dem Update schlechter als vorher, nichts zurückgerollt; `quittieren`: noch nicht behoben |
+| 10 | wartet: Zustimmung nötig, Kanal unterbrochen oder kaputt, Stopp vor apt (beim Prüfen: Stopp) |
 | 75 | läuft schon: Sperre, `install.sh` von Hand, ein anderer Paketvorgang nach 20 Minuten |
 
+**Kaputt quittieren.** Ein `kaputt` bleibt stehen (zen doctor: Fehler, Einstellungen: «Basis-Update kaputt»), bis
+eine neue Installation gelingt oder Zeno es nach der Behebung (`install.sh` noch einmal, Neustart …) quittiert:
+`sudo /usr/local/libexec/zenos/zenos-basis quittieren`. Es nimmt dieselbe Sperre und prüft nach, was sich ohne
+Eingriff prüfen lässt: dpkg, `quickshell --version`, greetd, ausgefallene Units und die Fehler von `zen doctor`, gegen
+die `ausgangslage` jenes Updates (die Zeile «Letztes Basis-Update kaputt» zählt dabei nicht). Ist davon noch etwas
+schlechter, Exit 5 und nichts vermerkt. Sonst steht `behoben` in `letzte.json`: zen doctor meldet «kaputt, als behoben
+vermerkt» als ok, die Einstellungen zeigen wieder die Lage der Prüfung, eine Mitteilung gibt es dazu nicht. Ob
+`install.sh` jetzt gelingt, prüft `quittieren` nicht (es änderte das System); das bestätigt Zeno mit dem Aufruf.
+
 Geprüft mit `test/einheiten/basis-updates.test.py` (Fixtures ohne und mit Kernel, Entfernungen, Sicherheit, geschützte
-Pakete, Herstellerquelle; Attrappen für apt, dpkg und install.sh) und im Testcontainer über die echten Units:
-prüfen (7 bzw. 3 Updates, siehe Staffelung), installieren ohne Zustimmung (3 Pakete, `install.sh` Exit 0, gesund,
-danach «aktuell»), Inhibitor und Marker während des Laufs, `policy-rc.d` danach weg.
+Pakete, Herstellerquelle; Attrappen für apt, dpkg und install.sh; Stopp während `dpkg --configure -a`, `apt-get
+update`, Warten und Ausgangslage; die Sperre der Paketlisten aus Sicht der Attrappen; `quittieren`) und im
+Testcontainer über die echten Units: prüfen (7 bzw. 3 Updates, siehe Staffelung), installieren ohne Zustimmung
+(3 Pakete, `install.sh` Exit 0, gesund, danach «aktuell»), Inhibitor und Marker während des Laufs, `policy-rc.d` danach
+weg. `test/container/basis-e2e.sh` dazu: Während der Installation scheitert `apt-get update` an der Sperre der
+Paketlisten («abbruch»); ein Stopp von `zenos-basis-pruefen.service` mitten in `dpkg --configure -a` lässt dpkg zu
+Ende laufen, die Unit bleibt bis dahin «deactivating», danach Exit 10 ohne `apt-get update` («stopp»).
 
 ### `zen update`: zwei Schritte
 
@@ -962,7 +991,9 @@ Ohne Netz und schnell zeigen den Stand der letzten Prüfung:
   Einstellungen › System.
 - `zen doctor`, Abschnitt «Ubuntu-Basis»: `Prompt=never` (Warnung, wenn nicht), Programm und Units der Basis-Updates
   (root-eigen, gleich dem Stand in `/opt/zenos`), Timer der Automatik (Hinweis bei Notschalter), ausstehende Updates
-  als Hinweis («Basis-Updates ausstehend: …»), «gesperrt» als Warnung, die letzte Installation (`kaputt` als Fehler).
+  als Hinweis («Basis-Updates ausstehend: …»; hat sich der Paketstand seit der Prüfung geändert: «letzte Prüfung …
+  (Stand …, seither Paketänderungen); neu prüfen: zen update»), «gesperrt» als Warnung, die letzte Installation
+  (`kaputt` als Fehler mit dem Weg zu `quittieren`, als behoben vermerkt ok).
   Einen ausstehenden Neustart nennt weiter der Abschnitt «Sicherheit» (`/run/reboot-required`), die Basis-Version
   der Abschnitt «System».
 
@@ -989,7 +1020,8 @@ unter Einstellungen › System › Updates einen eigenen Abschnitt «Updates · 
 «zustimmung»; beide übergeben den Hash der angezeigten Liste, bei «gesperrt» gibt es keinen Knopf. Ein Hinweis
 (Toast) kommt nur nach dem eigenen Klick; das Ergebnis einer Installation, von wem auch immer, kommt als Mitteilung
 (aus `letzte.json`, je einmal, gemerkt in `~/.local/state/zenos/basis-meldungen.json`): «Ubuntu-Basis aktualisiert»
-(still, höchstens 24 h alt), «Basis-Update kaputt» (dringend), «Basis-Update gescheitert». Hat die Automatik Kernel,
+(still, höchstens 24 h alt), «Basis-Update kaputt» (dringend), «Basis-Update gescheitert»; ein mit `quittieren` als
+behoben vermerktes «kaputt» meldet nichts mehr und gilt nicht mehr als kaputt. Hat die Automatik Kernel,
 Firmware, Bootloader oder Entfernungen gesehen (`automatik.json` «zustimmung» für die Liste von `stand.json`), kommt
 «Basis-Updates warten auf dich» einmal; wieder erst, wenn sich genau das ändert (ein neuer Kernel, andere
 Entfernungen), nicht bei jeder neuen Liste. Bei «gesperrt» ebenso «Basis-Updates gesperrt».

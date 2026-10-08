@@ -722,6 +722,9 @@ systemctl --user start zenos-shell.service
   (gesperrt: nach dem Entsperren).
 - [ ] Ausschalten nach langer Sperre wartet auch auf ein Basis-Update: Solange `zenos-basis-installieren.service`
   läuft, sagt `/opt/zenos/scripts/bin/zenos-energie status` «nein: Update läuft (zenos-basis-…)».
+- [ ] Gleich nach «Jetzt installieren» (die Unit misst zuerst mit `zen doctor` die Ausgangslage, auf dem Pi einige
+  Sekunden) zeigt das System-Menü schon «Update läuft»; `systemd-inhibit --list` nennt «Ubuntu-Basis wird
+  aktualisiert».
 - [ ] Basis-Update **mit Kernel** (sobald `zen version` bei «Pakete» «Kernel/Firmware/Bootloader» zeigt; sonst beim
   nächsten Kernel von Ubuntu nachholen). Vorher `uname -r` notieren. Die Automatik installiert nichts
   (`/usr/local/libexec/zenos/zenos-basis automatik`: «zustimmung»), in der Sitzung kommt einmal «Basis-Updates warten
@@ -820,7 +823,13 @@ journalctl -fu zenos-kanal-installieren.service
 Paket-Update ist etwas schlechter als vorher, die Meldung nennt was. Zurückgerollt wird nichts. Schick Claude die
 Meldung, dazu `/usr/local/libexec/zenos/zenos-basis status` und das Ende von `sudo tail -n 80
 /var/log/zenos/basis.log` (Paketstand vorher und Änderungen). Oft hilft schon ein zweiter Lauf von `install.sh`
-oder ein Neustart.
+oder ein Neustart. Ist es behoben, vermerkst du das, damit `zen doctor` und die Einstellungen es nicht mehr als
+kaputt melden (es prüft vorher nach, was sich prüfen lässt; ist noch etwas schlechter, sagt es was und vermerkt
+nichts):
+
+```
+sudo /usr/local/libexec/zenos/zenos-basis quittieren
+```
 
 `zen update` meldet bei «Ubuntu-Basis» «gesperrt»: apt würde ein Paket entfernen, das zenOS braucht. zenOS
 installiert das nie, auch nicht mit «ja». Nichts tun und Claude die Ausgabe von `zen update` schicken; meist löst

@@ -705,7 +705,11 @@ anstösst. Ablauf, Dateien und Exit-Codes: `docs/image-und-releases.md`, «Basis
 - **Kein eigenes Vertrauen:** zenOS prüft keine Signaturen selbst. apt prüft jede Paketliste gegen die Schlüssel von
   Ubuntu bzw. des Herstellers, genau wie bei `apt full-upgrade` von Hand. zenOS wählt nur aus, wann und mit wessen
   Zustimmung das geschieht, und installiert genau die Liste, die gezeigt wurde (Hash über die Liste; ändert sie sich
-  dazwischen, Exit 3).
+  dazwischen, Exit 3). Von der Auswertung bis zum Ende von `apt-get full-upgrade` hält es die Sperre der Paketlisten
+  (`/var/lib/apt/lists/lock`): Kein `apt-get update` (apt-daily) tauscht sie dazwischen aus, sonst brächte
+  full-upgrade womöglich einen Kernel oder eine Entfernung, die nie angezeigt wurde. Tut apt trotzdem mehr (etwa
+  unattended-upgrades genau dazwischen) und ist das ohne Zustimmung ein Kernel, Firmware, Bootloader oder eine
+  Entfernung, oder ein geschütztes Paket ginge weg, heisst das Ergebnis «kaputt», nicht «installiert».
 - **Nur root arbeitet:** Prüfen und Installieren laufen in Units als root (`zenos-basis-pruefen`,
   `-installieren`), aus der root-eigenen Kopie unter `/usr/local/libexec/zenos`, mit Argumentlisten und festem `PATH`.
   Wege dorthin: `zen update` mit sudo im Terminal, die Knöpfe der Einstellungen über polkit (oben, «Updates in den
@@ -730,11 +734,14 @@ anstösst. Ablauf, Dateien und Exit-Codes: `docs/image-und-releases.md`, «Basis
   nur root) und läuft nicht neben einem `install.sh` von Hand, einer unterbrochenen oder kaputten Installation des
   Kanals; auf apt-daily, unattended-upgrades und die Sperren von dpkg wartet sie höchstens 20 Minuten.
 - **Kein Aussperren:** greetd startet beim Update nicht neu (eigene `policy-rc.d` nur für diesen Lauf, die nur greetd
-  ablehnt); eine neue greetd-Version heisst «Neustart nötig». Während apt und `install.sh` hält ein Block-Inhibitor
-  Ausschalten und Ruhezustand auf, `zenos-energie` schaltet nicht aus (`zenos-argon` wartet bei 3 % Akku bis zu
-  5 Minuten länger), und ein Abbruch der SSH-Verbindung beendet die Unit nicht. Danach zählt nur, was schlechter
-  wurde (dpkg, install.sh, Quickshell, greetd, ausgefallene Units, Fehler in `zen doctor`); zurückgerollt wird nichts,
-  `letzte.json` und `zen doctor` nennen es, und die Oberfläche meldet «Basis-Update kaputt» dringend.
+  ablehnt); eine neue greetd-Version heisst «Neustart nötig». Ab der Ausgangslage der Gesundheitsprüfung bis nach
+  `install.sh` hält ein Block-Inhibitor Ausschalten und Ruhezustand auf, `zenos-energie` schaltet nicht aus
+  (`zenos-argon` wartet bei 3 % Akku bis zu 5 Minuten länger), und ein Abbruch der SSH-Verbindung beendet die Unit
+  nicht. Ein Stopp durch root vor apt beginnt apt nicht mehr; ein laufendes dpkg (auch `dpkg --configure -a` beim
+  Prüfen) bricht keiner mittendrin ab (`KillMode=mixed` in beiden Units). Danach zählt nur, was schlechter wurde
+  (dpkg, install.sh, Quickshell, greetd, ausgefallene Units, Fehler in `zen doctor`); zurückgerollt wird nichts,
+  `letzte.json` und `zen doctor` nennen es, und die Oberfläche meldet «Basis-Update kaputt» dringend. Ist es behoben,
+  vermerkt Zeno das mit `sudo …/zenos-basis quittieren` (root, prüft vorher nach).
 - **Sicherheitsupdates bleiben bei unattended-upgrades:** täglich, unabhängig vom Notschalter und vom Zeitpunkt; daran
   ändert zenos-basis nichts.
 - **Kein Wechsel der Hauptversion:** `Prompt=never` (Drop-in in `/etc/update-manager/release-upgrades.d/`, oben unter
