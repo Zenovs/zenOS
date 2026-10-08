@@ -867,7 +867,7 @@ geschieht, nur für genau die Datei, die er gesehen hat, und dass er vorher sieh
   Konfiguration bleibt). Alles andere bleibt bei `sudo apt remove`.
 - **Zustand und Log root-eigen:** `installiert.json` und `letzte.json` (0644, für alle lesbar, die Oberfläche liest sie
   ohne Rechte), Log `/var/log/zenos/installer.log` (0640, Gruppe adm: Paketstand vorher und nachher, Exit von apt).
-  Das Journal nennt nur den Dateinamen, nie den Ordner.
+  Das Journal nennt von der Datei nur den Namen, nicht ihren Ordner.
 - **Sperre, Einrichtung, Freigabe:** Während Sperre und Einrichtung öffnet das Fenster nicht, ein offener
   Passwortdialog bricht beim Sperren ab (Abschnitt «polkit-Agent»). Während einer Bildschirmfreigabe zeigt das
   Fenster nur, was Zeno selbst geöffnet hat (Dateiname, Paket); die Mitteilung am Ende hält die Freigabe wie jede
