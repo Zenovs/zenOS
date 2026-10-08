@@ -31,7 +31,8 @@ Aufruf:
                         root, in zenos-installer-installieren@.service: unter der gemeinsamen Sperre mit Kanal und Basis
                         (/run/zenos-sperre/kanal.lock, kein install.sh von Hand, kein anderer Paketvorgang, Sperre der
                         Paketlisten) noch einmal auswerten; nur wenn das Ergebnis «bereit» ist und der Plan gleich
-                        geblieben ist (dieselben Pakete kommen und gehen), «apt-get install -y» mit Block-Inhibitor.
+                        geblieben ist (dieselben Pakete kommen und gehen), «apt-get install -y» mit Block-Inhibitor
+                        (ohne Entfernung im Plan mit --no-remove; entfernt apt doch mehr als angezeigt: «fehler»).
                         Danach steht das Paket in installiert.json, das Ergebnis in letzte.json; die Ablage ist leer
   zenos-installer entfernen PAKET
                         root, in zenos-installer-entfernen@.service: «apt-get remove» (ohne purge) für ein Paket aus
@@ -1965,6 +1966,10 @@ def install_apt(job, deb, ev):
                "-o", "Dpkg::Options::=--force-confold", "-o", "APT::Get::AutomaticRemove=false"]
     if ev["zustand"] == "rueckschritt":
         options.append("--allow-downgrades")
+    # Zeigte der Plan keine Entfernung, entfernt apt auch keine: Änderte etwa unattended-upgrades den Paketstand
+    # zwischen Auswertung und apt (es nimmt die Sperre der Paketlisten nicht), bricht apt ab, statt neu zu planen
+    if not ev["entfernen"]:
+        options.append("--no-remove")
     print(f"apt-get install {package} {p['version']} …")
     journal(f"installiere {package} {p['version']} (SHA-256 {ev['sha256']})")
     with inhibitor(f"zen Installer installiert {package}"):
@@ -1975,25 +1980,33 @@ def install_apt(job, deb, ev):
     log.write(f"-- apt-get install: Exit {rc}", f"-- Änderungen ({len(changes)})",
               *[f"{n} {old or '(neu)'} → {new or '(entfernt)'}" for n, old, new in changes])
     status, version = installed_version(package)
+    # Was apt entfernte, ohne dass es angezeigt war (auch geschützte Pakete): nie still
+    shown = set(ev["entfernen"])
     protected = set(PROTECTED) | zenos_packages()
-    lost = [n for n, _, new in changes if new is None and base_name(n) in protected]
-    if lost:
-        job.result["hinweise"].append(f"Entfernt wurden geschützte Pakete: {names_text(lost)}")
-    if rc != 0 or status != "installed" or version != p["version"]:
+    unexpected = sorted({base_name(n) for n, _, new in changes if new is None} - shown)
+    lost = [n for n in unexpected if n in protected]
+    problem = ""
+    if unexpected:
+        problem = (f" apt entfernte dabei mehr als angezeigt: {names_text(unexpected)}"
+                   f"{' (geschützt: ' + names_text(lost) + ')' if lost else ''}.")
+        job.result["hinweise"].append(problem.strip())
+    if rc != 0 or status not in INSTALLED_STATES or version is None or not compare_versions(version, "eq",
+                                                                                          p["version"]):
         detail = next((clean(z[2:].strip(), 200) for z in reversed(tail) if z.startswith("E:")), "")
-        half = f" {package} ist nur halb installiert ({status}): sudo apt-get -f install oder entfernen." \
-            if status not in (None, "installed") else ""
+        half = ""
+        if status in HALF_STATES:
+            half = f" {package} ist nur halb installiert ({status}): sudo apt-get -f install oder entfernen."
+            # In die Liste, damit Einstellungen › Apps «Entfernen …» anbietet
+            add_installed(package, ev, job, version)
         code = job.finish("fehler", f"Die Installation ist gescheitert (apt-get Exit {rc}"
-                                    f"{': ' + detail if detail else ''}).{half} Einzelheiten: journalctl -u "
+                                    f"{': ' + detail if detail else ''}).{half}{problem} Einzelheiten: journalctl -u "
                                     f"zenos-installer-installieren@*, /var/log/zenos/installer.log.", EXIT_ERROR)
+    elif unexpected:
+        job.result["programme"] = add_installed(package, ev, job, version)
+        code = job.finish("fehler", f"{ev.get('name') or package} {p['version']} ist installiert, aber{problem} "
+                                    "Einzelheiten: /var/log/zenos/installer.log.", EXIT_ERROR)
     else:
-        programs = package_programs(package)
-        job.result["programme"] = programs
-        entries = load_installed_list()
-        entries[package] = {"name": package, "anzeigename": ev.get("name") or package, "version": p["version"],
-                            "architektur": p["architektur"], "datei": job.result["datei"], "sha256": ev["sha256"],
-                            "herausgeber": p.get("herausgeber"), "zeit": iso(now()), "programme": programs}
-        write_installed_list(entries)
+        job.result["programme"] = add_installed(package, ev, job, version)
         more = [n for n, _, _ in changes if base_name(n) != package]
         code = job.finish("installiert", f"{ev.get('name') or package} {p['version']} ist installiert"
                                          f"{' (dazu ' + plural(len(more), 'Paket', 'Pakete') + ')' if more else ''}.",
@@ -2001,6 +2014,19 @@ def install_apt(job, deb, ev):
     log.write(*[f"-- Hinweis: {h}" for h in job.result["hinweise"]],
               f"== Ende {log_stamp()} · {job.result['ergebnis']}")
     return code
+
+
+def add_installed(package, ev, job, version):
+    """Trägt PACKAGE in installiert.json ein (nach der Installation, auch wenn es nur halb installiert ist: Dann geht
+    «Entfernen …» in den Einstellungen). VERSION: wie dpkg sie nennt. Die sichtbaren Starter des Pakets."""
+    p = ev["paket"]
+    programs = package_programs(package)
+    entries = load_installed_list()
+    entries[package] = {"name": package, "anzeigename": ev.get("name") or package, "version": version or p["version"],
+                        "architektur": p["architektur"], "datei": job.result["datei"], "sha256": ev["sha256"],
+                        "herausgeber": p.get("herausgeber"), "zeit": iso(now()), "programme": programs}
+    write_installed_list(entries)
+    return programs
 
 
 def cmd_remove(argv):

@@ -122,6 +122,17 @@ if "install" in args:
         print("E: Sub-process /usr/bin/dpkg returned an error code (1)")
         sys.exit(code)
     name, version = feld(deb, "Package"), feld(deb, "Version")
+    # Wie dpkg: eine Epoche 0 fällt weg («0:1.0» → «1.0»)
+    version = version[2:] if version.startswith("0:") else version
+    weg = lies("install-weg.txt").split()
+    if weg and "--no-remove" in args:
+        print("E: Packages need to be removed but remove is disabled.")
+        sys.exit(100)
+    if lies("install.halb"):
+        z[name] = ["half-configured", version]
+        zustand_schreiben(z)
+        print("E: Sub-process /usr/bin/dpkg returned an error code (1)")
+        sys.exit(100)
     ziel = os.path.join(W, "fs")
     subprocess.run([DEB, "-x", deb, ziel], check=True)
     liste = subprocess.run([DEB, "-c", deb], capture_output=True, text=True, check=True).stdout
@@ -130,7 +141,7 @@ if "install" in args:
     with open(os.path.join(W, "dpkg-L", name), "w", encoding="utf-8") as f:
         f.write("\n".join(pfade) + "\n")
     z[name] = ["installed", version]
-    for zeile in lies("install-weg.txt").split():
+    for zeile in weg:
         z.pop(zeile, None)
     zustand_schreiben(z)
     print(f"Setting up {name} ({version}) ...")
@@ -1051,6 +1062,72 @@ class Auftrag(Umgebung):
         self.assertEqual(self.ansehen(pfad)["ergebnis"], "installiert")
         code, text = self.lauf(I.cmd_list, ["--json"])
         self.assertEqual(json.loads(text)["pakete"][0]["installierte_version"], "1.0-1")
+
+    def test_nie_still_mehr_entfernen(self):
+        """Ohne Entfernung im Plan läuft apt mit --no-remove (Befund S6): Ändert sich der Paketstand zwischen Auswertung
+        und apt, bricht apt ab, statt neu zu planen. Entfernt apt doch mehr als angezeigt: «fehler» mit Grund."""
+        self.zustand(libfrei1="1.0", greetd="0.10")
+        pfad = self.deb()
+        ev = self.ansehen(pfad)
+        self.assertEqual(ev["entfernen"], [])
+        self.apt("install-weg.txt", "libfrei1\n")
+        code, text = self.lauf(I.cmd_order_install, [pfad, ev["sha256"], ev["plan"]])
+        self.assertEqual(code, 1, text)
+        self.assertIn("--no-remove", self.echte_aufrufe("install")[0])
+        letzte = self.json_datei(I.LAST)
+        self.assertEqual(letzte["ergebnis"], "fehler")
+        self.assertIn("remove is disabled", letzte["grund"])
+        with open(f"{self.w}/dpkg-zustand.json", encoding="utf-8") as f:
+            self.assertIn("libfrei1", json.load(f), "nichts entfernt")
+        # Mit angezeigter Entfernung kein --no-remove; was apt darüber hinaus entfernt, steht im Ergebnis
+        self.apt("sim-extra.txt", "Remv libfrei1 [1.0]\n")
+        self.apt("install-weg.txt", "libfrei1 greetd\n")
+        ev = self.ansehen(pfad)
+        self.assertEqual(ev["entfernen"], ["libfrei1"])
+        code, text = self.lauf(I.cmd_order_install, [pfad, ev["sha256"], ev["plan"]])
+        self.assertEqual(code, 1, text)
+        self.assertNotIn("--no-remove", self.echte_aufrufe("install")[1])
+        letzte = self.json_datei(I.LAST)
+        self.assertEqual(letzte["ergebnis"], "fehler")
+        self.assertIn("Beispiel-App 1.0-1 ist installiert, aber apt entfernte dabei mehr als angezeigt: greetd "
+                      "(geschützt: greetd).", letzte["grund"])
+        self.assertNotIn("libfrei1", letzte["grund"])
+        self.assertEqual([e["name"] for e in self.json_datei(I.INSTALLED)["pakete"]], ["zenos-beispiel"],
+                         "installiert ist es trotzdem: «Entfernen …» geht")
+        with open(I.LOG_FILE, encoding="utf-8") as f:
+            self.assertIn("-- Hinweis: apt entfernte dabei mehr als angezeigt: greetd", f.read())
+
+    def test_halb_installiert_in_die_liste(self):
+        """Scheitert ein Skript, ist das Paket halb installiert: Grund mit Ausweg, und es steht in der Liste, damit
+        «Entfernen …» in den Einstellungen geht (Befund B2)."""
+        pfad = self.deb(skripte={"postinst": "#!/bin/sh\nexit 1\n"})
+        ev = self.ansehen(pfad)
+        self.apt("install.halb", "1")
+        code, text = self.lauf(I.cmd_order_install, [pfad, ev["sha256"], ev["plan"]])
+        self.assertEqual(code, 1, text)
+        letzte = self.json_datei(I.LAST)
+        self.assertEqual(letzte["ergebnis"], "fehler")
+        self.assertIn("zenos-beispiel ist nur halb installiert (half-configured): sudo apt-get -f install oder "
+                      "entfernen.", letzte["grund"])
+        self.assertEqual([e["name"] for e in self.json_datei(I.INSTALLED)["pakete"]], ["zenos-beispiel"])
+        ev = self.ansehen(pfad)
+        self.assertEqual((ev["ergebnis"], ev["ablehnung"]), ("abgelehnt", "halb"))
+        self.assertIn("in Einstellungen › Apps entfernen", ev["grund"])
+        code, text = self.lauf(I.cmd_order_remove, ["zenos-beispiel"])
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.json_datei(I.INSTALLED)["pakete"], [])
+
+    def test_epoche_null(self):
+        """dpkg nennt «0:1.0-1» als «1.0-1»: Das ist dieselbe Version, die Installation gelang (Befund B3)."""
+        pfad = self.deb(version="0:1.0-1", datei="epoche.deb")
+        ev = self.ansehen(pfad)
+        code, text = self.lauf(I.cmd_order_install, [pfad, ev["sha256"], ev["plan"]])
+        self.assertEqual(code, 0, text)
+        letzte = self.json_datei(I.LAST)
+        self.assertEqual(letzte["ergebnis"], "installiert", letzte["grund"])
+        self.assertEqual([(e["name"], e["version"]) for e in self.json_datei(I.INSTALLED)["pakete"]],
+                         [("zenos-beispiel", "1.0-1")])
+        self.assertEqual(self.ansehen(pfad)["ergebnis"], "installiert")
 
     def test_datei_geaendert(self):
         pfad = self.deb()
