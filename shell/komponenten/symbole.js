@@ -58,5 +58,7 @@ var daten = {
     "neustart": { d: "M3 12a9 9 0 1 0 2.64-6.36L3 8.3M3 3v5.3h5.3", strich: 1.8 },
     "abmelden": { d: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9", strich: 1.8 },
     "datei": { d: "M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6", strich: 1.7 },
-    "ordner": { d: "M5 4h3.9a2 2 0 0 1 1.66.9l.88 1.3a2 2 0 0 0 1.66.9H19a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z", strich: 1.7 }
+    "ordner": { d: "M5 4h3.9a2 2 0 0 1 1.66.9l.88 1.3a2 2 0 0 0 1.66.9H19a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z", strich: 1.7 },
+    // Paket (zen Installer): Kiste von schräg oben mit einem Band über den Deckel
+    "paket": { d: "M12 3l8 4.5v9L12 21l-8-4.5v-9zM4 7.5l8 4.5 8-4.5M12 12v9M8 5.25l8 4.5", strich: 1.7 }
 };

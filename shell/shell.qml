@@ -26,6 +26,7 @@ import qs.einrichtung as EinrichtungModul
 import qs.polkit as PolkitModul
 import qs.appleiste as AppleisteModul
 import qs.uebersicht as UebersichtModul
+import qs.installer as InstallerModul
 // qmllint enable unused-imports
 
 // Einstieg der zenOS-Sitzung.
@@ -87,6 +88,12 @@ ShellRoot {
 
     LazyLoader {
         source: "einrichtung/Einrichtung.qml"
+        loading: true
+    }
+
+    // zen Installer: .deb per Doppelklick installieren (IPC «installer», Fenster erst beim Öffnen)
+    LazyLoader {
+        source: "installer/Installer.qml"
         loading: true
     }
 
