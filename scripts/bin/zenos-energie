@@ -16,7 +16,7 @@
 #   zenos-energie hemmer-login       am Login-Bildschirm (nur als _greetd): hält den logind-Hemmer «handle-power-key»,
 #                                    solange der aufrufende Prozess (die Oberfläche des Logins) läuft; ein kurzer
 #                                    Druck weckt dort nur. Sonst «kein Login-Bildschirm …» und Exit 0
-#   zenos-energie meldung           nach einem automatischen Aus: Titel und Text der Mitteilung (je eine Zeile),
+#   zenos-energie meldung            nach einem automatischen Aus: Titel und Text der Mitteilung (je eine Zeile),
 #                                    einmal, beim ersten Aufruf nach dem nächsten Start
 #
 # Leitplanken (Code, nicht abschaltbar):
@@ -600,7 +600,8 @@ if (( $# != 1 )); then
   exit 2
 fi
 case "$1" in
-  darf-ausschalten | status | ausschalten | darf-ausschalten-login | ausschalten-login | taste | hemmer-login | meldung) ;;
+  darf-ausschalten | status | ausschalten | darf-ausschalten-login | ausschalten-login | taste | hemmer-login | \
+    meldung) ;;
   -h | --hilfe | --help) sed -n '2,37p' "$selbst" | sed 's/^# \{0,1\}//'; exit 0 ;;
   *) meldung "unbekannter Befehl «$1» (erlaubt: $erlaubt)"; exit 2 ;;
 esac
