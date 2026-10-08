@@ -493,6 +493,20 @@ Apps, Allgemein, Energie, System), Titel in Instrument Serif, Felder zweispaltig
   - Zuletzt der Leitplankenhinweis mit Schloss: «Die automatische Sperre bleibt immer aktiv, nichts auf dieser Seite
     verzögert sie …», darunter der Fuss mit dem Pfad wie bei «Allgemein».
 
+«Apps» (`SeiteApps.qml`): oben die proprietären Apps wie in der Einrichtung, darunter «Über den zen Installer» (Dienst
+`InstallerListe`; `einstellungen oeffnen apps/installer` scrollt dorthin):
+
+- Je Programm eine Zeile 60 px wie die Apps darüber: Symbol `paket` 18 px in `gedaempft`, der Name in Geist 15 (`text`),
+  darunter Paket, Version und seit wann in Geist Mono 12 (`gedaempft`), etwa «beispiel 1.4.2 · seit 3. Okt.»; ging es
+  inzwischen ohne den zen Installer, «· nicht mehr installiert». Alles als reiner Text.
+- Rechts «Entfernen …» (sekundär, 38 px, mit Schloss; bei «nicht mehr installiert» «Aus der Liste …»). Danach fragt der
+  polkit-Dialog nach dem Passwort. Währenddessen steht im Knopf still «Wartet …», dann «Wartet auf ein Update …» oder
+  «Wird entfernt …»; die Knöpfe der anderen Zeilen warten. Am Ende ein Hinweis wie bei den Updates («Fernzugriff ist
+  entfernt», sonst eine Warnung mit dem Grund); eine abgebrochene Passwortabfrage bleibt still. Die Zeile verschwindet
+  ohne Animation.
+- Darunter ein Satz in `gedaempft` (13 px, Zeilenhöhe 1,45): «Entfernen …» verlangt jedes Mal das Passwort, die
+  Einstellungen des Programms bleiben. Ohne Einträge steht dort nur, wie etwas dazukommt (Doppelklick auf eine .deb).
+
 Auf der Seite System steht zuoberst der Schalter «Firewall» mit Zustand («An», «Aus», «Wartet auf dein
 Passwort …») und einer Zeile Erklärung in `gedaempft`. Beim Ausschalten zeigt der Schalter sofort «aus»; bricht die
 Passwortabfrage ab, springt er zurück.

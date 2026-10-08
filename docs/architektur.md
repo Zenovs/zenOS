@@ -118,6 +118,7 @@ erscheint erst nach dem Neustart, und eine SSH-Verbindung bleibt während der In
 | `Leitplanken` | feste Regeln, siehe unten |
 | `Raster` | aktives Raster, Bildschirm-Profile, Aufruf von `zenos-labwc` (auch nach geändertem Scroll-Tempo) und `zenos-kanshi` |
 | `Firewall` | Zustand der Firewall lesen (`/etc/ufw/ufw.conf`, `/var/lib/zenos/firewall`), ein- und ausschalten über `pkexec zenos-firewall` |
+| `InstallerListe` | was über den zen Installer kam (`zenos-installer liste --json` ohne Rechte, neu bei Änderungen an `/var/lib/zenos/installer/installiert.json`), «Entfernen …» in Einstellungen › Apps über `pkexec zenos-installer-bedienen entfernen PAKET` (jedes Mal mit Passwort), Rückmeldung als Hinweis (Logik in `installer/installer.js`) |
 
 Dienste importieren nie `qs.theme`. Im Greeter (Benutzer `_greetd`, ohne `~/.config/zenos`) schreiben und starten
 sie nichts.
@@ -151,7 +152,7 @@ selbst endet in v0.3.1 auch bei Fehlern mit 0; `zenos-ipc` wertet die Ausgabe au
 | `uebersicht` | `umschalten`, `oeffnen`, `schliessen` (Fensterübersicht; öffnet nie während Sperre, Einrichtung und polkit-Dialog), `status` (`offen`/`zu`, `zu` erst nach dem Ausblenden), `fenster` (eine Zeile je Kachel: Index, appId, «Titel» bzw. bei Freigabe «Titel verborgen», dazu `aktiv`, `minimiert`, `vollbild`, `gewaehlt`) |
 | `schreibtisch` | `umschalten` (Schreibtisch zeigen bzw. die gemerkten Fenster zurück; nicht während Sperre und Einrichtung), `status` (`frei`/`normal`) |
 | `gesten` | `status` (`verbunden`/`getrennt`: liest die Oberfläche den Dienst `zenos-gesten`?) |
-| `installer` | `oeffnen(pfad)` (zen Installer für eine .deb, vom Starter `zenos-installer.desktop` über `zenos-installer oeffnen`: `offen`, `laeuft` (eine Installation läuft, das Fenster zeigt sie), `gesperrt`, `einrichtung` oder `ungueltig`), `status` (`zu`, `ansehen`, `bereit`, `installiert`, `abgelehnt`, `fehler`, `laeuft`, `fertig`, `gescheitert`), `schliessen`. Installieren nur über den Knopf im Fenster |
+| `installer` | `oeffnen(pfad)` (zen Installer für eine .deb, vom Starter `zenos-installer.desktop` über `zenos-installer oeffnen`: `offen`, `laeuft` (eine Installation läuft, das Fenster zeigt sie), `gesperrt`, `einrichtung` oder `ungueltig`), `status` (`zu`, `ansehen`, `bereit`, `installiert`, `abgelehnt`, `fehler`, `laeuft`, `fertig`, `gescheitert`), `schliessen`, `liste` (was Einstellungen › Apps unter «Über den zen Installer» zeigt: Paketnamen mit Leerzeichen oder `keine`; liest neu ein, das Ergebnis zählt erst für den nächsten Aufruf). Installieren nur über den Knopf im Fenster, Entfernen nur über den Knopf in den Einstellungen |
 
 Die Tastenkürzel von labwc rufen dieselben Ziele auf (Liste in `docs/module/m9.md`).
 

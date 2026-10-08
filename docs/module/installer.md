@@ -85,9 +85,29 @@ hat dafür nichts (nur `sudo apt install ./datei.deb` im Terminal).
    Mitteilung: Das Fenster sagt es.
 
 IPC `installer`: `oeffnen(pfad)` (siehe oben), `status` (`zu`, `ansehen`, `bereit`, `installiert`, `abgelehnt`,
-`fehler`, `laeuft`, `fertig`, `gescheitert`), `schliessen`. Installieren geht nur über den Knopf; IPC startet nie pkexec.
+`fehler`, `laeuft`, `fertig`, `gescheitert`), `schliessen`, `liste` (siehe unten). Installieren geht nur über den Knopf;
+IPC startet nie pkexec.
 Der Rundgang in `scripts/pruefen.sh` (Teil start) prüft die Pfade, sieht eine selbst gebaute .deb bis «bereit» an,
 öffnet sie ein zweites Mal, schliesst und prüft «nicht während der Einrichtung».
+
+## Einstellungen › Apps: Liste und Entfernen
+
+Unter «Über den zen Installer» steht, was über den zen Installer kam (Dienst `shell/dienste/InstallerListe.qml`, Logik
+in `installer.js`, Design: `docs/design.md`, «Apps»). `einstellungen oeffnen apps/installer` scrollt dorthin.
+
+1. **Liste:** `zenos-installer liste --json` ohne Rechte (`installiert.json` und der Stand von dpkg). Neu gelesen beim
+   Öffnen der Seite, wenn sich `installiert.json` oder `/var/lib/dpkg/status` ändert, alle 15 s, solange die Seite offen
+   ist, und nach einer eigenen Entfernung. Je Zeile Name, Paket, Version und seit wann; ging das Paket inzwischen ohne
+   den zen Installer, «nicht mehr installiert» (der Knopf heisst dann «Aus der Liste …»).
+2. **Entfernen …:** `pkexec /opt/zenos/scripts/bin/zenos-installer-bedienen entfernen PAKET` (polkit
+   `org.zenos.installer.entfernen`, `auth_admin` bei jedem Aufruf), nur für ein Paket der Liste, eins zur Zeit, nie
+   während der Sperre. Der Knopf zeigt «Wartet …» (Passwort), «Wartet auf ein Update …» bzw. «Wird entfernt …» (Phase
+   aus `zenos-installer status --json`, alle 1,5 s). Die Unit läuft weiter, wenn die Einstellungen zugehen.
+3. **Rückmeldung** wie bei den Basis-Updates: ein Hinweis nach dem eigenen Klick («Fernzugriff ist entfernt»; bei 3, 10,
+   75 und Fehlern eine Warnung mit dem Grund aus `letzte.json`, wenn sie zu genau diesem Paket und diesem Klick gehört),
+   keine Mitteilung; abgebrochene Passwortabfrage (126) still.
+
+IPC `installer liste` sagt, was die Liste zeigt (Paketnamen oder `keine`); Entfernen geht nur über den Knopf.
 
 ## zen install
 
@@ -126,7 +146,11 @@ vertrauenswürdig: Das Programm entfernt Steuerzeichen und kürzt sie, die Oberf
 - `zen doctor`, Abschnitt «zen Installer»: eingerichtet, Standard für .deb, Ablage leer, letztes Ergebnis.
 - Einheitentests `test/einheiten/installer.test.py` (selbst gebaute Test-.deb, als Benutzer und als root),
   `zen-install.test.py` und für die Oberfläche `installer.test.mjs` (node).
-- Ende zu Ende im Container: `test/container/installer-e2e.sh alle` (echtes systemd, apt und dpkg, über sudo).
+- Ende zu Ende im Container: `test/container/installer-e2e.sh alle` (echtes systemd, apt und dpkg; Doppelklick über
+  `gio open` und `xdg-open` bis ins Fenster, Installieren mit echtem pkexec, «Öffnen», Liste der Einstellungen,
+  Entfernen, Ablehnungen, Sperren gegen Kanal und Basis, Stopp, `install.sh` zweimal; siehe
+  `test/container/README.md`). xdg-open (Chrome) erkennt den Dateityp unter labwc nur mit `file`; auf Ubuntu Server
+  ist es da (ubuntu-standard).
 
 ## Rückweg
 
