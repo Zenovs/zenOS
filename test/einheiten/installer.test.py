@@ -1663,7 +1663,7 @@ pruefe_installer
 '''
 
 
-@unittest.skipUnless(BASH and shutil.which("stat"), "bash fehlt")
+@unittest.skipUnless(BASH and os.path.exists("/proc/self"), "nur unter Linux (GNU stat und install wie auf dem Pi)")
 class Modul(unittest.TestCase):
     def setUp(self):
         self.ziel = tempfile.mkdtemp(prefix="zenos-installer-modul.")

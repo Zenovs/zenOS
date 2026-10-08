@@ -59,7 +59,8 @@ _installer_standard() {
 
 _installer_zustand() {
   local zeile zustand text anzahl
-  anzahl=$(find "$_INSTALLER_ABLAGE" -mindepth 1 -maxdepth 1 2> /dev/null | wc -l)
+  # Arithmetik statt der rohen Ausgabe: BSD-wc rückt die Zahl mit Leerzeichen ein
+  anzahl=$(($(find "$_INSTALLER_ABLAGE" -mindepth 1 -maxdepth 1 2> /dev/null | wc -l)))
   zeile=$("$_INSTALLER_PYTHON" -I "$_INSTALLER_PROGRAMM" status --kurz 2> /dev/null | head -n 1) || zeile=""
   zustand=${zeile%% *}
   text=${zeile#* }
