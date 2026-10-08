@@ -64,6 +64,9 @@ vertrauen scripts/bin/zenos-kanal*
 vertrauen scripts/bin/zenos-basis*
 vertrauen system/systemd/system/zenos-kanal*
 vertrauen system/systemd/system/zenos-basis*
+vertrauen scripts/bin/zenos-installer*
+vertrauen scripts/module/*-installer.sh
+vertrauen system/systemd/system/zenos-installer*
 vertrauen system/basis
 vertrauen system/update-manager/
 vertrauen image/bauen.sh

@@ -19,6 +19,8 @@
 | `bin/zenos-gesten` | Wischen mit drei Fingern (Systemdienst `zenos-gesten.service`, Benutzer `zenos-gesten`): liest reine Touchpads nur lesend über libinput und meldet «oben» und «unten» an die Oberfläche; `--messen` misst die Schwelle ein, `--pruefen` für `zen doctor` (Modul und Prüfung `82-gesten`) |
 | `bin/zenos-basis` | Paket-Updates der Ubuntu-Basis: `pruefen` (apt-get update, Auswertung von `apt-get -s full-upgrade`), `installieren` (genau die geprüfte Liste, policy-rc.d nur gegen greetd, danach install.sh, Gesundheitsprüfung), `update [--ja]` (Schritt 2 von `zen update`), `jetzt HASH` und `zustimmen HASH` (Einstellungen), `automatik lauf\|gelegenheit` (Timer; fragt `zenos-kanal automatik darf --ohne-ssh`), `status`; root-eigene Kopie unter `/usr/local/libexec/zenos` (`71-basis`) |
 | `bin/zenos-kanal-bedienen` | Updates aus den Einstellungen (root über pkexec, polkit `org.zenos.kanal.*`): `pruefen`, `installieren ZIEL`, `zustimmen OBJEKT` starten die Units des Kanals (ZIEL und OBJEKT: der angezeigte Stand), `zeitpunkt …` setzt den Zeitpunkt; für die Ubuntu-Basis `basis-pruefen` (Unit), `basis-installieren HASH` und `basis-installieren-zustimmen HASH` (HASH: die angezeigte Liste); nur feste Wörter, Journal `-t zenos-kanal-bedienen` |
+| `bin/zenos-installer` | zen Installer für .deb-Pakete: `ansehen DATEI [--json]` (ohne Rechte: Metadaten, Inhalt, Symbol, Simulation mit `apt-get -s install`, Hinweise, Ablehnungen, Plan), `liste`, `status`, `oeffnen DATEI` (Doppelklick, an die Oberfläche), `auftrag-installieren`/`auftrag-entfernen` (root über den Helfer) und `installieren SHA256`/`entfernen PAKET` (in den Units); root-eigene Kopie unter `/usr/local/libexec/zenos` (`76-installer`) |
+| `bin/zenos-installer-bedienen` | zen Installer mit Rechten (root über pkexec, polkit `org.zenos.installer.*`, jedes Mal mit Passwort, oder sudo): `installieren PFAD SHA256 PLAN` (genau die angezeigte Datei und der angezeigte Plan), `entfernen PAKET` (nur aus der Liste des Installers); Journal `-t zenos-installer-bedienen` |
 
 ## install.sh
 
@@ -191,6 +193,21 @@ alle (`--kurz` für `zen doctor` und `zen version`). Sperre gemeinsam mit dem Ka
 Bedienung `bedienung.lock`). Prozesse nur mit Argumentlisten. Ablauf, Dateien und Exit-Codes:
 `docs/image-und-releases.md`, «Basis-Updates». Tests: `test/einheiten/basis-updates.test.py`,
 `basis-automatik.test.py`, `basis.test.py`, `zen-update.test.py`, Ende zu Ende `test/container/basis-e2e.sh`.
+
+## zenos-installer
+
+`bin/zenos-installer` (Python 3, nur Standardbibliothek, `python3 -I`) läuft für `ansehen`, `liste`, `status` und
+`oeffnen` als Benutzer aus `/opt/zenos`, mit Rechten als root-eigene Kopie `/usr/local/libexec/zenos/zenos-installer`
+(Modul `76-installer`). Ansehen liest das Paket nur (`dpkg-deb --ctrl-tarfile`/`--fsys-tarfile` als Datenstrom in
+`tarfile`, nichts wird entpackt oder ausgeführt), simuliert mit `apt-get -s install` und bindet das Ergebnis an die
+SHA-256 der Datei und einen Plan (Hash über Hauptpaket, Zustand und die Namen dessen, was apt installiert oder
+entfernt). `zenos-installer-bedienen installieren PFAD SHA256 PLAN` (pkexec, Passwort jedes Mal) öffnet die Datei als
+der aufrufende Benutzer, kopiert sie in die root-eigene Ablage `/var/lib/zenos/installer/ablage/`, prüft dort die
+SHA-256 und startet `zenos-installer-installieren@SHA256.service`: Sperre gemeinsam mit Kanal und Basis
+(`/run/zenos-sperre/kanal.lock`), Warten auf andere Paketvorgänge, Sperre der Paketlisten, noch einmal auswerten, nur
+bei gleichem Plan `apt-get install -y` mit Block-Inhibitor; Ergebnis in `letzte.json`, die Liste in `installiert.json`,
+Log `/var/log/zenos/installer.log`. Entfernen (`zenos-installer-entfernen@PAKET.service`) nur für Pakete aus der Liste
+und nur, wenn apt dabei nichts anderes entfernte. Tests: `test/einheiten/installer.test.py`.
 
 ## zenos-gesten
 

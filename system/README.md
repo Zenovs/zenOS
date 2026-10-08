@@ -35,19 +35,23 @@ Verweis angelegt; was generiert wird, erzeugen die Programme unter `scripts/bin/
 | `systemd/system/zenos-basis-automatik.service` | `/etc/systemd/system/` (`71-basis`, statisch) | ein Lauf: prüfen, eine Liste ohne Kernel, Firmware, Bootloader und Entfernungen installieren, wenn `zenos-kanal automatik darf --ohne-ssh` ja sagt (Sandbox wie die Automatik des Kanals) |
 | `systemd/system/zenos-basis-gelegenheit.timer` | `/etc/systemd/system/` (`71-basis`, aktiviert, ausser Notschalter) | alle 15 Min. (7, 22, 37, 52) |
 | `systemd/system/zenos-basis-gelegenheit.service` | `/etc/systemd/system/` (`71-basis`, statisch) | nur mit `/var/lib/zenos/basis/automatik-bereit`: die bereite Liste ohne `apt-get update` installieren, wenn es darf |
+| `systemd/system/zenos-installer-installieren@.service` | `/etc/systemd/system/` (`76-installer`, statisch) | zen Installer: genau die Datei der Instanz (SHA-256) aus `/var/lib/zenos/installer/ablage/` installieren, unter der Sperre mit Kanal und Basis, nur bei gleichem Plan, mit Inhibitor (`KillMode=mixed`; nur über `zenos-installer-bedienen`) |
+| `systemd/system/zenos-installer-entfernen@.service` | `/etc/systemd/system/` (`76-installer`, statisch) | zen Installer: ein Paket aus seiner Liste entfernen (Instanz: Paketname, maskiert; `apt-get remove` ohne purge, nur wenn sonst nichts geht) |
 | `modprobe/zenos-brcmfmac.conf` | `/etc/modprobe.d/` (von `zen netzwerk umstellen` bzw. im Image) | WPA3 im WLAN-Treiber des Raspberry Pi aus (`docs/module/netzwerk.md`) |
 | `cloud/99-zenos-netzwerk.cfg` | `/etc/cloud/cloud.cfg.d/` (von `zen netzwerk umstellen`, nie im Image) | cloud-init schreibt keine Netzwerk-Konfiguration mehr |
 | `doc/RECHTLICHES`, `doc/QUELLEN` | `/usr/local/share/doc/zenos/` (Modul `72-kennung`, neben `copyright` aus `LICENSE`) | Lizenzen, Markenhinweise und wo der Quellcode liegt; `/etc/legal` verweist darauf |
 | `systemd/system-shutdown/zenos-argon` | `/usr/lib/systemd/system-shutdown/` | Abschaltsignal an die Argon-Platine beim Ausschalten |
 | `portal/labwc-portals.conf` | `/etc/xdg/xdg-desktop-portal/` | Portale: `gtk`, Bildschirm über `wlr` |
 | `portal/xdpw.conf` | `/etc/xdg/xdg-desktop-portal-wlr/config` | Bildschirmwahl und Erkennung der Freigabe |
-| `xdg/labwc-mimeapps.list` | `/etc/xdg/labwc-mimeapps.list` | Standard-Apps der labwc-Sitzung: Ordner öffnet Thunar (`48-ablage`) |
+| `xdg/labwc-mimeapps.list` | `/etc/xdg/labwc-mimeapps.list` | Standard-Apps der labwc-Sitzung: Ordner öffnet Thunar, .deb der zen Installer (`48-ablage`) |
 | `thunar/uca.xml` | `~/.config/Thunar/uca.xml` (Kopie, nur mit der zenOS-Marke in der ersten Zeile) | Thunar: «Terminal hier öffnen» mit kitty (`48-ablage`) |
 | `applications/thunar-bulk-rename.desktop`, `applications/thunar-settings.desktop` | `/usr/local/share/applications/` | Hilfsstarter von Thunar ausblenden (`Hidden=true`, `48-ablage`) |
+| `applications/zenos-installer.desktop` | `/usr/local/share/applications/` (`76-installer`) | Starter des zen Installers für .deb (NoDisplay; Standard über `xdg/labwc-mimeapps.list`): `zenos-installer oeffnen %f` |
 | `pam/zenos-sperre` | direkt aus `/opt/zenos` (`configDirectory`) | PAM-Dienst des Sperrbildschirms |
 | `polkit/org.zenos.firewall.policy` | `/usr/share/polkit-1/actions/` | polkit-Aktionen für den Schalter «Firewall» (pkexec mit `zenos-firewall`, Ausschalten nur mit Passwort) |
 | `polkit/org.zenos.luefter.policy` | `/usr/share/polkit-1/actions/` (`80-argon`) | polkit-Aktion für die Zeile «Lüfter» im System-Menü (pkexec mit `zenos-luefter`, ohne Passwort, nur in der aktiven Sitzung am Gerät) |
 | `polkit/org.zenos.kanal.policy` | `/usr/share/polkit-1/actions/` (`14-kanal`) | polkit-Aktionen für Einstellungen › System › Updates (pkexec mit `zenos-kanal-bedienen`): prüfen, jetzt installieren und Zeitpunkt ohne Passwort, zustimmen jedes Mal mit Passwort; für die Ubuntu-Basis `basis-pruefen` und `basis-installieren` ohne Passwort, `basis-installieren-zustimmen` (Kernel, Firmware, Bootloader, Entfernungen) jedes Mal mit Passwort; nur in der aktiven Sitzung am Gerät |
+| `polkit/org.zenos.installer.policy` | `/usr/share/polkit-1/actions/` (`76-installer`) | polkit-Aktionen des zen Installers (pkexec mit `zenos-installer-bedienen`): installieren und entfernen jedes Mal mit Passwort, nur in der aktiven Sitzung am Gerät |
 | `kitty/kitty.conf` | `~/.config/kitty/kitty.conf` (Verweis) | Terminal, schlaues Ctrl+C, Super-Kürzel |
 | `fish/zenos.fish`, `fish/functions/` | `~/.config/fish/conf.d/zenos.fish` (Verweis) | Shell: Eingabezeile, Statuszeile, `?`, Warnung vor gefährlichen Befehlen |
 | `chrome/policies/zenos.json` | `/etc/opt/chrome/policies/managed/` | Chrome-Richtlinien (`docs/sicherheit.md`) |
