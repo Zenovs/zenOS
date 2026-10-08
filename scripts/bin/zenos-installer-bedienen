@@ -1,0 +1,97 @@
+#!/bin/bash
+# zenos-installer-bedienen installieren PFAD SHA256 PLAN|entfernen PAKET – der zen Installer mit Rechten. Läuft nur als
+# root: über pkexec (polkit-Aktionen in system/polkit/org.zenos.installer.policy, jedes Mal mit Passwort) oder sudo
+# (zen install im Terminal).
+#
+#   installieren PFAD SHA256 PLAN
+#                       «Installieren» im Fenster zen Installer: genau die angezeigte Datei. PFAD absolut, ohne
+#                       Steuerzeichen, Endung .deb; SHA256 (64 Zeichen 0-9a-f) und PLAN (40 Zeichen 0-9a-f) aus
+#                       «zenos-installer ansehen». zenos-installer auftrag-installieren öffnet die Datei als der
+#                       aufrufende Benutzer, kopiert sie in die root-eigene Ablage, prüft dort die SHA-256 und startet
+#                       zenos-installer-installieren@SHA256.service; die Unit installiert nur, wenn der Plan gleich
+#                       geblieben ist
+#   entfernen PAKET     «Entfernen» in den Einstellungen: zenos-installer auftrag-entfernen startet
+#                       zenos-installer-entfernen@PAKET.service (nur Pakete, die über den zen Installer kamen)
+#
+# Die Arbeit machen die Units bzw. /usr/local/libexec/zenos/zenos-installer (root-eigene Kopie). Läuft die Oberfläche
+# neu an, während eine Installation läuft, endet nur dieser Helfer; die Unit läuft zu Ende.
+#
+# Sicherheit: Vom Aufrufer kommen nur die Argumente (feste Wörter, Pfad, Hash und Plan streng geprüft, Paketname wie
+# dpkg ihn erlaubt) und PKEXEC_UID bzw. SUDO_UID (wer die Datei besitzen muss; zenos-installer prüft sie als Zahl);
+# der PATH ist fest (pkexec räumt die Umgebung ohnehin auf). Programme nur mit Argumentlisten, keine
+# Shell-Zeichenketten. Jeder Aufruf steht im Journal (journalctl -t zenos-installer-bedienen).
+#
+# Exit: der von zenos-installer (0 in Ordnung, 1 Fehler, 3 abgelehnt, 10 Stopp, 75 belegt), 1 Fehler, 2 falscher
+# Aufruf. 126 (abgebrochen) und 127 (nicht erlaubt) vergibt pkexec selbst.
+
+set -euo pipefail
+umask 022
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+unset IFS
+
+_name=zenos-installer-bedienen
+_programm=/usr/local/libexec/zenos/zenos-installer
+
+_fehler() { printf '%s: %s\n' "$_name" "$*" >&2; }
+_aufruf() { _fehler "Aufruf: zenos-installer-bedienen installieren PFAD SHA256 PLAN|entfernen PAKET"; }
+
+# Absolut, höchstens 4096 Zeichen, ohne Steuerzeichen, Endung .deb
+_pfad() {
+  local p=$1
+  [[ "$p" == /* && "$p" == *.deb && ${#p} -le 4096 ]] || return 1
+  [[ "$p" != *[[:cntrl:]]* ]]
+}
+
+(( $# >= 1 )) || { _aufruf; exit 2; }
+case "$1" in
+  installieren)
+    if (( $# != 4 )) || ! _pfad "$2" || [[ ! "$3" =~ ^[0-9a-f]{64}$ || ! "$4" =~ ^[0-9a-f]{40}$ ]]; then
+      _fehler "installieren braucht PFAD (absolut, .deb), SHA256 (64 Zeichen 0-9a-f) und PLAN (40 Zeichen 0-9a-f)"
+      exit 2
+    fi
+    ;;
+  entfernen)
+    if (( $# != 2 )) || [[ ! "$2" =~ ^[a-z0-9][a-z0-9+.-]{0,127}$ ]]; then
+      _fehler "entfernen braucht genau einen Paketnamen"
+      exit 2
+    fi
+    ;;
+  *)
+    _aufruf
+    exit 2
+    ;;
+esac
+
+if (( EUID != 0 )); then
+  _fehler "läuft nur als root (über pkexec aus dem zen Installer oder mit sudo)"
+  exit 2
+fi
+if [[ ! -f "$_programm" ]]; then
+  _fehler "$_programm fehlt (install.sh)"
+  exit 1
+fi
+
+_weg() {
+  if [[ "${PKEXEC_UID:-}" =~ ^[0-9]+$ ]]; then
+    printf 'pkexec, uid %s' "$PKEXEC_UID"
+  elif [[ "${SUDO_UID:-}" =~ ^[0-9]+$ ]]; then
+    printf 'sudo, uid %s' "$SUDO_UID"
+  else
+    printf 'root'
+  fi
+}
+_journal() { logger -t "$_name" -- "$*" 2>/dev/null || true; }
+
+rc=0
+case "$1" in
+  installieren)
+    _journal "Installieren: ${2##*/}, SHA-256 $3 ($(_weg))"
+    /usr/bin/python3 -I "$_programm" auftrag-installieren "$2" "$3" "$4" || rc=$?
+    ;;
+  entfernen)
+    _journal "Entfernen: $2 ($(_weg))"
+    /usr/bin/python3 -I "$_programm" auftrag-entfernen "$2" || rc=$?
+    ;;
+esac
+exit "$rc"

@@ -1,0 +1,22 @@
+# zenOS: zen Installer – ein Paket entfernen (zenos-installer entfernen %I). Die Instanz ist der Paketname, maskiert
+# wie «systemd-escape» (%I hebt das auf). Nur für Pakete aus /var/lib/zenos/installer/installiert.json, nie ein
+# geschütztes, und nur, wenn apt dabei nichts anderes entfernte; «apt-get remove» ohne purge (Konfiguration bleibt).
+# Gestartet von zenos-installer-bedienen (pkexec mit Passwort, polkit-Aktion org.zenos.installer.entfernen, oder sudo).
+#
+# Sperren, Inhibitor und Stopp wie zenos-installer-installieren@.service.
+[Unit]
+Description=zenOS: zen Installer entfernt ein Paket (%I)
+Documentation=file:///opt/zenos/docs/sicherheit.md
+ConditionPathExists=/usr/local/libexec/zenos/zenos-installer
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/zenos/zenos-installer entfernen %I
+Environment=HOME=/root LANG=C.UTF-8
+StateDirectory=zenos/installer
+StateDirectoryMode=0755
+UMask=0022
+KillMode=mixed
+TimeoutStartSec=2h
+TimeoutStopSec=20min
+SyslogIdentifier=zenos-installer

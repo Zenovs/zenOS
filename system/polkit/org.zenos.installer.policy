@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!--
+  zenOS: der zen Installer (pkexec mit scripts/bin/zenos-installer-bedienen). 76-installer legt die Datei nach
+  /usr/share/polkit-1/actions/ (root, 0644).
+
+  - pkexec ordnet einen Aufruf über den echten Pfad des Programms (exec.path) und das erste Argument (exec.argv1)
+    einer dieser Aktionen zu. Andere Argumente fallen auf org.freedesktop.policykit.exec (Administrator-Passwort);
+    der Helfer nimmt ohnehin nur installieren und entfernen an.
+  - Beides jedes Mal mit Passwort (auth_admin, nicht auth_admin_keep), nur in der aktiven Sitzung am Gerät: Ein
+    fremdes Paket führt bei der Installation eigene Skripte als root aus. Das Passwort gilt nur für genau die
+    angezeigte Datei (SHA-256) und genau den angezeigten Plan; Entfernen nur für ein Paket, das über den zen
+    Installer kam.
+-->
+<policyconfig>
+  <vendor>zenOS</vendor>
+
+  <action id="org.zenos.installer.installieren">
+    <description>Software installieren</description>
+    <message>Die angezeigte Software installieren. Das Paket läuft dabei mit allen Rechten.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/opt/zenos/scripts/bin/zenos-installer-bedienen</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">installieren</annotate>
+  </action>
+
+  <action id="org.zenos.installer.entfernen">
+    <description>Software entfernen</description>
+    <message>Software entfernen, die über den zen Installer kam.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/opt/zenos/scripts/bin/zenos-installer-bedienen</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">entfernen</annotate>
+  </action>
+</policyconfig>
