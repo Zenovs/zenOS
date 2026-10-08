@@ -1608,7 +1608,8 @@ class CriticalBattery:
       von vorn. 0 % nach einem gültigen niedrigen Wert gilt als sicher (BatteryMonitor, SOC_ZERO_VALID_FROM).
     - Läuft danach install.sh oder dpkg, wird gewartet, höchstens CRITICAL_MAX_DEFER (5 Min.) länger; die Uhrzeit zeigt
       dann diese späteste. SSH-Sitzungen, tmux und Hemmer halten es nicht auf: Bei leerem Akku käme sonst das harte Aus
-      (Abweichung vom Wortlaut von Zenos Entscheid, «nie während SSH, tmux oder Updates»; docs/module/energie.md).
+      (Abweichung vom Wortlaut von Zenos Entscheid, «nie während SSH, tmux oder Updates», von Zeno bestätigt am
+      08.10.2026; docs/module/energie.md).
     - Ausgeschaltet wird mit «systemctl poweroff» (nie neu starten, nie --force). Mit ZENOS_ARGON_TESTWURZEL nie."""
 
     def __init__(self, log, clock=time.monotonic, wall=None, busy=system_busy, runner=subprocess.run, notify=None):

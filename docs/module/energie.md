@@ -287,12 +287,13 @@ hergeleitet und am Gerät zu prüfen («Am Gerät prüfen», Punkt 5).
   Login-Bildschirm im Akkubetrieb nach 30 Min. Ohne Bereitschaft braucht ein gesperrter Laptop im Rucksack rund
   3,3 W, bis der Akku leer ist und hart abschaltet; ausgeschaltet laut Raspberry Pi rund 0,01 W (nicht selbst
   gemessen). «Nie» bleibt als Wahl.
-- **Abweichung beim leeren Akku (Rückfrage an Zeno offen):** Bei 3 % halten SSH und tmux das Ausschalten nicht auf,
-  und auf dpkg oder `install.sh` wartet `zenos-argon` höchstens 5 Min. Der Wortlaut des Entscheids («nie während SSH,
-  tmux oder Updates») sagt anderes. Grund: Bei leerem Akku käme sonst das harte Aus, mitten in dpkg ist das schlimmer
-  als ein kontrolliertes. Damit niemand überrascht wird, meldet `wall` die Vorwarnung, eine Wartezeit und einen Abbruch
-  allen offenen Terminals (auch SSH), und die Zeile steht auch am Login-Bildschirm. Bestätigt Zeno die Abweichung
-  nicht, wartet `zenos-argon` auch auf SSH und tmux (bis der Akku hart abschaltet).
+- **Abweichung beim leeren Akku (von Zeno bestätigt am 08.10.2026):** Bei 3 % halten SSH und tmux das Ausschalten
+  nicht auf, und auf dpkg oder `install.sh` wartet `zenos-argon` höchstens 5 Min. Der Wortlaut des Entscheids zum
+  Ausschalten («nie während SSH, tmux oder Updates») sagt anderes. Grund: Bei leerem Akku käme sonst das harte Aus,
+  mitten in dpkg ist das schlimmer als ein kontrolliertes. Damit niemand überrascht wird, meldet `wall` die
+  Vorwarnung, eine Wartezeit und einen Abbruch allen offenen Terminals (auch SSH), und die Zeile steht auch am
+  Login-Bildschirm. Zeno hat die Abweichung am 08.10.2026 bestätigt: kontrolliert ausschalten auch während SSH und
+  tmux, auf Updates höchstens 5 Min. warten, mit der Warnung über `wall`.
 - **Zenos Entscheid zu Video und Sperre (Antwort b):** Ein Idle-Hemmer (z. B. ein Video im Browser) hält die
   automatische Sperre höchstens 60 Min. ohne Eingabe auf, dann sperrt zenOS trotzdem (IdleMonitor mit
   `respectInhibitors: false`). Fest im Code, nicht abschaltbar. Vorher hielt ein vergessener Tab das Gerät
@@ -603,7 +604,6 @@ so macht es gesperrt auch `zen energie aus`). Jeden Fehlversuch meldet pam_unix 
   einen dunklen Login mit der Ein/Aus-Taste wecken will, schaltet aus (verloren geht nichts, angemeldet ist niemand,
   aber es folgt ein Kaltstart). Ein Hemmer «handle-power-key» im Greeter hielte das auf; das berührt logind und polkit
   für `_greetd` und ist nicht gebaut (Rückfrage an Zeno).
-- **Rückfrage an Zeno:** die Abweichung beim leeren Akku (Abschnitt «Entscheidungen»).
 - **Ein/Aus-Taste während Updates:** Ohne zenos-idle schaltet ein kurzer Druck sofort aus, auch während `zen update`
   per SSH. Ein Hemmer «shutdown» um `install.sh` (`systemd-inhibit --what=shutdown --mode=block`, braucht sudo) hielte
   logind davon ab; das wäre ein Eingriff in den Ablauf von `install.sh` und ist nicht gebaut.

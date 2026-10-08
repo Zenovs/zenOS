@@ -99,6 +99,9 @@ Abnahme in einer echten VM (lima/Apple Virtualization, Ubuntu 26.04 arm64, virti
   `shell/greeter/Bildschirm.qml` mit wlopm direkt aus dem Login; in der Sitzung bleibt «dunkel heisst gesperrt».
   Ausfallsicher: Was scheitert, lässt den Bildschirm an. Im Container mit `test/container/login-e2e.sh` geprüft, am
   Gerät abzunehmen (`docs/module/energie.md`, «Bildschirm aus am Login-Bildschirm»).
+- **Leerer Akku: kontrolliert ausschalten auch während SSH und tmux** (Zenos Bestätigung vom 08.10.2026): Bei 3 %
+  wartet `zenos-argon` auf Updates höchstens 5 Min. und warnt alle Terminals über `wall` (`docs/module/energie.md`,
+  «Entscheidungen»).
 
 ## Offene Punkte für Zeno
 
