@@ -8,7 +8,8 @@
 # gehören nicht ins Befehlsfeld. Hidden=true in /usr/local/share/applications/ heisst nach der Desktop-Entry-
 # Spezifikation «gelöscht» und überdeckt die Datei gleichen Namens in /usr/share/applications/.
 # Benutzer: ~/Ablage anlegen, wenn sie fehlt, und die XDG-Benutzerordner darauf richten; in Thunar öffnet
-# «Terminal hier öffnen» kitty (~/.config/Thunar/uca.xml). Gründe: docs/module/ablage.md.
+# «Terminal hier öffnen» kitty, und eine .deb hat «Mit zen Installer öffnen» (~/.config/Thunar/uca.xml). Gründe:
+# docs/module/ablage.md.
 
 modul_system() {
   # Die Pakete installiert 20-pakete gesammelt; hier nur nachziehen, falls etwas fehlt.

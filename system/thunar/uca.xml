@@ -4,6 +4,10 @@
   trägt. Sie ersetzt die Beispiel-Aktion aus /etc/xdg/Thunar/uca.xml: Deren Befehl «exo-open … TerminalEmulator»
   braucht xfce4-mime-helper aus xfce4-settings, das zenOS nicht mitbringt, und zeigte nur einen Fehler.
   Thunar setzt für %f den Ordner ein, in Anführungszeichen (g_shell_quote), wie bei der Beispiel-Aktion.
+  Dazu «Mit zen Installer öffnen» für .deb-Dateien (76-installer): Doppelklick öffnet ihn schon als Standard; die
+  Aktion bleibt auch dann im Menü, wenn du für .deb eine andere App gewählt hast. Thunar zerlegt den Befehl in
+  Argumente (keine Shell); zenos-installer prüft den Pfad und gibt ihn an die Oberfläche.
+  Die erste Zeile bleibt, wie sie ist: An ihr erkennt 48-ablage eine Datei von zenOS.
   Eigene Aktionen legst du in Thunar an (Bearbeiten, Benutzerdefinierte Aktionen). Thunar schreibt die Datei dann
   selbst neu, ohne die erste Zeile, und zenOS lässt sie danach unverändert.
 -->
@@ -17,5 +21,14 @@
     <patterns>*</patterns>
     <range/>
     <directories/>
+  </action>
+  <action>
+    <icon>package-x-generic</icon>
+    <name>Mit zen Installer öffnen</name>
+    <unique-id>zenos-installer-oeffnen</unique-id>
+    <command>/opt/zenos/scripts/bin/zenos-installer oeffnen %f</command>
+    <description>Heruntergeladene Software ansehen und installieren</description>
+    <patterns>*.deb</patterns>
+    <other-files/>
   </action>
 </actions>

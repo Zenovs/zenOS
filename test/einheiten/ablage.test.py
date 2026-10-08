@@ -304,9 +304,15 @@ class AblageTest(unittest.TestCase):
         wurzel = ElementTree.fromstring(inhalt)
         self.assertEqual(wurzel.tag, "actions")
         aktionen = wurzel.findall("action")
-        self.assertEqual(len(aktionen), 1)
+        self.assertEqual(len(aktionen), 2)
         self.assertEqual(aktionen[0].findtext("command"), "kitty --directory %f")
         self.assertIsNotNone(aktionen[0].find("directories"))
+        # «Mit zen Installer öffnen» nur für .deb, derselbe Aufruf wie der Starter zenos-installer.desktop
+        self.assertEqual(aktionen[1].findtext("command"), "/opt/zenos/scripts/bin/zenos-installer oeffnen %f")
+        self.assertEqual(aktionen[1].findtext("patterns"), "*.deb")
+        self.assertIsNotNone(aktionen[1].find("other-files"))
+        self.assertIsNone(aktionen[1].find("directories"))
+        self.assertEqual(len({a.findtext("unique-id") for a in aktionen}), 2)
 
     def test_uca_wird_angelegt(self):
         self.benutzerteil()

@@ -24,6 +24,8 @@ keinen, sondern nimmt einen aus Ubuntu (Thunar).
   zenOS die Datei angelegt hat, kopiert Thunar die Beispiel-Aktion selbst dorthin (im Container gesehen); auf dem Pi
   kommt die Datei mit demselben `install.sh`-Lauf wie Thunar. `zen doctor` meldet den Fall. Abhilfe: ohne eigene
   Aktionen die Datei löschen und `zen benutzer`, sonst die Aktion in Thunar auf `kitty --directory %f` ändern.
+  Dieselbe Datei bringt für .deb-Dateien «Mit zen Installer öffnen» (`zenos-installer oeffnen %f`,
+  `docs/module/installer.md`); der Doppelklick öffnet den zen Installer schon über den Standard für .deb.
 - **Hilfsstarter ausgeblendet:** `system/applications/thunar-bulk-rename.desktop` und `thunar-settings.desktop` →
   `/usr/local/share/applications/` mit `Hidden=true`. Im Befehlsfeld und in der App-Übersicht steht nur noch
   «Thunar File Manager» (deutsch «Dateimanager Thunar»).
