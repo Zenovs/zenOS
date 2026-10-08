@@ -28,6 +28,7 @@ import stat
 import struct
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
@@ -168,6 +169,12 @@ if args[0] == "-W" and args[-2] == "--":
     status, version = z[args[-1]]
     print(f"{status}\t{version}")
     sys.exit(0)
+if any("${Essential}" in a for a in args):
+    wichtig, noetig = lies("essentiell.txt").split(), lies("required.txt").split()
+    for name, (status, version) in sorted(z.items()):
+        print(f"{name}\t{status}\t{version}\t{'yes' if name in wichtig else 'no'}\t"
+              f"{'required' if name in noetig else 'optional'}")
+    sys.exit(0)
 for name, (status, version) in sorted(z.items()):
     print(f"{name}\t{version}\t{status}")
 '''
@@ -223,6 +230,24 @@ def schreiben(pfad, inhalt, modus=0o644):
                                                                    {"encoding": "utf-8"})) as f:
         f.write(inhalt)
     os.chmod(pfad, modus)
+
+
+def eintrag(name, art=tarfile.REGTYPE, modus=0o644, ziel="", **mehr):
+    """Ein TarInfo für roh_deb (Besitzer root wie bei dpkg-deb)."""
+    info = tarfile.TarInfo(name)
+    info.type = art
+    info.mode = modus
+    info.linkname = ziel
+    info.uid = info.gid = 0
+    info.uname = info.gname = "root"
+    info.mtime = 1_700_000_000
+    for schluessel, wert in mehr.items():
+        setattr(info, schluessel, wert)
+    return info
+
+
+def ordner(*namen):
+    return [(eintrag(n, tarfile.DIRTYPE, 0o755), None) for n in namen]
 
 
 def setUpModule():
@@ -309,6 +334,33 @@ class Umgebung(unittest.TestCase):
         subprocess.run([DPKG_DEB, "--root-owner-group", "-Zgzip", "-z1", "--build", wurzel, ziel], check=True,
                        capture_output=True)
         shutil.rmtree(bau)
+        return ziel
+
+    def roh_deb(self, steuer, daten, datei="roh.deb", kontrolle=None, format_=tarfile.GNU_FORMAT):
+        """Baut eine .deb von Hand (ar mit debian-binary, control.tar.gz, data.tar.gz), wie dpkg-deb --build sie nie
+        baut: harte Verweise, Gerätedateien, lange Namen, Sparse. STEUER und DATEN: [(TarInfo, Daten oder None)];
+        die Datei control kommt aus KONTROLLE (Standard: das Beispielpaket)."""
+        def tar(eintraege):
+            puffer = io.BytesIO()
+            with tarfile.open(fileobj=puffer, mode="w:gz", format=format_) as tf:
+                for info, inhalt in eintraege:
+                    if inhalt is not None:
+                        info.size = len(inhalt)
+                    tf.addfile(info, io.BytesIO(inhalt) if inhalt is not None else None)
+            return puffer.getvalue()
+
+        text = (kontrolle or KONTROLLE.format(name="zenos-roh", version="1.0-1", arch="arm64", extra="")).encode()
+        steuer = [(eintrag("./control"), text)] + list(steuer)
+        teile = [("debian-binary", b"2.0\n"), ("control.tar.gz", tar(steuer)), ("data.tar.gz", tar(daten))]
+        roh = b"!<arch>\n"
+        for name, inhalt in teile:
+            roh += f"{name:<16}{0:<12}{0:<6}{0:<6}{100644:<8}{len(inhalt):<10}`\n".encode() + inhalt
+            if len(inhalt) % 2:
+                roh += b"\n"
+        ziel = os.path.join(self.w, "ablage-benutzer", datei)
+        os.makedirs(os.path.dirname(ziel), exist_ok=True)
+        with open(ziel, "wb") as f:
+            f.write(roh)
         return ziel
 
     def zustand(self, **pakete):
@@ -679,6 +731,171 @@ class Ansehen(Umgebung):
         self.assertEqual(remv, [{"name": "fish", "alt": "4.2.1-3.2"}, {"name": "alt", "alt": None}])
         with self.assertRaises(I.Failure):
             I.parse_simulation("Inst kaputt\n")
+
+    # --- Pakete, wie dpkg-deb --build sie nie baut (Befunde S1 bis S5)
+
+    def test_skript_als_harter_verweis(self):
+        """Ein harter Verweis im Steuerteil ist ein Skript, das dpkg ausführt: Hinweis, mit dem Text seines Ziels."""
+        skript = b"#!/bin/sh\nsystemctl restart beispiel\n"
+        pfad = self.roh_deb([(eintrag("./zz", modus=0o755), skript),
+                             (eintrag("./postinst", tarfile.LNKTYPE, 0o755, "./zz"), None)],
+                            ordner("./", "./usr/", "./usr/bin/") + [(eintrag("./usr/bin/roh", modus=0o755), b"x")])
+        ev = self.ansehen(pfad)
+        self.assertEqual(ev["ergebnis"], "bereit", ev["grund"])
+        self.assertEqual(self.arten(ev), ["skripte", "dienste"])
+        self.assertIn("(postinst)", ev["hinweise"][0]["text"])
+        # Auch ein Skript, das keine Datei ist (Gerät, FIFO …), zählt
+        pfad = self.roh_deb([(eintrag("./prerm", tarfile.FIFOTYPE, 0o755), None)], ordner("./"), datei="fifo.deb")
+        self.assertIn("(prerm)", self.ansehen(pfad)["hinweise"][0]["text"])
+        # Ein harter Verweis, der kein Skript ist, ändert nichts
+        pfad = self.roh_deb([(eintrag("./zz", modus=0o644), b"x"),
+                             (eintrag("./md5sums", tarfile.LNKTYPE, 0o644, "./zz"), None)], ordner("./"), datei="md5.deb")
+        self.assertEqual(self.ansehen(pfad)["hinweise"], [])
+
+    def test_setuid_ueber_harten_verweis(self):
+        pfad = self.roh_deb([], ordner("./", "./usr/", "./usr/lib/", "./usr/lib/devx/") + [
+            (eintrag("./usr/lib/devx/a", modus=0o755), b"#!/bin/sh\n"),
+            (eintrag("./usr/lib/devx/b", tarfile.LNKTYPE, 0o4755, "./usr/lib/devx/a"), None)])
+        ev = self.ansehen(pfad)
+        self.assertEqual(self.arten(ev), ["setuid"])
+        self.assertIn("/usr/lib/devx/b", ev["hinweise"][0]["text"])
+        self.assertNotIn("/usr/lib/devx/a", ev["hinweise"][0]["text"])
+
+    def test_geraete_und_fifo(self):
+        for art in (tarfile.CHRTYPE, tarfile.BLKTYPE):
+            with self.subTest(art=art):
+                pfad = self.roh_deb([], ordner("./", "./usr/", "./usr/lib/", "./usr/lib/devx/") + [
+                    (eintrag("./usr/lib/devx/mem", art, 0o666, devmajor=1, devminor=1), None)], datei=f"geraet-{art}.deb")
+                ev = self.ansehen(pfad)
+                self.assertEqual((ev["ergebnis"], ev["ablehnung"]), ("abgelehnt", "geraete"))
+                self.assertIn("/usr/lib/devx/mem", ev["grund"])
+                self.assertEqual(self.apt_aufrufe(), [], "keine Simulation")
+        pfad = self.roh_deb([], ordner("./", "./usr/", "./usr/lib/", "./usr/lib/devx/") + [
+            (eintrag("./usr/lib/devx/rohr", tarfile.FIFOTYPE, 0o600), None)], datei="fifo.deb")
+        ev = self.ansehen(pfad)
+        self.assertEqual(ev["ergebnis"], "bereit", ev["grund"])
+        self.assertEqual(self.arten(ev), ["besondere"])
+        self.assertIn("/usr/lib/devx/rohr", ev["hinweise"][0]["text"])
+        # Eine Art, die dpkg nicht kennt (GNU-Volume)
+        pfad = self.roh_deb([], ordner("./") + [(eintrag("./usr/x", b"V"), None)], datei="volume.deb")
+        self.assertEqual(self.ansehen(pfad)["ablehnung"], "beschaedigt")
+
+    def test_replaces(self):
+        def mit(feld, datei):
+            return self.roh_deb([], ordner("./", "./usr/", "./usr/lib/") + [(eintrag("./usr/lib/os-release"), b"x\n")],
+                                kontrolle=KONTROLLE.format(name="zenos-roh", version="1.0-1", arch="arm64",
+                                                           extra=f"Replaces: {feld}\n"), datei=datei)
+        self.zustand(base_files="14", greetd="0.10", libwichtig1="1.0", libnoetig1="1.0", libnormal2="2.0")
+        schreiben(f"{self.w}/apt/essentiell.txt", "libwichtig1\n")
+        schreiben(f"{self.w}/apt/required.txt", "libnoetig1\n")
+        for feld, name in (("base-files", "base-files"), ("Greetd (<< 2.0)", "greetd"), ("x, kitty:any", "kitty"),
+                           ("libnormal2 | libwichtig1", "libwichtig1"), ("libnoetig1 (<= 1.0)", "libnoetig1"),
+                           ("base-files (>= 1)", "base-files"), ("labwc (>> 9)", "labwc")):
+            with self.subTest(feld=feld):
+                ev = self.ansehen(mit(feld, "ersetzt.deb"))
+                self.assertEqual((ev["ergebnis"], ev["ablehnung"]), ("abgelehnt", "geschuetzt"), ev["grund"])
+                self.assertIn(name, ev["grund"])
+                self.assertIn("(Replaces)", ev["grund"])
+        # Ein installiertes, gewöhnliches Paket: Hinweis; ein nicht installiertes oder das eigene: nichts
+        ev = self.ansehen(mit("libnormal2 (<< 3), nichtda, zenos-roh (<< 0.9)", "normal.deb"))
+        self.assertEqual(ev["ergebnis"], "bereit", ev["grund"])
+        self.assertIn("uebernimmt", self.arten(ev))
+        text = next(h["text"] for h in ev["hinweise"] if h["art"] == "uebernimmt")
+        self.assertEqual(text, "Übernimmt Dateien von installierten Paketen: libnormal2 (Replaces).")
+        ev = self.ansehen(mit("nichtda, zenos-roh", "still.deb"))
+        self.assertNotIn("uebernimmt", self.arten(ev))
+        # Nur für ältere Versionen (Umzug von Dateien, wie bsdextrautils «util-linux (<< 2.41.2-2~)»): zählt nicht
+        ev = self.ansehen(mit("libnoetig1 (<< 0.9), base-files (<< 13), libnormal2 (<= 1.9), greetd (= 0.9)",
+                              "alt.deb"))
+        self.assertEqual(ev["ergebnis"], "bereit", ev["grund"])
+        self.assertNotIn("uebernimmt", self.arten(ev))
+        # Über MAX_RELATIONS Teile: jeder gilt (ohne Vergleich)
+        I.MAX_RELATIONS = 1
+        ev = self.ansehen(mit("libnormal2 (<= 1.9), nichtda", "viele.deb"))
+        self.assertIn("uebernimmt", self.arten(ev))
+        self.assertEqual(I.relations("a (<< 1.0), B:any | c,, (x), d [arm64], e (>= kaputt version)"),
+                         [("a", "<<", "1.0"), ("b", None, None), ("c", None, None), ("d", None, None),
+                          ("e", None, None)])
+
+    def test_grenzen_beim_lesen(self):
+        """Lange Namen, pax-Köpfe und Sparse liest tarfile sonst ganz in den Speicher: abgelehnt, bevor das geschieht."""
+        faelle = {
+            "langname.deb": ([(eintrag("./usr/" + "a/" * 40_000 + "x"), b"x")], tarfile.GNU_FORMAT, "zu langen Namen"),
+            "pfad.deb": ([(eintrag("./usr/" + "a/" * 2_100 + "x"), b"x")], tarfile.GNU_FORMAT, "zu langen Pfad"),
+            "teil.deb": ([(eintrag("./usr/" + "b" * 300), b"x")], tarfile.GNU_FORMAT, "zu langen Pfad"),
+            "pax.deb": ([(eintrag("./usr/x", pax_headers={"comment": "c" * (1 << 20)}), b"x")], tarfile.PAX_FORMAT,
+                        "pax-Kopf"),
+            "sparse-pax.deb": ([(eintrag("./usr/x", pax_headers={"GNU.sparse.major": "1", "GNU.sparse.minor": "0",
+                                                                 "GNU.sparse.name": "./usr/x",
+                                                                 "GNU.sparse.realsize": "10"}), b"1\n0\n1\n")],
+                               tarfile.PAX_FORMAT, "Sparse"),
+            "sparse-gnu.deb": ([(eintrag("./usr/x", tarfile.GNUTYPE_SPARSE), b"x")], tarfile.GNU_FORMAT, "Sparse"),
+        }
+        for datei, (daten, format_, wort) in faelle.items():
+            with self.subTest(datei=datei):
+                ev = self.ansehen(self.roh_deb([], ordner("./", "./usr/") + daten, datei=datei, format_=format_))
+                self.assertEqual((ev["ergebnis"], ev["ablehnung"]), ("abgelehnt", "beschaedigt"), ev["grund"])
+                self.assertIn(wort, ev["grund"])
+                self.assertLess(len(json.dumps(ev)), 10_000)
+        # Die überschriebenen Methoden gibt es in tarfile (sonst griffe die Grenze nicht)
+        for name in ("_proc_member", "_proc_gnusparse_00", "_proc_gnusparse_01", "_proc_gnusparse_10"):
+            self.assertTrue(hasattr(tarfile.TarInfo, name), name)
+        # Zu viele Einträge im Daten- oder Steuerteil
+        I.MAX_MEMBERS = 4
+        ev = self.ansehen(self.deb())
+        self.assertEqual((ev["ablehnung"], ev["grund"]), ("beschaedigt", "Das Paket hat mehr als 4 Einträge."))
+        I.MAX_MEMBERS = ORIGINAL["MAX_MEMBERS"]
+        I.MAX_CONTROL_MEMBERS = 2
+        ev = self.ansehen(self.deb(name="zenos-zwei", skripte={"postinst": "#!/bin/sh\n", "prerm": "#!/bin/sh\n"}))
+        self.assertEqual(ev["ablehnung"], "beschaedigt")
+
+    def test_hinweise_und_antwort_begrenzt(self):
+        daten = ordner("./") + [(eintrag(f"./top{i:03d}/" + "d" * 200), b"x") for i in range(300)]
+        ev = self.ansehen(self.roh_deb([], daten, datei="viele.deb"))
+        self.assertEqual(self.arten(ev), ["ausserhalb"])
+        self.assertLessEqual(len(ev["hinweise"][0]["text"]), 300)
+        self.assertIn("und 294 weitere", ev["hinweise"][0]["text"])
+        self.assertEqual(len(I.hint("x", "y" * 5000)["text"]), 300)
+        I.MAX_VIEW_JSON = 200
+        code, text = self.lauf(I.cmd_view, [self.deb(), "--json"])
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads(text)["grund"], "Die Ansicht des Pakets wäre zu gross.")
+
+    def test_webseite_nur_druckbares_ascii(self):
+        """Ein ESC in der Webseite färbte in «zen install» die Hinweise unsichtbar; Richtungszeichen drehten Text."""
+        for adresse in ("https://example.invalid/\x1b[8m", "https://example.invalid/‮gpj.exe",
+                        "https://exämple.org/", "https://a\tb"):
+            with self.subTest(adresse=adresse):
+                self.assertIsNone(I.URL_RE.fullmatch(adresse))
+                kontrolle = KONTROLLE.format(name="zenos-roh", version="1.0-1", arch="arm64", extra="").replace(
+                    "https://example.org/app", adresse)
+                pfad = self.roh_deb([], ordner("./"), kontrolle=kontrolle, datei="webseite.deb")
+                ev = self.ansehen(pfad)
+                self.assertEqual(ev["ergebnis"], "bereit", ev["grund"])
+                self.assertIsNone(ev["paket"]["homepage"])
+                code, text = self.lauf(I.cmd_view, [pfad, "--auftrag"])
+                self.assertEqual(code, 0, text)
+                self.assertNotIn("\x1b", text)
+                self.assertNotIn("Webseite", text)
+        self.assertIsNotNone(I.URL_RE.fullmatch("https://example.org/a?b=1&c=%20#d"))
+
+    def test_halb_installiert(self):
+        """Ein gescheitertes postinst lässt das Paket halb installiert: eigene Ablehnung mit dem Ausweg."""
+        pfad = self.deb()
+        for status in ("half-configured", "unpacked", "half-installed"):
+            with self.subTest(status=status):
+                schreiben(f"{self.w}/dpkg-zustand.json", json.dumps({"zenos-beispiel": [status, "1.0-1"]}))
+                ev = self.ansehen(pfad)
+                self.assertEqual((ev["ergebnis"], ev["ablehnung"]), ("abgelehnt", "halb"), ev["grund"])
+                self.assertIn(f"nur halb installiert ({status}", ev["grund"])
+                self.assertIn("sudo apt-get -f install", ev["grund"])
+                self.assertIn("sudo apt remove zenos-beispiel", ev["grund"])
+                self.assertNotIn("ersetzt", self.arten(ev))
+        self.liste_schreiben("zenos-beispiel")
+        self.assertIn("in Einstellungen › Apps entfernen", self.ansehen(pfad)["grund"])
+        # Ausstehende Trigger: installiert
+        schreiben(f"{self.w}/dpkg-zustand.json", json.dumps({"zenos-beispiel": ["triggers-pending", "1.0-1"]}))
+        self.assertEqual(self.ansehen(pfad)["ergebnis"], "installiert")
 
 
 class Ablage(Umgebung):

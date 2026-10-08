@@ -145,8 +145,15 @@ test("ansichtLesen: Unbrauchbares fällt weg, ohne alles Nötige kein «bereit»
   // Symbol nur aus dem Laufzeitordner, nur PNG oder SVG, ohne Zeichen, die eine file://-Adresse brechen
   for (const s of ["/etc/passwd", "/run/user/1000/zenos-installer/x.png", "/tmp/a b/zenos-installer/" + "0".repeat(32) + ".png", "/tmp/a#b/zenos-installer/" + "0".repeat(32) + ".png", "relativ/zenos-installer/" + "0".repeat(32) + ".png", "/run/zenos-installer/" + "0".repeat(32) + ".gif"])
     assert.equal(ansicht({ symbol: s }).symbol, "", s);
-  // Webseite nur http(s), sonst weg
-  assert.equal(ansicht({ paket: Object.assign(antwort().paket, { homepage: "javascript:alert(1)" }) }).paket.homepage, "");
+  // Webseite nur http(s) aus druckbarem ASCII (kein ESC, keine Richtungszeichen, kein Leerzeichen), sonst weg
+  for (const h of ["javascript:alert(1)", "https://example.org/\u001b[8m", "https://example.org/‮gpj.exe", "https://a b", "https://x\"y", "https://exämple.org/"])
+    assert.equal(ansicht({ paket: Object.assign(antwort().paket, { homepage: h }) }).paket.homepage, "", JSON.stringify(h));
+  assert.equal(ansicht({ paket: Object.assign(antwort().paket, { homepage: "https://example.org/a?b=1&c=%20#d" }) }).paket.homepage, "https://example.org/a?b=1&c=%20#d");
+  // Eine riesige Antwort wird gar nicht erst gelesen (zenos-installer begrenzt sie auf 2 MiB)
+  const riesig = JSON.stringify(antwort({ grund: "x".repeat(4 * 1024 * 1024) }));
+  assert.equal(L.ansichtLesen(riesig, PFAD).ergebnis, "fehler");
+  assert.match(L.ansichtLesen(riesig, PFAD).grund, /keine lesbare Antwort/);
+  assert.equal(L.ansichtLesen(JSON.stringify(antwort({ grund: "x".repeat(1024 * 1024) })), PFAD).ergebnis, "bereit");
   // Fremde Namen, Starter und Hinweise
   const a = ansicht({
     name: "Böse\u202eApp\nZeile",

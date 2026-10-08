@@ -15,6 +15,8 @@
 // Fester Pfad: Die polkit-Aktionen (system/polkit/org.zenos.installer.policy) gelten genau für dieses Programm
 var HELFER = "/opt/zenos/scripts/bin/zenos-installer-bedienen";
 var MAX_PFAD = 4096;
+// Antworten von zenos-installer (ansehen --json höchstens 2 MiB): Grösseres wird gar nicht erst gelesen
+var MAX_ANTWORT = 4 * 1024 * 1024;
 
 var ERGEBNISSE = Object.freeze(["bereit", "installiert", "abgelehnt", "fehler"]);
 var ZUSTAENDE = Object.freeze(["neu", "update", "rueckschritt", "gleich"]);
@@ -27,7 +29,8 @@ var PLAN_RE = /^[0-9a-f]{40}$/;
 var PAKET_RE = /^[a-z0-9][a-z0-9+.-]{0,127}$/;
 var STARTER_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,200}\.desktop$/;
 var ART_RE = /^[a-z_]{1,30}$/;
-var URL_RE = /^https?:\/\/[^\s<>"']{1,300}$/;
+// Webseite wie URL_RE in zenos-installer: nur druckbares ASCII ohne Leerzeichen und ohne <>"'
+var URL_RE = /^https?:\/\/[!#-&(-;=?-~]{1,300}$/;
 var ZEIT_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$/;
 // Symbol des Pakets: nur aus dem Laufzeitordner des Benutzers (save_icon in zenos-installer), als file:// ladbar
 var SYMBOL_RE = /^\/[A-Za-z0-9._\/-]{1,300}\/zenos-installer\/[0-9a-f]{32}\.(png|svg)$/;
@@ -87,7 +90,7 @@ function absaetze(wert) {
 function _objekt(json) {
     if (json !== null && typeof json === "object" && !Array.isArray(json))
         return json;
-    if (typeof json !== "string" || json.trim() === "")
+    if (typeof json !== "string" || json.length > MAX_ANTWORT || json.trim() === "")
         return null;
     try {
         var d = JSON.parse(json);
@@ -193,7 +196,7 @@ function ansichtLesen(json, pfad) {
             version: text(p.version, 100),
             architektur: text(p.architektur, 32),
             herausgeber: text(p.herausgeber, 200),
-            homepage: typeof p.homepage === "string" && URL_RE.test(p.homepage) ? p.homepage : "",
+            homepage: typeof p.homepage === "string" && URL_RE.test(p.homepage) ? text(p.homepage, 300) : "",
             zusammenfassung: text(p.zusammenfassung, 200),
             beschreibung: absaetze(p.beschreibung),
             installiertGroesse: _zahl(p.installiert_groesse)

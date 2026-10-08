@@ -39,18 +39,24 @@ Aufruf:
 
 Auswertung (ansehen und vor dem Installieren noch einmal als root):
   ergebnis    bereit (installierbar), installiert (diese Version ist schon da), abgelehnt (mit «ablehnung»: zu_gross,
-              endung, fremd, beschaedigt, architektur, essentiell, geschuetzt, abhaengigkeiten) oder fehler
+              endung, fremd, beschaedigt, geraete, architektur, essentiell, geschuetzt, halb, abhaengigkeiten) oder
+              fehler
   zustand     neu, update, rueckschritt, gleich
   hinweise    je {art, stufe, text}; stufe «warnung» nur für Entfernungen, sonst «hinweis». Arten: skripte (eigene
-              Skripte als root), dienste (Systemdienste), autostart, paketquellen, setuid, ausserhalb (Dateien
-              ausserhalb von /usr und /opt), kernel (Kernel-Module, DKMS), rechte (sudo, polkit-Regeln, PAM), ersetzt
-              (ersetzt ein Paket, das nicht über den zen Installer kam), rueckschritt, entfernen
+              Skripte als root, auch als Verweis oder harter Verweis), dienste (Systemdienste), autostart,
+              paketquellen, setuid (auch über einen harten Verweis), besondere (FIFO), ausserhalb (Dateien ausserhalb
+              von /usr und /opt), kernel (Kernel-Module, DKMS), rechte (sudo, polkit-Regeln, PAM), uebernimmt (Replaces:
+              Dateien installierter Pakete), ersetzt (ersetzt ein Paket, das nicht über den zen Installer kam),
+              rueckschritt, entfernen
   plan        Hash (40 Zeichen) über das Hauptpaket mit Zustand und die Namen aller Pakete, die apt installieren oder
               entfernen würde. Die Installation läuft nur mit genau diesem Plan.
-Geschützt (nie entfernen, nie durch ein Paket gleichen Namens ersetzen): die Liste aus scripts/lib/aufraeumen.sh (wie
-zenos-basis) und die Pakete von zenOS (scripts/pakete/*.txt). Entfernen würde apt ausserdem nie, was als manuell
-installiert gilt (ausser es kam selbst über den zen Installer). Texte aus dem Paket sind nicht vertrauenswürdig: Die
-Oberfläche zeigt sie nur als reinen Text.
+Geschützt (nie entfernen, nie durch ein Paket gleichen Namens ersetzen, nie per Replaces Dateien übernehmen): die Liste
+aus scripts/lib/aufraeumen.sh (wie zenos-basis) und die Pakete von zenOS (scripts/pakete/*.txt); per Replaces auch
+nichts Installiertes mit «Essential: yes» oder «Priority: required». Entfernen würde apt ausserdem nie, was als manuell
+installiert gilt (ausser es kam selbst über den zen Installer). Gerätedateien lehnt es ab. Texte aus dem Paket sind
+nicht vertrauenswürdig: Die Oberfläche zeigt sie nur als reinen Text. Grenzen beim Lesen: Pfade 4096 Byte (Teile 255),
+200 000 Einträge, Köpfe für lange Namen 64 KiB und pax 1 MiB, keine Sparse-Dateien; die Antwort mit --json höchstens
+2 MiB.
 
 JSON von «ansehen --json»: version, ergebnis, grund, ablehnung, pfad, datei, groesse, sha256, plan, name (Anzeigename),
 paket {name, version, architektur, herausgeber, homepage, zusammenfassung, beschreibung, installiert_groesse,
@@ -135,6 +141,20 @@ MAX_IMAGE = 1 << 20
 MAX_IMAGES_TOTAL = 24 << 20
 MAX_SMALL_FILE = 4 << 20
 MAX_PATH = 4096
+# Im Archiv: Pfade (Byte, wie PATH_MAX) und ihre Teile (Byte, wie NAME_MAX), Einträge im Datenteil und im Steuerteil,
+# Köpfe für lange Namen (GNU) und pax. tarfile läse einen solchen Kopf sonst in voller angegebener Grösse in den
+# Speicher: Eine .deb von wenigen hundert kB verlangte so Gigabytes.
+MAX_NAME_PART = 255
+MAX_MEMBERS = 200_000
+MAX_CONTROL_MEMBERS = 64
+MAX_CONTROL_KEPT = 8 << 20
+MAX_LONG_HEADER = 64 << 10
+MAX_PAX_HEADER = 1 << 20
+# Antwort von «ansehen --json» (die Oberfläche liest sie im Prozess von Quickshell)
+MAX_VIEW_JSON = 2 << 20
+MAX_HINT = 300
+# Teile von Replaces, die mit dpkg --compare-versions geprüft werden
+MAX_RELATIONS = 100
 MAX_LOG = 2 << 20
 KEEP_LOG = 512 << 10
 KEEP_ICONS = 20
@@ -180,7 +200,12 @@ SHA_RE = re.compile(r"[0-9a-f]{64}")
 PLAN_RE = re.compile(r"[0-9a-f]{40}")
 FIELD_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,63}")
 TIME_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
-URL_RE = re.compile(r"https?://[^\s<>\"']{1,300}")
+# Webseite: nur druckbares ASCII ohne Leerzeichen und ohne <>"' (kein ESC, keine Richtungszeichen; zen install druckt
+# sie im Terminal)
+URL_RE = re.compile(r"https?://[\x21\x23-\x26\x28-\x3b\x3d\x3f-\x7e]{1,300}")
+# Ein Teil eines Felds wie Replaces («a (<< 1.0)», «b:any», «c»): Name, Vergleich, Version
+RELATION_RE = re.compile(r"\s*(?P<name>[A-Za-z0-9][A-Za-z0-9+.-]{0,127})(?::[A-Za-z0-9-]{1,32})?\s*"
+                         r"(?:\(\s*(?P<op><<|<=|>=|>>|=|<|>)\s*(?P<version>[^\s()]{1,128})\s*\))?")
 # «Inst NAME[:ARCH] [ALT] (NEU QUELLE … [ARCH]) […]», «Remv NAME[:ARCH] [ALT] […]»
 INST_RE = re.compile(r"Inst (?P<name>[a-z0-9][a-z0-9+.-]*(?::[a-z0-9-]+)?) (?:\[(?P<old>[^\]\s]+)\] )?"
                      r"\((?P<new>[^\s()]+)(?: [^()]*)?\)(?: \[[^\]]*\])?")
@@ -197,6 +222,9 @@ RIGHTS_PREFIXES = ("/etc/sudoers.d/", "/etc/polkit-1/rules.d/", "/usr/share/polk
 SOURCES_PREFIXES = ("/etc/apt/sources.list.d/", "/etc/apt/trusted.gpg.d/", "/etc/apt/keyrings/")
 KERNEL_RE = re.compile(r"/(?:usr/)?lib/modules/.+\.ko(?:\.(?:xz|zst|gz))?|/usr/src/[^/]+/dkms\.conf")
 SCRIPTS = ("preinst", "postinst", "prerm", "postrm", "config")
+# dpkg-Zustände: installiert (auch mit ausstehenden Triggern) und nur halb installiert (ein Skript scheiterte)
+INSTALLED_STATES = ("installed", "triggers-pending", "triggers-awaited")
+HALF_STATES = ("half-installed", "unpacked", "half-configured")
 # In den Skripten: Dienste und Paketquellen (nur Hinweise, eine Heuristik)
 SCRIPT_SERVICE_RE = re.compile(r"\b(?:systemctl|deb-systemd-invoke|deb-systemd-helper|invoke-rc\.d|update-rc\.d)\b|"
                                r"(?:^|[\s;&|])service\s+\S+\s+(?:start|restart)\b", re.M)
@@ -224,6 +252,10 @@ class Refusal(Exception):
         super().__init__(reason)
         self.kind = kind
         self.reason = reason
+
+
+class TarLimit(tarfile.TarError):
+    """Ein Kopf im Archiv über den Grenzen (LimitedTarInfo)."""
 
 
 # --- Allgemein -------------------------------------------------------------------------------------------------
@@ -479,7 +511,9 @@ def sha256_fd(fd, limit=MAX_DEB):
 
 def member_path(raw):
     """Pfad eines Eintrags im Archiv als absoluter Pfad («./usr/bin/x» → «/usr/bin/x», «./» → «/»). Refusal bei
-    absoluten Pfaden, «..» oder Steuerzeichen."""
+    absoluten Pfaden, «..», Steuerzeichen und Pfaden über MAX_PATH Byte bzw. Teilen über MAX_NAME_PART Byte."""
+    if len(raw) > MAX_PATH or len(raw.encode("utf-8", "surrogateescape")) > MAX_PATH:
+        raise Refusal("beschaedigt", "Das Paket enthält einen zu langen Pfad.")
     p = raw
     while p.startswith("./"):
         p = p[2:]
@@ -488,13 +522,39 @@ def member_path(raw):
     p = p.rstrip("/")
     if p.startswith("/") or ".." in p.split("/") or any(not c.isprintable() for c in p):
         raise Refusal("beschaedigt", "Das Paket enthält einen ungültigen Pfad.")
+    if any(len(part.encode("utf-8")) > MAX_NAME_PART for part in p.split("/")):
+        raise Refusal("beschaedigt", "Das Paket enthält einen zu langen Pfad.")
     return "/" + p
 
 
+class LimitedTarInfo(tarfile.TarInfo):
+    """TarInfo mit Grenzen für Köpfe, die tarfile ganz in den Speicher liest: lange Namen und Verweisziele (GNU) bis
+    MAX_LONG_HEADER, pax-Köpfe bis MAX_PAX_HEADER. Sparse-Dateien (GNU, auch über pax) nimmt dpkg ohnehin nicht an;
+    ihre Angaben könnten beliebig viel Speicher verlangen. Sonst TarLimit (ein Test hält die Namen der Methoden fest)."""
+
+    def _proc_member(self, tarfile_):
+        if self.type in (tarfile.GNUTYPE_LONGNAME, tarfile.GNUTYPE_LONGLINK) and self.size > MAX_LONG_HEADER:
+            raise TarLimit("einen zu langen Namen")
+        if self.type in (tarfile.XHDTYPE, tarfile.XGLTYPE, tarfile.SOLARIS_XHDTYPE) and self.size > MAX_PAX_HEADER:
+            raise TarLimit("einen zu grossen pax-Kopf")
+        if self.type == tarfile.GNUTYPE_SPARSE:
+            raise TarLimit("eine Sparse-Datei")
+        return super()._proc_member(tarfile_)
+
+    def _proc_gnusparse_00(self, *_):
+        raise TarLimit("eine Sparse-Datei")
+
+    def _proc_gnusparse_01(self, *_):
+        raise TarLimit("eine Sparse-Datei")
+
+    def _proc_gnusparse_10(self, *_):
+        raise TarLimit("eine Sparse-Datei")
+
+
 class TarReader:
-    """«dpkg-deb --ctrl-tarfile|--fsys-tarfile DATEI» als Datenstrom in tarfile (Modus «r|»): nichts wird entpackt
-    oder ausgeführt, nur gelesen. Ein Zeitlimit beendet dpkg-deb; dann und bei jedem Fehler von dpkg-deb oder tar:
-    Refusal «beschaedigt»."""
+    """«dpkg-deb --ctrl-tarfile|--fsys-tarfile DATEI» als Datenstrom in tarfile (Modus «r|», LimitedTarInfo): nichts
+    wird entpackt oder ausgeführt, nur gelesen. Ein Zeitlimit beendet dpkg-deb; dann, bei einem Kopf über den Grenzen
+    und bei jedem Fehler von dpkg-deb oder tar: Refusal «beschaedigt»."""
 
     def __init__(self, path, what, timeout=DEB_TIMEOUT):
         self.path = path
@@ -512,16 +572,19 @@ class TarReader:
         timer = threading.Timer(self.timeout, proc.kill)
         timer.start()
         problem = None
+        limit = None
         try:
             try:
-                with tarfile.open(fileobj=proc.stdout, mode="r|") as tf:
+                with tarfile.open(fileobj=proc.stdout, mode="r|", tarinfo=LimitedTarInfo) as tf:
                     for member in tf:
                         yield member, tf
                 # tar füllt mit Nullen auf: den Rest lesen, sonst endete dpkg-deb an der geschlossenen Leitung
                 while proc.stdout.read(1 << 16):
                     pass
+            except TarLimit as e:
+                limit = str(e)
             except (tarfile.TarError, EOFError, OSError, ValueError) as e:
-                problem = f"tar: {e}"
+                problem = clean(f"tar: {e}", 200)
         finally:
             timer.cancel()
             with contextlib.suppress(OSError):
@@ -530,6 +593,8 @@ class TarReader:
             errors.seek(0)
             detail = first_line(errors.read(4096).decode("utf-8", "replace"))
             errors.close()
+        if limit:
+            raise Refusal("beschaedigt", f"Das Paket enthält {limit}. So liest es der zen Installer nicht.")
         if rc == -signal.SIGKILL:
             raise Refusal("beschaedigt", f"Das Paket liess sich nicht in {self.timeout} s lesen.")
         if rc != 0 or problem:
@@ -572,18 +637,32 @@ def parse_control(text):
 
 
 def read_control(path):
-    """Felder und Skripte aus dem Steuerteil: (Felder, {Skript: Text})."""
+    """Felder und Skripte aus dem Steuerteil: (Felder, {Skript: Text}). Ein Skript zählt in jeder Form, die dpkg
+    ausführen könnte: Datei, Verweis, harter Verweis (dann mit dem Text seines Ziels) oder anderes."""
     control = None
     scripts = {}
+    # Inhalt der Dateien bisher (für harte Verweise, die immer auf einen früheren Eintrag zeigen), mit Grenze
+    seen = {}
+    kept = 0
+    count = 0
     for member, tf in TarReader(path, "--ctrl-tarfile"):
+        count += 1
+        if count > MAX_CONTROL_MEMBERS:
+            raise Refusal("beschaedigt", "Der Steuerteil des Pakets hat zu viele Einträge.")
         name = member_path(member.name).lstrip("/")
-        if name == "control":
+        data = None
+        if member.isreg():
             data = read_member(tf, member, MAX_CONTROL_MEMBER)
+            if data is not None and kept + len(data) <= MAX_CONTROL_KEPT:
+                seen[name] = data
+                kept += len(data)
+        elif member.islnk():
+            data = seen.get(member_path(member.linkname).lstrip("/"))
+        if name == "control":
             if data is None:
                 raise Refusal("beschaedigt", "Die Paketbeschreibung (control) fehlt oder ist zu gross.")
             control = data.decode("utf-8", "replace")
-        elif name in SCRIPTS and (member.isreg() or member.issym()):
-            data = read_member(tf, member, MAX_CONTROL_MEMBER) if member.isreg() else b""
+        elif name in SCRIPTS:
             scripts[name] = (data or b"").decode("utf-8", "replace")
     if control is None:
         raise Refusal("beschaedigt", "Die Paketbeschreibung (control) fehlt.")
@@ -597,16 +676,25 @@ def image_wanted(path):
 def read_contents(path, extra=()):
     """Ein Durchgang durch den Datenteil: alle Einträge [(Pfad, Art, Modus, Grösse, Ziel)], die Starter in
     /usr/share/applications und Bilder unter /usr/share/icons und /usr/share/pixmaps (mit Grenzen), dazu die Pfade aus
-    EXTRA. Art: d Ordner, f Datei, l Verweis, h harter Verweis, o anderes."""
+    EXTRA. Art: d Ordner, f Datei, l Verweis, h harter Verweis, p FIFO. Gerätedateien: Refusal «geraete» (eine für alle
+    schreibbare Gerätedatei gäbe jedem Prozess root; kein ehrliches Paket bringt eine mit); jede andere Art (dpkg kennt
+    sie nicht) und mehr als MAX_MEMBERS Einträge: Refusal «beschaedigt»."""
     entries = []
     desktops = {}
     images = {}
     total = 0
     extra = set(extra)
     for member, tf in TarReader(path, "--fsys-tarfile"):
+        if len(entries) >= MAX_MEMBERS:
+            raise Refusal("beschaedigt", f"Das Paket hat mehr als {MAX_MEMBERS} Einträge.")
         p = member_path(member.name)
+        if member.ischr() or member.isblk():
+            raise Refusal("geraete", f"Das Paket bringt Gerätedateien mit ({clean(p, 120)}). Das macht der zen "
+                                     "Installer nicht.")
         kind = "d" if member.isdir() else "f" if member.isreg() else "l" if member.issym() else \
-            "h" if member.islnk() else "o"
+            "h" if member.islnk() else "p" if member.isfifo() else None
+        if kind is None:
+            raise Refusal("beschaedigt", "Das Paket enthält einen Eintrag unbekannter Art.")
         entries.append((p, kind, member.mode, member.size, member.linkname if kind in "lh" else ""))
         if kind != "f":
             continue
@@ -766,6 +854,43 @@ def installed_version(package):
     return None, None
 
 
+def installed_facts():
+    """Installierte Pakete nach dpkg {Name: (Version, Essential, Priority)} (ohne Architektur; nur
+    Konfigurationsdateien zählt nicht). Failure, wenn dpkg-query scheitert."""
+    r = run([DPKG_QUERY, "-W", "-f=${Package}\t${db:Status-Status}\t${Version}\t${Essential}\t${Priority}\n"],
+            env=tool_env())
+    if r.returncode != 0:
+        raise Failure(f"dpkg-query endete mit Exit {r.returncode}: {first_line(r.stderr)}")
+    facts = {}
+    for line in r.stdout.split("\n"):
+        parts = line.split("\t")
+        if len(parts) == 5 and parts[1] not in ("not-installed", "config-files", ""):
+            facts[parts[0]] = (parts[2], parts[3].strip().lower(), parts[4].strip().lower())
+    return facts
+
+
+def relations(value):
+    """Teile eines Felds wie Replaces («a (<< 1.0), b:any | c»): [(Name, Vergleich, Version)], Namen klein geschrieben
+    wie bei dpkg, ohne Architektur; Vergleich und Version None ohne (lesbare) Klammer."""
+    found = []
+    for part in re.split(r"[,|]", value):
+        m = RELATION_RE.match(part)
+        if m:
+            version = m.group("version")
+            ok = version is not None and VERSION_RE.fullmatch(version)
+            found.append((m.group("name").lower(), m.group("op") if ok else None, version if ok else None))
+    return found
+
+
+def relation_applies(op, version, installed):
+    """Gilt ein Replaces jetzt oder bei einem künftigen Update des anderen Pakets? Ohne Version, mit >=, >> oder >
+    immer (dpkg liesse dann auch bei jedem Update dieses Pakets die übernommenen Dateien liegen); mit <<, <=, < oder =
+    nur, wenn die installierte Version passt."""
+    if op is None or op in (">=", ">>", ">"):
+        return True
+    return installed is not None and compare_versions(installed, op, version)
+
+
 def compare_versions(a, op, b):
     """dpkg --compare-versions A OP B."""
     return run([DPKG, "--compare-versions", a, op, b], env=tool_env()).returncode == 0
@@ -870,7 +995,8 @@ def plan_hash(package, state, installs, removals):
 
 
 def hint(art, text, level="hinweis"):
-    return {"art": art, "stufe": level, "text": text}
+    """Ein Hinweis; der Text (oft mit Pfaden aus dem Paket) ohne Steuerzeichen und höchstens MAX_HINT Zeichen."""
+    return {"art": art, "stufe": level, "text": clean(text, MAX_HINT)}
 
 
 def content_hints(entries, scripts):
@@ -901,9 +1027,13 @@ def content_hints(entries, scripts):
     if sources or script_sources:
         hints.append(hint("paketquellen", "Fügt eine Paketquelle hinzu: Updates dieser Software kommen danach mit den "
                                           "Basis-Updates von zenOS."))
-    special = sorted(p for p, k, m in files if k == "f" and m & (stat.S_ISUID | stat.S_ISGID))
+    # Auch ein harter Verweis: dpkg setzt seinen Modus auf die gemeinsame Datei
+    special = sorted(p for p, k, m in files if k in "fh" and m & (stat.S_ISUID | stat.S_ISGID))
     if special:
         hints.append(hint("setuid", f"Bringt Programme mit erhöhten Rechten mit (setuid/setgid): {names_text(special)}."))
+    fifos = sorted(p for p, k, _ in files if k == "p")
+    if fifos:
+        hints.append(hint("besondere", f"Legt besondere Dateien an (FIFO): {names_text(fifos, 3)}."))
     outside = {}
     for p, _, _ in files:
         top = p.split("/")[1] if p.count("/") >= 1 else ""
@@ -911,7 +1041,7 @@ def content_hints(entries, scripts):
             outside[f"/{top}"] = outside.get(f"/{top}", 0) + 1
     if outside:
         parts = [f"{d} ({n})" for d, n in sorted(outside.items())]
-        hints.append(hint("ausserhalb", f"Legt Dateien ausserhalb von /usr und /opt ab: {', '.join(parts)}."))
+        hints.append(hint("ausserhalb", f"Legt Dateien ausserhalb von /usr und /opt ab: {names_text(parts, 6)}."))
     if any(KERNEL_RE.fullmatch(p) for p, _, _ in files):
         hints.append(hint("kernel", "Bringt Kernel-Module mit."))
     rights = sorted({p for p, _, _ in files if p.startswith(RIGHTS_PREFIXES)})
@@ -1016,6 +1146,7 @@ class Evaluation:
         if package in protected_names:
             raise Refusal("geschuetzt", f"Das Paket hiesse wie ein Teil von zenOS oder Ubuntu ({package}) und "
                                         "ersetzte ihn. Das macht der zen Installer nicht.")
+        self.replaces(package, fields.get("replaces", ""), protected_names)
         self.state(package, version)
         self.simulation(package, protected_names)
         if self.data["ergebnis"] is None:
@@ -1071,6 +1202,34 @@ class Evaluation:
             self.data["symbol"] = save_icon(icon, self.data["sha256"])
         return entries, desktops, images
 
+    def replaces(self, package, value, protected_names):
+        """Replaces: dpkg übernimmt damit Dateien eines anderen Pakets still (ohne Skript, ohne Entfernung) und lässt
+        sie bei dessen Updates liegen. Nie von einem geschützten Paket, nie von einem installierten unverzichtbaren
+        (Essential) oder erforderlichen (Priority required); sonst ein Hinweis, wenn das andere Paket installiert ist.
+        Was nur für ältere Versionen gilt («Replaces: a (<< 2.0)» bei a 2.1, üblich nach einem Umzug von Dateien),
+        zählt nicht."""
+        found = sorted({r for r in relations(value) if r[0] != package}, key=lambda r: (r[0], r[1] or "", r[2] or ""))
+        if not found:
+            return
+        facts = installed_facts()
+        blocked, taken = set(), set()
+        # Höchstens MAX_RELATIONS Vergleiche mit dpkg; darüber gilt jeder Teil (streng statt langsam)
+        exact = len(found) <= MAX_RELATIONS
+        for name, op, version in found:
+            installed = facts.get(name)
+            if exact and not relation_applies(op, version, installed[0] if installed else None):
+                continue
+            if name in protected_names or (installed and (installed[1] == "yes" or installed[2] == "required")):
+                blocked.add(name)
+            elif installed:
+                taken.add(name)
+        if blocked:
+            raise Refusal("geschuetzt", f"Das Paket übernähme Dateien von {names_text(sorted(blocked))} (Replaces). "
+                                        "Das macht der zen Installer nicht.")
+        if taken:
+            self.data["hinweise"].append(hint("uebernimmt", "Übernimmt Dateien von installierten Paketen: "
+                                                            f"{names_text(sorted(taken))} (Replaces)."))
+
     def state(self, package, version):
         status, old = installed_version(package)
         listed = load_installed_list()
@@ -1079,7 +1238,11 @@ class Evaluation:
         if old is None:
             self.data["zustand"] = "neu"
             return
-        if status == "installed" and compare_versions(version, "eq", old):
+        if status in HALF_STATES:
+            remove = "in Einstellungen › Apps entfernen" if package in listed else f"entfernen: sudo apt remove {package}"
+            raise Refusal("halb", f"{package} {clean(old, 60)} ist nur halb installiert ({status}; ein Skript des "
+                                  f"Pakets scheiterte). Erst reparieren: sudo apt-get -f install, oder {remove}.")
+        if status in INSTALLED_STATES and compare_versions(version, "eq", old):
             self.data["zustand"] = "gleich"
         elif compare_versions(version, "lt", old):
             self.data["zustand"] = "rueckschritt"
@@ -1172,7 +1335,13 @@ def cmd_view(argv):
         path = os.path.realpath(raw)
         ev = evaluate_file(path, with_icon=as_json)
     if as_json:
-        print(json.dumps(ev, ensure_ascii=False, indent=1))
+        text = json.dumps(ev, ensure_ascii=False, indent=1)
+        # Die Oberfläche liest die Antwort im Prozess von Quickshell: nie mehr als MAX_VIEW_JSON
+        if len(text.encode("utf-8")) > MAX_VIEW_JSON:
+            ev = {"version": 1, "ergebnis": "fehler", "grund": "Die Ansicht des Pakets wäre zu gross.",
+                  "pfad": ev.get("pfad"), "datei": ev.get("datei")}
+            text = json.dumps(ev, ensure_ascii=False, indent=1)
+        print(text)
     else:
         for line in view_lines(ev):
             print(line)
