@@ -5,14 +5,17 @@
 # Python) mit einem blanken Repo, dazu Wegwerf-Schlüssel (Release, Wurzel), alles zur Laufzeit unter /srv/kanal-e2e.
 # Nichts davon verlässt den Container. Getestet wird mit dem echten zen, install.sh, systemd und den Units.
 #
-# Vorbereitung auf dem Mac (Container aus dem installierten Image, ~/zenOS auf dem Stand vor diesem Code):
+# Vorbereitung auf dem Mac (Container frisch aus dem installierten Image, ohne install.sh: Den Kanal gab es dort nie):
 #   ZENOS_TESTBILD=zenos-test:installiert test/container/starten.sh zenos-kanal-e2e
-#   docker exec -u tester -w /home/tester/zenOS zenos-kanal-e2e ./scripts/install.sh   (alter Stand nach /opt/zenos)
 # Dann je Schritt: docker exec zenos-kanal-e2e bash /repo/test/container/kanal-e2e.sh <schritt>
+# starten.sh bringt ~/zenOS auf den Stand von /repo. Ein install.sh daraus brächte den Kanal schon vor «migration»;
+# den alten Stand stellt deshalb «alt» her.
 #
 # Schritte (in dieser Reihenfolge; nach «abbruch» und «zweimal» Neustart des Containers, danach wieder «einrichten»):
+#   alt          (zuerst, nur einmal) das Gerät auf v0.1.0-rc3, der letzten Version ohne Kanal: ~/zenOS auf diesen Tag
+#                als dev, origin auf die Adresse unten, install.sh als tester; bricht ab, wenn der Kanal schon da war
 #   einrichten   CA, Server, Schlüssel, origin mit dem Stand von ~tester/zenOS als dev (idempotent, auch nach Neustart)
-#   migration    Arbeitsstand von /repo als neuer Commit auf dev; das alte «zen update» bringt den neuen Kanal
+#   migration    Arbeitsstand von /repo als neuer Commit auf dev; das alte «zen update» aus «alt» bringt den neuen Kanal
 #   dev          Anker ohne Schlüssel: unsignierter Commit, «nein» ändert nichts, «ja» installiert; install.sh
 #                zweimal als root aus der Bereitstellung (zweiter Lauf 0 Änderungen)
 #   signiert     Anker aus Wegwerf-Schlüsseln, Kanal vorschau, signierter Tag ohne Frage installiert, auch während ein
@@ -73,6 +76,9 @@ ARBEIT=$E2E/arbeit
 URL=https://zenos-remote.test:8443/zenOS.git
 STAND=/var/lib/zenos/kanal
 TESTER=tester
+# Die letzte Version ohne Kanal (Images rc1 bis rc3): Ihr zen update holt origin/<kanal> mit git und ruft install.sh
+# auf. Auf diesem Weg kam der Kanal auf die Geräte, und ein zen rollback auf diesen Tag bringt ihn zurück («rollback»).
+ALT=v0.1.0-rc3
 
 ok() { printf '  ok  %s\n' "$*"; }
 fehler() { printf '  FEHLER  %s\n' "$*" >&2; exit 1; }
@@ -178,7 +184,47 @@ anker_leeren() { # ohne Schlüssel: nur die Kommentare aus dem Repo (wie vor den
 
 kanal() { printf '%s\n' "$1" > /etc/xdg/zenos/kanal; }
 
+# Hat das Gerät den Kanal? Ein Teil davon genügt: zenos-kanal, seine Units, sein Zustand oder der Anker
+kanal_spuren() {
+  local pfad
+  for pfad in /usr/local/libexec/zenos/zenos-kanal /etc/systemd/system/zenos-kanal-installieren.service \
+    /etc/systemd/system/zenos-kanal-nachstart.service "$STAND" /etc/zenos/vertrauen; do
+    if [[ -e "$pfad" ]]; then printf '%s\n' "$pfad"; return 0; fi
+  done
+  return 1
+}
+
 # --- Schritte ------------------------------------------------------------------------------------------------------
+
+s_alt() {
+  schritt "alt: Gerät auf $ALT, der letzten Version ohne Kanal"
+  local quelle=/home/$TESTER/zenOS ziel spur
+  # Nur auf einem Gerät, das den Kanal nie hatte: Was ein install.sh mit einem neueren Stand hinterliess, bliebe liegen,
+  # und «migration» fände es auch dann, wenn der alte Weg den Kanal nicht brächte
+  if spur=$(kanal_spuren); then
+    fehler "$spur gibt es schon: Container frisch aus zenos-test:installiert starten, ohne install.sh (Kopf der Datei)"
+  fi
+  install -d -m 0755 "$E2E"
+  ziel=$(runuser -u "$TESTER" -- git -C "$quelle" rev-parse --verify --quiet "$ALT^{commit}") ||
+    fehler "$ALT fehlt in ~/zenOS"
+  runuser -u "$TESTER" -- git -C "$quelle" checkout -q --force -B dev "$ziel"
+  runuser -u "$TESTER" -- git -C "$quelle" clean -q -fd
+  if runuser -u "$TESTER" -- git -C "$quelle" remote get-url origin > /dev/null 2>&1; then
+    runuser -u "$TESTER" -- git -C "$quelle" remote set-url origin "$URL"
+  else
+    runuser -u "$TESTER" -- git -C "$quelle" remote add origin "$URL"
+  fi
+  kanal dev
+  ok "$quelle auf $ALT (dev), origin $URL"
+  runuser -u "$TESTER" -- env HOME=/home/$TESTER "$quelle/scripts/install.sh" > "$E2E/alt.txt" 2>&1 ||
+    { tail -n 30 "$E2E/alt.txt" >&2; fehler "install.sh aus $ALT"; }
+  erwarte_kopf "$ziel" "$ALT installiert"
+  [[ "$(git -c safe.directory=/opt/zenos -C /opt/zenos remote get-url origin)" == "$URL" ]] ||
+    fehler "/opt/zenos hat nicht origin $URL"
+  if grep -q 'zenos-kanal' /opt/zenos/scripts/zen.d/update.sh; then fehler "zen update aus $ALT kennt den Kanal"; fi
+  if spur=$(kanal_spuren); then fehler "$ALT hat $spur angelegt"; fi
+  ok "zen update ist der alte Weg (git und install.sh), vom Kanal keine Spur"
+}
 
 s_einrichten() {
   schritt "einrichten"
@@ -229,7 +275,7 @@ PY
   g ls-remote "$URL" refs/heads/dev > /dev/null || fehler "origin über https nicht erreichbar"
   ok "origin $URL mit dev $(g -C "$REMOTE" rev-parse --short dev)"
   [[ "$(git -c safe.directory=/opt/zenos -C /opt/zenos remote get-url origin)" == "$URL" ]] ||
-    fehler "/opt/zenos hat nicht origin $URL (zuerst install.sh aus ~/zenOS mit diesem origin)"
+    fehler "/opt/zenos hat nicht origin $URL (zuerst «alt» oder install.sh aus ~/zenOS mit diesem origin)"
   ok "/opt/zenos folgt $URL"
   automatik_timer_zahm
   ok "Timer der Automatik lösen im Test nicht von selbst aus"
@@ -237,7 +283,13 @@ PY
 
 s_migration() {
   schritt "migration: altes zen update bringt den neuen Kanal"
-  local neu rc=0 datei
+  local neu rc=0 datei spur
+  # Geprüft wird der Weg eines Geräts ohne Kanal. Hat es den Kanal schon (install.sh aus dem Stand von starten.sh), ist
+  # zen update bereits der neue: Er fragt für den unsignierten Commit nach «ja» und endet ohne Antwort mit Exit 10.
+  if spur=$(kanal_spuren) || grep -q 'zenos-kanal' /opt/zenos/scripts/zen.d/update.sh; then
+    fehler "das Gerät hat den Kanal schon (${spur:-zen update}): frischer Container, dann zuerst «alt» (Kopf der Datei)"
+  fi
+  ok "Gerät ohne Kanal: $(git -c safe.directory=/opt/zenos -C /opt/zenos describe --tags --always)"
   ga rm -q -r --cached . > /dev/null
   find "$ARBEIT" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
   g -C /repo ls-files -z -co --exclude-standard | while IFS= read -r -d '' datei; do
@@ -246,7 +298,22 @@ s_migration() {
   neu=$(neuer_commit "kanal: Stand aus /repo (e2e)")
   zen_update "" || rc=$?
   erwarte_rc "$rc" 0 "altes zen update"
+  erwarte_text "Hole Stand von origin (Kanal dev)" "der alte Weg holte mit git"
+  if grep -q "Tippe «ja»" "$E2E/zen.txt"; then fehler "der alte Weg fragte nach «ja»"; fi
   erwarte_kopf "$neu" "neuer Stand"
+  grep -q -- '--nur-zenos' /opt/zenos/scripts/zen.d/update.sh || fehler "zen update ist danach nicht der neue"
+  # install.sh lief aus /opt/zenos selbst (nicht aus einem Arbeitsstand): Der Kanal ist nicht angehalten
+  [[ ! -e "$STAND/angehalten" ]] || fehler "nach der Migration «angehalten»"
+  ok "zen update geht jetzt über den Kanal, nicht angehalten"
+  # Der Anker kommt nie von selbst aus dem Repo (der Stand kam ungeprüft): nur der Ordner, mit Schlüsseln im Repo dazu
+  # der Weg von Hand (12-vertrauen)
+  [[ -d /etc/zenos/vertrauen ]] || fehler "Ordner des Ankers fehlt"
+  if grep -qs '^zenos-' /etc/zenos/vertrauen/release; then fehler "Anker ohne Zutun aus dem Repo übernommen"; fi
+  if grep -qs '^zenos-release ' /repo/system/vertrauen/release; then
+    erwarte_text "sudo zen kanal anker /opt/zenos/system/vertrauen" "Anker nicht übernommen, Hinweis auf den Weg von Hand"
+  else
+    ok "Anker ohne Schlüssel (das Repo hat keine)"
+  fi
   grep -q 'def cmd_install' /usr/local/libexec/zenos/zenos-kanal || fehler "neuer zenos-kanal fehlt"
   for datei in installieren nachstart; do
     [[ -f "/etc/systemd/system/zenos-kanal-$datei.service" ]] || fehler "zenos-kanal-$datei.service fehlt"
@@ -1311,6 +1378,7 @@ s_automatik_uhr() {
 }
 
 case "${1:-}" in
+  alt) s_alt ;;
   einrichten) s_einrichten ;;
   migration) s_migration ;;
   dev) s_dev ;;
@@ -1337,5 +1405,5 @@ case "${1:-}" in
   nach-automatik-2) s_nach_automatik_2 ;;
   nach-automatik-3) s_nach_automatik_3 ;;
   automatik-uhr) s_automatik_uhr ;;
-  *) sed -n '2,64p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 2 ;;
 esac
