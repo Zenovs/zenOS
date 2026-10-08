@@ -130,8 +130,10 @@ Abnahme in einer echten VM (lima/Apple Virtualization, Ubuntu 26.04 arm64, virti
 - **fish als Login-Shell** (`chsh -s /usr/bin/fish`), damit auch SSH-Sitzungen Eingabezeile, `?` und die Warnung haben.
 - **Nubix** hat bis v4.4.4 keinen arm64-Build; ein arm64-`.deb` in der Release reicht, `zen apps` bietet es dann an.
 - **Widgets** (Zustandswert `widgets`): was sie zeigen sollen, ist offen.
-- **Chrome `AutofillCreditCardEnabled`** ist ab Chrome 156 veraltet; Nachfolger `AutofillSettings` in
-  `docs/sicherheit.md` festhalten und übernehmen.
+- **Chrome `AutofillCreditCardEnabled`** ist ab Chrome 156 veraltet. Erledigt am 08.10.2026: Die Richtlinie setzt
+  zusätzlich den Nachfolger `AutofillSettings` (Kreditkarten auf allen Seiten gesperrt, der Ersatz laut Googles
+  Richtlinienliste); die alte bleibt, solange Google sie auswertet. Belege in `docs/sicherheit.md`,
+  «Chrome-Richtlinien». Am Gerät prüfen: Chrome-Punkt in ANLEITUNG E (`chrome://policy`, 14 Richtlinien).
 - **`esm-cache` von ubuntu-pro-client** fragt bei `apt update` `contracts.canonical.com` ab; abschalten oder lassen.
 - **GitHub:** 2FA im Konto prüfen. Erledigt am 08.10.2026 (per `gh`, mit Zenos Ja): Issues aus, Rulesets
   «Release-Tags» (`v*`, `vertrauen/*`: nicht verschieben, nicht löschen, Ausnahme Admin) und «dev und main» (nicht

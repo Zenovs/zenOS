@@ -660,8 +660,10 @@ systemctl --user start zenos-shell.service
   Zuklappen sperrt innerhalb von 2 s und macht dunkel, Aufklappen schaltet den Bildschirm an, die Sperre steht.
 - [ ] Per SSH, nur lesend: `sudo /opt/zenos/scripts/bin/zenos-argon --pruefen` zeigt «Messchip aktiv, Argons
   Akkuprofil ist geladen» und den Ladestand. `zen doctor` zeigt im Abschnitt «Argon ONE» den Akku.
-- [ ] In Chrome zeigt `chrome://policy` 13 zenOS-Richtlinien ohne Fehler. Die 1Password-Erweiterung ist fest
-  installiert, andere Erweiterungen sind gesperrt.
+- [ ] In Chrome zeigt `chrome://policy` 14 zenOS-Richtlinien ohne Fehler. Die 1Password-Erweiterung ist fest
+  installiert, andere Erweiterungen sind gesperrt. `AutofillSettings` steht dort mit Status OK; ab Chrome 156 darf
+  `AutofillCreditCardEnabled` als veraltet markiert sein. Unter `chrome://settings/payments` ist das Speichern und
+  Ausfüllen von Zahlungsmethoden aus und von der Organisation verwaltet.
 - [ ] In VS Code steht die Einstellung `telemetry.telemetryLevel` auf `off` und ist von der Organisation verwaltet.
 - [ ] `zen firewall status` zeigt «an» und die fünf SSH-Regeln für die lokalen Netze (`LIMIT IN`). Von einem
   zweiten Gerät im selben Netz geht `ssh` weiterhin; die laufende SSH-Sitzung riss beim Einschalten nicht ab.
