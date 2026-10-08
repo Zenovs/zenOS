@@ -52,7 +52,8 @@
 #   Temp-Ordner, ZENOS_CODE zeigt auf dieses Repo, PipeWire-Client ohne Echtzeit über RTKit (module-rt aus,
 #   Begründung bei start_lauf). In shell.qml folgt ein Rundgang über IPC (Thema hin und zurück, Einrichtung
 #   zu, Befehlsfeld mit Apps-Ansicht, Zentrale, Umschalter, jede Einstellungen-Seite, Updates, App-Leiste,
-#   Einrichtung auf, Hinweis, Bildschirmfreigabe, zuletzt die Sperre).
+#   zen Installer mit einer selbst gebauten .deb (nur ansehen), Einrichtung auf, Hinweis, Bildschirmfreigabe, zuletzt
+#   die Sperre).
 #   Fehler: kein «Configuration Loaded» im Zeitlimit, Absturz, ERROR-Zeilen, «Type … unavailable», «is not a
 #   type», ReferenceError/TypeError, «Cannot assign», «Binding loop», Warnungen aus Dateien unter shell/,
 #   console.warn/console.error, ein gescheiterter IPC-Aufruf, eine andere als die erwartete Antwort (z. B.
@@ -730,7 +731,9 @@ START_BEKANNT=(
 )
 
 # Rundgang über IPC in shell/shell.qml (Ziele und Funktionen aus BAUPLAN 6). Jeder Aufruf muss gelingen;
-# «… → ANTWORT» erwartet zusätzlich genau diese Antwort. Die Testsitzung beginnt wie ein erster Start mit
+# «… → ANTWORT» erwartet zusätzlich genau diese Antwort, «… ~> ANTWORT» wartet bis zu 20 s darauf (fragt alle 0,5 s
+# neu). @DEB@ steht für die Test-.deb aus start_deb; ohne dpkg-deb entfallen diese Aufrufe. Die Testsitzung beginnt wie
+# ein erster Start mit
 # offener Einrichtung. Solange sie offen ist, öffnen Befehlsfeld, Umschalter und Einstellungen nicht (sie
 # lägen unsichtbar dahinter); sie geht deshalb vorher zu und kommt erst weiter hinten wieder.
 START_RUNDGANG=(
@@ -819,8 +822,22 @@ START_RUNDGANG=(
   "schreibtisch status → normal"
   # Wischen mit drei Fingern: ohne zenos-gesten (CI, Container) «getrennt», auf dem Pi mit Touchpad «verbunden»
   "gesten status"
+  # zen Installer (Doppelklick auf eine .deb): Der Pfad wird geprüft; die Test-.deb öffnet das Fenster und wird ohne
+  # Rechte angesehen (dpkg-deb liest, apt simuliert nur), ein zweites Öffnen sieht neu an. Installiert wird nichts.
+  "installer status → zu"
+  "installer oeffnen paket.deb → ungueltig"
+  "installer oeffnen /tmp/paket.zip → ungueltig"
+  "installer oeffnen @DEB@ → offen"
+  "installer status ~> bereit"
+  "installer oeffnen @DEB@ → offen"
+  "installer status ~> bereit"
+  "installer schliessen"
+  "installer status → zu"
   "einrichtung oeffnen"
   "einrichtung status → offen 1"
+  # Während der Einrichtung öffnet der zen Installer nicht
+  "installer oeffnen @DEB@ → einrichtung"
+  "installer status → zu"
   # Während der Einrichtung öffnet die Übersicht nicht
   "uebersicht oeffnen"
   "uebersicht status → zu"
@@ -885,6 +902,27 @@ start_ipc() {
     return 1
   fi
   return 0
+}
+
+# Test-.deb für den Rundgang (zen Installer) nach O/home/Downloads: Architektur all, ohne Abhängigkeiten, mit Starter,
+# Systemdienst und postinst (zwei Hinweise), gebaut mit dpkg-deb. Pfad auf stdout; leer ohne dpkg-deb oder wenn der Pfad
+# Zeichen enthält, die der Rundgang nicht als ein Argument weitergibt.
+start_deb() {
+  local o=$1 bau=$1/deb-bau ziel=$1/home/Downloads/zenos-pruefen-beispiel_1.0_all.deb
+  command -v dpkg-deb > /dev/null 2>&1 || return 0
+  [[ "$ziel" =~ ^[A-Za-z0-9/._-]+$ ]] || return 0
+  mkdir -p -- "$bau/DEBIAN" "$bau/usr/share/applications" "$bau/usr/lib/systemd/system" "$o/home/Downloads" || return 0
+  printf '%s\n' 'Package: zenos-pruefen-beispiel' 'Version: 1.0' 'Architecture: all' \
+    'Maintainer: zenOS Prüfung <pruefen@example.org>' 'Homepage: https://example.org/pruefen' 'Installed-Size: 4' \
+    'Description: Beispiel für den Start-Test von pruefen.sh' ' Ein Paket fast ohne Inhalt für den Rundgang des zen Installers.' \
+    > "$bau/DEBIAN/control"
+  printf '%s\n' '#!/bin/sh' 'exit 0' > "$bau/DEBIAN/postinst"
+  printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=Prüfbeispiel' 'Exec=true' > "$bau/usr/share/applications/zenos-pruefen-beispiel.desktop"
+  printf '%s\n' '[Service]' 'ExecStart=/bin/true' > "$bau/usr/lib/systemd/system/zenos-pruefen-beispiel.service"
+  chmod -R u=rwX,go=rX -- "$bau"
+  chmod 0755 -- "$bau/DEBIAN/postinst"
+  dpkg-deb --root-owner-group --build "$bau" "$ziel" > /dev/null 2>&1 || return 0
+  printf '%s' "$ziel"
 }
 
 # Einstiegsdateien: shell/shell.qml zuerst, dann jede kleingeschriebene .qml-Datei mit ShellRoot
@@ -1010,23 +1048,43 @@ SH
   else
     start_ruhe "$o/quickshell.log" 3
     if [[ "$datei" == shell/shell.qml ]]; then
-      local aufruf erwartet ist n=0 antwort=1
+      local aufruf erwartet ist n=0 antwort=1 warten rc versuch deb
       local -a teile
+      deb=$(start_deb "$o")
+      [[ -n "$deb" ]] || printf '#ausgelassen zen Installer nur ohne Test-.deb geprüft (dpkg-deb fehlt).\n' >> "$o/bericht"
       for aufruf in "${START_RUNDGANG[@]}"; do
         erwartet=""
-        if [[ "$aufruf" == *" → "* ]]; then
+        warten=0
+        if [[ "$aufruf" == *"@DEB@"* ]]; then
+          [[ -n "$deb" ]] || continue
+          aufruf=${aufruf//@DEB@/$deb}
+        fi
+        if [[ "$aufruf" == *" ~> "* ]]; then
+          erwartet=${aufruf#* ~> }
+          aufruf=${aufruf%% ~> *}
+          warten=40
+        elif [[ "$aufruf" == *" → "* ]]; then
           erwartet=${aufruf#* → }
           aufruf=${aufruf%% → *}
         fi
         read -r -a teile <<< "$aufruf"
         n=$((n + 1))
-        start_ipc "$o" "${teile[@]}"
-        case $? in
+        versuch=0
+        while :; do
+          rc=0
+          start_ipc "$o" "${teile[@]}" || rc=$?
+          ist=$(tr '\n' ' ' < "$o/ipc" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+          (( rc == 0 && versuch < warten )) && [[ "$ist" != "$erwartet" ]] || break
+          versuch=$((versuch + 1))
+          sleep 0.5
+        done
+        case $rc in
           0)
-            if [[ -n "$erwartet" ]]; then
-              ist=$(tr '\n' ' ' < "$o/ipc" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-              if [[ "$ist" != "$erwartet" ]]; then
-                befund=1
+            if [[ -n "$erwartet" && "$ist" != "$erwartet" ]]; then
+              befund=1
+              if (( warten )); then
+                printf 'IPC «%s» antwortet nach 20 s «%s» statt «%s».\n' "$aufruf" "$ist" "$erwartet" >> "$o/bericht"
+              else
                 printf 'IPC «%s» antwortet «%s» statt «%s».\n' "$aufruf" "$ist" "$erwartet" >> "$o/bericht"
               fi
             fi

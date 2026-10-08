@@ -93,7 +93,8 @@ Startet `shell/shell.qml`, `shell/greeter.qml` und den Notfall-Login (jede klein
 unter `shell/` mit `ShellRoot`) nacheinander in labwc ohne Bildschirm, wartet auf «Configuration Loaded»
 und wertet das Quickshell-Protokoll aus. In `shell.qml` folgt ein Rundgang über IPC (Thema hin und zurück,
 Befehlsfeld mit Apps-Ansicht, Zentrale, Umschalter, jede Einstellungen-Seite, App-Leiste, Fensterübersicht,
-Schreibtisch, Einrichtung, Hinweis, Bildschirmfreigabe, zuletzt die Sperre).
+Schreibtisch, zen Installer mit einer selbst gebauten .deb (nur ansehen, braucht dpkg-deb), Einrichtung, Hinweis,
+Bildschirmfreigabe, zuletzt die Sperre).
 Gemeldet werden die gefundenen Zeilen: Ladefehler («Type … unavailable», «is not a type»),
 ReferenceError/TypeError, «Cannot assign», «Binding loop», jede Warnung aus einer Datei unter `shell/`,
 `console.warn`/`console.error`, gescheiterte IPC-Aufrufe und eine Sperre, die nicht «gesperrt» meldet.
