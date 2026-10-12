@@ -342,6 +342,9 @@ stehen, nichts rückt.
   Akku-Mitteilung da (5 % ersetzt 10 %), und am Netzteil verschwindet sie. Bei 3 % (drei Messungen) ersetzt sie die
   dringende Karte «Akku fast leer» / «zenOS schaltet um 22:41 aus. Netzteil anschliessen bricht ab.»; auf der Sperre
   steht dieselbe Uhrzeit in der ruhigen Zeile der Vorwarnung, mit dem Symbol `akku-leer` in `warnung`.
+- Bei Docks meldet sich zenOS einmal je Gerät, mit Dringlichkeit normal: «Dock: kein Bild über USB-C» (Rechner ohne
+  DisplayPort, Bildschirm an HDMI), «Dock: kein Bild an dieser Buchse» und «DisplayLink-Gerät erkannt» (Treiber fehlt;
+  `docs/module/dock.md`).
 
 ### Fenster
 

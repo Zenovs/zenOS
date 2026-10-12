@@ -23,6 +23,7 @@ Status: `offen` · `in Arbeit` · `fertig` · `offener Punkt`
 | M15 · Abschluss | fertig | Integration (frische Installation von GitHub, `zen update`, voller Image-Bau, drei Abnahme-Touren, drei Reviews mit Gegenprüfung, 36 Befunde behoben), Doku, ANLEITUNG, CHANGELOG, Tag `v0.1.0-rc1` |
 | Bildmarke «Zwei Steine» | fertig | nach Zenos Spezifikation: Dateien in `assets/zeichen/` (erzeugt von `erzeugen.py`), Pfade in tokens.json, `ZenZeichen` statt `Zeichen` in Leiste, Login, Sperre, Befehlsfeld und Erstem Start, Wasserzeichen und Token `wasserzeichen` entfernt, App-Icon `zenos` (45-thema). Details: `docs/bildmarke.md` |
 | Bootsplash (Plymouth) | fertig, nicht aktiv | Theme `system/plymouth/zenos/` (Gleiten, Überblenden, atmender Spalt, Passwortfeld, 1x/2x), Modul 42-bootsplash legt es ab, `zen bootsplash` schaltet nach Rückfrage ein, `zen doctor` meldet den Stand. Details: `docs/module/bootsplash.md` |
+| Docks und Bildschirm über USB | fertig | direkt auf dem Pi (Argon ONE UP) gebaut: zenos-dock, udev-Regel 73-zenos-dock (nur Markierung für systemd), Benutzerdienst zenos-dock.service, Modul 84-dock, Abschnitt in zen doctor. Befund und Mitteilung am Gerät mit dem i-tec-Dock geprüft; der Weg über udev nach install.sh. Details: `docs/module/dock.md` |
 
 ## Wo gebaut wird
 

@@ -174,6 +174,7 @@ Die Tastenkürzel von labwc rufen dieselben Ziele auf (Liste in `docs/module/m9.
 | `zenos-apps` | proprietäre Apps installieren (`zen apps`) |
 | `zenos-argon` | Argon ONE: Lüfter und Power-Button (V3), Akku-Messchip, Deckel und kontrolliertes Ausschalten bei 3 % (ONE UP), Mindeststufe für den Lüfter, Werte für die Leiste |
 | `zenos-gesten` | Wischen mit drei Fingern: Systemdienst `zenos-gesten.service` (eigener Benutzer, liest reine Touchpads nur lesend über libinput, meldet «oben» und «unten» auf `/run/zenos-gesten/gesten.sock`); dazu `--messen` (Schwelle einmessen) und `--pruefen` (für `zen doctor`) |
+| `zenos-dock` | Docks und Bildschirm über USB: Benutzerdienst `zenos-dock.service` (udev startet ihn beim Einstecken eines USB-C-Docks mit Billboard oder eines DisplayLink-Geräts, die Sitzung beim Anmelden), meldet jeden Befund einmal; dazu `pruefen` (für `zen doctor`) und `vergessen` |
 | `zenos-luefter` | Lüfterwunsch schreiben («auto» oder Mindeststufe 1–4; root: über pkexec oder sudo, `zen luefter`) |
 | `zenos-kanal-bedienen` | Updates aus den Einstellungen (root über pkexec): prüfen, jetzt installieren und zustimmen starten Units des Kanals, Zeitpunkt setzen über `zenos-kanal zeitpunkt`; für die Ubuntu-Basis `basis-pruefen` (Unit), `basis-installieren HASH` und `basis-installieren-zustimmen HASH` (über `zenos-basis jetzt` bzw. `zustimmen`) |
 | `zenos-basis` | Paket-Updates der Ubuntu-Basis (root, ausgeführt wird die Kopie unter `/usr/local/libexec/zenos`): `pruefen` (ein unterbrochenes dpkg nachholen, apt-get update, Auswertung von `apt-get -s full-upgrade`), `installieren` (genau die geprüfte Liste, mit Inhibitor, danach `install.sh` und Gesundheitsprüfung), `update [--ja]` (Schritt 2 von `zen update`), `jetzt` und `zustimmen` (Einstellungen), `automatik lauf\|gelegenheit` (Timer), `status` (ohne root) |
@@ -308,6 +309,13 @@ Die Regeln aus dem Manifest stehen im Code, nicht in der Konfiguration, und lass
   Touchpad läuft er nie. labwc öffnet die Geräte weiter über logind und bekommt jede Bewegung unverändert. Die
   Oberfläche (`Gesten`) liest nur die Wörter «oben» und «unten» von seinem Socket. Rechte, Härtung, Restrisiko und
   Rückweg in `docs/sicherheit.md`, «Gesten».
+- **Docks und Bildschirm über USB:** Ein USB-C-Dock bekommt sein Bild als DisplayPort aus der Buchse. Liefert sie das
+  nicht, meldet es ein Billboard-Gerät (USB-Klasse 0x11) und bleibt dunkel. Das Compute Module 5 und der Pi 5 haben
+  gar keinen DisplayPort-Ausgang, auch nicht an USB-C. Die udev-Regel `73-zenos-dock.rules` markiert Billboards und
+  DisplayLink-Geräte nur für systemd und startet so den Benutzerdienst `zenos-dock.service`. `zenos-dock` entscheidet
+  an den Bildausgängen unter `/sys/class/drm` und meldet einmal, was geht: am Pi «über USB-C kein Bild, Bildschirm an
+  HDMI», an einem Rechner mit DisplayPort «diese Buchse liefert kein Bild», bei DisplayLink ohne Treiber, dass zenOS
+  den proprietären Treiber nicht mitliefert. Er installiert nie einen Treiber. Einzelheiten in `docs/module/dock.md`.
 
 ## Entscheidung: Logik für Modi und Zustände (C5)
 
@@ -345,6 +353,7 @@ Die Logik läuft in Quickshell selbst, ohne eigenen Hintergrunddienst.
 | Freigabe Akkuprofil (ONE UP) | `/etc/xdg/zenos/argon-akkuprofil` (`zen akku freigeben`) | nie |
 | Gerätewerte (Akku, Lüfter) | `/run/zenos/geraet.json` (flüchtig, Ordner gehört `zenos-argon`) | nie |
 | Gesten | Socket `/run/zenos-gesten/gesten.sock` und Merker `bereit` (flüchtig, Ordner gehört `zenos-gesten`); Einheit `/etc/systemd/system/zenos-gesten.service`, udev-Regel `/etc/udev/rules.d/72-zenos-gesten.rules`, Benutzer `/etc/sysusers.d/zenos-gesten.conf`; Notschalter `/etc/xdg/zenos/gesten-aus` (root, `install.sh` nimmt dann alles zurück) | Einheit, Regel und Benutzer ja (Kopien), sonst nie |
+| Docks | Einheit `/etc/systemd/user/zenos-dock.service`, udev-Regel `/etc/udev/rules.d/73-zenos-dock.rules`; gemeldete Befunde `~/.local/state/zenos/dock-meldungen.json` (0600) mit Sperre `dock-meldungen.lock` | Einheit und Regel ja (Kopien), sonst nie |
 | Lüfterwunsch | `/var/lib/zenos/luefter` (`modus=auto\|mindest`, `stufe=1…4`, `seit=…`; root, 0644; fehlt = auto) | nie |
 | Firewall, bewusster Zustand | `/var/lib/zenos/firewall` (`zustand=an\|aus`, `seit=…`; root, 0644; fehlt = Standard an) | nie |
 | polkit-Aktionen | `/usr/share/polkit-1/actions/org.zenos.firewall.policy`, `org.zenos.luefter.policy`, `org.zenos.kanal.policy`, `org.zenos.installer.policy` | ja (Kopie von `system/polkit/`) |
@@ -355,7 +364,7 @@ Die Logik läuft in Quickshell selbst, ohne eigenen Hintergrunddienst.
 | Schriften | `/usr/local/share/fonts/zenos/` | ja (`assets/fonts/`) |
 | App-Icon `zenos` | `~/.local/share/icons/hicolor/<n>x<n>/apps/zenos.png` | ja (`assets/zeichen/png/`) |
 | Bootsplash-Theme | `/usr/share/plymouth/themes/zenos/` (eingeschaltet erst mit `zen bootsplash aktivieren`) | ja (`system/plymouth/zenos/`) |
-| Benutzereinheiten | `/etc/systemd/user/` (`zenos-sitzung.target`, `zenos-shell`, `zenos-idle`, `zenos-kanshi`, Drop-in für `xdg-desktop-portal-wlr`) | ja (Kopien) |
+| Benutzereinheiten | `/etc/systemd/user/` (`zenos-sitzung.target`, `zenos-shell`, `zenos-idle`, `zenos-kanshi`, `zenos-dock`, Drop-in für `xdg-desktop-portal-wlr`) | ja (Kopien) |
 | Systemeinheiten | `/etc/systemd/system/zenos-argon.service`, `/usr/lib/systemd/system-shutdown/zenos-argon` | ja (Kopien) |
 | Netz-Einheiten | `/etc/systemd/system/zenos-wlan-land.service`, `zenos-netzwerk-erststart.service`, Drop-in `systemd-networkd-wait-online.service.d/zenos-netzwerk.conf` | ja (Kopien) |
 | Netz nach dem Umstieg | `/etc/netplan/90-zenos-netzwerk.yaml`, WLAN-Profile `/etc/netplan/90-NM-<uuid>.yaml` (0600 root, Passwörter wie bisher in netplan) | nie |
@@ -374,7 +383,7 @@ Die Logik läuft in Quickshell selbst, ohne eigenen Hintergrunddienst.
 | Bildschirm-Profile | `~/.config/zenos/bildschirme.json` | nie |
 | Web-Apps | `~/.config/zenos/webapps.json`, Starter `~/.local/share/applications/zenos-webapp-<id>.desktop` | nie |
 | Laufzeitzustand | `~/.local/state/zenos/laufzeit.json` (`modus`, `zustand`, `raster`, `profil`) | nie |
-| Weiterer Zustand | `~/.local/state/zenos/` (`thema.json`: zuletzt übertragener Akzent; Merker für die Vorlagen; `kanal-meldungen.json` und `basis-meldungen.json`: welche Mitteilungen der Updates schon kamen) | nie |
+| Weiterer Zustand | `~/.local/state/zenos/` (`thema.json`: zuletzt übertragener Akzent; Merker für die Vorlagen; `kanal-meldungen.json` und `basis-meldungen.json`: welche Mitteilungen der Updates schon kamen; `dock-meldungen.json`: welche Docks schon gemeldet sind) | nie |
 | Nutzungsstatistik | `~/.local/share/zenos/befehlsfeld.json` (nur Desktop-IDs und Zähler) | nie |
 | Flüchtige Marker | `$XDG_RUNTIME_DIR/zenos/` (`gesperrt`, `freigabe`, `freigabe.neu`, `freigabe-wahl`, `freigabe-eintraege`, `freigabe-ende`, Sperrdateien) | nie |
 | Bildschirmfotos | `~/Ablage/Screenshots/` | nie |
@@ -417,6 +426,7 @@ Systemteile, dann alle Benutzerteile.
 | `76-installer` | zen Installer: `zenos-installer` als root-eigene Kopie (nur, wenn der Weg dorthin nur für root schreibbar ist), Units `zenos-installer-installieren@` und `-entfernen@` (statisch), polkit-Aktionen, Starter `zenos-installer.desktop`, `/var/lib/zenos/installer` mit `ablage/`. Keine Pakete, läuft auch im Image |
 | `80-argon` | Argon-Dienst (V3 und ONE UP) und Shutdown-Hook |
 | `82-gesten` | Wischen mit drei Fingern: Dienstbenutzer `zenos-gesten` (systemd-sysusers), udev-Regel für reine Touchpads, `zenos-gesten.service` (startet ihn, wenn es ein Touchpad gibt; nach Änderungen neu); keine Pakete. Mit Notschalter `/etc/xdg/zenos/gesten-aus` nimmt es alles zurück |
+| `84-dock` | Docks und Bildschirm über USB: udev-Regel (markiert Billboards und DisplayLink-Geräte nur für systemd), Benutzerdienst `zenos-dock.service`; nach einer neuen Regel stösst es nur diese Geräte an (`change`). Keine Pakete, kein Treiber |
 | `90-benutzer` | Oberfläche verknüpfen, Ordner für persönliche Daten |
 | `95-zen` | `/usr/local/bin/zen`, Log-Ordner |
 
@@ -517,6 +527,9 @@ Ubuntu-Archiv und Herstellerquellen (Ubuntu 26.04 LTS) ──▶ Pi: zen update,
 
 - **Raspberry Pi 5 (arm64):** Hauptziel und Messlatte. Gebaut und getestet wurde 0.1 in Docker-Containern mit
   Ubuntu 26.04 arm64 (`test/container/`); die Abnahme auf dem Pi steht aus. Zenos Gerät ist ein Argon ONE UP:
-  ein Laptop mit Compute Module 5 Lite (gleicher Chip BCM2712 wie der Pi 5), eingebauter Tastatur und Akku.
+  ein Laptop mit Compute Module 5 Lite (gleicher Chip BCM2712 wie der Pi 5), eingebauter Tastatur und Akku. Bild
+  gibt es nur über HDMI (`HDMI-A-2` ist das eingebaute Display, `HDMI-A-1` die Buchse); die beiden USB-C-Buchsen
+  führen nur USB 2.0, eine davon ohne GPIO-Modul gar keine Daten. Ein USB-C-Dock liefert dort Netzwerk und USB, aber
+  kein Bild (`docs/module/dock.md`).
 - **x86-Bürorechner (amd64):** später. Gleiche Oberfläche, eigene Hardware-Teile, zum Beispiel ohne Argon-Dienst
   (`zenos-argon.service` startet dort nicht). Dort ist GNOME als Rückfall-Sitzung beim Login vorgesehen.

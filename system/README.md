@@ -9,10 +9,11 @@ Verweis angelegt; was generiert wird, erzeugen die Programme unter `scripts/bin/
 | `labwc/{autostart,environment,shutdown,menu.xml}` | `~/.config/labwc/` (Verweise) | Start und Ende der Sitzung, Umgebung, Rechtsklick-Menüs |
 | `greeter/labwc/` | direkt aus `/opt/zenos` (`labwc -C`) | labwc des Logins, ohne Vorgabe-Tasten und mit leerem Menü |
 | `greetd/config.toml` | `/etc/greetd/config.toml` | Login auf VT 7, kein Autologin |
-| `systemd/user/` | `/etc/systemd/user/` | `zenos-sitzung.target`, `zenos-shell`, `zenos-idle` (Sperre, Bildschirm aus, Hemmer der Ein/Aus-Taste), `zenos-kanshi`, Drop-in für `xdg-desktop-portal-wlr` |
+| `systemd/user/` | `/etc/systemd/user/` | `zenos-sitzung.target`, `zenos-shell`, `zenos-idle` (Sperre, Bildschirm aus, Hemmer der Ein/Aus-Taste), `zenos-kanshi`, `zenos-dock` (Docks und Bildschirm über USB, `84-dock`), Drop-in für `xdg-desktop-portal-wlr` |
 | `systemd/system/zenos-argon.service` | `/etc/systemd/system/` | Argon ONE: Lüfter und Power-Button (V3), Akku, Deckel (GPIO27, nur lesend) und Ausschalten bei 3 % Akku (ONE UP), Mindeststufe für den Lüfter, `/run/zenos/geraet.json` |
 | `systemd/system/zenos-gesten.service` | `/etc/systemd/system/` (`82-gesten`, ohne `[Install]`, udev startet ihn mit Touchpad) | Wischen mit drei Fingern: liest reine Touchpads nur lesend über libinput (Benutzer `zenos-gesten`, gehärtet), meldet «oben» und «unten» auf `/run/zenos-gesten/gesten.sock`; Rechte und Rückweg (Notschalter `/etc/xdg/zenos/gesten-aus`) in `docs/sicherheit.md`, «Gesten» |
 | `udev/72-zenos-gesten.rules` | `/etc/udev/rules.d/` (`82-gesten`) | Knoten reiner Touchpads (ohne Tasten) `root:zenos-gesten` mit 0640 statt `root:input`, startet `zenos-gesten.service` |
+| `udev/73-zenos-dock.rules` | `/etc/udev/rules.d/` (`84-dock`) | markiert USB-C-Docks mit Billboard und DisplayLink-Geräte nur für systemd und startet so `zenos-dock.service` in der Sitzung; keine Rechte, kein Treiber (`docs/module/dock.md`) |
 | `sysusers/zenos-gesten.conf` | `/etc/sysusers.d/` (`82-gesten`, `systemd-sysusers`) | gesperrter Dienstbenutzer `zenos-gesten` ohne Home und ohne weitere Gruppen |
 | `systemd/system/zenos-wlan-land.service` | `/etc/systemd/system/` (`35-netzwerk`) | WLAN-Land mit `iw` setzen, nach `zen netzwerk umstellen` |
 | `systemd/system/zenos-netzwerk-erststart.service` | `/etc/systemd/system/` (aktiviert nur im Image) | erster Start eines Images: auf NetworkManager umstellen |

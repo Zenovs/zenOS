@@ -526,6 +526,25 @@ weg (beide brauchen die Gruppe `input` und fehlen in Ubuntu 26.04).
   Benutzer liegen, harmlos: Ohne `/opt/zenos/scripts/bin/zenos-gesten` startet der Dienst nicht, und die Touchpads
   liest dann niemand ausser labwc.
 
+## Docks (USB)
+
+Steckt ein USB-C-Dock ohne Bild oder ein DisplayLink-Gerät, sagt zenOS einmal, was geht (`docs/module/dock.md`).
+Grundsatz: erkennen und erklären, nie selbst einen Treiber holen.
+
+- **udev-Regel nur zum Markieren:** `73-zenos-dock.rules` setzt für Billboards (USB-Klasse 0x11) und DisplayLink-Geräte
+  (Hersteller 17e9) nur `TAG+="systemd"` und `SYSTEMD_USER_WANTS=zenos-dock.service`. Sie ändert keine Rechte, bindet
+  keinen Treiber und startet nichts als root (kein `RUN`, kein `PROGRAM`, kein `IMPORT`; geprüft in
+  `test/einheiten/dock.test.py`).
+- **Als Benutzer, nur lesend:** `zenos-dock` läuft in der Benutzerinstanz der Sitzung (nicht für den Login:
+  `ConditionUser=!@system`) und liest nur `/sys` und Prozessnamen unter `/proc`. Es schreibt nur seinen Merker
+  `~/.local/state/zenos/dock-meldungen.json` (0600) und schickt Mitteilungen über `notify-send` mit Argumentliste.
+- **Kein Treiber, nichts aus dem Netz:** Der DisplayLink-Treiber von Synaptics ist proprietär. Er kommt nie ins Image,
+  und zenOS lädt ihn auch nicht von sich aus. Die Mitteilung nennt nur, dass er fehlt.
+- **Datenschutz:** Text, Journal und `zen doctor` nennen Hersteller, Produkt und `vid:pid`, nie Seriennummern,
+  Netzwerknamen (sie enthalten die MAC) oder Adressen.
+- **Anstossen:** Nach einer neuen Regel schickt das Modul nur Billboards und DisplayLink-Geräte noch einmal durch die
+  Regeln (`udevadm trigger --action=change`, nie `add`, das Treiber neu binden könnte).
+
 ## 1Password
 
 - Passwörter, Karten und Schlüssel liegen nur in 1Password.

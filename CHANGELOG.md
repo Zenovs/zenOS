@@ -3,6 +3,20 @@
 Was sich an zenOS ändert, pro Version. Das Format lehnt sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/)
 an; eine Version entspricht einem Tag `v…` im Repo.
 
+## Unveröffentlicht
+
+### Neu
+
+- **Docks und Bildschirm über USB:** Steckt ein USB-C-Dock, das kein Bild bekommt, sagt zenOS einmal, warum. Am Pi 5
+  und am Compute Module 5 (Argon ONE UP) kommt «Dock: kein Bild über USB-C»: Der Chip hat keinen DisplayPort-Ausgang,
+  auch nicht an USB-C, daran ändert kein Treiber etwas; der Bildschirm gehört an HDMI, USB und Netzwerk am Dock gehen
+  weiter. An einem Rechner mit DisplayPort heisst es «Dock: kein Bild an dieser Buchse». Ein DisplayLink-Gerät ohne
+  Treiber wird erkannt und benannt; den proprietären Treiber von Synaptics installiert zenOS nicht (unter labwc
+  ungetestet). Erkannt wird über eine udev-Regel, die Billboards (USB-Klasse 0x11) und DisplayLink-Geräte nur für
+  systemd markiert, und den kurzen Benutzerdienst `zenos-dock.service`; jede Mitteilung kommt einmal je Gerät.
+  `zen doctor` zeigt im Abschnitt «Docks und Bildschirm über USB» Bildausgänge, Docks und Netzwerk über USB. Modul
+  `84-dock`, Doku `docs/module/dock.md`.
+
 ## 0.1.0-rc7 – 2026-10-08
 
 Alles seit `v0.1.0-rc6`: der zen Installer für heruntergeladene `.deb`, die Ein/Aus-Taste am dunklen Login weckt nur,

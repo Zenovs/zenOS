@@ -17,6 +17,7 @@
 | `release-signieren.sh` | signiert ein Release oder einen Tag `vertrauen/NNNN` mit 1Password (Mac, bash 3.2) |
 | `bin/zenos-kanal` | signierter Kanal auf dem Gerät: holen (ohne Rechte), prüfen und bereitstellen (root, ohne Netz), installieren mit Gesundheitsprüfung und Rückweg, nachstart, Status, Anker, Zeitpunkt, `jetzt` und `zustimmen` für die Einstellungen, `automatik` (Timer, Notschalter) und `bestaetigen` (nach dem Start); Kern von `zen update` und `zen rollback` |
 | `bin/zenos-gesten` | Wischen mit drei Fingern (Systemdienst `zenos-gesten.service`, Benutzer `zenos-gesten`): liest reine Touchpads nur lesend über libinput und meldet «oben» und «unten» an die Oberfläche; `--messen` misst die Schwelle ein, `--pruefen` für `zen doctor` (Modul und Prüfung `82-gesten`) |
+| `bin/zenos-dock` | Docks und Bildschirm über USB (Benutzerdienst `zenos-dock.service`, von udev und der Sitzung gestartet): `melden` sagt einmal je Gerät, warum ein USB-C-Dock kein Bild bekommt oder welcher Treiber einem DisplayLink-Gerät fehlt, `pruefen` für `zen doctor`, `vergessen` (Modul und Prüfung `84-dock`, `docs/module/dock.md`) |
 | `bin/zenos-basis` | Paket-Updates der Ubuntu-Basis: `pruefen` (apt-get update, Auswertung von `apt-get -s full-upgrade`), `installieren` (genau die geprüfte Liste, policy-rc.d nur gegen greetd, danach install.sh, Gesundheitsprüfung), `update [--ja]` (Schritt 2 von `zen update`), `jetzt HASH` und `zustimmen HASH` (Einstellungen), `automatik lauf\|gelegenheit` (Timer; fragt `zenos-kanal automatik darf --ohne-ssh`), `status`; root-eigene Kopie unter `/usr/local/libexec/zenos` (`71-basis`) |
 | `bin/zenos-kanal-bedienen` | Updates aus den Einstellungen (root über pkexec, polkit `org.zenos.kanal.*`): `pruefen`, `installieren ZIEL`, `zustimmen OBJEKT` starten die Units des Kanals (ZIEL und OBJEKT: der angezeigte Stand), `zeitpunkt …` setzt den Zeitpunkt; für die Ubuntu-Basis `basis-pruefen` (Unit), `basis-installieren HASH` und `basis-installieren-zustimmen HASH` (HASH: die angezeigte Liste); nur feste Wörter, Journal `-t zenos-kanal-bedienen` |
 | `bin/zenos-installer` | zen Installer für .deb-Pakete: `ansehen DATEI [--json\|--auftrag]` (ohne Rechte: Metadaten, Inhalt, Symbol, Simulation mit `apt-get -s install`, Hinweise, Ablehnungen, Plan), `liste`, `status`, `oeffnen DATEI` (Doppelklick, an die Oberfläche), `auftrag-installieren`/`auftrag-entfernen` (root über den Helfer) und `installieren SHA256`/`entfernen PAKET` (in den Units); root-eigene Kopie unter `/usr/local/libexec/zenos` (`76-installer`) |
@@ -246,6 +247,24 @@ sudo -u zenos-gesten /usr/bin/python3 -I /opt/zenos/scripts/bin/zenos-gesten --m
   zurück; `doctor.d/82-gesten.sh` prüft Dateien, Benutzer, Knoten, Dienst und die Verbindung der Oberfläche. Rechte und
   Restrisiko: `docs/sicherheit.md`, «Gesten». Tests: `test/einheiten/gesten.test.py`, Ende-zu-Ende
   `test/container/gesten-e2e.sh`.
+
+## zenos-dock
+
+`bin/zenos-dock` (Python 3, nur Standardbibliothek, `python3 -I`) liest `/sys` (USB-Geräte, Bildausgänge, Module) und
+die Prozessnamen unter `/proc` und läuft als Benutzer. udev startet `zenos-dock.service` beim Einstecken eines
+USB-C-Docks mit Billboard oder eines DisplayLink-Geräts (`73-zenos-dock.rules`), `zenos-sitzung.target` beim
+Anmelden. Entschieden wird an den Bildausgängen: ohne DisplayPort (Pi 5, Compute Module 5) «über USB-C kein Bild»,
+mit DisplayPort, aber ohne verbundenen Bildschirm «diese Buchse liefert kein Bild». Jede Mitteilung kommt einmal je
+Gerät und Befund (`~/.local/state/zenos/dock-meldungen.json`). Ein Treiber wird nie installiert.
+
+```
+/opt/zenos/scripts/bin/zenos-dock pruefen
+/opt/zenos/scripts/bin/zenos-dock vergessen
+```
+
+- Modul `84-dock` installiert Regel und Einheit; nach einer neuen Regel stösst es nur Billboards und
+  DisplayLink-Geräte an (`udevadm trigger --action=change`). `doctor.d/84-dock.sh` zeigt Dateien, Befunde und einen
+  gescheiterten letzten Lauf. Tests: `test/einheiten/dock.test.py`.
 
 ## pruefen.sh
 

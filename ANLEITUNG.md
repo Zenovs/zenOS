@@ -754,6 +754,17 @@ systemctl --user start zenos-shell.service
   linux-firmware-raspi` und `systemctl is-enabled rpi-eeprom-update.service` (spielt Ubuntu ein neues EEPROM von
   selbst ein?).
 
+**Docks und Bildschirm über USB (Einzelheiten in `docs/module/dock.md`)**
+- [ ] USB-C-Dock (mit Bildschirm daran) in die USB-C-Buchse mit Daten stecken: Nach wenigen Sekunden kommt einmal die
+  Mitteilung «Dock: kein Bild über USB-C» von zenOS. Netzwerk und USB am Dock gehen.
+- [ ] Dock ab- und wieder einstecken, ab- und wieder anmelden: keine zweite Mitteilung.
+- [ ] `zen doctor`, Abschnitt «Docks und Bildschirm über USB»: «Bildausgänge: HDMI-A-1 frei, HDMI-A-2 verbunden · kein
+  DisplayPort, auch nicht über USB-C», das Billboard des Docks mit «Bildschirm an HDMI anschliessen (frei:
+  HDMI-A-1)», «Netzwerk über USB (r8152): Kabel steckt».
+- [ ] `/opt/zenos/scripts/bin/zenos-dock vergessen`, Dock neu einstecken: Die Mitteilung kommt wieder.
+  `journalctl --user -u zenos-dock` nennt «gemeldet: USB-C-Dock (Billboard …)».
+- [ ] Bildschirm an die HDMI-Buchse des Laptops: Er geht an, kanshi nimmt das passende Profil.
+
 **Lüfter einstellen (Argon ONE UP, auch Argon ONE V3)**
 - [ ] System-Menü: Die Zeile «Lüfter» zeigt z. B. «aus · Auto» und rechts einen Pfeil. Ein Klick klappt darunter
   «Auto · 1 · 2 · 3 · 4» auf, «Auto» ist hervorgehoben, darunter «Folgt der Temperatur.». Hell und dunkel ruhig, nichts
