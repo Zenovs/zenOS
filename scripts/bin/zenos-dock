@@ -1,0 +1,591 @@
+#!/usr/bin/python3
+"""zenos-dock: Docks und Bildschirme an USB erkennen und einmal ehrlich sagen, was geht.
+
+Ein USB-C-Dock bekommt sein Bild als DisplayPort aus der USB-C-Buchse (DisplayPort Alt Mode). Liefert die Buchse das
+nicht, meldet das Dock ein Billboard-Gerät (USB-Klasse 0x11) und bleibt dunkel; USB und Netzwerk am Dock gehen
+trotzdem. Das Compute Module 5 und der Raspberry Pi 5 haben gar keinen DisplayPort-Ausgang, auch nicht an USB-C: Dort
+hilft kein Treiber. Ein DisplayLink-Gerät (Hersteller 17e9) schickt das Bild dagegen als Daten über USB und braucht
+einen Treiber: udl im Kernel für alte Chips, sonst evdi und den proprietären DisplayLink-Treiber von Synaptics.
+
+Aufruf:
+  zenos-dock melden [--warten SEKUNDEN]
+                         Benutzerdienst zenos-dock.service (udev startet ihn beim Einstecken, zenos-sitzung.target
+                         beim Anmelden): wartet kurz (Standard 3 s), bis Dock und Bildschirme da sind, prüft und
+                         schickt für jeden neuen Befund eine Mitteilung, einmal je Gerät und Befund
+  zenos-dock pruefen     nur lesend, für zen doctor: Bildausgänge, Docks, DisplayLink, Netzwerk über USB. Je Zeile
+                         «ok|hinweis|warnung|fehler», ein Tabulator, der Text
+  zenos-dock vergessen   die gemerkten Mitteilungen löschen: Die nächste Prüfung meldet wieder
+  zenos-dock --hilfe
+
+Befunde (entschieden wird an den Bildausgängen unter /sys/class/drm, «DP-…»; eDP ist ein eingebautes Display):
+- Billboard und kein DisplayPort-Ausgang: «Dieser Rechner gibt über USB-C kein Bild aus». Sicher, etwa am Pi 5 und
+  am Compute Module 5.
+- Billboard, DisplayPort-Ausgänge da, keiner verbunden: «Diese Buchse liefert dem Dock kein Bild», eine andere
+  versuchen (vermutlich: Viele Rechner haben Bild nur an einzelnen USB-C-Buchsen).
+- Billboard und ein DisplayPort-Bildschirm verbunden: keine Mitteilung (manche Docks zeigen das Billboard trotzdem).
+- DisplayLink mit gebundenem Kernel-Treiber (udl) oder mit laufendem DisplayLink-Treiber (Modul evdi und Prozess
+  DisplayLinkManager): keine Mitteilung. Sonst «DisplayLink-Gerät erkannt»: zenOS liefert den Treiber nicht mit
+  (proprietär, nie im Image) und hat ihn unter labwc nicht geprüft.
+Was das Billboard über seine Alt Modes sagt (BOS-Deskriptor, SVID ff01 DisplayPort, 8087 Thunderbolt), steht nur im
+Text: Manche Docks füllen den Deskriptor bloss generisch aus (SVID 0, «erfolgreich» ohne Bild).
+
+Gemerkt wird in ~/.local/state/zenos/dock-meldungen.json (0600): welche Mitteilung je Gerät (Hersteller:Produkt) und
+Befund schon kam, höchstens 50. Kommt eine Mitteilung nicht an (die Oberfläche läuft nicht), bleibt sie offen. Eine
+Sperre im selben Ordner verhindert doppelte Mitteilungen, wenn zwei Läufe zusammenfallen.
+
+Liest nur /sys (USB-Geräte, Bildausgänge, Module) und die Prozessnamen unter /proc. Im Text und im Journal stehen
+Hersteller, Produkt und Kennung (vid:pid), nie Seriennummern, Netzwerknamen oder Adressen. Mitteilungen über
+notify-send mit Argumentliste, nie über eine Shell.
+
+Nur für Tests: ZENOS_DOCK_TESTWURZEL=<ordner> legt /sys und /proc unter diesen Ordner.
+
+Exit: 0 in Ordnung · 1 Fehler · 2 Aufruf.
+"""
+
+import datetime
+import fcntl
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+
+USB_PATH = "/sys/bus/usb/devices"
+DRM_PATH = "/sys/class/drm"
+NET_PATH = "/sys/class/net"
+MODULE_PATH = "/sys/module"
+PROC_PATH = "/proc"
+# Nur für Tests: legt /sys und /proc unter diesen Ordner (siehe Kopf)
+TEST_ROOT_VARIABLE = "ZENOS_DOCK_TESTWURZEL"
+
+STATE_NAME = "dock-meldungen.json"
+LOCK_NAME = "dock-meldungen.lock"
+STATE_VERSION = 1
+STATE_LIMIT = 50
+
+WAIT_DEFAULT = 3.0
+WAIT_RANGE = (0.0, 60.0)
+# So lange wartet «melden» auf den Mitteilungsdienst (beim Anmelden startet die Oberfläche gerade erst)
+SERVER_WAIT = 60.0
+SERVER_STEP = 2.0
+COMMAND_TIMEOUT = 10
+NOTIFICATIONS = "org.freedesktop.Notifications"
+
+CLASS_BILLBOARD = "11"
+VENDOR_DISPLAYLINK = "17e9"
+SVID_NAMES = {0xFF01: "DisplayPort", 0x8087: "Thunderbolt"}
+# /proc/<pid>/comm ist auf 15 Zeichen gekürzt: «DisplayLinkManager»
+DISPLAYLINK_COMM = "DisplayLinkMana"
+KERNEL_DISPLAYLINK = "udl"
+TEXT_LIMIT = 60
+
+
+class UsageError(Exception):
+    pass
+
+
+# --- Log -------------------------------------------------------------------
+
+
+class Log:
+    """Meldungen auf stderr; unter systemd mit Priorität für das Journal."""
+
+    def __init__(self, journal=None):
+        self.journal = ("JOURNAL_STREAM" in os.environ) if journal is None else journal
+
+    def _write(self, priority, text):
+        prefix = f"<{priority}>" if self.journal else "zenos-dock: "
+        print(prefix + text, file=sys.stderr, flush=True)
+
+    def info(self, text):
+        self._write(6, text)
+
+    def warning(self, text):
+        self._write(4, text)
+
+
+# --- /sys lesen ------------------------------------------------------------
+
+
+def root_path(path):
+    root = os.environ.get(TEST_ROOT_VARIABLE)
+    return os.path.join(root, path.lstrip("/")) if root else path
+
+
+def read_text(path, limit=256):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read(limit).strip()
+    except OSError:
+        return None
+
+
+def read_bytes(path, limit=4096):
+    try:
+        with open(path, "rb") as f:
+            return f.read(limit)
+    except OSError:
+        return b""
+
+
+def clean(text):
+    """Herstellertexte für eine Zeile: ohne Steuerzeichen, Leerraum zusammengefasst, gekürzt."""
+    if not text:
+        return ""
+    text = re.sub(r"[\x00-\x1f\x7f]", " ", text)
+    text = " ".join(text.split())
+    return text[:TEXT_LIMIT].rstrip()
+
+
+def driver_name(path):
+    try:
+        return os.path.basename(os.readlink(os.path.join(path, "driver")))
+    except OSError:
+        return None
+
+
+def list_dir(path):
+    try:
+        return sorted(os.listdir(path))
+    except OSError:
+        return []
+
+
+def scan_usb():
+    """USB-Geräte (ohne Root-Hubs) mit ihren Schnittstellen, sortiert nach Port."""
+    base = root_path(USB_PATH)
+    names = list_dir(base)
+    devices = {}
+    for name in names:
+        if ":" in name or name.startswith("usb"):
+            continue
+        path = os.path.join(base, name)
+        vendor = read_text(os.path.join(path, "idVendor"))
+        product = read_text(os.path.join(path, "idProduct"))
+        if not vendor or not product:
+            continue
+        devices[name] = {
+            "port": name,
+            "id": f"{vendor.lower()}:{product.lower()}",
+            "vendor": vendor.lower(),
+            "device_class": (read_text(os.path.join(path, "bDeviceClass")) or "").lower(),
+            "manufacturer": clean(read_text(os.path.join(path, "manufacturer"))),
+            "product": clean(read_text(os.path.join(path, "product"))),
+            "bos": read_bytes(os.path.join(path, "bos_descriptors")),
+            "interfaces": [],
+        }
+    for name in names:
+        if ":" not in name:
+            continue
+        device = devices.get(name.split(":", 1)[0])
+        if device is None:
+            continue
+        path = os.path.join(base, name)
+        device["interfaces"].append({
+            "interface_class": (read_text(os.path.join(path, "bInterfaceClass")) or "").lower(),
+            "driver": driver_name(path),
+        })
+    return [devices[name] for name in sorted(devices)]
+
+
+def scan_outputs():
+    """Bildausgänge aus /sys/class/drm: Name (ohne «cardN-»), verbunden, Treiber der Karte."""
+    base = root_path(DRM_PATH)
+    outputs = []
+    for name in list_dir(base):
+        match = re.fullmatch(r"(card\d+)-(.+)", name)
+        if not match or match.group(2).startswith("Writeback"):
+            continue
+        status = read_text(os.path.join(base, name, "status"))
+        if status is None:
+            continue
+        card = match.group(1)
+        outputs.append({
+            "name": match.group(2),
+            "connected": status == "connected",
+            "driver": driver_name(os.path.join(base, card, "device")),
+        })
+    return outputs
+
+
+def scan_network():
+    """Netzwerk über USB: je Schnittstelle Treiber und ob ein Kabel steckt (keine Namen: sie enthalten die MAC)."""
+    base = root_path(NET_PATH)
+    links = []
+    for name in list_dir(base):
+        device = os.path.join(base, name, "device")
+        try:
+            target = os.path.realpath(device)
+        except OSError:
+            continue
+        if "/usb" not in target or not os.path.exists(device):
+            continue
+        links.append({
+            "driver": driver_name(device) or "unbekannt",
+            "connected": read_text(os.path.join(base, name, "carrier")) == "1",
+        })
+    return links
+
+
+def module_loaded(name):
+    return os.path.isdir(os.path.join(root_path(MODULE_PATH), name))
+
+
+def process_running(comm):
+    base = root_path(PROC_PATH)
+    for name in list_dir(base):
+        if name.isdigit() and read_text(os.path.join(base, name, "comm"), 64) == comm:
+            return True
+    return False
+
+
+# --- Auswerten -------------------------------------------------------------
+
+
+def billboard_modes(bos):
+    """SVIDs aus der Billboard-Fähigkeit des BOS-Deskriptors (ohne SVID 0), leer, wenn keine da ist."""
+    if len(bos) < 5 or bos[1] != 0x0F:
+        return []
+    total = min(len(bos), bos[2] | bos[3] << 8)
+    offset = bos[0]
+    while offset + 3 <= total:
+        length = bos[offset]
+        if length < 3 or offset + length > total:
+            break
+        if bos[offset + 1] == 0x10 and bos[offset + 2] == 0x0D and length >= 8:
+            count = bos[offset + 4]
+            # Billboard 1.0 hat 40 Byte vor der Liste, ab 1.1 mit bcdVersion und Fehlerangabe 44 Byte
+            start = length - 4 * count
+            if start not in (40, 44):
+                return []
+            modes = []
+            for n in range(count):
+                position = offset + start + 4 * n
+                svid = bos[position] | bos[position + 1] << 8
+                if svid:
+                    modes.append(svid)
+            return modes
+        offset += length
+    return []
+
+
+def is_billboard(device):
+    return device["device_class"] == CLASS_BILLBOARD or any(
+        s["interface_class"] == CLASS_BILLBOARD for s in device["interfaces"])
+
+
+def describe(device):
+    parts = [device["id"]] + [t for t in (device["manufacturer"], device["product"]) if t]
+    return ", ".join(parts)
+
+
+def mode_text(modes):
+    names = [SVID_NAMES.get(svid, f"SVID {svid:04x}") for svid in modes]
+    return f" ({' und '.join(names)})" if names else ""
+
+
+def is_displayport(output):
+    return output["name"].startswith("DP-")
+
+
+def evaluate(devices, outputs, evdi_loaded, displaylink_running):
+    """Befunde je Dock bzw. DisplayLink-Gerät: key, level (für zen doctor), text (Bericht) und, wenn eine
+    Mitteilung fällig ist, title und message."""
+    findings = []
+    displayport = [o for o in outputs if is_displayport(o)]
+    free_hdmi = [o["name"] for o in outputs if o["name"].startswith("HDMI") and not o["connected"]]
+    hdmi = f" (frei: {', '.join(free_hdmi)})" if free_hdmi else ""
+    for device in devices:
+        if is_billboard(device):
+            wish = f"will das Bild über USB-C{mode_text(billboard_modes(device['bos']))}"
+            base = f"USB-C-Dock (Billboard {describe(device)}): {wish}"
+            if not displayport:
+                findings.append({
+                    "key": f"billboard:{device['id']}:kein-dp",
+                    "level": "hinweis",
+                    "text": f"{base}, dieser Rechner hat keinen DisplayPort-Ausgang, auch nicht an USB-C. "
+                            f"Bildschirm an HDMI anschliessen{hdmi}",
+                    "title": "Dock: kein Bild über USB-C",
+                    "message": "Dieser Rechner gibt über USB-C kein Bild aus, daran ändert auch ein Treiber nichts. "
+                               "Schliess den Bildschirm an HDMI an. USB und Netzwerk am Dock gehen weiter.",
+                })
+            elif not any(o["connected"] for o in displayport):
+                findings.append({
+                    "key": f"billboard:{device['id']}:buchse",
+                    "level": "warnung",
+                    "text": f"{base}, die Buchse liefert ihm keins (kein DisplayPort-Bildschirm verbunden). "
+                            "Eine andere USB-C-Buchse versuchen",
+                    "title": "Dock: kein Bild an dieser Buchse",
+                    "message": "Diese USB-C-Buchse liefert dem Dock kein Bild. Versuch eine andere, oft ist sie "
+                               "mit dem DisplayPort- oder Thunderbolt-Zeichen markiert. USB und Netzwerk am Dock "
+                               "gehen weiter.",
+                })
+            else:
+                findings.append({
+                    "key": f"billboard:{device['id']}:dp",
+                    "level": "ok",
+                    "text": f"{base}, ein DisplayPort-Bildschirm ist verbunden",
+                })
+        elif device["vendor"] == VENDOR_DISPLAYLINK:
+            base = f"DisplayLink-Gerät ({describe(device)})"
+            drivers = {s["driver"] for s in device["interfaces"]}
+            if KERNEL_DISPLAYLINK in drivers:
+                findings.append({
+                    "key": f"displaylink:{device['id']}:udl",
+                    "level": "ok",
+                    "text": f"{base}: Kernel-Treiber udl",
+                })
+            elif evdi_loaded and displaylink_running:
+                findings.append({
+                    "key": f"displaylink:{device['id']}:treiber",
+                    "level": "hinweis",
+                    "text": f"{base}: DisplayLink-Treiber läuft (evdi, DisplayLinkManager), unter labwc ungetestet",
+                })
+            else:
+                findings.append({
+                    "key": f"displaylink:{device['id']}:ohne",
+                    "level": "hinweis",
+                    "text": f"{base}: kein Treiber. Ein Bild braucht evdi und den proprietären DisplayLink-Treiber "
+                            "von Synaptics; zenOS liefert ihn nicht mit und hat ihn unter labwc nicht geprüft "
+                            "(docs/module/dock.md)",
+                    "title": "DisplayLink-Gerät erkannt",
+                    "message": "Für ein Bild braucht dieses Gerät den DisplayLink-Treiber von Synaptics. zenOS "
+                               "liefert ihn nicht mit und hat ihn unter labwc noch nicht geprüft. Mehr mit zen doctor.",
+                })
+    return findings
+
+
+def output_line(outputs):
+    if not outputs:
+        return "hinweis", "Keine Bildausgänge unter /sys/class/drm"
+    parts = [f"{o['name']} {'verbunden' if o['connected'] else 'frei'}" for o in outputs]
+    text = "Bildausgänge: " + ", ".join(parts)
+    if not any(is_displayport(o) for o in outputs):
+        text += " · kein DisplayPort, auch nicht über USB-C"
+    return "ok", text
+
+
+# --- Gemerkte Mitteilungen -------------------------------------------------
+
+
+def state_dir():
+    home = os.environ.get("HOME")
+    if not home or not os.path.isabs(home):
+        raise OSError("HOME fehlt")
+    return os.path.join(home, ".local", "state", "zenos")
+
+
+def load_state(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    seen = data.get("gemeldet") if isinstance(data, dict) and data.get("version") == STATE_VERSION else None
+    if not isinstance(seen, dict):
+        return {}
+    return {k: v for k, v in seen.items() if isinstance(k, str) and isinstance(v, str)}
+
+
+def save_state(path, seen):
+    newest = sorted(seen.items(), key=lambda item: item[1], reverse=True)[:STATE_LIMIT]
+    data = {"version": STATE_VERSION, "gemeldet": dict(sorted(newest))}
+    folder = os.path.dirname(path)
+    descriptor, temporary = tempfile.mkstemp(prefix=".dock-meldungen.", dir=folder)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+
+
+def now_text():
+    return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+# --- Mitteilungen ----------------------------------------------------------
+
+
+def run_command(argv):
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, timeout=COMMAND_TIMEOUT, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def server_ready():
+    result = run_command(["busctl", "--user", "call", "org.freedesktop.DBus", "/org/freedesktop/DBus",
+                          "org.freedesktop.DBus", "NameHasOwner", "s", NOTIFICATIONS])
+    if result is None:
+        # Ohne busctl lässt sich nicht nachsehen: notify-send selbst entscheidet
+        return True
+    return result.returncode == 0 and result.stdout.split() == ["b", "true"]
+
+
+def wait_for_server(seconds, step=SERVER_STEP):
+    deadline = time.monotonic() + seconds
+    while True:
+        if server_ready():
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(step)
+
+
+def notify_command(finding):
+    return ["notify-send", "--app-name=zenOS", "--icon=zenos", "--urgency=normal", "--category=device", "--",
+            finding["title"], finding["message"]]
+
+
+def notify(finding):
+    result = run_command(notify_command(finding))
+    return result is not None and result.returncode == 0
+
+
+# --- Befehle ---------------------------------------------------------------
+
+
+def current_findings():
+    return evaluate(scan_usb(), scan_outputs(), module_loaded("evdi"), process_running(DISPLAYLINK_COMM))
+
+
+def run_report(wait, log):
+    if wait:
+        time.sleep(wait)
+    due = [f for f in current_findings() if f.get("title")]
+    if not due:
+        return 0
+    try:
+        folder = state_dir()
+        os.makedirs(folder, mode=0o700, exist_ok=True)
+    except OSError as err:
+        log.warning(f"Kein Ordner für die gemerkten Mitteilungen: {err}")
+        return 1
+    try:
+        descriptor = os.open(os.path.join(folder, LOCK_NAME), os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+    except OSError as err:
+        log.warning(f"Keine Sperre für die gemerkten Mitteilungen: {err}")
+        return 1
+    with os.fdopen(descriptor, "r+b") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        path = os.path.join(folder, STATE_NAME)
+        seen = load_state(path)
+        new = [f for f in due if f["key"] not in seen]
+        if not new:
+            return 0
+        if not wait_for_server(SERVER_WAIT):
+            log.warning("Mitteilungsdienst nicht erreichbar, nichts gemeldet (der nächste Lauf versucht es wieder)")
+            return 0
+        sent = 0
+        for finding in new:
+            if notify(finding):
+                seen[finding["key"]] = now_text()
+                sent += 1
+                log.info(f"gemeldet: {finding['text']}")
+            else:
+                log.warning(f"notify-send gescheitert: {finding['title']}")
+        if sent:
+            try:
+                save_state(path, seen)
+            except OSError as err:
+                log.warning(f"{path} nicht geschrieben: {err}")
+                return 1
+    return 0
+
+
+def run_check():
+    outputs = scan_outputs()
+    lines = [output_line(outputs)]
+    findings = evaluate(scan_usb(), outputs, module_loaded("evdi"), process_running(DISPLAYLINK_COMM))
+    lines += [(f["level"], f["text"]) for f in findings]
+    if not findings:
+        lines.append(("ok", "Kein USB-C-Dock mit Billboard und kein DisplayLink-Gerät angeschlossen"))
+    for link in scan_network():
+        lines.append(("ok", f"Netzwerk über USB ({link['driver']}): "
+                            f"{'Kabel steckt' if link['connected'] else 'kein Kabel'}"))
+    try:
+        seen = load_state(os.path.join(state_dir(), STATE_NAME))
+    except OSError:
+        seen = {}
+    if seen:
+        count = "1 Befund" if len(seen) == 1 else f"{len(seen)} Befunde"
+        lines.append(("hinweis", f"Schon gemeldet: {count} (neu melden: zenos-dock vergessen)"))
+    for kind, text in lines:
+        print(f"{kind}\t{text}")
+    return 0
+
+
+def run_forget():
+    try:
+        path = os.path.join(state_dir(), STATE_NAME)
+        os.unlink(path)
+    except FileNotFoundError:
+        print("Nichts gemerkt")
+        return 0
+    except OSError as err:
+        print(f"zenos-dock: {err}", file=sys.stderr)
+        return 1
+    print("Gemerkte Mitteilungen gelöscht: Die nächste Prüfung meldet wieder")
+    return 0
+
+
+# --- Aufruf ----------------------------------------------------------------
+
+
+def parse_args(argv):
+    items = list(argv)
+    if not items:
+        raise UsageError("Befehl fehlt")
+    command = items.pop(0)
+    if command in ("-h", "--hilfe", "--help"):
+        return {"befehl": "hilfe"}
+    if command not in ("melden", "pruefen", "vergessen"):
+        raise UsageError(f"unbekannter Befehl «{command}»")
+    options = {"befehl": command, "warten": WAIT_DEFAULT}
+    while items:
+        arg = items.pop(0)
+        if arg == "--warten" and command == "melden":
+            if not items:
+                raise UsageError("--warten braucht einen Wert")
+            text = items.pop(0)
+            try:
+                value = float(text)
+            except ValueError:
+                raise UsageError(f"--warten: «{text}» ist keine Zahl") from None
+            low, high = WAIT_RANGE
+            if not low <= value <= high:
+                raise UsageError(f"--warten: erlaubt {low:.0f} bis {high:.0f} Sekunden")
+            options["warten"] = value
+        else:
+            raise UsageError(f"unbekannte Option «{arg}»")
+    return options
+
+
+def main(argv=None):
+    try:
+        options = parse_args(sys.argv[1:] if argv is None else argv)
+    except UsageError as err:
+        print(f"zenos-dock: {err}", file=sys.stderr)
+        print("Aufruf: zenos-dock melden [--warten SEKUNDEN] | pruefen | vergessen (--hilfe)", file=sys.stderr)
+        return 2
+    if options["befehl"] == "hilfe":
+        print(__doc__.strip())
+        return 0
+    if options["befehl"] == "pruefen":
+        return run_check()
+    if options["befehl"] == "vergessen":
+        return run_forget()
+    return run_report(options["warten"], Log())
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -6,4 +6,4 @@ Documentation=file:///opt/zenos/docs/architektur.md
 BindsTo=graphical-session.target
 Wants=graphical-session-pre.target
 After=graphical-session-pre.target
-Wants=zenos-shell.service zenos-idle.service zenos-kanshi.service
+Wants=zenos-shell.service zenos-idle.service zenos-kanshi.service zenos-dock.service

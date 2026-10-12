@@ -1,0 +1,17 @@
+# zenOS: USB-C-Docks mit Billboard (USB-Klasse 0x11) und DisplayLink-Geräte (Hersteller 17e9) erkennen.
+#
+# Die Regel ändert keine Rechte, bindet keinen Treiber und startet kein Programm als root. Sie markiert nur das Gerät
+# für systemd und lässt die Benutzerinstanz der Sitzung den Dienst zenos-dock.service starten (SYSTEMD_USER_WANTS). Der
+# liest /sys und meldet einmal, was am Dock geht (scripts/bin/zenos-dock, docs/module/dock.md).
+# - Billboard als ganzes Gerät (bDeviceClass 11) oder als Schnittstelle eines Geräts (bInterfaceClass 11).
+# - Nicht nur bei «add»: systemd führt ein Gerät nur, solange sein letztes Ereignis die Markierung trägt (CURRENT_TAGS).
+# Geprüft in test/einheiten/dock.test.py, am Gerät mit zen doctor (Abschnitt «Docks und Bildschirm über USB»).
+ACTION=="remove", GOTO="zenos_dock_ende"
+SUBSYSTEM!="usb", GOTO="zenos_dock_ende"
+ENV{DEVTYPE}=="usb_device", ATTR{bDeviceClass}=="11", GOTO="zenos_dock_melden"
+ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="17e9", GOTO="zenos_dock_melden"
+ENV{DEVTYPE}=="usb_interface", ATTR{bInterfaceClass}=="11", GOTO="zenos_dock_melden"
+GOTO="zenos_dock_ende"
+LABEL="zenos_dock_melden"
+TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="zenos-dock.service"
+LABEL="zenos_dock_ende"

@@ -1,0 +1,19 @@
+# zenOS: Docks und Bildschirm über USB erkennen und einmal melden, was geht (scripts/bin/zenos-dock melden).
+# udev startet ihn beim Einstecken eines USB-C-Docks mit Billboard oder eines DisplayLink-Geräts
+# (73-zenos-dock.rules, SYSTEMD_USER_WANTS), zenos-sitzung.target beim Anmelden (Wants=). Er prüft, schickt jede
+# Mitteilung nur einmal (~/.local/state/zenos/dock-meldungen.json) und endet.
+[Unit]
+Description=zenOS Docks und Bildschirm über USB erkennen
+Documentation=file:///opt/zenos/docs/module/dock.md
+PartOf=zenos-sitzung.target
+After=graphical-session.target zenos-shell.service
+# Nur in der Sitzung eines Menschen: nicht für den Login (greetd, Systembenutzer), nicht ohne Wayland
+ConditionUser=!@system
+ConditionEnvironment=WAYLAND_DISPLAY
+ConditionFileIsExecutable=/opt/zenos/scripts/bin/zenos-dock
+
+[Service]
+Type=oneshot
+ExecStart=/opt/zenos/scripts/bin/zenos-dock melden
+# 3 s fürs Einstecken, bis 60 s auf den Mitteilungsdienst (die Oberfläche startet beim Anmelden gerade erst)
+TimeoutStartSec=90
