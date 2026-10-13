@@ -167,6 +167,25 @@ schliesst. Beim Sperren schliessen alle Menüs, und während der Sperre bleiben 
 - Ohne NetworkManager: die Netzzeile wie bisher, mit WLAN-Gerät darunter 12 px `gedaempft` «WLAN wählen: im
   Terminal «zen netzwerk umstellen», dann neu starten.»
 
+**Bluetooth im System-Menü** (unter dem WLAN nach einer Trennlinie; nur mit Bluetooth im Gerät, siehe
+`docs/module/bluetooth.md`):
+
+- «Bluetooth» mit Schalter wie beim WLAN; nur der Schalter schaltet. Das Symbol `bluetooth` steht in `text2`, solange
+  ein Gerät verbunden ist, sonst gedämpft; ausgeschaltet `bluetooth-aus`. Gesperrt (rfkill) steht rechts in Mono
+  «gesperrt», ohne Schalter.
+- Darunter die verbundenen Geräte: Symbol nach Typ (`maus`, `tastatur`, `kopfhoerer`, sonst `bluetooth`), Name, rechts
+  der Akku in Mono («81 %», wenn das Gerät ihn meldet), Haken im Akzent und «x» zum Vergessen. Ein Klick fragt einmal
+  ««Maus» trennen?», erst der zweite Klick trennt (4 s gültig). Vergessen fragt wie beim WLAN in `fehler` nach.
+- «Weitere Geräte» mit Pfeil klappt die Liste auf (ohne Animation): gekoppelte Geräte («gekoppelt» in Mono), dann
+  gefundene mit Namen, jeweils nach Namen ohne Rücksicht auf Akzente. Geräte ohne Namen fehlen, bis sie gekoppelt sind.
+  Solange die Liste offen ist, sucht der Adapter; leer «Suche Geräte …». Während eines Versuchs «koppelt …» bzw.
+  «verbindet …» in Mono. Darunter 12 px `gedaempft` «Neues Gerät: in den Kopplungsmodus bringen, dann hier wählen.»
+  Fehler ruhig in `fehler` unter dem Gerät («Koppeln hat nicht geklappt. Ist das Gerät im Kopplungsmodus?»).
+- Bildschirmfreigabe: «Gerätename verborgen» in `gedaempft`, «Weitere Geräte» mit «verborgen» und ohne Pfeil, keine
+  Suche.
+- Läuft BlueZ nicht: «Bluetooth» mit «nicht bereit» und darunter 12 px `gedaempft` «Bluetooth antwortet nicht. Prüfen
+  mit «zen doctor».»
+
 Im System-Menü folgt nach 1Password und einer Trennlinie das Gerät: Akku («87 % · lädt», «100 % · Netzteil», «9 %»,
 «nicht freigegeben»), Lüfter und CPU-Temperatur («41 °C»). Zeilen ohne Wert fehlen, ohne Akku und Lüfter bleibt nur
 die Temperatur. Bei niedrigem Akku steht sein Symbol in `warnung`. Werte reichen höchstens bis kurz vor den Titel und

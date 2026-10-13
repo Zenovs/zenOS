@@ -526,6 +526,28 @@ weg (beide brauchen die Gruppe `input` und fehlen in Ubuntu 26.04).
   Benutzer liegen, harmlos: Ohne `/opt/zenos/scripts/bin/zenos-gesten` startet der Dienst nicht, und die Touchpads
   liest dann niemand ausser labwc.
 
+## Bluetooth
+
+Bluetooth bedient das System-Menü über BlueZ, den Bluetooth-Stack von Ubuntu (`docs/module/bluetooth.md`). zenOS
+erfindet dabei nichts selbst.
+
+- **Nicht sichtbar für andere:** zenOS schaltet `Discoverable` nie ein, und BlueZ hat es ab Werk aus. Fremde Geräte
+  sehen den Rechner nicht und können sich nicht von sich aus koppeln (`Pairable: no`). Gekoppelt wird nur, was Zeno im
+  Menü wählt. `zen doctor` warnt, falls der Rechner doch sichtbar ist.
+- **Koppeln ohne eigenen Agenten:** BlueZ nimmt dann «NoInputNoOutput» (Just Works). Das schützt nicht gegen jemanden,
+  der genau beim Koppeln in der Nähe mithört oder sich dazwischenschaltet. Deshalb koppeln nur auf Klick, nur mit einem
+  Gerät im Kopplungsmodus und nach 30 s ohne Antwort abbrechen. Geräte mit PIN-Eingabe koppeln so nicht.
+- **Vertraut:** Ein gekoppeltes Gerät bekommt `Trusted`, damit es sich nach einem Neustart selbst verbindet. «x» im Menü
+  vergisst es ganz (`RemoveDevice`).
+- **Rechte:** Die Sitzung spricht BlueZ über den System-Bus; die D-Bus-Regel von BlueZ erlaubt das jedem lokalen
+  Benutzer (`/usr/share/dbus-1/system.d/bluetooth.conf`). zenOS gibt keine weiteren Rechte, keine Gruppe, keine
+  udev-Regel.
+- **Datenschutz:** Gerätenamen tragen oft Namen von Menschen. Während einer Bildschirmfreigabe zeigt das Menü keine
+  Namen und sucht nicht. Adressen erscheinen nie in der Oberfläche, `zen doctor` nennt nur Anzahlen.
+- **Ausschalten:** Der Schalter schaltet den Adapter über BlueZ aus (`Powered`). Nach einem Neustart schaltet BlueZ ihn
+  wieder ein (`AutoEnable`, Ubuntu-Standard). Dauerhaft aus geht mit `rfkill block bluetooth`; das Menü zeigt dann
+  «gesperrt».
+
 ## Docks (USB)
 
 Steckt ein USB-C-Dock ohne Bild oder ein DisplayLink-Gerät, sagt zenOS einmal, was geht (`docs/module/dock.md`).

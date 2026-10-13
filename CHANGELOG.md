@@ -7,6 +7,14 @@ an; eine Version entspricht einem Tag `v…` im Repo.
 
 ### Neu
 
+- **Bluetooth im System-Menü:** Unter dem WLAN steht «Bluetooth» mit Schalter, darunter die verbundenen Geräte mit
+  Akkustand. «Weitere Geräte» klappt die gekoppelten und gefundenen Geräte auf; solange die Liste offen ist, sucht der
+  Adapter. Ein Klick koppelt ein neues Gerät (Kopplungsmodus) und verbindet es, ein gekoppeltes verbindet sich. Trennen
+  und Vergessen fragen einmal nach. Während einer Bildschirmfreigabe bleiben Gerätenamen verborgen. Sichtbar für
+  andere wird der Rechner nie; gekoppelt wird ohne PIN-Eingabe (Mäuse, Kopfhörer, die meisten Tastaturen). Neu ist das
+  Paket `bluez` (Modul `36-bluetooth`), dazu ein Abschnitt «Bluetooth» in `zen doctor` (nur Anzahlen) und
+  `zenos-ipc leiste menue bluetooth`. Doku `docs/module/bluetooth.md`.
+
 - **Docks und Bildschirm über USB:** Steckt ein USB-C-Dock, das kein Bild bekommt, sagt zenOS einmal, warum. Am Pi 5
   und am Compute Module 5 (Argon ONE UP) kommt «Dock: kein Bild über USB-C»: Der Chip hat keinen DisplayPort-Ausgang,
   auch nicht an USB-C, daran ändert kein Treiber etwas; der Bildschirm gehört an HDMI, USB und Netzwerk am Dock gehen

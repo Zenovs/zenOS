@@ -90,6 +90,11 @@ erscheint erst nach dem Neustart, und eine SSH-Verbindung bleibt während der In
   (`app-zenos-<name>-<zeit>.scope` in `app.slice`). Ein Neustart von `zenos-shell.service` beendet sie nicht.
 - **WLAN** (`leiste/WlanQuelle.qml`, kein Dienst unter `dienste/`): spricht NetworkManager über
   `Quickshell.Networking` (D-Bus) und entsteht erst, wenn NetworkManager läuft (siehe «Netz» unten).
+- **Bluetooth** (`leiste/BluetoothQuelle.qml`, ebenso kein Dienst unter `dienste/`): spricht BlueZ über
+  `Quickshell.Bluetooth` (D-Bus) und entsteht erst, wenn `bluetooth.service` läuft. Der Abschnitt im System-Menü
+  (`BluetoothAbschnitt.qml`, Logik in `bluetooth.js`) fehlt ohne Bluetooth im Gerät (`/sys/class/bluetooth`).
+  Gekoppelt wird ohne eigenen Agenten (BlueZ nimmt dann «NoInputNoOutput»), sichtbar für andere wird der Rechner
+  nie (`docs/module/bluetooth.md`).
 - **Ordner und Ablage:** Ordner öffnet Thunar, der Dateimanager von Ubuntu (Standard für `inode/directory` in
   `/etc/xdg/labwc-mimeapps.list`, nur in der zenOS-Sitzung). Der Knopf rechts neben dem Raster und die Aktion
   «Ablage» öffnen `~/Ablage`, den einen Ordner für eigene Dateien (`docs/module/ablage.md`).
@@ -146,7 +151,7 @@ selbst endet in v0.3.1 auch bei Fehlern mit 0; `zenos-ipc` wertet die Ausgabe au
 | `raster` | `setzen(id)`, `aktiv` |
 | `hinweis` | `zeigen(text)`, `warnen(text)` |
 | `einrichtung` | `oeffnen`, `apps`, `schliessen`, `status` |
-| `leiste` | `menue(system\|raster\|wlan\|luefter)` (`wlan`: System-Menü mit aufgeklappter WLAN-Liste, `luefter`: mit Wahl des Lüfters), `schliessen`, `status` (`system`/`raster`/`zu`) |
+| `leiste` | `menue(system\|raster\|wlan\|bluetooth\|luefter)` (`wlan`: System-Menü mit aufgeklappter WLAN-Liste, `bluetooth`: mit aufgeklappter Liste der Bluetooth-Geräte, `luefter`: mit Wahl des Lüfters), `schliessen`, `status` (`system`/`raster`/`zu`) |
 | `polkit` | `status` (`offen`/`zu`), `agent` (`angemeldet`/`nicht angemeldet`), `abbrechen` |
 | `appleiste` | `zeigen` (auf dem Bildschirm des aktiven Fensters, nur wenn sie erscheinen darf), `verbergen`, `status` (`offen`/`zu`), `apps` (eine Zeile pro App: appId, Anzahl Fenster, `aktiv`) |
 | `uebersicht` | `umschalten`, `oeffnen`, `schliessen` (Fensterübersicht; öffnet nie während Sperre, Einrichtung und polkit-Dialog), `status` (`offen`/`zu`, `zu` erst nach dem Ausblenden), `fenster` (eine Zeile je Kachel: Index, appId, «Titel» bzw. bei Freigabe «Titel verborgen», dazu `aktiv`, `minimiert`, `vollbild`, `gewaehlt`) |
@@ -411,6 +416,7 @@ Systemteile, dann alle Benutzerteile.
 | `25-quickshell` | Quickshell bauen, nur wenn der Stempel fehlt oder abweicht |
 | `30-schriften` | Geist, Geist Mono, Instrument Serif |
 | `35-netzwerk` | NetworkManager fürs WLAN-Menü bereitlegen (umgestellt wird mit `zen netzwerk umstellen`), WLAN-Land, wait-online |
+| `36-bluetooth` | BlueZ für den Bluetooth-Abschnitt im System-Menü (Paket aus `pakete/bluetooth.txt`); startet `bluetooth.service` nach der ersten Installation, wenn er aktiviert ist und in diesem Start noch nie lief |
 | `40-sitzung` | greetd mit Greeter, Benutzereinheiten, Portale |
 | `42-bootsplash` | Bootsplash-Theme ablegen, nicht einschalten |
 | `45-thema` | Erscheinungsbild auf GTK, Qt, kitty, labwc und VS Code, App-Icon `zenos` |

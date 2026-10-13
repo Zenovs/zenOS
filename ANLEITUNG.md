@@ -754,6 +754,18 @@ systemctl --user start zenos-shell.service
   linux-firmware-raspi` und `systemctl is-enabled rpi-eeprom-update.service` (spielt Ubuntu ein neues EEPROM von
   selbst ein?).
 
+**Bluetooth (Einzelheiten in `docs/module/bluetooth.md`)**
+- [ ] System-Menü oben rechts: Unter dem WLAN steht «Bluetooth» mit Schalter. Ausschalten: Symbol wird
+  `bluetooth-aus`, die Geräte verschwinden; einschalten: alles ist wieder da.
+- [ ] «Weitere Geräte» aufklappen: «Suche Geräte …», nach einigen Sekunden erscheinen Geräte mit Namen in der Nähe.
+  Zuklappen beendet die Suche (`bluetoothctl show` zeigt «Discovering: no»).
+- [ ] Eine Bluetooth-Maus oder Kopfhörer in den Kopplungsmodus bringen und in der Liste wählen: «koppelt …», dann
+  «verbindet …», danach steht das Gerät oben mit Haken (und Akku, wenn es ihn meldet). Nach einem Neustart verbindet
+  es sich von selbst.
+- [ ] Klick auf das verbundene Gerät: ««Name» trennen?», zweiter Klick trennt. «x» und zweimal klicken vergisst es.
+- [ ] Bildschirm freigeben (etwa in Chrome): «Gerätename verborgen», die Liste lässt sich nicht aufklappen.
+- [ ] `zen doctor`, Abschnitt «Bluetooth»: Dienst läuft, Adapter an, für andere nicht sichtbar, Anzahl der Geräte.
+
 **Docks und Bildschirm über USB (Einzelheiten in `docs/module/dock.md`)**
 - [ ] USB-C-Dock (mit Bildschirm daran) in die USB-C-Buchse mit Daten stecken: Nach wenigen Sekunden kommt einmal die
   Mitteilung «Dock: kein Bild über USB-C» von zenOS. Netzwerk und USB am Dock gehen.
