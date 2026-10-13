@@ -1,0 +1,3 @@
+# Bluetooth: BlueZ (bluetoothd, bluetoothctl) für den Bluetooth-Abschnitt im System-Menü (shell/leiste/BluetoothQuelle.qml
+# über Quickshell.Bluetooth, scripts/module/36-bluetooth.sh, docs/module/bluetooth.md). Ohne Empfehlungen.
+bluez
