@@ -36,9 +36,9 @@
 #   auch Typen im eigenen Ordner wie Quickshell). Die Meldungen nennen wieder die Pfade unter shell/.
 #   «uncreatable-type» ist abgeschaltet (Quickshell-Fenstertypen erscheinen fälschlich so).
 #   Fehler: Syntaxfehler und andere kritische Meldungen. Alle anderen Befunde sind Warnungen und
-#   lassen den Test nicht scheitern (Liste mit --ausfuehrlich). Fünf bekannte Fehlalarme aus Quickshells
+#   lassen den Test nicht scheitern (Liste mit --ausfuehrlich). Sechs bekannte Fehlalarme aus Quickshells
 #   Typdaten (FileView.adapter, Process.onExited, Notification.actions, PolkitAgent.flow,
-#   PanelWindow.margins) bleiben immer Warnungen und werden getrennt gezählt. Doppelte ids («syntax.duplicate-ids») sind Warnungen: qmllint 6.10
+#   Bluetooth.defaultAdapter, PanelWindow.margins) bleiben immer Warnungen und werden getrennt gezählt. Doppelte ids («syntax.duplicate-ids») sind Warnungen: qmllint 6.10
 #   meldet sie auch für getrennte implizite Komponenten (zwei Delegates mit derselben id), die die QML-Engine
 #   annimmt; eine echte Doppelung lädt nicht («id is not unique») und fällt im Teil start auf.
 #   Ohne Quickshell-Module (/usr/local/lib/qt6/qml/Quickshell, z. B. in CI) zählen nur echte Syntaxfehler
@@ -605,6 +605,8 @@ BEKANNT = [
     re.compile(r'Type "QList<qs::service::notifications::NotificationAction\*>"'),
     # PolkitAgent.flow: die Typdaten nennen «AuthFlow» ohne Namensraum, exportiert ist qs::service::polkit::AuthFlow
     re.compile(r'Type "AuthFlow" of property "flow" not found'),
+    # Bluetooth.defaultAdapter: ebenso «BluetoothAdapter» ohne Namensraum, exportiert ist qs::bluetooth::BluetoothAdapter
+    re.compile(r'Type "BluetoothAdapter" of property "defaultAdapter" not found'),
 ]
 # PanelWindow.margins: gruppierte Eigenschaft ohne Typdaten. qmllint meldet die Gruppe und jede Kante darin
 # (auch in der Blockform «margins { top: … }», deshalb bis sechs Zeilen danach).
@@ -756,10 +758,12 @@ START_RUNDGANG=(
   "befehlsfeld status → offen"
   "befehlsfeld ansicht → apps"
   "befehlsfeld schliessen"
-  # System-Menü, auch mit aufgeklappter WLAN-Liste (ohne NetworkManager: Anzeige und Hinweis) und Wahl des Lüfters
+  # System-Menü, auch mit aufgeklappter WLAN-Liste (ohne NetworkManager: Anzeige und Hinweis), Liste der
+  # Bluetooth-Geräte (ohne BlueZ: Hinweis bzw. kein Abschnitt) und Wahl des Lüfters
   # (ohne zenos-argon: keine Lüfterzeile)
   "leiste menue system"
   "leiste menue wlan"
+  "leiste menue bluetooth"
   "leiste menue luefter"
   "leiste schliessen"
   "mitteilungen zentrale"

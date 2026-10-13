@@ -11,6 +11,7 @@ import qs.dienste
 // Raster-Menü. Modus- und Zustandswahl (Oberflaeche.modusWahlOffen/zustandWahlOffen) zeigt
 // modi/Umschalter.qml, die Zentrale (Oberflaeche.zentraleOffen) mitteilungen/Mitteilungen.qml.
 // WLAN: WlanQuelle (NetworkManager über Quickshell.Networking) entsteht erst, wenn NetworkManager läuft.
+// Bluetooth: BluetoothQuelle (BlueZ über Quickshell.Bluetooth) entsteht erst, wenn bluetooth.service läuft.
 Scope {
     id: root
 
@@ -23,6 +24,8 @@ Scope {
     property bool menueWlanOffen: false
     // System-Menü mit aufgeklappter Wahl des Lüfters öffnen (zenos-ipc leiste menue luefter)
     property bool menueLuefterOffen: false
+    // System-Menü mit aufgeklappter Liste der Bluetooth-Geräte öffnen (zenos-ipc leiste menue bluetooth)
+    property bool menueBluetoothOffen: false
 
     // NetworkManager läuft (geprüft beim Start und beim Öffnen des System-Menüs, bis er einmal lief). Erst dann
     // entsteht WlanQuelle: Quickshell wählt sein Netz-Backend beim ersten Zugriff und behält es bis zum Neustart.
@@ -30,9 +33,23 @@ Scope {
     // WlanQuelle oder null
     readonly property var wlan: wlanLader.item ?? null
 
+    // bluetooth.service läuft (geprüft wie NetworkManager, bis es einmal lief) und das Gerät hat Bluetooth
+    // (/sys/class/bluetooth, für den Hinweis, wenn BlueZ nicht läuft)
+    property bool btLaeuft: false
+    property bool btGeraet: false
+    // BluetoothQuelle oder null
+    readonly property var bluetooth: btLader.item ?? null
+
     function _nmPruefen(): void {
         if (!nmLaeuft && !nmPruefung.running)
             nmPruefung.running = true;
+    }
+
+    function _btPruefen(): void {
+        if (!btLaeuft && !btPruefung.running)
+            btPruefung.running = true;
+        if (!btGeraet && !btGeraetPruefung.running)
+            btGeraetPruefung.running = true;
     }
 
     // umschalten: ein zweiter Klick auf denselben Knopf schliesst das Menü wieder
@@ -61,6 +78,7 @@ Scope {
             Kanal.aktualisieren();
             Basis.aktualisieren();
             _nmPruefen();
+            _btPruefen();
         }
     }
 
@@ -68,6 +86,7 @@ Scope {
         menue = "";
         menueWlanOffen = false;
         menueLuefterOffen = false;
+        menueBluetoothOffen = false;
     }
 
     // Nur der Zustand des Dienstes (Argumentliste, keine Shell); Exit 0 = läuft
@@ -75,6 +94,30 @@ Scope {
         id: nmPruefung
 
         command: ["systemctl", "is-active", "--quiet", "NetworkManager.service"]
+    }
+
+    Process {
+        id: btPruefung
+
+        command: ["systemctl", "is-active", "--quiet", "bluetooth.service"]
+    }
+
+    // Bluetooth im Gerät: ein Eintrag unter /sys/class/bluetooth (z. B. hci0)
+    Process {
+        id: btGeraetPruefung
+
+        command: ["ls", "-1", "/sys/class/bluetooth"]
+        stdout: StdioCollector {
+            onStreamFinished: root.btGeraet = text.trim() !== ""
+        }
+    }
+
+    // Wie WlanQuelle: Fehlt Quickshell.Bluetooth oder hat BluetoothQuelle einen Fehler, bleibt die Leiste stehen
+    LazyLoader {
+        id: btLader
+
+        active: root.btLaeuft
+        source: "BluetoothQuelle.qml"
     }
 
     // Über «source» geladen: Fehlt Quickshell.Networking oder hat WlanQuelle einen Fehler, bleibt die Leiste stehen
@@ -92,7 +135,12 @@ Scope {
             if (code === 0)
                 root.nmLaeuft = true;
         });
+        btPruefung.exited.connect(code => {
+            if (code === 0)
+                root.btLaeuft = true;
+        });
         root._nmPruefen();
+        root._btPruefen();
     }
 
     // Bildschirm mit offenem Menü für die anderen Oberflächen (leer = keins)
@@ -204,6 +252,9 @@ Scope {
                         wlanQuelle: root.wlan
                         wlanNmLaeuft: root.nmLaeuft
                         wlanOffen: root.menueWlanOffen
+                        bluetoothQuelle: root.bluetooth
+                        bluetoothGeraet: root.btGeraet
+                        bluetoothOffen: root.menueBluetoothOffen
                         luefterOffen: root.menueLuefterOffen
                         onSchliessen: root.menueSchliessen()
                     }
@@ -259,22 +310,23 @@ Scope {
         }
     }
 
-    // zenos-ipc leiste menue system|raster|wlan|luefter · zenos-ipc leiste schliessen · zenos-ipc leiste status
-    // (für Tests und eigene Tastenkürzel; öffnet auf dem ersten Bildschirm; «wlan» bzw. «luefter» ist das System-Menü
-    // mit aufgeklappter WLAN-Liste bzw. Wahl des Lüfters)
+    // zenos-ipc leiste menue system|raster|wlan|bluetooth|luefter · zenos-ipc leiste schliessen · zenos-ipc leiste status
+    // (für Tests und eigene Tastenkürzel; öffnet auf dem ersten Bildschirm; «wlan», «bluetooth» bzw. «luefter» ist das
+    // System-Menü mit aufgeklappter WLAN-Liste, Liste der Bluetooth-Geräte bzw. Wahl des Lüfters)
     IpcHandler {
         target: "leiste"
 
         function menue(name: string): void {
-            if (["system", "raster", "wlan", "luefter"].indexOf(name) < 0)
+            if (["system", "raster", "wlan", "bluetooth", "luefter"].indexOf(name) < 0)
                 return;
             const instanz = leisten.instances.length > 0 ? leisten.instances[0] : null;
             if (!instanz)
                 return;
-            if (name === "wlan" || name === "luefter") {
+            if (name === "wlan" || name === "bluetooth" || name === "luefter") {
                 // neu aufbauen, damit die Liste bzw. Wahl aufgeklappt beginnt
                 root.menueSchliessen();
                 root.menueWlanOffen = name === "wlan";
+                root.menueBluetoothOffen = name === "bluetooth";
                 root.menueLuefterOffen = name === "luefter";
                 name = "system";
             }

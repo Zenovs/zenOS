@@ -6,7 +6,8 @@ import qs.dienste
 import qs.komponenten
 
 // System-Menü unter dem System-Knopf der Leiste: Netz mit WLAN (WlanAbschnitt: Netz wählen, verbinden,
-// vergessen, WLAN ein/aus über NetworkManager), Lautstärke mit Regler und Stumm, 1Password, dann das Gerät
+// vergessen, WLAN ein/aus über NetworkManager), Bluetooth (BluetoothAbschnitt: ein/aus, Geräte koppeln, verbinden,
+// trennen, vergessen über BlueZ; fehlt ohne Bluetooth im Gerät), Lautstärke mit Regler und Stumm, 1Password, dann das Gerät
 // (Akku und CPU-Temperatur als Anzeige; Lüfter mit aufklappbarer Wahl «Auto · 1 · 2 · 3 · 4», LuefterAbschnitt),
 // dann Sperren, Bildschirm aus, Einstellungen, Abmelden, Neustart und Ausschalten. Läuft gerade ein Update aus dem
 // Kanal oder der Basis (install.sh bzw. apt mit Block-Inhibitor), steht bei Neustart und Ausschalten «Update läuft»:
@@ -20,6 +21,11 @@ Menuekarte {
     property bool wlanNmLaeuft: false
     // Liste der WLANs gleich aufgeklappt (zenos-ipc leiste menue wlan)
     property bool wlanOffen: false
+    // BluetoothQuelle aus Leiste.qml (null, solange bluetooth.service nicht läuft) und ob das Gerät Bluetooth hat
+    property var bluetoothQuelle: null
+    property bool bluetoothGeraet: false
+    // Liste der Bluetooth-Geräte gleich aufgeklappt (zenos-ipc leiste menue bluetooth)
+    property bool bluetoothOffen: false
     // Wahl des Lüfters gleich aufgeklappt (zenos-ipc leiste menue luefter)
     property bool luefterOffen: false
 
@@ -101,6 +107,20 @@ Menuekarte {
         quelle: root.wlanQuelle
         nmLaeuft: root.wlanNmLaeuft
         offen: root.wlanOffen
+    }
+
+    // --- Bluetooth ---
+
+    Abschnitt {
+        visible: bluetooth.visible
+    }
+
+    BluetoothAbschnitt {
+        id: bluetooth
+
+        quelle: root.bluetoothQuelle
+        geraetDa: root.bluetoothGeraet
+        offen: root.bluetoothOffen
     }
 
     Abschnitt {}

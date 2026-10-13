@@ -60,5 +60,12 @@ var daten = {
     "datei": { d: "M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6", strich: 1.7 },
     "ordner": { d: "M5 4h3.9a2 2 0 0 1 1.66.9l.88 1.3a2 2 0 0 0 1.66.9H19a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z", strich: 1.7 },
     // Paket (zen Installer): Kiste von schräg oben mit einem Band über den Deckel
-    "paket": { d: "M12 3l8 4.5v9L12 21l-8-4.5v-9zM4 7.5l8 4.5 8-4.5M12 12v9M8 5.25l8 4.5", strich: 1.7 }
+    "paket": { d: "M12 3l8 4.5v9L12 21l-8-4.5v-9zM4 7.5l8 4.5 8-4.5M12 12v9M8 5.25l8 4.5", strich: 1.7 },
+    // Bluetooth (System-Menü): die Rune, «aus» mit dem Strich und dort unterbrochen
+    "bluetooth": { d: "M7 7l10 10-5 5V2l5 5L7 17", strich: 1.8 },
+    "bluetooth-aus": { d: "M17 17l-5 5V12l-5 5M2 2l20 20M14.5 9.5L17 7l-5-5v4.5", strich: 1.8 },
+    // Geräte an Bluetooth: Maus (Körper mit Rad), Tastatur (Tasten und Leertaste), Kopfhörer (Bügel und Muscheln)
+    "maus": { d: "M12 2a7 7 0 0 1 7 7v6a7 7 0 0 1 -14 0v-6a7 7 0 0 1 7 -7zM12 6v4", strich: 1.7 },
+    "tastatur": { d: "M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-16a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2zM6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10", strich: 1.7 },
+    "kopfhoerer": { d: "M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3", strich: 1.7 }
 };
