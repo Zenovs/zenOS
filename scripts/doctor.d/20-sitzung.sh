@@ -18,11 +18,15 @@ _sitzung_gleich() { [[ -f "$2" ]] && cmp -s -- "$1" "$2"; }
 
 _sitzung_pakete() {
   abschnitt "Pakete"
-  local datei zeile wort anzahl=0
+  local datei zeile wort anzahl=0 arch nur
   local -a woerter fehlend=()
   local -A gesehen=()
+  arch=$(dpkg --print-architecture 2> /dev/null) || arch=""
   for datei in "$_sitzung_code"/scripts/pakete/*.txt; do
     [[ -f "$datei" && "$(basename -- "$datei")" != quickshell-bau.txt ]] || continue
+    # «# architektur: …» wie pakete_liste_gilt in scripts/lib/gemeinsam.sh: Listen anderer Architekturen zählen nicht
+    nur=$(sed -n 's/^#[[:space:]]*architektur:[[:space:]]*//p' -- "$datei" | head -n 1)
+    [[ -z "$nur" || -z "$arch" || " $nur " == *" $arch "* ]] || continue
     while IFS= read -r zeile || [[ -n "$zeile" ]]; do
       read -ra woerter <<< "${zeile%%#*}"
       for wort in "${woerter[@]}"; do

@@ -298,6 +298,16 @@ paket_installiert() {
   [[ "$status" == installed ]]
 }
 
+# Gilt eine Paketliste (scripts/pakete/*.txt) für diesen Rechner? Eine Zeile «# architektur: arm64 …» beschränkt
+# sie auf diese Architekturen (dpkg --print-architecture); ohne die Zeile gilt sie überall.
+pakete_liste_gilt() {
+  local datei=$1 zeile arch
+  zeile=$(sed -n 's/^#[[:space:]]*architektur:[[:space:]]*//p' -- "$datei" | head -n 1)
+  [[ -n "$zeile" ]] || return 0
+  arch=$(dpkg --print-architecture 2>/dev/null) || return 0
+  [[ " $zeile " == *" $arch "* ]]
+}
+
 apt_quellen_geaendert() { _ZENOS_APT_AKTUELL=0; }
 
 _zenos_apt() {

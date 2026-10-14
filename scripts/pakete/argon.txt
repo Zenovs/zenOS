@@ -1,4 +1,6 @@
 # M13 · Argon ONE (zenos-argon)
+# architektur: arm64
+# Nur auf dem Pi: Auf x86 startet zenos-argon nicht (ConditionArchitecture=arm64), die Pakete brauchte dort niemand.
 # Lüfter über I2C: Python-Modul smbus; i2cget für zen doctor
 python3-smbus
 i2c-tools

@@ -3,7 +3,7 @@
 # shellcheck shell=bash
 #
 # Liest scripts/pakete/*.txt (ein Paket pro Zeile, «#» Kommentar) ausser quickshell-bau.txt und installiert
-# nur, was fehlt. Pakete starten ihre Dienste dabei nicht (policy-rc.d in pakete_sicherstellen), greetd
+# nur, was fehlt. Eine Liste mit «# architektur: …» gilt nur auf diesen Architekturen (pakete_liste_gilt). Pakete starten ihre Dienste dabei nicht (policy-rc.d in pakete_sicherstellen), greetd
 # läuft also erst nach dem Neustart. Fehlt ein Paket in
 # den Paketquellen (z. B. nicht für diese Architektur), wird es mit einer Warnung übersprungen, statt die
 # ganze Installation aufzuhalten.
@@ -69,6 +69,7 @@ _pakete_liste() {
     [[ -f "$datei" ]] || continue
     name=$(basename -- "$datei")
     [[ "$name" != quickshell-bau.txt ]] || continue
+    pakete_liste_gilt "$datei" || continue
     while IFS= read -r zeile || [[ -n "$zeile" ]]; do
       read -ra woerter <<< "${zeile%%#*}"
       for wort in "${woerter[@]}"; do

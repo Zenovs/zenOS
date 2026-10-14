@@ -17,13 +17,15 @@
 modul_system() {
   local einheit=zenos-argon.service zeile
   local -a pakete=()
-  # Die Pakete installiert 20-pakete gesammelt; hier nur nachziehen, falls etwas fehlt.
-  while IFS= read -r zeile || [[ -n "$zeile" ]]; do
-    zeile=${zeile%%#*}
-    zeile=${zeile//[[:space:]]/}
-    [[ -n "$zeile" ]] && pakete+=("$zeile")
-  done < "$ZENOS_CODE/scripts/pakete/argon.txt"
-  pakete_sicherstellen "${pakete[@]}"
+  # Die Pakete installiert 20-pakete gesammelt; hier nur nachziehen, falls etwas fehlt (nur auf arm64, siehe Liste).
+  if pakete_liste_gilt "$ZENOS_CODE/scripts/pakete/argon.txt"; then
+    while IFS= read -r zeile || [[ -n "$zeile" ]]; do
+      zeile=${zeile%%#*}
+      zeile=${zeile//[[:space:]]/}
+      [[ -n "$zeile" ]] && pakete+=("$zeile")
+    done < "$ZENOS_CODE/scripts/pakete/argon.txt"
+    pakete_sicherstellen "${pakete[@]}"
+  fi
 
   datei_installieren "$ZENOS_CODE/system/systemd/system/$einheit" "/etc/systemd/system/$einheit" 0644 root:root
   dienst_aktivieren "$einheit"
