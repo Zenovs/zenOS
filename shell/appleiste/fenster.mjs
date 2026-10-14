@@ -122,3 +122,22 @@ export function buchstabe(name) {
     const zeichen = Array.from(String(name ?? "").trim());
     return zeichen.length > 0 ? zeichen[0].toUpperCase() : "";
 }
+
+// Ist der rechte Rand dieses Bildschirms eine Wand, also liegt rechts daneben kein anderer Bildschirm? Nur dort sitzt
+// die Auslösezone: Bei zwei Bildschirmen nebeneinander läuft der Zeiger über den inneren Rand einfach hinüber, die
+// 1-px-Zone wäre dort kaum zu treffen und stünde beim Wechsel im Weg. Bildschirme wie ShellScreen aus Quickshell
+// (name, x, y, width, height in logischen Pixeln); 1 px Spiel für Rundungen bei Skalierung. Ohne Bildschirm: false.
+export function randAussen(bildschirm, alle) {
+    if (!bildschirm)
+        return false;
+    const rechts = bildschirm.x + bildschirm.width;
+    for (const anderer of alsListe(alle)) {
+        if (!anderer || anderer.name === bildschirm.name)
+            continue;
+        const nebenan = Math.abs(anderer.x - rechts) <= 1;
+        const ueberlappt = anderer.y < bildschirm.y + bildschirm.height && anderer.y + anderer.height > bildschirm.y;
+        if (nebenan && ueberlappt)
+            return false;
+    }
+    return true;
+}

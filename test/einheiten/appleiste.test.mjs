@@ -4,7 +4,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-    alsListe, appSchluessel, buchstabe, gruppieren, istOberflaeche, nameOhneStarter, verlaufNachfuehren, webAppHost, ziel
+    alsListe, appSchluessel, buchstabe, gruppieren, istOberflaeche, nameOhneStarter, randAussen, verlaufNachfuehren,
+    webAppHost, ziel
 } from "../../shell/appleiste/fenster.mjs";
 
 // Fenster wie Toplevel aus Quickshell: nur appId zählt, verglichen wird die Identität
@@ -165,4 +166,38 @@ test("Name ohne Starter und Anfangsbuchstabe", () => {
     assert.equal(buchstabe("𝔸pp"), "𝔸");
     assert.equal(buchstabe(""), "");
     assert.equal(buchstabe(null), "");
+});
+
+// Bildschirme wie ShellScreen: name, x, y, width, height
+function schirm(name, x, y, width, height) {
+    return { name: name, x: x, y: y, width: width, height: height };
+}
+
+test("Auslösezone nur am äusseren rechten Rand", () => {
+    const links = schirm("DP-1", 0, 0, 1920, 1080);
+    const rechts = schirm("HDMI-A-1", 1920, 0, 2560, 1440);
+    assert.equal(randAussen(links, [links]), true);
+    assert.equal(randAussen(links, [links, rechts]), false);
+    assert.equal(randAussen(rechts, [links, rechts]), true);
+});
+
+test("Auslösezone: übereinander, versetzt und skaliert", () => {
+    const unten = schirm("eDP-1", 0, 1080, 1920, 1200);
+    const oben = schirm("DP-1", 0, 0, 1920, 1080);
+    assert.equal(randAussen(unten, [unten, oben]), true);
+    // rechts daneben, aber ganz unterhalb: kein Nachbar
+    const tief = schirm("DP-2", 1920, 1200, 1920, 1080);
+    assert.equal(randAussen(oben, [oben, tief]), true);
+    // halb überlappend: Nachbar
+    const versetzt = schirm("DP-3", 1920, 540, 1920, 1080);
+    assert.equal(randAussen(oben, [oben, versetzt]), false);
+    // Rundung bei Skalierung 1,5: 1 px Spiel
+    const skaliert = schirm("DP-4", 1281, 0, 1280, 720);
+    assert.equal(randAussen(schirm("eDP-1", 0, 0, 1280, 800), [skaliert]), false);
+});
+
+test("Auslösezone ohne Bildschirm oder Liste", () => {
+    assert.equal(randAussen(null, []), false);
+    assert.equal(randAussen(schirm("DP-1", 0, 0, 800, 600), undefined), true);
+    assert.equal(randAussen(schirm("DP-1", 0, 0, 800, 600), { length: 1, 0: schirm("DP-1", 0, 0, 800, 600) }), true);
 });

@@ -9,8 +9,8 @@ import qs.dienste
 import "fenster.mjs" as Fenster
 
 // App-Leiste am rechten Rand: ein Symbol pro offener App, ein Klick holt sie nach vorne. Auch über Vollbild-Fenstern
-// (Ebene Overlay; labwc legt Vollbild nur über die Ebene Top). Sonst ist nichts zu sehen: Pro Bildschirm liegt im
-// mittleren Drittel des rechten Rands eine unsichtbare Auslösezone von 1 px. Verweilt der Zeiger dort
+// (Ebene Overlay; labwc legt Vollbild nur über die Ebene Top). Sonst ist nichts zu sehen: Auf jedem Bildschirm, rechts
+// von dem kein anderer liegt, sitzt im mittleren Drittel des rechten Rands eine unsichtbare Auslösezone von 1 px. Verweilt der Zeiger dort
 // root.verweilen ms, gleitet die Karte herein; verlässt er Karte und Zone, verschwindet sie nach root.gnadenfrist ms,
 // ebenso nach einem Klick auf eine App. Nie während Sperre und Einrichtung; offene Menüs, Befehlsfeld, Wahl,
 // Zentrale und Fensterübersicht gehen vor. Mausbedienung, keine Tastatur (das Befehlsfeld ist die Zentrale).
@@ -147,6 +147,8 @@ Scope {
             property string bildschirmName: ""
             readonly property bool hier: root.offenAuf !== "" && root.offenAuf === bildschirmName
             readonly property int hoehe: modelData?.height ?? 0
+            // Rechts daneben liegt kein anderer Bildschirm: nur dann gibt es hier eine Auslösezone (fenster.mjs)
+            readonly property bool randAussen: Fenster.randAussen(modelData, Quickshell.screens)
             // Zeiger in der Auslösezone bzw. über Karte und Randstreifen
             property bool amRand: false
             property bool ueberLeiste: false
@@ -232,7 +234,7 @@ Scope {
             // wenigsten weg (z. B. die Bildlaufleiste eines Browsers).
             PanelWindow {
                 screen: proBildschirm.modelData
-                visible: root.bereit
+                visible: root.bereit && proBildschirm.randAussen
                 anchors.right: true
                 implicitWidth: 1
                 implicitHeight: Math.max(1, Math.round(proBildschirm.hoehe / 3))
