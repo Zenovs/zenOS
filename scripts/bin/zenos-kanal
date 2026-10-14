@@ -346,6 +346,7 @@ CONSENT_PATHS = (
     "scripts/zen.d/bootsplash.sh",
     "scripts/pakete/bootsplash.txt",
     "system/plymouth/",
+    "system/grub/",
 )
 CONSENT_GROUPS = ("firewall", "netz", "boot")
 PATTERN_RE = re.compile(r"[A-Za-z0-9._][A-Za-z0-9._*/-]{0,199}")

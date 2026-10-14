@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 72-kennung: Systemkennung zenOS – zenos-kennung und apt-Hook, Stand (Umlenkungen, os-release aktuell, Begrüssung,
-# Verweise), Codenamen wie Ubuntu, ausstehendes base-files-Update, apt-check von update-notifier
+# Verweise), GRUB mit dem Namen Ubuntu, Codenamen wie Ubuntu, ausstehendes base-files-Update, apt-check von
+# update-notifier
 # shellcheck shell=bash
 #
 # Die Sicherheitsquelle selbst prüft 70-sicherheit (zenos-sicherheitsquelle). Ausgegeben werden nur Namen und
@@ -11,6 +12,7 @@ pruefe_kennung() {
   _kennung_werkzeug || return 0
   _kennung_stand
   [[ "$(os_release_wert ID)" == zenos ]] || return 0
+  _kennung_grub
   _kennung_codenamen
   _kennung_verweise
   _kennung_base_files
@@ -48,6 +50,30 @@ _kennung_werkzeug() {
     warnung "$hook fehlt – die Kennung zieht nach Updates von base-files nicht nach (install.sh)"
   elif [[ -r /opt/zenos/system/apt/60zenos-kennung ]] && ! cmp -s "$hook" /opt/zenos/system/apt/60zenos-kennung; then
     warnung "$hook weicht vom Stand in /opt/zenos ab (install.sh stellt ihn wieder her)"
+  fi
+}
+
+# Mit GRUB (x86): Das Drop-in hält GRUB_DISTRIBUTOR bei Ubuntu (scripts/module/72-kennung.sh). Ohne es legte das
+# nächste grub-install einen EFI-Eintrag «zenOS» an. Gelesen wird nur, nichts ausgeführt.
+_kennung_grub() {
+  local dropin=/etc/default/grub.d/zenos-distributor.cfg datei spaeter=""
+  [[ -f /etc/default/grub ]] || return 0
+  if [[ ! -f "$dropin" ]]; then
+    fehler "$dropin fehlt – mit der Kennung zenOS legte das nächste grub-install einen EFI-Eintrag «zenOS» an (install.sh)"
+    return 0
+  fi
+  if [[ -r /opt/zenos/system/grub/zenos-distributor.cfg ]] && ! cmp -s "$dropin" /opt/zenos/system/grub/zenos-distributor.cfg; then
+    warnung "$dropin weicht vom Stand in /opt/zenos ab (install.sh stellt ihn wieder her)"
+  fi
+  # Eine später gelesene Datei könnte den Namen wieder überschreiben
+  for datei in /etc/default/grub.d/*.cfg; do
+    [[ -f "$datei" && "$datei" > "$dropin" ]] || continue
+    if grep -qE '^[[:space:]]*(export[[:space:]]+)?GRUB_DISTRIBUTOR=' -- "$datei" 2>/dev/null; then spaeter=$datei; fi
+  done
+  if [[ -n "$spaeter" ]]; then
+    warnung "$spaeter setzt GRUB_DISTRIBUTOR nach $dropin – der Name im Bootloader ist dann nicht mehr Ubuntu"
+  else
+    ok "GRUB behält den Namen Ubuntu (EFI/ubuntu)"
   fi
 }
 

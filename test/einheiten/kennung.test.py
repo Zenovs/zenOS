@@ -466,5 +466,56 @@ class Durchlauf(unittest.TestCase):
         self.assertEqual(self.lauf("pruefen").returncode, 0)
 
 
+class Grub(unittest.TestCase):
+    """x86: GRUB_DISTRIBUTOR bleibt Ubuntu (system/grub/zenos-distributor.cfg, _kennung_grub in 72-kennung)."""
+
+    DROPIN = os.path.join(WURZEL, "system", "grub", "zenos-distributor.cfg")
+    DOCTOR = os.path.join(WURZEL, "scripts", "doctor.d", "72-kennung.sh")
+
+    def test_dropin_setzt_nur_den_namen(self):
+        with open(self.DROPIN, encoding="utf-8") as f:
+            zeilen = [z.strip() for z in f if z.strip() and not z.lstrip().startswith("#")]
+        self.assertEqual(zeilen, ["GRUB_DISTRIBUTOR=Ubuntu"])
+
+    def test_vor_der_umstellung_und_nur_mit_grub(self):
+        with open(MODUL, encoding="utf-8") as f:
+            text = f.read()
+        ablauf = text[text.index("modul_system() {"):]
+        ablauf = ablauf[:ablauf.index("\n}\n")]
+        self.assertLess(ablauf.index("_kennung_grub"), ablauf.index("_kennung_umstellen"))
+        self.assertLess(ablauf.index("_kennung_grub"), ablauf.index("_kennung_werkzeug"))
+        funktion = text[text.index("_kennung_grub() {"):]
+        funktion = funktion[:funktion.index("\n}\n")]
+        self.assertIn("[[ -f /etc/default/grub ]] || return 0", funktion)
+        self.assertIn("/etc/default/grub.d/zenos-distributor.cfg", funktion)
+
+    def test_modul_ohne_grub_und_mit_grub(self):
+        skript = r"""
+set -Eeuo pipefail
+datei_installieren() { printf '%s\n' "$*"; }
+source "$1"
+_kennung_grub
+"""
+        # Ob /etc/default/grub da ist, entscheidet der Rechner, auf dem der Test läuft (CI: ja, Pi und Mac: nein)
+        r = subprocess.run(["bash", "-c", skript, "test", MODUL], capture_output=True, text=True, timeout=30,
+                           check=False, env=dict(os.environ, ZENOS_CODE="/opt/zenos"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        if os.path.exists("/etc/default/grub"):
+            self.assertEqual(r.stdout, "/opt/zenos/system/grub/zenos-distributor.cfg "
+                             "/etc/default/grub.d/zenos-distributor.cfg 0644 root:root\n")
+        else:
+            self.assertEqual(r.stdout, "")
+
+    def test_rueckfrage_pfad_boot(self):
+        with open(os.path.join(WURZEL, "scripts", "lib", "sensible-pfade"), encoding="utf-8") as f:
+            self.assertIn("boot system/grub/\n", f.read())
+
+    def test_doctor_prueft_dropin(self):
+        with open(self.DOCTOR, encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn("_kennung_grub", text)
+        self.assertIn("/etc/default/grub.d/zenos-distributor.cfg", text)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

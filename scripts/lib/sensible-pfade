@@ -37,6 +37,7 @@ boot scripts/module/42-bootsplash.sh
 boot scripts/zen.d/bootsplash.sh
 boot scripts/pakete/bootsplash.txt
 boot system/plymouth/
+boot system/grub/
 
 anmeldung system/pam/
 anmeldung system/polkit/

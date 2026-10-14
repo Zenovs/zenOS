@@ -11,6 +11,8 @@
 # - Version für os-release: /usr/local/share/zenos/version aus «git describe» von /opt/zenos, ohne «v» und «-dirty»
 #   (auf dev nach einem Tag ehrlich als «0.1.0-rc2-18-g<commit>», auf einem Tag «0.1.0»).
 # - Logo «zenos» (LOGO=zenos) als /usr/local/share/icons/hicolor/scalable/apps/zenos.svg (App-Icon der Bildmarke).
+# - Mit GRUB (x86): /etc/default/grub.d/zenos-distributor.cfg hält GRUB_DISTRIBUTOR bei Ubuntu, vor jeder Umstellung
+#   (_kennung_grub). Sonst legte das nächste grub-install einen EFI-Eintrag «zenOS» an.
 # - Vorab-Prüfung vor jeder Umstellung: die neue os-release zuerst in den Temp-Ordner, dann
 #   «LSB_OS_RELEASE=<neu> zenos-sicherheitsquelle». Läuft nach 70-sicherheit, damit 51zenos-ubuntu-quellen schon liegt.
 #     Exit 0 → «zenos-kennung einrichten» (idempotent: nur, was fehlt oder veraltet ist).
@@ -27,6 +29,7 @@ _KENNUNG_PROGRAMM=/usr/local/sbin/zenos-kennung
 
 modul_system() {
   _kennung_rechtliches
+  _kennung_grub
   _kennung_werkzeug || return 0
   _kennung_version
   datei_installieren "$ZENOS_CODE/assets/zeichen/zenos-app-icon.svg" \
@@ -42,6 +45,16 @@ _kennung_rechtliches() {
   datei_installieren "$ZENOS_CODE/LICENSE" "$ziel/copyright" 0644 root:root
   datei_installieren "$ZENOS_CODE/system/doc/RECHTLICHES" "$ziel/RECHTLICHES" 0644 root:root
   datei_installieren "$ZENOS_CODE/system/doc/QUELLEN" "$ziel/QUELLEN" 0644 root:root
+}
+
+# GRUB (x86): Ubuntu leitet GRUB_DISTRIBUTOR aus NAME in os-release ab, daraus EFI/<name> und den EFI-Eintrag. Mit
+# NAME="zenOS" legte das nächste grub-install (Update von grub oder shim) still einen neuen EFI-Eintrag an. Das Drop-in
+# hält den Namen bei Ubuntu, und zwar vor jeder Umstellung; bleibt die Kennung Ubuntu, ändert es nichts. Ohne GRUB
+# (Pi: Start über die Firmware) entfällt es.
+_kennung_grub() {
+  [[ -f /etc/default/grub ]] || return 0
+  datei_installieren "$ZENOS_CODE/system/grub/zenos-distributor.cfg" /etc/default/grub.d/zenos-distributor.cfg \
+    0644 root:root
 }
 
 # Root führt das Programm aus: Jeder Ordner auf dem Weg gehört root und ist nur für root schreibbar
