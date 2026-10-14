@@ -1,0 +1,28 @@
+zenOS – Installer-Stick für x86-Rechner (amd64)
+================================================
+
+Dieser Stick ist das offizielle Ubuntu-Server-ISO mit zwei Zusätzen:
+
+  /autoinstall.yaml       automatische Installation (Ubuntu-Installer, «autoinstall»)
+  /zenos/einrichten.sh    richtet zenOS am Ende der Installation ein
+  /zenos/stand            welcher Stand von zenOS (Tag, Commit, Kanal)
+  /zenos/zenos.bundle     der Code von zenOS zu diesem Stand (git bundle)
+
+Gebaut mit image/x86-stick.sh aus dem Repo https://github.com/Zenovs/zenOS. Der Tag war beim Bau gültig signiert
+(image/tag-pruefen.sh) und wird im installierten System noch einmal geprüft. Bootteile und Pakete sind die von Ubuntu.
+
+Ablauf am Rechner:
+  1. Vom Stick starten. Die Frage, ob die automatische Installation laufen soll, bestätigen.
+  2. Sprache, Tastatur und Netz wählen. Ohne Netz geht es nicht (Pakete für zenOS).
+  3. Festplatte: «Use an entire disk», «Set up this disk as an LVM group» und «Encrypt the LVM group with LUKS».
+     Die Passphrase fragt der Installer; sie steht nirgends in einer Datei. Alles auf der Platte wird gelöscht.
+  4. Name, Rechnername, Benutzer und Passwort, dann SSH nach Wunsch.
+  5. Am Ende installiert der Installer zenOS (20 bis 40 Minuten) und startet neu. Es erscheint der Login von zenOS.
+
+Scheitert die Einrichtung von zenOS, ist Ubuntu trotzdem installiert. Protokolle nach dem Neustart:
+/var/log/zenos/stick.log und /var/log/zenos/install.log. Weiter von Hand: ANLEITUNG.md, Abschnitt «x86».
+
+Chrome, VS Code und 1Password sind nicht auf dem Stick. Die Einrichtung beim ersten Start installiert sie auf Wunsch
+aus den offiziellen Quellen der Hersteller.
+
+Ubuntu ist eine Marke von Canonical Ltd. zenOS ist ein persönliches Projekt, nicht mit Canonical verbunden.

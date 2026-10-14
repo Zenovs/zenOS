@@ -72,5 +72,7 @@ vertrauen system/basis
 vertrauen system/update-manager/
 vertrauen image/bauen.sh
 vertrauen image/tag-pruefen.sh
+vertrauen image/x86-stick.sh
+vertrauen image/x86/
 vertrauen .github/workflows/
 vertrauen .githooks/
