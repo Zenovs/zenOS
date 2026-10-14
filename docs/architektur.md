@@ -539,10 +539,11 @@ Ubuntu-Archiv und Herstellerquellen (Ubuntu 26.04 LTS) ──▶ Pi: zen update,
   gibt es nur über HDMI (`HDMI-A-2` ist das eingebaute Display, `HDMI-A-1` die Buchse); die beiden USB-C-Buchsen
   führen nur USB 2.0, eine davon ohne GPIO-Modul gar keine Daten. Ein USB-C-Dock liefert dort Netzwerk und USB, aber
   kein Bild (`docs/module/dock.md`).
-- **x86-Rechner (amd64):** ab `v0.1.0-rc8` über den Installer-Stick (`image/x86-stick.sh`, ANLEITUNG H) oder
-  `install.sh` auf einem vorhandenen Ubuntu Server 26.04. Gleiche Oberfläche und derselbe Code; was die Hardware
+- **x86-Rechner (amd64):** ab `v0.1.0-rc8` über den Installer-Stick (`image/x86-stick.sh`, ANLEITUNG H: das ISO von
+  Ubuntu Desktop mit seinem grafischen Installer, zenOS kommt auf Ubuntu Desktop, gdm weicht greetd, GNOME bleibt
+  installiert) oder `install.sh` auf einem vorhandenen Ubuntu 26.04. Gleiche Oberfläche und derselbe Code; was die Hardware
   betrifft, entscheidet zur Laufzeit: Argon-Dienst und seine Pakete nur auf arm64 (`zenos-argon.service` mit
   `ConditionArchitecture=arm64`, `# architektur: arm64` in `scripts/pakete/argon.txt`), Temperatur vom Fühler der CPU
   (`scripts/bin/zenos-temperatur`), GRUB behält den Namen Ubuntu (`docs/module/kennung.md`), `zen doctor` prüft
   Verschlüsselung und Secure Boot (Abschnitt «PC»). Akku, Deckel und Gesten blenden sich ohne die Hardware aus. Auf
-  echter Hardware noch nicht abgenommen. GNOME als Rückfall-Sitzung beim Login ist vorgesehen, aber noch nicht gebaut.
+  echter Hardware noch nicht abgenommen. GNOME ist mit dem Stick schon installiert; als Rückfall-Sitzung im Login von zenOS wählbar ist es noch nicht.

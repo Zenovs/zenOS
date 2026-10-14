@@ -1258,13 +1258,14 @@ git switch dev
 
 ## H · x86-Rechner (Installer-Stick)
 
-Für einen x86-Rechner (amd64), etwa einen kleinen Bürorechner. Ab `v0.1.0-rc8`. Der Stick ist das offizielle
-Ubuntu-Server-ISO mit der automatischen Installation von zenOS; du baust ihn selbst, weil das ISO für GitHub zu gross
-ist. Alles auf der Platte des Rechners wird gelöscht. Hintergrund: `docs/image-und-releases.md`, «Bürorechner (x86)».
+Für einen x86-Rechner (amd64), etwa einen kleinen Bürorechner. Ab `v0.1.0-rc8`. Der Stick ist das offizielle ISO von
+Ubuntu Desktop mit seinem grafischen Installer; am Ende der Installation richtet er zenOS ein. Du baust ihn selbst, weil
+das ISO für GitHub zu gross ist. Alles auf der Platte des Rechners wird gelöscht. GNOME aus Ubuntu Desktop bleibt
+installiert, den Login übernimmt zenOS. Hintergrund: `docs/image-und-releases.md`, «Bürorechner (x86)».
 
 **Voraussetzungen:**
-- x86-Rechner mit UEFI, mindestens 4 GB RAM (8 GB empfohlen) und 40 GB Platte
-- USB-Stick mit mindestens 4 GB (wird gelöscht)
+- x86-Rechner mit UEFI, mindestens 8 GB RAM und 64 GB Platte
+- USB-Stick mit mindestens 8 GB (wird gelöscht)
 - Netzwerkkabel am Rechner, empfohlen (die Installation lädt Pakete)
 - Mac oder Linux-Rechner, um den Stick zu bauen, mit balenaEtcher
 
@@ -1288,8 +1289,8 @@ git clone --branch v0.1.0-rc8 https://github.com/Zenovs/zenOS.git ~/zenOS-stick
 cd ~/zenOS-stick
 ```
 
-**H4.** Den Stick bauen. Das Skript prüft die Signatur des Tags, lädt Ubuntu (rund 3 GB, beim nächsten Mal aus dem
-Cache), prüft es und baut `zenos-0.1.0-rc8-x86-installer.iso` im aktuellen Ordner:
+**H4.** Den Stick bauen. Das Skript prüft die Signatur des Tags, lädt Ubuntu Desktop (rund 6,5 GB, beim nächsten Mal
+aus dem Cache), prüft es und baut `zenos-0.1.0-rc8-x86-installer.iso` im aktuellen Ordner:
 
 ```
 image/x86-stick.sh
@@ -1302,28 +1303,31 @@ nicht: nicht weitermachen.
 
 ### Installieren (am Rechner)
 
+Die Namen der Schritte stehen hier sinngemäss; sie hängen von der Sprache ab, die du im Installer wählst.
+
 **H6.** Den Stick einstecken und den Rechner davon starten. Bei HP-Rechnern öffnet `F9` das Boot-Menü (`F10` die
-Einstellungen), bei anderen oft `F12` oder `Esc`. Secure Boot darf an bleiben.
+Einstellungen), bei anderen oft `F12` oder `Esc`. Secure Boot darf an bleiben. Im Menü «Try or Install Ubuntu» wählen.
 
-**H7.** Im Menü «Try or Install Ubuntu Server» wählen (startet nach 30 s von selbst). Der Installer fragt, ob er die
-automatische Installation vom Stick nutzen soll: bestätigen.
+**H7.** Der grafische Installer startet. «Ubuntu installieren», dann Sprache, Barrierefreiheit, Tastatur (für die
+Schweiz «Deutsch (Schweiz)») und Netz. Mit Kabel steht das Netz von selbst.
 
-**H8.** Sprache, Tastatur (für die Schweiz «German (Switzerland)») und Netz wählen. Mit Kabel steht das Netz von selbst.
+**H8.** Fragt der Installer nach der Art der Installation, «Interaktive Installation» wählen. Beim Umfang genügt die
+Standardauswahl. Zusätzliche Treiber und Medienformate nach Wunsch.
 
-**H9.** Festplatte: «Use an entire disk», die richtige Platte, «Set up this disk as an LVM group» und **«Encrypt the LVM
-group with LUKS»** anhaken, Passphrase zweimal eingeben. Auf dem Bürorechner ist die Verschlüsselung Pflicht. Die
-Übersicht bestätigen; erst jetzt wird gelöscht.
+**H9.** Festplatte: «Festplatte löschen und Ubuntu installieren». Unter «Erweiterte Funktionen» **«LVM und
+Verschlüsselung verwenden»** wählen und eine Passphrase setzen. Auf dem Bürorechner ist die Verschlüsselung Pflicht.
+Erst mit «Installieren» am Ende der Übersicht wird gelöscht.
 
-**H10.** Profil: dein Name, ein Rechnername, Benutzername und Passwort. Bei SSH «Install OpenSSH server» anhaken, wenn du
-per SSH arbeiten willst; «Import SSH key» von GitHub übernimmt deine öffentlichen Schlüssel.
+**H10.** Konto: dein Name, ein Rechnername, Benutzername und Passwort. Dann die Zeitzone.
 
-**H11.** Warten. Nach Ubuntu richtet der Installer zenOS ein («running late commands»): 20 bis 40 Minuten, das meiste
-ist der Bau von Quickshell. Danach startet der Rechner neu. Den Stick abziehen, wenn der Installer darum bittet.
+**H11.** Warten. Nach dem Kopieren richtet der Installer zenOS ein: 20 bis 40 Minuten, das meiste ist der Bau von
+Quickshell. Die Anzeige steht dabei eine Weile still, das ist normal. Danach «Jetzt neu starten» und den Stick abziehen.
 
-**H12.** Beim Start die LUKS-Passphrase eingeben. Es erscheint der Login von zenOS. Anmelden; die Einrichtung beim
-ersten Start fragt nach Name, Ort, Erscheinungsbild und erstem Modus und bietet Chrome, VS Code und 1Password an.
+**H12.** Beim Start die Passphrase eingeben. Es erscheint der Login von zenOS (nicht der von Ubuntu). Anmelden; die
+Einrichtung beim ersten Start fragt nach Name, Ort, Erscheinungsbild und erstem Modus und bietet Chrome, VS Code und
+1Password an.
 
-**H13.** Prüfen, im Terminal (kitty über das Befehlsfeld mit `Super + Leertaste`, oder per SSH):
+**H13.** Prüfen, im Terminal (kitty über das Befehlsfeld mit `Super + Leertaste`):
 
 ```
 zen doctor
@@ -1334,18 +1338,24 @@ Testliste aus E, ohne die Punkte zu Argon, Akku und Lüfter.
 
 ### Wenn die Einrichtung von zenOS scheitert
 
-Der Installer meldet dann einen Fehler. Ubuntu ist trotzdem installiert. Neu starten, als dein Benutzer anmelden
-(Textkonsole) und `/var/log/zenos/stick.log` ansehen. Meist war das Netz weg. Weiter wie unten «Ohne Stick», ab H15,
-mit `/opt/zenos` statt `~/zenOS`, falls es `/opt/zenos` schon gibt.
+Der Installer meldet dann einen Fehler. Ubuntu ist trotzdem installiert und startet mit dem Login von Ubuntu. Anmelden,
+ein Terminal öffnen und `/var/log/zenos/stick.log` ansehen. Meist war das Netz weg. Weiter wie unten «Ohne Stick», ab
+H15; gibt es `/opt/zenos` schon, dort statt in `~/zenOS`.
 
-### Ohne Stick: Rechner mit Ubuntu Server 26.04
+### Zurück zum Login von Ubuntu
 
-Läuft auf dem Rechner schon Ubuntu Server 26.04 (amd64), geht es auch ohne Neuinstallation. Dann bleibt die Platte, wie
-sie ist (meist unverschlüsselt), und der Kanal für Updates ist `dev`, bis du ihn mit `zen kanal` umstellst. Für den
-Bürorechner ist der Stick der bessere Weg. Achtung: zenOS schaltet die Firewall ein (herein nur SSH aus lokalen Netzen),
-entfernt snapd, falls keine eigenen Snaps installiert sind, und stellt den Login auf greetd um.
+Der Login von Ubuntu (gdm) ist nur ausgeschaltet. Zurück, per SSH oder an der Textkonsole (`Ctrl + Alt + F3`):
+`sudo systemctl disable greetd`, dann `sudo systemctl enable gdm3` und neu starten.
 
-**H14.** Per SSH verbunden:
+### Ohne Stick: Rechner mit Ubuntu 26.04
+
+Läuft auf dem Rechner schon Ubuntu 26.04 (amd64, Server oder Desktop), geht es auch ohne Neuinstallation. Dann bleibt
+die Platte, wie sie ist (meist unverschlüsselt), und der Kanal für Updates ist `dev`, bis du ihn mit `zen kanal`
+umstellst. Für den Bürorechner ist der Stick der bessere Weg. Achtung: zenOS schaltet die Firewall ein (herein nur SSH
+aus lokalen Netzen), entfernt snapd, falls keine eigenen Snaps installiert sind, und richtet greetd als Login ein. Auf
+Ubuntu Desktop bleibt der Login von Ubuntu, bis du ihn abschaltest (`install.sh` sagt, wie).
+
+**H14.** Im Terminal:
 
 ```
 git clone --branch v0.1.0-rc8 https://github.com/Zenovs/zenOS.git ~/zenOS
@@ -1357,7 +1367,7 @@ git clone --branch v0.1.0-rc8 https://github.com/Zenovs/zenOS.git ~/zenOS
 cd ~/zenOS
 ```
 
-**H16.** zenOS installieren (wie C2, auch hier mit `tmux new -s zenos` davor, falls die Verbindung abreissen kann):
+**H16.** zenOS installieren (per SSH mit `tmux new -s zenos` davor, falls die Verbindung abreissen kann):
 
 ```
 ./scripts/install.sh

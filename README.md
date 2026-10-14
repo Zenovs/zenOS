@@ -82,8 +82,8 @@ Eine neue Ubuntu-Version (etwa 28.04) kommt nie als Update: `do-release-upgrade`
 ## Hardware
 
 - Raspberry Pi 5, entwickelt und getestet im Argon ONE Gehäuse
-- x86-Rechner (amd64), ab `v0.1.0-rc8`: Installer-Stick zum Selbstbauen aus dem offiziellen Ubuntu-Server-ISO
-  (`image/x86-stick.sh`, mit Verschlüsselung und Secure Boot), siehe [ANLEITUNG.md](ANLEITUNG.md), Abschnitt H. Auf
+- x86-Rechner (amd64), ab `v0.1.0-rc8`: Installer-Stick zum Selbstbauen aus dem offiziellen ISO von Ubuntu Desktop,
+  mit dessen grafischem Installer (`image/x86-stick.sh`, mit Verschlüsselung und Secure Boot), siehe [ANLEITUNG.md](ANLEITUNG.md), Abschnitt H. Auf
   echter Hardware noch nicht abgenommen.
 
 ## Dokumentation

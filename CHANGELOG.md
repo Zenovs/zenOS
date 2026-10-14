@@ -12,13 +12,15 @@ Alles seit `v0.1.0-rc7`: der Installer-Stick für x86-Rechner, x86 im Allgemeine
 
 ### Neu
 
-- **Installer-Stick für x86-Rechner (amd64):** `image/x86-stick.sh` baut aus dem offiziellen Ubuntu-Server-ISO einen
-  Stick mit der automatischen Installation von zenOS, nur aus einem gültig signierten Tag (`image/tag-pruefen.sh`) und
-  mit dem gegen die signierten Prüfsummen von Ubuntu geprüften ISO; die Bootteile bleiben die von Ubuntu, der Stick
-  startet auch mit Secure Boot. Der Ubuntu-Installer fragt Sprache, Tastatur, Netz, Festplatte mit Verschlüsselung
-  (LUKS), Profil und SSH am Bildschirm, kein Passwort steht in einer Datei. Am Ende richtet `image/x86/einrichten.sh`
-  zenOS im installierten System ein wie den Bau des Pi-Images (`install.sh --image` im chroot, Kanal und Zustand ab Werk
-  aus dem Tag). Das ISO liegt nicht im Release (über 2 GiB), jeder baut es selbst. Läuft unter Linux und auf dem Mac.
+- **Installer-Stick für x86-Rechner (amd64):** `image/x86-stick.sh` baut aus dem offiziellen ISO von Ubuntu Desktop
+  einen Stick mit dem grafischen Installer von Ubuntu und der Einrichtung von zenOS, nur aus einem gültig signierten Tag
+  (`image/tag-pruefen.sh`) und mit dem gegen die signierten Prüfsummen von Ubuntu geprüften ISO; die Bootteile bleiben
+  die von Ubuntu, der Stick startet auch mit Secure Boot. Der Installer zeigt alle gewohnten Schritte (Sprache,
+  Tastatur, Netz, Festplatte mit LVM und Verschlüsselung, Konto, Zeitzone), kein Passwort steht in einer Datei. Am Ende
+  richtet `image/x86/einrichten.sh` zenOS im installierten System ein wie den Bau des Pi-Images (`install.sh --image`
+  im chroot, Kanal und Zustand ab Werk aus dem Tag); gdm von Ubuntu Desktop weicht greetd mit dem Login von zenOS,
+  GNOME bleibt installiert. Das ISO (rund 6,5 GB) liegt nicht im Release, jeder baut es selbst. Läuft unter Linux und
+  auf dem Mac.
   Doku `docs/image-und-releases.md` («Bürorechner (x86)»), Bedienung ANLEITUNG H. Auf echter Hardware noch nicht
   abgenommen.
 - **`zen doctor` auf x86:** Abschnitt «PC: Systemplatte und Start» (nur amd64): ob die Systemplatte auf LUKS liegt und

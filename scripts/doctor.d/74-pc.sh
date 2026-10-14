@@ -41,7 +41,7 @@ _pc_verschluesselung() {
   elif _pc_auf_crypt "$nummer"; then
     ok "Systemplatte verschlüsselt (LUKS)"
   else
-    warnung "Systemplatte nicht verschlüsselt – auf dem Bürorechner Pflicht (docs/sicherheit.md); geht nur mit einer Neuinstallation (Installer-Stick: «Encrypt the LVM group with LUKS»)"
+    warnung "Systemplatte nicht verschlüsselt – auf dem Bürorechner Pflicht (docs/sicherheit.md); geht nur mit einer Neuinstallation (Installer-Stick: «LVM und Verschlüsselung verwenden», ANLEITUNG H9)"
   fi
 }
 

@@ -1277,10 +1277,15 @@ auch jedes `-rc` eine öffentliche Release-Seite bekommt, liegt zenOS schon dami
 ## Bürorechner (x86)
 
 Für x86-Rechner (amd64) gibt es kein fertiges Image, sondern einen Installer-Stick, den jeder selbst baut:
-`image/x86-stick.sh` nimmt das offizielle Ubuntu-Server-ISO und legt die automatische Installation von zenOS dazu
-(ab `v0.1.0-rc8`). Bedienung: ANLEITUNG, Abschnitt H.
+`image/x86-stick.sh` nimmt das offizielle ISO von **Ubuntu Desktop** mit seinem grafischen Installer und legt die
+Einrichtung von zenOS dazu (ab `v0.1.0-rc8`). Bedienung: ANLEITUNG, Abschnitt H.
 
-**Warum selbst bauen:** Das ISO ist rund 2,9 GB gross, GitHub nimmt Release-Dateien nur unter 2 GiB. Zerstückeln wäre
+**Warum Ubuntu Desktop:** Zeno will die Installation grafisch wie bei Ubuntu Desktop, nicht im Textmodus von Ubuntu
+Server (Entscheid vom 14.10.2026). Den grafischen Installer gibt es nur auf dem Desktop-ISO, und er installiert immer
+Ubuntu Desktop (GNOME mit gdm). zenOS kommt darauf: GNOME bleibt installiert, den Login übernimmt greetd mit zenOS. Eine
+Auswahl von GNOME im Login von zenOS (Rückfall-Sitzung, `docs/architektur.md`) gibt es noch nicht.
+
+**Warum selbst bauen:** Das ISO ist rund 6,5 GB gross, GitHub nimmt Release-Dateien nur unter 2 GiB. Zerstückeln wäre
 schlechter (siehe «Grenzen»). Und so gibt zenOS kein verändertes Ubuntu-ISO weiter: Was auf dem Stick von Ubuntu kommt,
 ist Byte für Byte das ISO von Ubuntu, geprüft gegen dessen signierte Prüfsummen.
 
@@ -1294,8 +1299,8 @@ ssh-keygen):
 2. **Ubuntu:** `SHA256SUMS` und `SHA256SUMS.gpg` von `releases.ubuntu.com/<version>/`, Signatur mit `gpgv` gegen den
    «Ubuntu CD Image Automatic Signing Key (2012)» (`8439 38DF 228D 22F7 B374 2BC0 D94A A3F0 EFE2 1092`, dieselbe
    Kopie wie in `image/bauen.sh`, ein Einheitentest hält beide gleich), die neueste Punktversion von
-   `ubuntu-26.04*-live-server-amd64.iso`, Download in den Cache (`~/.cache/zenos/ubuntu`, setzt nach einem Abbruch
-   fort), dann die Prüfsumme.
+   `ubuntu-26.04*-desktop-amd64.iso`, Download in den Cache (`~/.cache/zenos/ubuntu`, setzt nach einem Abbruch fort),
+   dann die Prüfsumme.
 3. **Inhalt:** `/autoinstall.yaml` und `/zenos/` mit `einrichten.sh`, `README`, `stand` (Tag, Commit, Kanal, Version,
    origin, signiert) und `zenos.bundle` (`git bundle` des Stands mit allen Tags). Alles kommt aus dem Commit des Tags,
    nicht aus dem Arbeitsstand.
@@ -1305,45 +1310,49 @@ ssh-keygen):
 
 **Die Installation am Rechner** (`image/x86/autoinstall.yaml`, Format «autoinstall» von Ubuntu):
 
-- Der Installer findet `/autoinstall.yaml` auf dem Stick und fragt einmal, ob er sie nutzen soll. Danach zeigt er wie
-  gewohnt Sprache, Tastatur, Netz, Festplatte, Profil und SSH (`interactive-sections`). Die Verschlüsselung (LUKS unter
-  LVM) wählt man im Schritt Festplatte; die Passphrase und das Passwort stehen in keiner Datei.
-- Fest eingestellt: Ubuntu Server (nicht minimiert), keine Snaps, keine proprietären Treiber und Codecs,
-  Sicherheitsupdates schon während der Installation, `git` als Paket, Zeitzone über die Standortabfrage des Installers
-  (`timezone: geoip`, wie Ubuntu sie auch für den Spiegel nutzt; ein fester Ort gehört nicht ins Repo), am Ende
-  Neustart.
-- **`late-commands`:** `image/x86/einrichten.sh /target`, als Argumentliste ohne Shell. Das Skript macht im neu
-  installierten System, was `image/bauen.sh` für das Pi-Image macht (Schritt 4 und 5): chroot mit `/dev`, `/proc`,
-  `/sys`, frischen tmpfs für `/run` und `/tmp` (ohne `/run/systemd/system` startet `install.sh` keine Dienste) und
-  der Namensauflösung des Installers, `policy-rc.d` gegen Dienststarts, `/opt/zenos` aus dem Bundle (losgelöst auf dem
-  Commit, ohne Zweige, mit allen Tags, origin GitHub über https, Besitz root), dann
-  `ZENOS_KANAL=<kanal> /opt/zenos/scripts/install.sh --image` mit leerer Umgebung. Danach prüft es die
-  Ubuntu-Sicherheitsquelle, den GRUB-Namen (`docs/module/kennung.md`), den Kanal und bei einem signierten Tag den Anker
-  und `zenos-kanal image <tag>`: Der Tag wird im installierten System noch einmal wie auf einem Gerät geprüft, und der
-  Zustand ab Werk entsteht wie im Pi-Image. Protokoll: `/var/log/zenos/stick.log` und `/var/log/zenos/install.log`.
+- Der grafische Installer liest `/autoinstall.yaml` vom Stick. Mit `interactive-sections: ["*"]` zeigt er alle
+  gewohnten Schritte: Sprache, Tastatur, Netz, Umfang, Festplatte (unter «Erweiterte Funktionen» LVM mit
+  Verschlüsselung), Konto und Zeitzone. Die Passphrase und das Passwort stehen in keiner Datei.
+- Die Datei fügt nur hinzu, was der Installer nicht fragt: `git` als Paket und die `late-commands`.
+- **`late-commands`:** `image/x86/einrichten.sh /target`, als Argumentliste ohne Shell. Das Skript startet sich zuerst
+  mit leerer Umgebung neu (der Desktop-Installer läuft als Snap, dessen Umgebung gehört nicht in die Werkzeuge des
+  Systems). Dann macht es im neu installierten System, was `image/bauen.sh` für das Pi-Image macht (Schritt 4 und 5):
+  chroot mit `/dev`, `/proc`, `/sys`, frischen tmpfs für `/run` und `/tmp` (ohne `/run/systemd/system` startet
+  `install.sh` keine Dienste) und der Namensauflösung des Installers, `policy-rc.d` gegen Dienststarts, `/opt/zenos`
+  aus dem Bundle (losgelöst auf dem Commit, ohne Zweige, mit allen Tags, origin GitHub über https, Besitz root), dann
+  `ZENOS_KANAL=<kanal> /opt/zenos/scripts/install.sh --image` mit leerer Umgebung. Für Ubuntu Desktop als Grundlage
+  zwei Schritte mehr:
+  - **Login:** Vor `install.sh` wird ein anderer Anmeldedienst (gdm3) im neuen System deaktiviert, sein Paket bleibt.
+    Sonst liesse `install.sh` greetd aus (`40-sitzung`, auf einem laufenden System richtig, damit dort nie still der
+    Login wechselt). Danach prüft das Skript, dass greetd der Anmeldedienst ist.
+  - **Netz:** Verwaltet NetworkManager das Netz schon (netplan mit `renderer: NetworkManager`), entfällt die Umstellung
+    beim ersten Start (`zenos-netzwerk-erststart`, `docs/module/netzwerk.md`). Sie ist für netplan mit systemd-networkd
+    gebaut und schaltete NetworkManager ab, wenn sie scheitert. Das WLAN-Menü braucht nur einen laufenden
+    NetworkManager; ein späteres `install.sh` lässt einen laufenden NetworkManager, wie er ist.
+  Danach prüft es die Ubuntu-Sicherheitsquelle, den GRUB-Namen (`docs/module/kennung.md`), den Kanal und bei einem
+  signierten Tag den Anker und `zenos-kanal image <tag>`: Der Tag wird im installierten System noch einmal wie auf
+  einem Gerät geprüft, und der Zustand ab Werk entsteht wie im Pi-Image. Protokoll: `/var/log/zenos/stick.log` und
+  `/var/log/zenos/install.log`.
 - Benutzer, Rechnername, SSH-Hostschlüssel und `machine-id` kommen vom Ubuntu-Installer; zenOS fasst sie nicht an.
   Beim ersten Anmelden zieht die Sitzung die Benutzerteile nach (`install.sh --nur-benutzer`), die Einrichtung von
   zenOS fragt nach Name, Ort, Erscheinungsbild und erstem Modus und installiert die proprietären Apps auf Wunsch.
-- Der erste Start stellt das Netz wie beim Pi-Image auf NetworkManager um (`zenos-netzwerk-erststart.service`,
-  `docs/module/netzwerk.md`); scheitert das, bleibt es bei netplan mit systemd-networkd.
+- Snaps von Ubuntu Desktop (etwa Firefox) bleiben: `22-aufraeumen` entfernt snapd nur ohne eigene Snaps und meldet es
+  sonst (`zen doctor`).
 
 **Was x86 anders macht als der Pi:** Argon-Dienst und seine Pakete entfallen (`# architektur: arm64` in
 `scripts/pakete/argon.txt`), die Temperatur in der Leiste kommt vom Fühler der CPU (`scripts/bin/zenos-temperatur`),
 GRUB behält den Namen Ubuntu (`/etc/default/grub.d/zenos-distributor.cfg`), und `zen doctor` prüft im Abschnitt «PC»
-Verschlüsselung der Systemplatte und Secure Boot. Eine Rückfall-Sitzung mit GNOME (`docs/architektur.md`) gibt es noch
-nicht.
+Verschlüsselung der Systemplatte und Secure Boot.
 
-**Geprüft (Oktober 2026):** Im Testbau aus dem Arbeitsstand (`--testbau-ohne-signatur`), in QEMU (q35, OVMF mit Secure
-Boot und den Schlüsseln von Microsoft, ohne KVM): Das ISO hat dieselbe Bootstruktur wie das von Ubuntu (El Torito für
-BIOS und UEFI, GPT mit der EFI-Partition, `xorriso -report_el_torito`), der Stick startet unter Secure Boot, und der
-Installer nimmt `/autoinstall.yaml` an und installiert Ubuntu. Ob `einrichten.sh` im Installer bis zum Login von zenOS
-durchläuft, war beim Schreiben noch nicht geprüft; der Lauf wird hier nachgetragen. Für den unbeaufsichtigten Test
-waren die Antworten vorbelegt und die Frage nach der automatischen Installation über `autoinstall` auf der
-Kernel-Kommandozeile abgeschaltet; das gilt nur für den Test-Stick, nie für das Repo. Auf echter Hardware ist der Stick
-noch nicht abgenommen.
+**Geprüft (Oktober 2026):** In QEMU (q35, OVMF mit Secure Boot und den Schlüsseln von Microsoft, ohne KVM), mit
+Testbauten aus dem Arbeitsstand: Das ISO hat dieselbe Bootstruktur wie das von Ubuntu (`xorriso -report_el_torito`),
+der Stick mit dem Server-ISO (bis zum Umbau auf Ubuntu Desktop) startet unter Secure Boot, und der Installer nimmt `/autoinstall.yaml` an. Mit dem
+Desktop-ISO wird hier nachgetragen, was der Test zeigt. Für unbeaufsichtigte Tests waren die Antworten vorbelegt und
+`autoinstall` auf der Kernel-Kommandozeile gesetzt; das gilt nur für Test-Sticks, nie für das Repo. Auf echter Hardware
+ist der Stick noch nicht abgenommen.
 
 **Grenzen:** Ohne Netz scheitert die Einrichtung von zenOS (Pakete aus den Ubuntu-Quellen, Quickshell aus dem
-Quellcode); Ubuntu ist dann trotzdem installiert, weiter von Hand nach ANLEITUNG H. Ein Rechner mit schon installiertem
-Ubuntu Server 26.04 geht auch ohne Stick (`git clone` und `scripts/install.sh`, ANLEITUNG H), dann aber ohne Zustand
-ab Werk: Der Kanal ist `dev`, bis Anker und Kanal von Hand gesetzt sind (`zen kanal`), und die Platte bleibt, wie sie
-war.
+Quellcode); Ubuntu ist dann trotzdem installiert und startet mit dem Login von Ubuntu, weiter von Hand nach ANLEITUNG H.
+Ein Rechner mit schon installiertem Ubuntu 26.04 geht auch ohne Stick (`git clone` und `scripts/install.sh`,
+ANLEITUNG H), dann aber ohne Zustand ab Werk: Der Kanal ist `dev`, bis Anker und Kanal von Hand gesetzt sind
+(`zen kanal`), die Platte bleibt, wie sie war, und auf Ubuntu Desktop bleibt der Login von Ubuntu, bis man gdm abschaltet.
