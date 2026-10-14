@@ -5,8 +5,24 @@ an; eine Version entspricht einem Tag `v…` im Repo.
 
 ## Unveröffentlicht
 
+## 0.1.0-rc8 – 2026-10-14
+
+Alles seit `v0.1.0-rc7`: der Installer-Stick für x86-Rechner, x86 im Allgemeinen (GRUB, Temperatur, Argon-Pakete,
+`zen doctor`), Bluetooth im System-Menü und Docks über USB.
+
 ### Neu
 
+- **Installer-Stick für x86-Rechner (amd64):** `image/x86-stick.sh` baut aus dem offiziellen Ubuntu-Server-ISO einen
+  Stick mit der automatischen Installation von zenOS, nur aus einem gültig signierten Tag (`image/tag-pruefen.sh`) und
+  mit dem gegen die signierten Prüfsummen von Ubuntu geprüften ISO; die Bootteile bleiben die von Ubuntu, der Stick
+  startet auch mit Secure Boot. Der Ubuntu-Installer fragt Sprache, Tastatur, Netz, Festplatte mit Verschlüsselung
+  (LUKS), Profil und SSH am Bildschirm, kein Passwort steht in einer Datei. Am Ende richtet `image/x86/einrichten.sh`
+  zenOS im installierten System ein wie den Bau des Pi-Images (`install.sh --image` im chroot, Kanal und Zustand ab Werk
+  aus dem Tag). Das ISO liegt nicht im Release (über 2 GiB), jeder baut es selbst. Läuft unter Linux und auf dem Mac.
+  Doku `docs/image-und-releases.md` («Bürorechner (x86)»), Bedienung ANLEITUNG H. Auf echter Hardware noch nicht
+  abgenommen.
+- **`zen doctor` auf x86:** Abschnitt «PC: Systemplatte und Start» (nur amd64): ob die Systemplatte auf LUKS liegt und
+  ob Secure Boot an ist, beides auf dem Bürorechner Pflicht (`docs/sicherheit.md`). Gelesen wird nur `/sys`.
 - **Bluetooth im System-Menü:** Unter dem WLAN steht «Bluetooth» mit Schalter, darunter die verbundenen Geräte mit
   Akkustand. «Weitere Geräte» klappt die gekoppelten und gefundenen Geräte auf; solange die Liste offen ist, sucht der
   Adapter. Ein Klick koppelt ein neues Gerät (Kopplungsmodus) und verbindet es, ein gekoppeltes verbindet sich. Trennen
@@ -14,7 +30,6 @@ an; eine Version entspricht einem Tag `v…` im Repo.
   andere wird der Rechner nie; gekoppelt wird ohne PIN-Eingabe (Mäuse, Kopfhörer, die meisten Tastaturen). Neu ist das
   Paket `bluez` (Modul `36-bluetooth`), dazu ein Abschnitt «Bluetooth» in `zen doctor` (nur Anzahlen) und
   `zenos-ipc leiste menue bluetooth`. Doku `docs/module/bluetooth.md`.
-
 - **Docks und Bildschirm über USB:** Steckt ein USB-C-Dock, das kein Bild bekommt, sagt zenOS einmal, warum. Am Pi 5
   und am Compute Module 5 (Argon ONE UP) kommt «Dock: kein Bild über USB-C»: Der Chip hat keinen DisplayPort-Ausgang,
   auch nicht an USB-C, daran ändert kein Treiber etwas; der Bildschirm gehört an HDMI, USB und Netzwerk am Dock gehen
@@ -24,6 +39,22 @@ an; eine Version entspricht einem Tag `v…` im Repo.
   systemd markiert, und den kurzen Benutzerdienst `zenos-dock.service`; jede Mitteilung kommt einmal je Gerät.
   `zen doctor` zeigt im Abschnitt «Docks und Bildschirm über USB» Bildausgänge, Docks und Netzwerk über USB. Modul
   `84-dock`, Doku `docs/module/dock.md`.
+
+### Geändert
+
+- **GRUB behält den Namen Ubuntu:** Ubuntu leitet den Namen des Bootloaders und des EFI-Eintrags aus `NAME` in
+  os-release ab; mit der Kennung zenOS hätte das nächste Update von grub oder shim still einen neuen EFI-Eintrag
+  «zenOS» angelegt. Auf Rechnern mit GRUB legt `72-kennung` vor der Umstellung
+  `/etc/default/grub.d/zenos-distributor.cfg` (`GRUB_DISTRIBUTOR=Ubuntu`) ab, `zen doctor` prüft es. `system/grub/` ist
+  ein Rückfrage-Pfad (Gruppe `boot`): Dieses Update installiert ein Gerät erst nach Zustimmung. Auf dem Pi (ohne GRUB)
+  ändert sich nichts.
+- **Temperatur in der Leiste vom Fühler der CPU:** `scripts/bin/zenos-temperatur` sucht beim Start der Oberfläche
+  `x86_pkg_temp`, `coretemp`, `k10temp` oder auf dem Pi `cpu-thermal`; auf x86 ist `thermal_zone0` oft das Mainboard.
+  Auf dem Pi bleibt es `thermal_zone0`.
+- **Argon-Pakete nur auf arm64:** `python3-smbus`, `i2c-tools` und `python3-libgpiod` kommen nur noch auf den Pi (Zeile
+  `# architektur: arm64` in `scripts/pakete/argon.txt`, beachtet von `20-pakete`, `80-argon` und `zen doctor`).
+- **App-Leiste bei mehreren Bildschirmen:** Die Auslösezone liegt nur noch am rechten Rand eines Bildschirms, rechts
+  von dem kein anderer liegt. Am inneren Rand zweier Bildschirme läuft der Zeiger ungestört hinüber.
 
 ## 0.1.0-rc7 – 2026-10-08
 
