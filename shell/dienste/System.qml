@@ -9,11 +9,12 @@ import Quickshell.Services.Pipewire
 // Systemzustand für die Leiste: Temperatur, Netz, Ton, 1Password (Akku und Lüfter: Geraet).
 // Sparsam für den Pi: ein Timer (5 s) liest ein paar kleine Dateien aus /sys und /proc,
 // der Ton kommt direkt von PipeWire. Prozesse startet der Dienst nur für die 1Password-Prüfung
-// (selten und nur, wenn 1Password installiert ist).
+// (selten und nur, wenn 1Password installiert ist) und einmal beim Start für die Suche nach dem
+// Temperaturfühler der CPU.
 Singleton {
     id: root
 
-    // °C aus /sys/class/thermal/thermal_zone0/temp, -1 wenn unbekannt
+    // °C der CPU (Datei von scripts/bin/zenos-temperatur, auf dem Pi thermal_zone0), -1 wenn unbekannt
     readonly property int temperatur: _temperature
 
     // Netz: Standardverbindung über ein Gerät, das oben ist (nur Anzeige, zenOS verwaltet kein Netz)
@@ -64,6 +65,9 @@ Singleton {
     // --- Temperatur ---
 
     property int _temperature: -1
+    // Datei mit der Temperatur der CPU in Milligrad, leer bis zenos-temperatur sie genannt hat. Auf x86 ist
+    // thermal_zone0 oft die ACPI-Zone des Mainboards; die Nummern können sich zwischen zwei Starts ändern.
+    property string _thermalPath: ""
 
     // Plausible Werte, sonst -1
     function _celsius(value: var): int {
@@ -71,10 +75,24 @@ Singleton {
         return isFinite(n) && n > -40 && n < 150 ? Math.round(n) : -1;
     }
 
+    // Einmal beim Start, mit Argumentliste; angenommen werden nur Pfade unter /sys/class
+    Process {
+        id: thermalSearch
+
+        command: [Pfade.code + "/scripts/bin/zenos-temperatur"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                const pfad = text.trim();
+                if (/^\/sys\/class\/(thermal|hwmon)\/[A-Za-z0-9_\/.-]+$/.test(pfad) && !pfad.includes(".."))
+                    root._thermalPath = pfad;
+            }
+        }
+    }
+
     FileView {
         id: thermalFile
 
-        path: "/sys/class/thermal/thermal_zone0/temp"
+        path: root._thermalPath
         printErrors: false
         // Milligrad, z. B. «46123»
         onLoaded: root._temperature = root._celsius(parseInt(text().trim(), 10) / 1000)
@@ -277,7 +295,8 @@ Singleton {
     property int _tick: 0
 
     function _poll(full: bool): void {
-        thermalFile.reload();
+        if (_thermalPath !== "")
+            thermalFile.reload();
         routeFile.reload();
         route6File.reload();
         wirelessFile.reload();
@@ -308,5 +327,6 @@ Singleton {
         opRunningCheck.exited.connect(code => root._opRunning = code === 0);
         opInstalledCheck.running = true;
         opRunningCheck.running = true;
+        thermalSearch.running = true;
     }
 }

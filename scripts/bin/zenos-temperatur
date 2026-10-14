@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# zenos-temperatur – nennt die Datei mit der Temperatur der CPU (Milligrad) für die Leiste (shell/dienste/System.qml).
+#
+#   zenos-temperatur [--wurzel ORDNER]
+#
+# Die Oberfläche fragt einmal beim Start, gelesen wird danach im Takt der Leiste nur die genannte Datei. Gesucht wird:
+#   1. eine Thermal-Zone der CPU: x86_pkg_temp (Intel), cpu-thermal bzw. cpu_thermal (Raspberry Pi und andere Boards)
+#   2. ein hwmon der CPU: coretemp (Intel, temp1 ist das Paket), k10temp (AMD, Tctl), zenpower (AMD)
+#   3. sonst thermal_zone0 wie bisher (auf x86 oft die ACPI-Zone des Mainboards, deshalb nur als Rückfall)
+# Die Nummern von thermal_zoneN und hwmonN können sich zwischen zwei Starts ändern; deshalb sucht die Oberfläche bei
+# jedem Start neu. --wurzel ORDNER sucht unter ORDNER/sys statt /sys (Tests), die Ausgabe nennt den Pfad ohne ORDNER.
+# Liest nur /sys. Exit 0 mit dem Pfad auf stdout, 1 ohne Sensor, 2 bei falschem Aufruf.
+
+set -uo pipefail
+
+WURZEL=""
+case "$#:${1:-}" in
+  0:) ;;
+  2:--wurzel) WURZEL=${2%/} ;;
+  *)
+    echo "Aufruf: zenos-temperatur [--wurzel ORDNER]" >&2
+    exit 2
+    ;;
+esac
+
+THERMAL=$WURZEL/sys/class/thermal
+HWMON=$WURZEL/sys/class/hwmon
+
+# Inhalt einer kurzen Datei aus /sys (erste Zeile), leer, wenn sie fehlt oder nicht lesbar ist
+_lesen() {
+  local zeile=""
+  [[ -r "$1" ]] && IFS= read -r zeile < "$1" 2> /dev/null
+  printf '%s' "$zeile"
+}
+
+# Eine Temperatur ist lesbar, wenn die Datei eine Zahl enthält
+_temperatur() {
+  [[ "$(_lesen "$1")" =~ ^-?[0-9]+$ ]]
+}
+
+_ausgabe() {
+  printf '%s\n' "${1#"$WURZEL"}"
+  exit 0
+}
+
+for typ in x86_pkg_temp cpu-thermal cpu_thermal; do
+  for zone in "$THERMAL"/thermal_zone*; do
+    if [[ "$(_lesen "$zone/type")" == "$typ" ]] && _temperatur "$zone/temp"; then
+      _ausgabe "$zone/temp"
+    fi
+  done
+done
+
+for name in coretemp k10temp zenpower; do
+  for geraet in "$HWMON"/hwmon*; do
+    if [[ "$(_lesen "$geraet/name")" == "$name" ]] && _temperatur "$geraet/temp1_input"; then
+      _ausgabe "$geraet/temp1_input"
+    fi
+  done
+done
+
+if _temperatur "$THERMAL/thermal_zone0/temp"; then
+  _ausgabe "$THERMAL/thermal_zone0/temp"
+fi
+exit 1
