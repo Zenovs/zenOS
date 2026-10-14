@@ -4,7 +4,7 @@ Jeder Checkpoint endet mit einem Tag und einer Abnahme durch Zeno auf echter Har
 
 **Version 0.1:** C1 bis C8 werden gemeinsam in einem Durchgang gebaut, nach `BAUAUFTRAG.md`. Den Workflow für C9 baut Claude Code mit; das erste Release mit Image entsteht als Vorabversion mit `v0.1.0-rc6`, das erste «Latest» erst nach Zenos Abnahme mit dem Tag `v0.1.0`.
 
-**Stand 0.1 (Oktober 2026):** C1 bis C9 sind gebaut und im Container getestet. Seit `v0.1.0-rc2` kamen dazu: der signierte Update-Kanal (`stabil`, `vorschau`, `dev`, Vertrauensanker, Automatik mit einstellbarem Zeitpunkt), Energie (Bildschirm aus nach der Sperre, Ausschalten nach langer Sperre und bei 3 % Akku), die Systemkennung zenOS (`ID=zenos`) und das Image als eigenständige Distribution mit Release-Seite und Quellcode aller Pakete. `v0.1.0-rc3` ist gebaut (unsigniert, nur als Workflow-Artefakt). Dazu die Fensterübersicht mit Wischen, Bildschirm aus am Login und Updates der Ubuntu-Basis über `zen update` samt Sperre gegen einen Wechsel der Hauptversion. `v0.1.0-rc4` ist der erste signierte Release-Kandidat; sein Image-Bau scheiterte an einer Dateiberechtigung im Workflow (behoben). `v0.1.0-rc6` ist der erste Release-Kandidat mit Image und Release-Seite (Vorabversion, rc5 übersprungen), `v0.1.0-rc7` bringt den zen Installer und die Ein/Aus-Taste am Login. Danach die Abnahme auf echter Hardware und `v0.1.0`. Abweichungen sind unten mit «0.1:» markiert. Was genau umgesetzt ist, steht in `docs/funktionen.md`.
+**Stand 0.1 (Oktober 2026):** C1 bis C9 sind gebaut und im Container getestet. Seit `v0.1.0-rc2` kamen dazu: der signierte Update-Kanal (`stabil`, `vorschau`, `dev`, Vertrauensanker, Automatik mit einstellbarem Zeitpunkt), Energie (Bildschirm aus nach der Sperre, Ausschalten nach langer Sperre und bei 3 % Akku), die Systemkennung zenOS (`ID=zenos`) und das Image als eigenständige Distribution mit Release-Seite und Quellcode aller Pakete. `v0.1.0-rc3` ist gebaut (unsigniert, nur als Workflow-Artefakt). Dazu die Fensterübersicht mit Wischen, Bildschirm aus am Login und Updates der Ubuntu-Basis über `zen update` samt Sperre gegen einen Wechsel der Hauptversion. `v0.1.0-rc4` ist der erste signierte Release-Kandidat; sein Image-Bau scheiterte an einer Dateiberechtigung im Workflow (behoben). `v0.1.0-rc6` ist der erste Release-Kandidat mit Image und Release-Seite (Vorabversion, rc5 übersprungen), `v0.1.0-rc7` bringt den zen Installer und die Ein/Aus-Taste am Login, `v0.1.0-rc8` den Installer-Stick für x86-Rechner, Bluetooth und Docks. Danach die Abnahme auf echter Hardware und `v0.1.0`. Abweichungen sind unten mit «0.1:» markiert. Was genau umgesetzt ist, steht in `docs/funktionen.md`.
 
 ## C0 · Grundlagen
 
@@ -81,4 +81,5 @@ Projekt-Starter · Arbeitsstand pro Modus · zenOS-Check · Dev-Server-Übersich
 
 ## Später
 
-- Bürorechner (amd64) als eigener Installer
+- Bürorechner (amd64) als eigener Installer (0.1: ab `v0.1.0-rc8` als Installer-Stick zum Selbstbauen,
+  `image/x86-stick.sh`, ANLEITUNG H; Abnahme auf echter Hardware und GNOME als Rückfall-Sitzung stehen aus)

@@ -84,8 +84,19 @@ Grundsatz 1: Sicherheit ist Standard und geht vor Design und Bequemlichkeit. Sie
   zenOS nie an. Einzelheiten und Rückweg in `docs/module/m11.md`.
 - Die Firewall (`ufw`) ist standardmässig an. Ausschalten geht nur bewusst und nur mit Passwort (siehe
   «Firewall» unten). SSH nur mit Schlüssel ist das Ziel; zenOS ändert die SSH-Konfiguration nicht.
-- Festplattenverschlüsselung: auf dem Bürorechner Pflicht. Auf dem Pi ist sie das Ziel; in 0.1 noch nicht umgesetzt (offen).
-- Secure Boot: auf dem Bürorechner aktiv. Auf dem Pi bewusst nicht, weil dort Schlüssel dauerhaft in den Chip geschrieben werden.
+- Festplattenverschlüsselung: auf dem Bürorechner Pflicht. Der Installer-Stick für x86 lässt sie im Ubuntu-Installer
+  wählen (LUKS unter LVM, Passphrase am Bildschirm, nie in einer Datei; ANLEITUNG H9), `zen doctor` warnt auf amd64 ohne
+  sie (Abschnitt «PC»). Auf dem Pi ist sie das Ziel; in 0.1 noch nicht umgesetzt (offen).
+- Secure Boot: auf dem Bürorechner aktiv. Der Stick behält Shim und GRUB von Ubuntu unverändert (signiert) und startet
+  so mit Secure Boot; zenOS bringt keine Kernel-Module mit. `zen doctor` warnt auf amd64, wenn es aus ist. Auf dem Pi
+  bewusst nicht, weil dort Schlüssel dauerhaft in den Chip geschrieben werden.
+- Bootloader auf x86: Die Kennung zenOS ändert `NAME` in os-release, aus dem Ubuntu den Namen für GRUB und den
+  EFI-Eintrag ableitet. `/etc/default/grub.d/zenos-distributor.cfg` hält ihn bei Ubuntu, damit kein Update still einen
+  neuen EFI-Eintrag anlegt (`docs/module/kennung.md`); `system/grub/` ist ein Rückfrage-Pfad.
+- Installer-Stick: nur aus einem gültig signierten Tag (`image/tag-pruefen.sh`), Ubuntu-ISO gegen die signierten
+  Prüfsummen von Ubuntu geprüft, im installierten System prüft `zenos-kanal image` den Tag noch einmal
+  (`docs/image-und-releases.md`, «Bürorechner (x86)»). Die Zeitzone kommt bei der Installation über die
+  Standortabfrage von Ubuntu (geoip), wie der Spiegel der Paketquellen.
 - Backups sollen automatisch und verschlüsselt auf einen eigenen Server oder ein NAS laufen (Ziel, in 0.1 noch nicht umgesetzt).
   Bis dahin sichert man vor einem Wechsel der Ubuntu-Basis von Hand auf einen eigenen Datenträger, nie auf ein Ziel im
   Netz (`docs/image-und-releases.md`, «Basiswechsel»).

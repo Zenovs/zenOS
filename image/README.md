@@ -1,7 +1,7 @@
 # image
 
 Bau des Pi-Images: `zenos-<version>-pi5-arm64.img.xz`, Paketliste und `SHA256SUMS`, dazu der Quellcode aller
-Pakete für die Release-Seite. Grundlage ist das offizielle
+Pakete für die Release-Seite. Für x86-Rechner baut `image/x86-stick.sh` einen Installer-Stick (ganz unten). Grundlage ist das offizielle
 Ubuntu 26.04 LTS Server-Image für den Raspberry Pi. Zielbild: `docs/image-und-releases.md`.
 
 | Datei | Zweck |
@@ -10,6 +10,8 @@ Ubuntu 26.04 LTS Server-Image für den Raspberry Pi. Zielbild: `docs/image-und-r
 | `image/tag-pruefen.sh` | prüft, ob ein Release-Tag gültig signiert ist (vor dem Bau, in `bauen.sh` und `image.yml`) |
 | `image/erststart/` | erster Start ohne Imager: `user-data`, `90-zenos-benutzer.cfg`, README der Startpartition |
 | `image/quellen.sh` | holt den Quellcode aller Pakete einer Paketliste und packt ihn in Teile unter 2 GiB |
+| `image/x86-stick.sh` | baut den Installer-Stick für x86-Rechner aus dem offiziellen Ubuntu-Server-ISO, nur aus einem gültig signierten Tag (ohne root, Linux und Mac) |
+| `image/x86/` | auf dem Stick: `autoinstall.yaml` (automatische Installation), `einrichten.sh` (richtet zenOS am Ende ein), `README` |
 | `.github/workflows/image.yml` | baut bei jedem Tag `v*`, veröffentlicht Releases |
 
 ## Ablauf von `bauen.sh`
@@ -280,3 +282,15 @@ Die Grundlage (Ubuntu-Datei und SHA-256) steht in den Versionshinweisen und in `
   Versionshinweise jedes Releases beschreiben das. Die erzwungene Passwortänderung bleibt bewusst, sonst
   bliebe das Standardpasswort bestehen.
 - Die Benutzerteile von zenOS kommen beim ersten Login (`zenos-sitzung` ruft `install.sh --nur-benutzer`).
+
+## Installer-Stick für x86 (`x86-stick.sh`)
+
+```
+image/x86-stick.sh [--ref vX.Y.Z[-rcN]] [--ausgabe ORDNER] [--cache ORDNER]
+```
+
+Baut `zenos-<version>-x86-installer.iso` (und `.sha256`) aus dem offiziellen Ubuntu-Server-ISO für amd64: Tag prüfen
+(`tag-pruefen.sh`), `SHA256SUMS` von releases.ubuntu.com mit dem Ubuntu-CD-Schlüssel prüfen, ISO laden und prüfen,
+`/autoinstall.yaml` und `/zenos/` aus dem Commit des Tags dazulegen (xorriso, Bootteile unverändert). Ablauf, Inhalt und
+Installation: `docs/image-und-releases.md`, «Bürorechner (x86)»; Bedienung: ANLEITUNG, Abschnitt H.
+

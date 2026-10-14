@@ -185,6 +185,7 @@ Die Tastenkürzel von labwc rufen dieselben Ziele auf (Liste in `docs/module/m9.
 | `zenos-basis` | Paket-Updates der Ubuntu-Basis (root, ausgeführt wird die Kopie unter `/usr/local/libexec/zenos`): `pruefen` (ein unterbrochenes dpkg nachholen, apt-get update, Auswertung von `apt-get -s full-upgrade`), `installieren` (genau die geprüfte Liste, mit Inhibitor, danach `install.sh` und Gesundheitsprüfung), `update [--ja]` (Schritt 2 von `zen update`), `jetzt` und `zustimmen` (Einstellungen), `automatik lauf\|gelegenheit` (Timer), `status` (ohne root) |
 | `zenos-netzwerk` | Netz von netplan/systemd-networkd auf NetworkManager umstellen und zurück (`zen netzwerk`) |
 | `zenos-firewall` | Firewall ein- und ausschalten (root: über pkexec, sudo oder `install.sh`), bewussten Zustand merken |
+| `zenos-temperatur` | nennt die Datei mit der Temperatur der CPU für die Leiste (einmal beim Start der Oberfläche; Pi `cpu-thermal`, Intel `x86_pkg_temp`/`coretemp`, AMD `k10temp`), liest nur `/sys` |
 | `zenos-sicherheitsquelle` | prüft mit unattended-upgrades selbst, ob die Ubuntu-Sicherheitsquelle erlaubt ist (nur lesend, für `zen doctor` und die Vorab-Prüfung von `72-kennung`) |
 | `zenos-kennung` | Systemkennung zenOS: os-release, Konsole, `/etc/legal` und Begrüssung per dpkg-divert und dpkg-statoverride einrichten, nachziehen (apt-Hook), prüfen und zurück zu Ubuntu (root; ausgeführt wird die Kopie unter `/usr/local/sbin`) |
 | `zenos-installer` | zen Installer für .deb: `ansehen` (ohne Rechte: Metadaten, Inhalt, Symbol, Simulation mit `apt-get -s install`, Hinweise, Ablehnungen, Plan), `oeffnen` (Starter für .deb, gibt den geprüften Pfad an die Oberfläche), `liste`, `status`; als root (ausgeführt wird die Kopie unter `/usr/local/libexec/zenos`) `auftrag-installieren`, `auftrag-entfernen` und in den Units `installieren SHA256`, `entfernen PAKET` (`docs/module/installer.md`) |
@@ -364,6 +365,7 @@ Die Logik läuft in Quickshell selbst, ohne eigenen Hintergrunddienst.
 | polkit-Aktionen | `/usr/share/polkit-1/actions/org.zenos.firewall.policy`, `org.zenos.luefter.policy`, `org.zenos.kanal.policy`, `org.zenos.installer.policy` | ja (Kopie von `system/polkit/`) |
 | Quickshell | `/usr/local/bin/quickshell`, Stempel `/usr/local/share/zenos/quickshell.version` | nein, Quellbau |
 | Systemkennung | `/usr/lib/os-release`, `/etc/issue`, `/etc/legal` (umgelenkt, Ubuntu-Fassung jeweils als `<datei>.ubuntu`), `/etc/update-motd.d/00-zenos`, statoverrides für Ubuntus motd-Skripte, Verweise `zenos.info`/`zenos.mirrors`/`zenos.csv`, Version `/usr/local/share/zenos/version`, Merker `/var/lib/zenos/kennung` (nur nach `zenos-kennung ubuntu`) | nein, von `zenos-kennung` |
+| GRUB (nur x86) | `/etc/default/grub.d/zenos-distributor.cfg` (`GRUB_DISTRIBUTOR=Ubuntu`, damit der Bootloader trotz Kennung zenOS bei `EFI/ubuntu` bleibt) | ja (Kopie aus `system/grub/`) |
 | `zenos-kennung` und Hook | `/usr/local/sbin/zenos-kennung` (Kopie, root, 0755), `/etc/apt/apt.conf.d/60zenos-kennung` | ja (Kopien) |
 | Logo `zenos` | `/usr/local/share/icons/hicolor/scalable/apps/zenos.svg` | ja (`assets/zeichen/zenos-app-icon.svg`) |
 | Schriften | `/usr/local/share/fonts/zenos/` | ja (`assets/fonts/`) |
@@ -537,5 +539,10 @@ Ubuntu-Archiv und Herstellerquellen (Ubuntu 26.04 LTS) ──▶ Pi: zen update,
   gibt es nur über HDMI (`HDMI-A-2` ist das eingebaute Display, `HDMI-A-1` die Buchse); die beiden USB-C-Buchsen
   führen nur USB 2.0, eine davon ohne GPIO-Modul gar keine Daten. Ein USB-C-Dock liefert dort Netzwerk und USB, aber
   kein Bild (`docs/module/dock.md`).
-- **x86-Bürorechner (amd64):** später. Gleiche Oberfläche, eigene Hardware-Teile, zum Beispiel ohne Argon-Dienst
-  (`zenos-argon.service` startet dort nicht). Dort ist GNOME als Rückfall-Sitzung beim Login vorgesehen.
+- **x86-Rechner (amd64):** ab `v0.1.0-rc8` über den Installer-Stick (`image/x86-stick.sh`, ANLEITUNG H) oder
+  `install.sh` auf einem vorhandenen Ubuntu Server 26.04. Gleiche Oberfläche und derselbe Code; was die Hardware
+  betrifft, entscheidet zur Laufzeit: Argon-Dienst und seine Pakete nur auf arm64 (`zenos-argon.service` mit
+  `ConditionArchitecture=arm64`, `# architektur: arm64` in `scripts/pakete/argon.txt`), Temperatur vom Fühler der CPU
+  (`scripts/bin/zenos-temperatur`), GRUB behält den Namen Ubuntu (`docs/module/kennung.md`), `zen doctor` prüft
+  Verschlüsselung und Secure Boot (Abschnitt «PC»). Akku, Deckel und Gesten blenden sich ohne die Hardware aus. Auf
+  echter Hardware noch nicht abgenommen. GNOME als Rückfall-Sitzung beim Login ist vorgesehen, aber noch nicht gebaut.

@@ -27,7 +27,7 @@ Die Grundsätze stehen im [Manifest](MANIFEST.md).
 
 ## Status
 
-Version 0.1 ist gebaut und liegt auf dem Branch `dev`; die Release-Kandidaten `v0.1.0-rc1` bis `rc3` sind unsigniert (nur Workflow-Artefakte), `v0.1.0-rc4` ist der erste signierte (sein Image-Bau scheiterte, ohne Release-Seite). `v0.1.0-rc6` ist der erste mit Image und Release-Seite (Vorabversion, rc5 übersprungen), `v0.1.0-rc7` bringt den zen Installer; nach der Abnahme kommt `v0.1.0`. Alle Module sind in Docker-Containern mit Ubuntu 26.04 arm64 getestet, der gleichen Architektur wie der Pi. Die Abnahme auf echter Hardware steht noch aus; was dort zu prüfen ist, steht in der Testliste in [ANLEITUNG.md](ANLEITUNG.md). Was 0.1 kann: [docs/funktionen.md](docs/funktionen.md). Nächste Schritte: [ROADMAP.md](ROADMAP.md).
+Version 0.1 ist gebaut und liegt auf dem Branch `dev`; die Release-Kandidaten `v0.1.0-rc1` bis `rc3` sind unsigniert (nur Workflow-Artefakte), `v0.1.0-rc4` ist der erste signierte (sein Image-Bau scheiterte, ohne Release-Seite). `v0.1.0-rc6` ist der erste mit Image und Release-Seite (Vorabversion, rc5 übersprungen), `v0.1.0-rc7` bringt den zen Installer, `v0.1.0-rc8` den Installer-Stick für x86-Rechner; nach der Abnahme kommt `v0.1.0`. Alle Module sind in Docker-Containern mit Ubuntu 26.04 arm64 getestet, der gleichen Architektur wie der Pi. Die Abnahme auf echter Hardware steht noch aus; was dort zu prüfen ist, steht in der Testliste in [ANLEITUNG.md](ANLEITUNG.md). Was 0.1 kann: [docs/funktionen.md](docs/funktionen.md). Nächste Schritte: [ROADMAP.md](ROADMAP.md).
 
 ## Installieren per Skript
 
@@ -82,7 +82,9 @@ Eine neue Ubuntu-Version (etwa 28.04) kommt nie als Update: `do-release-upgrade`
 ## Hardware
 
 - Raspberry Pi 5, entwickelt und getestet im Argon ONE Gehäuse
-- Später: x86-Rechner als eigene Installer-Variante
+- x86-Rechner (amd64), ab `v0.1.0-rc8`: Installer-Stick zum Selbstbauen aus dem offiziellen Ubuntu-Server-ISO
+  (`image/x86-stick.sh`, mit Verschlüsselung und Secure Boot), siehe [ANLEITUNG.md](ANLEITUNG.md), Abschnitt H. Auf
+  echter Hardware noch nicht abgenommen.
 
 ## Dokumentation
 

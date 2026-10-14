@@ -25,6 +25,7 @@ Status: `offen` · `in Arbeit` · `fertig` · `offener Punkt`
 | Bootsplash (Plymouth) | fertig, nicht aktiv | Theme `system/plymouth/zenos/` (Gleiten, Überblenden, atmender Spalt, Passwortfeld, 1x/2x), Modul 42-bootsplash legt es ab, `zen bootsplash` schaltet nach Rückfrage ein, `zen doctor` meldet den Stand. Details: `docs/module/bootsplash.md` |
 | Docks und Bildschirm über USB | fertig | direkt auf dem Pi (Argon ONE UP) gebaut: zenos-dock, udev-Regel 73-zenos-dock (nur Markierung für systemd), Benutzerdienst zenos-dock.service, Modul 84-dock, Abschnitt in zen doctor. Befund und Mitteilung am Gerät mit dem i-tec-Dock geprüft; der Weg über udev nach install.sh. Details: `docs/module/dock.md` |
 | Bluetooth im System-Menü | fertig | direkt auf dem Pi gebaut: BluetoothQuelle (Quickshell.Bluetooth), BluetoothAbschnitt und bluetooth.js, Symbole, Paket bluez mit Modul 36-bluetooth, zen doctor. Headless hell und dunkel angesehen, Start-Test ohne Befund; Koppeln mit einem echten Gerät steht aus. Details: `docs/module/bluetooth.md` |
+| x86-Rechner und Installer-Stick | fertig, nicht abgenommen | `image/x86-stick.sh` baut aus dem offiziellen Ubuntu-Server-ISO einen Stick mit automatischer Installation (`image/x86/`), GRUB behält den Namen Ubuntu, Argon-Pakete nur auf arm64, Temperatur vom Fühler der CPU, App-Leiste nur am äusseren Rand, `zen doctor` Abschnitt «PC». In QEMU mit Secure Boot geprüft: Start und Ubuntu-Installer (Testbau); Einrichtung von zenOS im Installer und echte Hardware stehen aus. Details: `docs/image-und-releases.md`, «Bürorechner (x86)» |
 
 ## Wo gebaut wird
 
@@ -35,11 +36,13 @@ I2C/GPIO des Argon ONE, Tastatur), ist pro Modul unter «am Pi prüfen» notiert
 
 ## Stand
 
-**Oktober 2026:** Nach `v0.1.0-rc2` kamen der signierte Update-Kanal, Energie, die Systemkennung zenOS und das Image
-als eigenständige Distribution (Release-Seite, Quellcode) dazu; `v0.1.0-rc3` ist gebaut (unsigniert, nur Artefakt).
-Die Fensterübersicht ist in Arbeit. `v0.1.0-rc4` ist der erste signierte Release-Kandidat (Image-Bau scheiterte, behoben). Nächster
-Schritte: `v0.1.0-rc6` (rc5 übersprungen) ist das erste Release mit Image, `v0.1.0-rc7` bringt den zen Installer, dann die Abnahme auf echter Hardware und `v0.1.0` (`ROADMAP.md`). Der Rest dieses
-Abschnitts beschreibt den Stand von rc1/rc2.
+**13. Oktober 2026:** Nach `v0.1.0-rc2` kamen der signierte Update-Kanal, Energie, die Systemkennung zenOS, das Image
+als eigenständige Distribution (Release-Seite, Quellcode) und die Fensterübersicht mit Wischen dazu. `v0.1.0-rc4` ist
+der erste signierte Release-Kandidat (Image-Bau scheiterte, behoben), `v0.1.0-rc6` (rc5 übersprungen) das erste Release
+mit Image, `v0.1.0-rc7` bringt den zen Installer. `v0.1.0-rc8` bringt den Installer-Stick für x86-Rechner, Bluetooth
+und Docks; den Tag signiert Zeno (`scripts/release-signieren.sh`). Danach die Abnahme auf echter Hardware (Argon ONE UP
+und ein x86-Rechner) und `v0.1.0` (`ROADMAP.md`). Rund 1600 Einheitentests. Der Rest dieses Abschnitts beschreibt den
+Stand von rc1/rc2.
 
 Alle Module sind gebaut und im Container getestet (Ubuntu 26.04 arm64 mit systemd, headless labwc, echte
 PAM-/logind-Sitzungen). Die Abnahme auf dem Pi steht aus: `ANLEITUNG.md`, Abschnitte C bis E. Pro Modul steht unter
@@ -52,8 +55,8 @@ Gemessen im Container (nicht auf dem Pi):
 - Image: `install.sh --image` im Ubuntu-Pi-Image, 1481 MiB mit `xz -9` (72 % der 2-GiB-Grenze), ohne
   SSH-Hostschlüssel, ohne proprietäre Apps, ohne Benutzerdaten. Auf GitHub (Tag `v0.1.0-rc1`) gebaut in 15:29 Minuten,
   1484 MiB, als Workflow-Artefakt (kein Release).
-- `scripts/pruefen.sh`: shellcheck, JSON-Schemas, Hex- und sh-c-Regel, rund 300 Einheitentests, qmllint, gitleaks,
-  Start-Test der Oberfläche – sauber, auch in der CI auf GitHub.
+- `scripts/pruefen.sh`: shellcheck, JSON-Schemas, Hex- und sh-c-Regel, damals rund 300 Einheitentests, qmllint,
+  gitleaks, Start-Test der Oberfläche – sauber, auch in der CI auf GitHub.
 
 Abnahme in einer echten VM (lima/Apple Virtualization, Ubuntu 26.04 arm64, virtio-gpu mit Mesa, statt des Pi):
 - Installation genau nach ANLEITUNG B–D, Neustart, echter greetd-Login auf VT 7, Einrichtung, echte Installation von
@@ -112,6 +115,12 @@ Abnahme in einer echten VM (lima/Apple Virtualization, Ubuntu 26.04 arm64, virti
   wartet `zenos-argon` auf Updates höchstens 5 Min. und warnt alle Terminals über `wall` (`docs/module/energie.md`,
   «Entscheidungen»).
 
+- **x86 über einen Stick zum Selbstbauen** (Zenos Auftrag vom 13.10.2026: «auf x86-Rechnern installieren», dazu
+  `v0.1.0-rc8`): Das Ubuntu-ISO ist für eine Release-Datei zu gross (2,9 GB), deshalb baut `image/x86-stick.sh` den
+  Stick aus dem offiziellen ISO, statt ein verändertes Ubuntu-ISO zu verteilen. Die Einrichtung im Installer folgt dem
+  Bau des Pi-Images (`install.sh --image` im chroot). Zeitzone über geoip des Installers, weil kein fester Ort ins
+  Repo darf. Alle Erweiterungen aus dev bleiben (Zenos Entscheid vom 13.10.2026), dazu nur der GRUB-Schutz.
+
 ## Offene Punkte für Zeno
 
 - **Bildmarke:** App-Icon mit zwei flacheren Kachelecken in der Referenz (Absicht?), Farbe der Mono-Zeile im
@@ -121,6 +130,14 @@ Abnahme in einer echten VM (lima/Apple Virtualization, Ubuntu 26.04 arm64, virti
 - **coremail** (eigenes Repo): legt beim ersten Start einen zweiten Starter an; die nötige Änderung steht in
   `docs/module/m12.md`. zenOS entfernt ihn bis dahin.
 - **Abnahme auf dem Pi** nach `ANLEITUNG.md` (C bis E). Danach `CHANGELOG.md` ergänzen und `v0.1.0` taggen (G).
+- **`v0.1.0-rc8` signieren** am Mac mit `scripts/release-signieren.sh v0.1.0-rc8` (Touch ID); erst dann baut GitHub das
+  Release. Das Update auf rc8 fragt auf den Geräten nach Zustimmung (neuer Rückfrage-Pfad `system/grub/`).
+- **Abnahme auf einem x86-Rechner** mit dem Stick (ANLEITUNG H): Secure Boot an, LUKS gewählt, Login, Einrichtung,
+  `zen doctor` Abschnitt «PC», Testliste E ohne Argon. GNOME als Rückfall-Sitzung fehlt noch.
+- **`zen update` auf dev aus Claude Code:** `CLAUDE.md` nennt `zen update --nur-zenos` für den Weg über `dev`. Die Commits
+  auf `dev` sind unsigniert, `zen update` verlangt dafür ein getipptes «ja» an einem Terminal; aus Claude Code (ohne
+  Terminal) geht das nicht. Was geht: `./scripts/install.sh` aus `~/zenOS`. `CLAUDE.md` anpassen oder den Weg ändern
+  ist Zenos Entscheid.
 - **Temporäre sudo-Regel** `/etc/sudoers.d/zenos-bau` nach der Testphase löschen (G1), falls angelegt.
 - **Safe Browsing Stufe 2 oder 1** in Chrome (Zielkonflikt Sicherheit ↔ «keine Telemetrie», `docs/sicherheit.md`).
 - **Firewall:** entschieden (Oktober 2026), standardmässig an; Ausschalten nur über den Schalter in den

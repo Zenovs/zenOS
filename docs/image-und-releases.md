@@ -1274,6 +1274,76 @@ eingerichtet («Signierte Releases»); der erste signierte Tag ist `v0.1.0-rc4` 
 auch jedes `-rc` eine öffentliche Release-Seite bekommt, liegt zenOS schon damit für alle sichtbar auf GitHub: Ob
 «Name und Marke» davor geklärt wird oder erst vor `v0.1.0`, entscheidet Zeno (ANLEITUNG, «G6 bis G10»).
 
-## Bürorechner
+## Bürorechner (x86)
 
-Für x86 kommt später ein eigener Installer-Stick: ein Ubuntu-ISO mit Autoinstall, das nach der Installation `scripts/install.sh` ausführt. Die Verschlüsselung fragt der Installer interaktiv ab. Kein Passwort steht in einer Datei.
+Für x86-Rechner (amd64) gibt es kein fertiges Image, sondern einen Installer-Stick, den jeder selbst baut:
+`image/x86-stick.sh` nimmt das offizielle Ubuntu-Server-ISO und legt die automatische Installation von zenOS dazu
+(ab `v0.1.0-rc8`). Bedienung: ANLEITUNG, Abschnitt H.
+
+**Warum selbst bauen:** Das ISO ist rund 2,9 GB gross, GitHub nimmt Release-Dateien nur unter 2 GiB. Zerstückeln wäre
+schlechter (siehe «Grenzen»). Und so gibt zenOS kein verändertes Ubuntu-ISO weiter: Was auf dem Stick von Ubuntu kommt,
+ist Byte für Byte das ISO von Ubuntu, geprüft gegen dessen signierte Prüfsummen.
+
+**`image/x86-stick.sh`** (läuft ohne root unter Linux und auf dem Mac, bash 3.2; braucht git, curl, gpgv, xorriso,
+ssh-keygen):
+
+1. **Stand:** ein Release-Tag, gültig signiert, geprüft mit `image/tag-pruefen.sh` (dieselben Regeln wie beim Pi-Image
+   und auf dem Gerät). Ohne `--ref` der Release-Tag auf HEAD. Kanal und Version folgen dem Tag: `vX.Y.Z` → `stabil`,
+   `-rcN` → `vorschau`. Ohne gültige Signatur nur mit `--testbau-ohne-signatur` (Kanal `dev`, Version mit
+   `-testbau`, ohne Zustand ab Werk; nie für den Alltag).
+2. **Ubuntu:** `SHA256SUMS` und `SHA256SUMS.gpg` von `releases.ubuntu.com/<version>/`, Signatur mit `gpgv` gegen den
+   «Ubuntu CD Image Automatic Signing Key (2012)» (`8439 38DF 228D 22F7 B374 2BC0 D94A A3F0 EFE2 1092`, dieselbe
+   Kopie wie in `image/bauen.sh`, ein Einheitentest hält beide gleich), die neueste Punktversion von
+   `ubuntu-26.04*-live-server-amd64.iso`, Download in den Cache (`~/.cache/zenos/ubuntu`, setzt nach einem Abbruch
+   fort), dann die Prüfsumme.
+3. **Inhalt:** `/autoinstall.yaml` und `/zenos/` mit `einrichten.sh`, `README`, `stand` (Tag, Commit, Kanal, Version,
+   origin, signiert) und `zenos.bundle` (`git bundle` des Stands mit allen Tags). Alles kommt aus dem Commit des Tags,
+   nicht aus dem Arbeitsstand.
+4. **ISO:** `xorriso -indev <ubuntu.iso> -outdev <zenos.iso> -map … -boot_image any replay`. Die Bootteile (El Torito für
+   BIOS und UEFI, MBR und GPT mit der angehängten EFI-Partition) übernimmt xorriso unverändert; Shim und GRUB bleiben die
+   signierten von Ubuntu, der Stick startet also auch mit Secure Boot. Dazu `zenos-<version>-x86-installer.iso.sha256`.
+
+**Die Installation am Rechner** (`image/x86/autoinstall.yaml`, Format «autoinstall» von Ubuntu):
+
+- Der Installer findet `/autoinstall.yaml` auf dem Stick und fragt einmal, ob er sie nutzen soll. Danach zeigt er wie
+  gewohnt Sprache, Tastatur, Netz, Festplatte, Profil und SSH (`interactive-sections`). Die Verschlüsselung (LUKS unter
+  LVM) wählt man im Schritt Festplatte; die Passphrase und das Passwort stehen in keiner Datei.
+- Fest eingestellt: Ubuntu Server (nicht minimiert), keine Snaps, keine proprietären Treiber und Codecs,
+  Sicherheitsupdates schon während der Installation, `git` als Paket, Zeitzone über die Standortabfrage des Installers
+  (`timezone: geoip`, wie Ubuntu sie auch für den Spiegel nutzt; ein fester Ort gehört nicht ins Repo), am Ende
+  Neustart.
+- **`late-commands`:** `image/x86/einrichten.sh /target`, als Argumentliste ohne Shell. Das Skript macht im neu
+  installierten System, was `image/bauen.sh` für das Pi-Image macht (Schritt 4 und 5): chroot mit `/dev`, `/proc`,
+  `/sys`, frischen tmpfs für `/run` und `/tmp` (ohne `/run/systemd/system` startet `install.sh` keine Dienste) und
+  der Namensauflösung des Installers, `policy-rc.d` gegen Dienststarts, `/opt/zenos` aus dem Bundle (losgelöst auf dem
+  Commit, ohne Zweige, mit allen Tags, origin GitHub über https, Besitz root), dann
+  `ZENOS_KANAL=<kanal> /opt/zenos/scripts/install.sh --image` mit leerer Umgebung. Danach prüft es die
+  Ubuntu-Sicherheitsquelle, den GRUB-Namen (`docs/module/kennung.md`), den Kanal und bei einem signierten Tag den Anker
+  und `zenos-kanal image <tag>`: Der Tag wird im installierten System noch einmal wie auf einem Gerät geprüft, und der
+  Zustand ab Werk entsteht wie im Pi-Image. Protokoll: `/var/log/zenos/stick.log` und `/var/log/zenos/install.log`.
+- Benutzer, Rechnername, SSH-Hostschlüssel und `machine-id` kommen vom Ubuntu-Installer; zenOS fasst sie nicht an.
+  Beim ersten Anmelden zieht die Sitzung die Benutzerteile nach (`install.sh --nur-benutzer`), die Einrichtung von
+  zenOS fragt nach Name, Ort, Erscheinungsbild und erstem Modus und installiert die proprietären Apps auf Wunsch.
+- Der erste Start stellt das Netz wie beim Pi-Image auf NetworkManager um (`zenos-netzwerk-erststart.service`,
+  `docs/module/netzwerk.md`); scheitert das, bleibt es bei netplan mit systemd-networkd.
+
+**Was x86 anders macht als der Pi:** Argon-Dienst und seine Pakete entfallen (`# architektur: arm64` in
+`scripts/pakete/argon.txt`), die Temperatur in der Leiste kommt vom Fühler der CPU (`scripts/bin/zenos-temperatur`),
+GRUB behält den Namen Ubuntu (`/etc/default/grub.d/zenos-distributor.cfg`), und `zen doctor` prüft im Abschnitt «PC»
+Verschlüsselung der Systemplatte und Secure Boot. Eine Rückfall-Sitzung mit GNOME (`docs/architektur.md`) gibt es noch
+nicht.
+
+**Geprüft (Oktober 2026):** Im Testbau aus dem Arbeitsstand (`--testbau-ohne-signatur`), in QEMU (q35, OVMF mit Secure
+Boot und den Schlüsseln von Microsoft, ohne KVM): Das ISO hat dieselbe Bootstruktur wie das von Ubuntu (El Torito für
+BIOS und UEFI, GPT mit der EFI-Partition, `xorriso -report_el_torito`), der Stick startet unter Secure Boot, und der
+Installer nimmt `/autoinstall.yaml` an und installiert Ubuntu. Ob `einrichten.sh` im Installer bis zum Login von zenOS
+durchläuft, war beim Schreiben noch nicht geprüft; der Lauf wird hier nachgetragen. Für den unbeaufsichtigten Test
+waren die Antworten vorbelegt und die Frage nach der automatischen Installation über `autoinstall` auf der
+Kernel-Kommandozeile abgeschaltet; das gilt nur für den Test-Stick, nie für das Repo. Auf echter Hardware ist der Stick
+noch nicht abgenommen.
+
+**Grenzen:** Ohne Netz scheitert die Einrichtung von zenOS (Pakete aus den Ubuntu-Quellen, Quickshell aus dem
+Quellcode); Ubuntu ist dann trotzdem installiert, weiter von Hand nach ANLEITUNG H. Ein Rechner mit schon installiertem
+Ubuntu Server 26.04 geht auch ohne Stick (`git clone` und `scripts/install.sh`, ANLEITUNG H), dann aber ohne Zustand
+ab Werk: Der Kanal ist `dev`, bis Anker und Kanal von Hand gesetzt sind (`zen kanal`), und die Platte bleibt, wie sie
+war.

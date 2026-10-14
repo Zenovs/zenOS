@@ -1,7 +1,7 @@
 # Anleitung: zenOS installieren und testen
 
 Von Ubuntu Server auf dem Pi bis zum getesteten zenOS. Führe die Befehle einzeln aus und schau nach jedem, ob er ohne
-Fehler durchlief.
+Fehler durchlief. Für einen x86-Rechner (Installer-Stick) gilt Abschnitt H.
 
 **Voraussetzungen:**
 - Raspberry Pi 5 mit mindestens 4 GB RAM
@@ -1253,3 +1253,118 @@ git switch dev
 - Bootsplash einschalten: per SSH `zen bootsplash aktivieren`. Es zeigt jeden Schritt vorher (Pakete, Standard-Theme,
   «quiet splash» in der Boot-Kommandozeile, neues initramfs) und fragt nach. Danach startet der Pi zweimal. Zurück mit
   `zen bootsplash deaktivieren`. Was du danach prüfst: `docs/module/bootsplash.md`, «Am Pi prüfen».
+
+---
+
+## H · x86-Rechner (Installer-Stick)
+
+Für einen x86-Rechner (amd64), etwa einen kleinen Bürorechner. Ab `v0.1.0-rc8`. Der Stick ist das offizielle
+Ubuntu-Server-ISO mit der automatischen Installation von zenOS; du baust ihn selbst, weil das ISO für GitHub zu gross
+ist. Alles auf der Platte des Rechners wird gelöscht. Hintergrund: `docs/image-und-releases.md`, «Bürorechner (x86)».
+
+**Voraussetzungen:**
+- x86-Rechner mit UEFI, mindestens 4 GB RAM (8 GB empfohlen) und 40 GB Platte
+- USB-Stick mit mindestens 4 GB (wird gelöscht)
+- Netzwerkkabel am Rechner, empfohlen (die Installation lädt Pakete)
+- Mac oder Linux-Rechner, um den Stick zu bauen, mit balenaEtcher
+
+### Stick bauen (Mac)
+
+**H1.** Werkzeuge für den Bau (Linux: `sudo apt install xorriso gpgv`):
+
+```
+brew install xorriso gnupg
+```
+
+**H2.** Den Stand des Releases holen:
+
+```
+git clone --branch v0.1.0-rc8 https://github.com/Zenovs/zenOS.git ~/zenOS-stick
+```
+
+**H3.**
+
+```
+cd ~/zenOS-stick
+```
+
+**H4.** Den Stick bauen. Das Skript prüft die Signatur des Tags, lädt Ubuntu (rund 3 GB, beim nächsten Mal aus dem
+Cache), prüft es und baut `zenos-0.1.0-rc8-x86-installer.iso` im aktuellen Ordner:
+
+```
+image/x86-stick.sh
+```
+
+Am Ende steht `Fertig: …/zenos-0.1.0-rc8-x86-installer.iso`. Bricht es mit «nicht gültig signiert» ab, stimmt der Tag
+nicht: nicht weitermachen.
+
+**H5.** Die ISO-Datei mit balenaEtcher auf den USB-Stick schreiben («Flash from file», dann den Stick wählen).
+
+### Installieren (am Rechner)
+
+**H6.** Den Stick einstecken und den Rechner davon starten. Bei HP-Rechnern öffnet `F9` das Boot-Menü (`F10` die
+Einstellungen), bei anderen oft `F12` oder `Esc`. Secure Boot darf an bleiben.
+
+**H7.** Im Menü «Try or Install Ubuntu Server» wählen (startet nach 30 s von selbst). Der Installer fragt, ob er die
+automatische Installation vom Stick nutzen soll: bestätigen.
+
+**H8.** Sprache, Tastatur (für die Schweiz «German (Switzerland)») und Netz wählen. Mit Kabel steht das Netz von selbst.
+
+**H9.** Festplatte: «Use an entire disk», die richtige Platte, «Set up this disk as an LVM group» und **«Encrypt the LVM
+group with LUKS»** anhaken, Passphrase zweimal eingeben. Auf dem Bürorechner ist die Verschlüsselung Pflicht. Die
+Übersicht bestätigen; erst jetzt wird gelöscht.
+
+**H10.** Profil: dein Name, ein Rechnername, Benutzername und Passwort. Bei SSH «Install OpenSSH server» anhaken, wenn du
+per SSH arbeiten willst; «Import SSH key» von GitHub übernimmt deine öffentlichen Schlüssel.
+
+**H11.** Warten. Nach Ubuntu richtet der Installer zenOS ein («running late commands»): 20 bis 40 Minuten, das meiste
+ist der Bau von Quickshell. Danach startet der Rechner neu. Den Stick abziehen, wenn der Installer darum bittet.
+
+**H12.** Beim Start die LUKS-Passphrase eingeben. Es erscheint der Login von zenOS. Anmelden; die Einrichtung beim
+ersten Start fragt nach Name, Ort, Erscheinungsbild und erstem Modus und bietet Chrome, VS Code und 1Password an.
+
+**H13.** Prüfen, im Terminal (kitty über das Befehlsfeld mit `Super + Leertaste`, oder per SSH):
+
+```
+zen doctor
+```
+
+Im Abschnitt «PC: Systemplatte und Start» stehen «Systemplatte verschlüsselt (LUKS)» und «Secure Boot an». Dann die
+Testliste aus E, ohne die Punkte zu Argon, Akku und Lüfter.
+
+### Wenn die Einrichtung von zenOS scheitert
+
+Der Installer meldet dann einen Fehler. Ubuntu ist trotzdem installiert. Neu starten, als dein Benutzer anmelden
+(Textkonsole) und `/var/log/zenos/stick.log` ansehen. Meist war das Netz weg. Weiter wie unten «Ohne Stick», ab H15,
+mit `/opt/zenos` statt `~/zenOS`, falls es `/opt/zenos` schon gibt.
+
+### Ohne Stick: Rechner mit Ubuntu Server 26.04
+
+Läuft auf dem Rechner schon Ubuntu Server 26.04 (amd64), geht es auch ohne Neuinstallation. Dann bleibt die Platte, wie
+sie ist (meist unverschlüsselt), und der Kanal für Updates ist `dev`, bis du ihn mit `zen kanal` umstellst. Für den
+Bürorechner ist der Stick der bessere Weg. Achtung: zenOS schaltet die Firewall ein (herein nur SSH aus lokalen Netzen),
+entfernt snapd, falls keine eigenen Snaps installiert sind, und stellt den Login auf greetd um.
+
+**H14.** Per SSH verbunden:
+
+```
+git clone --branch v0.1.0-rc8 https://github.com/Zenovs/zenOS.git ~/zenOS
+```
+
+**H15.**
+
+```
+cd ~/zenOS
+```
+
+**H16.** zenOS installieren (wie C2, auch hier mit `tmux new -s zenos` davor, falls die Verbindung abreissen kann):
+
+```
+./scripts/install.sh
+```
+
+**H17.**
+
+```
+sudo reboot
+```

@@ -269,8 +269,9 @@ Formularfehler erscheinen nicht als Hinweis, sondern ruhig unter dem Formular.
 Wechselt mit der Maus zwischen offenen Apps, auch wenn eine im Vollbild läuft. Sonst ist von ihr nichts zu sehen:
 keine Kante, kein Strich.
 
-- **Auslösen:** Pro Bildschirm liegt im mittleren Drittel des rechten Rands eine unsichtbare Zone von 1 px (Ebene
-  Overlay, damit sie auch über Vollbild-Fenstern liegt). Die Leiste erscheint erst, wenn der Zeiger dort 300 ms
+- **Auslösen:** Auf jedem Bildschirm, rechts von dem kein anderer liegt, sitzt im mittleren Drittel des rechten Rands
+  eine unsichtbare Zone von 1 px (Ebene Overlay, damit sie auch über Vollbild-Fenstern liegt). Am inneren Rand zweier
+  Bildschirme nebeneinander gibt es keine: Dort läuft der Zeiger hinüber, statt anzustossen. Die Leiste erscheint erst, wenn der Zeiger dort 300 ms
   verweilt; wandert er dabei mehr als 24 px auf oder ab, beginnt die Zeit neu. Oben und unten am Rand passiert
   nichts. 1 px genügt, weil der Zeiger am Rand anstösst, und nimmt dem Fenster darunter am wenigsten weg (etwa die
   Bildlaufleiste eines Browsers im Vollbild): Ein Klick genau in diese letzte Spalte erreicht das Fenster nicht,

@@ -144,6 +144,17 @@ Rückänderung, sonst fragte dpkg bei der nächsten Version nach). `zen doctor`:
   ehrlich die Basis; ein Divert wäre ein weiteres Conffile), `/etc/issue.net` (ohne Banner in sshd unsichtbar, SSH ist
   tabu), Paketquellen, Schlüssel, `/etc/dpkg/origins/default`, Paketnamen, Kernel- und SSH-Kennungen sowie alle
   Copyright-Zeilen von Canonical. Kein Ubuntu-Paket wird entfernt, umbenannt oder neu gebaut.
+- **GRUB behält den Namen Ubuntu (x86):** Ubuntu leitet `GRUB_DISTRIBUTOR` in `/etc/default/grub` aus `NAME` in
+  os-release ab (`( . /etc/os-release && echo ${NAME} )`), und grub 2.14 nimmt den Wert auch als Titel des
+  EFI-Eintrags. Mit `NAME="zenOS"` legte das nächste `grub-install` (bei einem Update von grub oder shim, auch über
+  unattended-upgrades) still einen Ordner `EFI/zenos` und einen neuen EFI-Starteintrag an: ein Eingriff am Bootloader
+  ohne Rückfrage. Das Modul legt deshalb auf jedem Rechner mit `/etc/default/grub` vor der Umstellung
+  `/etc/default/grub.d/zenos-distributor.cfg` mit `GRUB_DISTRIBUTOR=Ubuntu` ab (Quelle `system/grub/`). Die Datei wird
+  nach `/etc/default/grub` gelesen; alles bleibt bei `EFI/ubuntu` und den Menünamen von Ubuntu. Auf dem Pi gibt es
+  kein GRUB, dort entfällt sie. `system/grub/` ist ein Rückfrage-Pfad der Gruppe `boot` (`scripts/lib/sensible-pfade`):
+  Ein Update, das die Datei ändert, installiert ein Gerät nur nach Zustimmung. `zen doctor` prüft, ob sie da ist und ob
+  eine später gelesene Datei den Namen wieder überschreibt. Der Rückweg auf die Kennung Ubuntu lässt sie liegen; sie
+  setzt dann denselben Namen wie Ubuntu selbst.
 - **apport:** Mit `ID=zenos` behandelt apport Ubuntu-Pakete nicht mehr als Pakete der Distribution
   (`is_distro_package` → False, Bauplan). `ubuntu-bug` meldet zenOS also nicht an Launchpad; das ist richtig so.
 - **base-files und unattended-upgrades:** base-files kommt aus `-updates`, das unattended-upgrades ohnehin nicht
