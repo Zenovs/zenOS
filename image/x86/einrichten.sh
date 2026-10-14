@@ -12,7 +12,10 @@
 #      Dienststarts. /var/tmp bleibt auf der Platte (Quickshell-Bau, etwa 3,5 GB).
 #   3. /opt/zenos: Klon aus dem Bundle, losgelöst auf dem Commit, ohne Zweige, mit allen Tags, origin auf GitHub
 #      (https), Besitz root, sauber.
+#   3a. Ubuntu Desktop als Grundlage: Ein anderer Anmeldedienst (gdm3) wird deaktiviert, sein Paket bleibt. Sonst liesse
+#      install.sh greetd aus (40-sitzung, auf einem laufenden System richtig), und es käme GNOME statt zenOS.
 #   4. «ZENOS_KANAL=<kanal> /opt/zenos/scripts/install.sh --image» mit leerer Umgebung im chroot.
+#   4a. Verwaltet NetworkManager das Netz schon (Ubuntu Desktop), entfällt die Umstellung beim ersten Start.
 #   5. Prüfen: Kanal wie im Stand; bei einem signierten Tag Anker vollständig und «zenos-kanal image <tag>» (prüft den
 #      Tag im installierten System noch einmal wie ein Gerät und legt den Zustand ab Werk an). Kennung zenOS nur mit
 #      nachgewiesener Ubuntu-Sicherheitsquelle (zenos-sicherheitsquelle).
@@ -24,6 +27,14 @@
 # Neustart von Hand einrichten (ANLEITUNG.md, Abschnitt «x86»).
 
 set -Eeuo pipefail
+
+# Mit leerer Umgebung neu starten: Der Desktop-Installer läuft als Snap, und dessen Umgebung (LD_LIBRARY_PATH,
+# PYTHONPATH, SNAP*) gehört nicht in Werkzeuge des Systems und nicht in den chroot
+if [[ "${BASH_SOURCE[0]}" == "$0" && "${ZENOS_EINRICHTEN_SAUBER:-}" != 1 ]]; then
+  exec /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin LANG=C.UTF-8 TERM=dumb \
+    ZENOS_EINRICHTEN_SAUBER=1 /bin/bash "$(readlink -f -- "${BASH_SOURCE[0]}")" "$@"
+fi
+
 umask 022
 export LC_ALL=C.UTF-8
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -239,6 +250,36 @@ zenos_installieren() {
   (( rc == 0 )) || die "install.sh --image ist gescheitert (Exit $rc, Protokoll /var/log/zenos/install.log)"
 }
 
+# Ubuntu Desktop bringt gdm3 als Anmeldedienst mit (display-manager.service). install.sh liesse greetd dann aus, damit
+# auf einem laufenden System nie still der Login wechselt. Hier, bei einer frischen Installation vom Stick, soll der
+# Login von zenOS kommen: Der andere Dienst wird deaktiviert (systemctl disable im chroot entfernt den Verweis), sein
+# Paket bleibt installiert. Rückweg: ANLEITUNG H.
+anmeldung_vorbereiten() {
+  local dm="$ZIEL/etc/systemd/system/display-manager.service" dienst
+  if [[ ! -L "$dm" ]]; then
+    info "Kein anderer Anmeldedienst eingerichtet"
+    return 0
+  fi
+  dienst=$(basename -- "$(readlink -- "$dm")")
+  [[ "$dienst" != greetd.service ]] || return 0
+  [[ "$dienst" =~ ^[A-Za-z0-9@._-]+\.service$ ]] || die "display-manager.service zeigt auf «$dienst»"
+  in_chroot systemctl disable --quiet "$dienst" || die "$dienst lässt sich nicht deaktivieren"
+  if [[ -L "$dm" ]]; then rm -f -- "$dm"; fi
+  info "Anmeldedienst $dienst deaktiviert (das Paket bleibt); den Login übernimmt greetd mit zenOS"
+}
+
+# Verwaltet NetworkManager das Netz schon (Ubuntu Desktop: netplan mit «renderer: NetworkManager»), entfällt die
+# Umstellung beim ersten Start: zenos-netzwerk-erststart ist für netplan mit systemd-networkd gebaut und schaltete
+# NetworkManager ab, wenn sie scheitert. Das WLAN-Menü braucht nur einen laufenden NetworkManager.
+netz_abschliessen() {
+  if grep -rqsE '^[[:space:]]*renderer:[[:space:]]*NetworkManager' -- "$ZIEL/etc/netplan"; then
+    rm -f -- "$ZIEL/var/lib/zenos/netzwerk-erststart"
+    info "NetworkManager verwaltet das Netz schon: keine Umstellung beim ersten Start"
+  elif [[ -e "$ZIEL/var/lib/zenos/netzwerk-erststart" ]]; then
+    info "Beim ersten Start stellt zenOS das Netz auf NetworkManager um (zenos-netzwerk-erststart)"
+  fi
+}
+
 # Wie check_identity und prepare_channel in image/bauen.sh. Die Kennung ist nicht Pflicht (install.sh lässt sie bei
 # Ubuntu, wenn die Sicherheitsquelle sonst nicht erlaubt wäre), die Sicherheitsquelle schon.
 pruefen() {
@@ -257,6 +298,9 @@ pruefen() {
   kanal=$(head -n 1 -- "$ZIEL/etc/xdg/zenos/kanal" 2>/dev/null | tr -d '[:space:]') || kanal=""
   [[ "$kanal" == "$KANAL" ]] || die "Kanal ist «$kanal» statt «$KANAL» (/etc/xdg/zenos/kanal)"
   info "Kanal für zen update: $kanal"
+  [[ "$(readlink -- "$ZIEL/etc/systemd/system/display-manager.service" 2>/dev/null)" == */greetd.service ]] ||
+    die "greetd ist nicht der Anmeldedienst (display-manager.service): Es käme nicht der Login von zenOS"
+  info "Anmeldung: greetd mit dem Login von zenOS"
   if [[ "$SIGNIERT" != 1 ]]; then
     info "Testbau: kein Zustand ab Werk"
     return 0
@@ -288,10 +332,12 @@ main() {
   stand_lesen
   schritt "chroot vorbereiten"
   chroot_vorbereiten
+  anmeldung_vorbereiten
   schritt "/opt/zenos"
   code_einrichten
   schritt "install.sh --image"
   zenos_installieren
+  netz_abschliessen
   schritt "Prüfen"
   pruefen
   abschliessen

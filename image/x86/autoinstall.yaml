@@ -1,58 +1,27 @@
-# zenOS: automatische Installation für x86-Rechner (amd64), auf dem Installer-Stick unter /autoinstall.yaml.
+# zenOS: Installation für x86-Rechner (amd64), auf dem Installer-Stick unter /autoinstall.yaml.
 # Quelle im Repo: image/x86/autoinstall.yaml, auf den Stick gelegt von image/x86-stick.sh. Doku: docs/image-und-releases.md,
 # Abschnitt «Bürorechner (x86)», Format: https://canonical-subiquity.readthedocs-hosted.com/en/latest/reference/autoinstall-reference.html
 #
-# Der Ubuntu-Installer fragt am Bildschirm, was persönlich ist oder ein Passwort braucht: Sprache, Tastatur, Netz,
-# Festplatte mit Verschlüsselung (LUKS), Name, Rechnername, Benutzer und Passwort, SSH. Kein Passwort steht in dieser
-# Datei. Alles andere ist fest: Ubuntu Server ohne Snaps, Sicherheitsupdates schon bei der Installation, git für
-# /opt/zenos. Am Ende richtet image/x86/einrichten.sh zenOS im installierten System ein (late-commands), wie der Bau
-# des Pi-Images mit «install.sh --image». Danach startet der Rechner neu in den Login von zenOS.
-#
-# Da die Datei vom Stick kommt und nicht auf der Kernel-Kommandozeile steht, fragt der Installer einmal, ob er sie
-# verwenden soll. Gelöscht wird nichts ohne die Bestätigung im Schritt «Festplatte».
+# Der Stick ist das ISO von Ubuntu Desktop mit seinem grafischen Installer. Er zeigt alle gewohnten Schritte
+# (interactive-sections «*»): Sprache, Tastatur, Netz, Umfang der Installation, Festplatte mit Verschlüsselung, Zeitzone,
+# Name, Rechnername, Benutzer und Passwort. Kein Passwort steht in dieser Datei. Diese Datei fügt nur hinzu, was der
+# Installer nicht fragt: git für /opt/zenos und am Ende die Einrichtung von zenOS (image/x86/einrichten.sh, wie der Bau
+# des Pi-Images mit «install.sh --image»). Danach startet der Rechner in den Login von zenOS.
 #
 # YAML: nur mit Leerzeichen einrücken, nie mit Tabulatoren.
 
 autoinstall:
   version: 1
 
-  # Diese Schritte zeigt der Installer wie bei einer normalen Installation
+  # Alle Schritte grafisch, wie bei Ubuntu Desktop
   interactive-sections:
-    - locale
-    - keyboard
-    - network
-    - storage
-    - identity
-    - ssh
+    - "*"
 
-  # Kein Update des Installers während der Installation (ohne Rückfrage)
-  refresh-installer:
-    update: false
-
-  # Ubuntu Server, nicht die minimierte Fassung
-  source:
-    id: ubuntu-server
-    search_drivers: false
-
-  # Zeitzone über die Standortabfrage des Installers bei Ubuntu (geoip, wie beim Spiegel der Paketquellen), sonst
-  # liefe die Uhr in UTC. Ein fester Ort gehört nicht ins Repo. Ohne Netz bleibt UTC (sudo timedatectl set-timezone …).
-  timezone: geoip
-
-  # git braucht einrichten.sh für /opt/zenos
+  # git braucht einrichten.sh für /opt/zenos (fehlt es trotzdem, installiert einrichten.sh es nach)
   packages:
     - git
 
-  # Sicherheitsupdates schon bei der Installation; keine Snaps, keine proprietären Treiber und Codecs
-  updates: security
-  snaps: []
-  drivers:
-    install: false
-  codecs:
-    install: false
-
   # zenOS einrichten (ohne Shell: Argumentliste). Scheitert es, meldet der Installer einen Fehler; Ubuntu ist dann
-  # installiert, zenOS lässt sich nach dem Neustart von Hand einrichten (ANLEITUNG.md, Abschnitt «x86»).
+  # installiert, zenOS lässt sich nach dem Neustart von Hand einrichten (ANLEITUNG.md, Abschnitt H).
   late-commands:
     - [bash, /cdrom/zenos/einrichten.sh, /target]
-
-  shutdown: reboot

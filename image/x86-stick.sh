@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# x86-stick.sh – baut den Installer-Stick von zenOS für x86-Rechner (amd64): das offizielle Ubuntu-Server-ISO mit der
-# automatischen Installation von zenOS (image/x86/). Das Ergebnis schreibst du mit balenaEtcher (oder dd) auf einen
-# USB-Stick, mindestens 4 GB.
+# x86-stick.sh – baut den Installer-Stick von zenOS für x86-Rechner (amd64): das offizielle ISO von Ubuntu Desktop mit
+# seinem grafischen Installer, dazu die Einrichtung von zenOS (image/x86/). Das Ergebnis schreibst du mit balenaEtcher
+# (oder dd) auf einen USB-Stick, mindestens 8 GB.
 #
 #   image/x86-stick.sh [--ref vX.Y.Z[-rcN]] [optionen]
 #
@@ -10,13 +10,15 @@
 #      Release-Tag auf HEAD. Kanal und Version folgen dem Tag wie beim Pi-Image (vX.Y.Z → stabil, -rcN → vorschau).
 #   2. Ubuntu: SHA256SUMS und SHA256SUMS.gpg von releases.ubuntu.com, Signatur mit gpgv gegen den «Ubuntu CD Image
 #      Automatic Signing Key (2012)» (fest unten, dieselbe Kopie wie in image/bauen.sh), neueste Punktversion von
-#      ubuntu-<version>*-live-server-amd64.iso, Download in den Cache und Prüfsumme.
+#      ubuntu-<version>*-desktop-amd64.iso, Download in den Cache und Prüfsumme.
 #   3. Auf das ISO kommen /autoinstall.yaml und /zenos/ (einrichten.sh, README, stand, zenos.bundle), alles aus dem
 #      Commit des Tags, nicht aus dem Arbeitsstand. Bootteile bleiben unverändert (xorriso «-boot_image any replay»):
 #      Der Stick startet mit UEFI und Secure Boot wie das ISO von Ubuntu, und im BIOS-Modus.
 #   4. Ergebnis zenos-<version>-x86-installer.iso und daneben die Prüfsumme (.sha256).
-# Das fertige ISO ist grösser als 2 GiB und liegt deshalb nicht im Release: Jeder baut es selbst aus dem offiziellen
-# Ubuntu-ISO. So wird auch kein verändertes Ubuntu-Image weitergegeben.
+# Am Rechner zeigt der grafische Installer von Ubuntu alle gewohnten Schritte (mit Verschlüsselung); am Ende richtet er
+# zenOS ein. GNOME aus Ubuntu Desktop bleibt installiert, den Login übernimmt zenOS (greetd).
+# Das fertige ISO (rund 6,5 GB) ist grösser als 2 GiB und liegt deshalb nicht im Release: Jeder baut es selbst aus dem
+# offiziellen Ubuntu-ISO. So wird auch kein verändertes Ubuntu-Image weitergegeben.
 #
 # Optionen:
 #   --ref REF          Stand: ein Release-Tag (Standard: der Release-Tag auf HEAD)
@@ -294,7 +296,7 @@ ubuntu_waehlen() {
     die "SHA256SUMS ist nicht mit dem Ubuntu-CD-Schlüssel $CDIMAGE_FINGERPRINT signiert"
   info "Signatur von SHA256SUMS gültig (Ubuntu CD Image Signing Key ${CDIMAGE_FINGERPRINT: -16})"
 
-  muster="^ubuntu-${opt_ubuntu//./\\.}(\\.([0-9]+))?-live-server-amd64\\.iso\$"
+  muster="^ubuntu-${opt_ubuntu//./\\.}(\\.([0-9]+))?-desktop-amd64\\.iso\$"
   ISO_NAME=""
   while read -r hash name; do
     name=${name#\*}
@@ -306,7 +308,7 @@ ubuntu_waehlen() {
       ISO_SHA=$hash
     fi
   done < "$summen"
-  [[ -n "$ISO_NAME" ]] || die "In SHA256SUMS steht kein Server-ISO für amd64 (Ubuntu $opt_ubuntu)"
+  [[ -n "$ISO_NAME" ]] || die "In SHA256SUMS steht kein Desktop-ISO für amd64 (Ubuntu $opt_ubuntu)"
   ISO_URL="$ordner/$ISO_NAME"
   info "Gewählt: $ISO_NAME"
 }
@@ -322,7 +324,7 @@ ubuntu_laden() {
     warn "Vorhandene Datei hat eine andere Prüfsumme, lade neu: $ISO"
     rm -f -- "$ISO"
   fi
-  info "Lade $ISO_NAME (rund 3 GB)"
+  info "Lade $ISO_NAME (rund 6,5 GB)"
   laden "$ISO_URL" "$ISO.teil" gross || die "Download von $ISO_URL fehlgeschlagen (nochmals starten setzt fort)"
   if [[ "$(sha256_von "$ISO.teil")" != "$ISO_SHA" ]]; then
     rm -f -- "$ISO.teil"
@@ -387,7 +389,7 @@ main() {
   fi
   TMP=$(mktemp -d "${TMPDIR:-/tmp}/zenos-x86-stick.XXXXXX") || die "Temp-Ordner fehlt"
   trap aufraeumen EXIT
-  schritt "Ubuntu-Server-ISO"
+  schritt "Ubuntu-Desktop-ISO"
   ubuntu_waehlen
   ubuntu_laden
   schritt "Inhalt für den Stick"
@@ -397,12 +399,12 @@ main() {
   schritt "Fertig: $ERGEBNIS"
   cat <<EOF
    Weiter (ANLEITUNG.md, Abschnitt «x86»):
-   1. Mit balenaEtcher auf einen USB-Stick schreiben (mindestens 4 GB; alles darauf wird gelöscht).
+   1. Mit balenaEtcher auf einen USB-Stick schreiben (mindestens 8 GB; alles darauf wird gelöscht).
    2. Am Rechner vom Stick starten (Boot-Menü, oft F9, F12 oder Esc). Secure Boot darf an bleiben.
-   3. Die Frage nach der automatischen Installation bestätigen. Sprache, Tastatur und Netz wählen.
-   4. Festplatte: ganze Platte, «Set up this disk as an LVM group» und «Encrypt the LVM group with LUKS».
-   5. Name, Rechnername, Benutzer und Passwort; SSH nach Wunsch (Schlüssel von GitHub importieren geht).
-   6. Danach richtet der Installer zenOS ein (20 bis 40 Minuten, Netz nötig) und startet neu in den Login von zenOS.
+   3. Im grafischen Installer «Ubuntu installieren», dann Sprache, Tastatur und Netz (Kabel empfohlen).
+   4. Festplatte: «Festplatte löschen und Ubuntu installieren», unter «Erweiterte Funktionen» «LVM und Verschlüsselung».
+   5. Konto (Name, Rechnername, Benutzer, Passwort) und Zeitzone.
+   6. Danach richtet der Installer zenOS ein (20 bis 40 Minuten, Netz nötig). Neu starten: Es kommt der Login von zenOS.
 EOF
 }
 

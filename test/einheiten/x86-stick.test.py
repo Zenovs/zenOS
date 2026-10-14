@@ -63,22 +63,20 @@ class Autoinstall(unittest.TestCase):
 
     @unittest.skipIf(yaml is None, "python3-yaml fehlt")
     def test_aufbau(self):
+        """Grafischer Installer von Ubuntu Desktop: alle Schritte interaktiv, die Datei hängt nur git und die
+        Einrichtung an. Keine vorbelegten Antworten (Konto, Festplatte, Quelle), die den Installer überspringen
+        liessen."""
         with open(YAML, encoding="utf-8") as f:
             daten = yaml.safe_load(f)
         a = daten["autoinstall"]
         self.assertEqual(a["version"], 1)
-        for teil in ("locale", "keyboard", "network", "storage", "identity", "ssh"):
-            self.assertIn(teil, a["interactive-sections"])
-        self.assertNotIn("identity", a)
-        self.assertNotIn("storage", a)
-        self.assertEqual(a["refresh-installer"], {"update": False})
-        self.assertEqual(a["source"]["id"], "ubuntu-server")
+        self.assertEqual(a["interactive-sections"], ["*"])
+        for schluessel in ("identity", "storage", "source", "locale", "keyboard", "network", "user-data", "shutdown"):
+            self.assertNotIn(schluessel, a)
         self.assertIn("git", a["packages"])
-        self.assertEqual(a["snaps"], [])
-        self.assertEqual(a["updates"], "security")
         # Argumentliste, keine Shell
         self.assertEqual(a["late-commands"], [["bash", "/cdrom/zenos/einrichten.sh", "/target"]])
-        self.assertEqual(a["shutdown"], "reboot")
+        self.assertEqual(set(a), {"version", "interactive-sections", "packages", "late-commands"})
 
 
 STAND = r"""
@@ -130,6 +128,91 @@ class Stand(unittest.TestCase):
     def test_ohne_bundle(self):
         os.unlink(os.path.join(self.tmp.name, "zenos.bundle"))
         self.assertEqual(self.lauf().returncode, 1)
+
+
+DESKTOP = r"""
+set -uo pipefail
+source "$1"
+ZIEL=$2
+# Attrappe: systemctl disable im chroot entfernt den Verweis wie systemd
+in_chroot() {
+  printf 'chroot %s\n' "$*"
+  if [[ "$1 $2" == "systemctl disable" ]]; then rm -f -- "$ZIEL/etc/systemd/system/display-manager.service"; fi
+}
+"$3"
+"""
+
+
+class Desktop(unittest.TestCase):
+    """Ubuntu Desktop als Grundlage: gdm3 weicht greetd, die Netzumstellung beim ersten Start entfällt."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.ziel = self.tmp.name
+        os.makedirs(os.path.join(self.ziel, "etc", "systemd", "system"))
+        os.makedirs(os.path.join(self.ziel, "etc", "netplan"))
+        os.makedirs(os.path.join(self.ziel, "var", "lib", "zenos"))
+
+    def pfad(self, *teile):
+        return os.path.join(self.ziel, *teile)
+
+    def lauf(self, funktion):
+        return subprocess.run(["bash", "-c", DESKTOP, "desktop", EINRICHTEN, self.ziel, funktion],
+                              capture_output=True, text=True, timeout=30, check=False)
+
+    def dm(self, dienst):
+        os.symlink(f"/usr/lib/systemd/system/{dienst}", self.pfad("etc", "systemd", "system", "display-manager.service"))
+
+    def test_gdm_wird_deaktiviert(self):
+        self.dm("gdm3.service")
+        r = self.lauf("anmeldung_vorbereiten")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("chroot systemctl disable --quiet gdm3.service", r.stdout)
+        self.assertFalse(os.path.lexists(self.pfad("etc", "systemd", "system", "display-manager.service")))
+
+    def test_greetd_und_ohne_anmeldedienst_unveraendert(self):
+        r = self.lauf("anmeldung_vorbereiten")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("chroot", r.stdout)
+        self.dm("greetd.service")
+        r = self.lauf("anmeldung_vorbereiten")
+        self.assertNotIn("chroot", r.stdout)
+        self.assertTrue(os.path.islink(self.pfad("etc", "systemd", "system", "display-manager.service")))
+
+    def test_seltsamer_verweis_abgelehnt(self):
+        os.symlink("/usr/lib/systemd/system/x y.service",
+                   self.pfad("etc", "systemd", "system", "display-manager.service"))
+        r = self.lauf("anmeldung_vorbereiten")
+        self.assertEqual(r.returncode, 1)
+        self.assertNotIn("chroot", r.stdout)
+
+    def marke(self):
+        with open(self.pfad("var", "lib", "zenos", "netzwerk-erststart"), "w", encoding="utf-8") as f:
+            f.write("# Test\n")
+
+    def test_networkmanager_schon_da(self):
+        with open(self.pfad("etc", "netplan", "01-network-manager-all.yaml"), "w", encoding="utf-8") as f:
+            f.write("# Let NetworkManager manage all devices on this system\nnetwork:\n  version: 2\n"
+                    "  renderer: NetworkManager\n")
+        self.marke()
+        r = self.lauf("netz_abschliessen")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(os.path.exists(self.pfad("var", "lib", "zenos", "netzwerk-erststart")))
+
+    def test_networkd_behaelt_die_umstellung(self):
+        with open(self.pfad("etc", "netplan", "50-cloud-init.yaml"), "w", encoding="utf-8") as f:
+            f.write("network:\n  version: 2\n  ethernets:\n    enp1s0:\n      dhcp4: true\n")
+        self.marke()
+        r = self.lauf("netz_abschliessen")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.exists(self.pfad("var", "lib", "zenos", "netzwerk-erststart")))
+
+    def test_saubere_umgebung(self):
+        # Neustart mit leerer Umgebung nur beim Ausführen, nicht beim Laden (Tests)
+        text = lesen(EINRICHTEN)
+        self.assertIn("exec /usr/bin/env -i", text)
+        self.assertIn('"${BASH_SOURCE[0]}" == "$0" && "${ZENOS_EINRICHTEN_SAUBER:-}" != 1', text)
 
 
 class NurPruefen(unittest.TestCase):
