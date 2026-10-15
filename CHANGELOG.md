@@ -5,13 +5,25 @@ an; eine Version entspricht einem Tag `v…` im Repo.
 
 ## Unveröffentlicht
 
-## 0.1.0-rc8 – 2026-10-14
+## 0.1.0-rc8 – 2026-10-15
 
 Alles seit `v0.1.0-rc7`: der Installer-Stick für x86-Rechner, x86 im Allgemeinen (GRUB, Temperatur, Argon-Pakete,
-`zen doctor`), Bluetooth im System-Menü und Docks über USB.
+`zen doctor`), das Geräteprofil «Öffentlicher Bildschirm», Bluetooth im System-Menü und Docks über USB.
 
 ### Neu
 
+- **Öffentlicher Bildschirm (Geräteprofil `anzeige`):** Ein Gerät zeigt nach dem Einschalten von selbst eine App im
+  Vollbild, ohne Sperre, etwa ein Dashboard an der Wand. Dafür meldet sich ein technisches Anzeige-Konto an:
+  Systemkonto ohne Passwort, ohne Rechte, Login-Shell `nologin`, keine Gruppen und Schlüssel; polkit erlaubt ihm nur
+  die Hemmer gegen Standby (kein Ausschalten, kein Neustart). Eigene schlanke labwc-Sitzung ohne Leiste, Befehlsfeld,
+  Mitteilungen und Tastenkürzel ausser dem Ausweg `Strg + Alt + Shift + Rücktaste`; Fenster maximiert ohne Rahmen;
+  `zenos-anzeige.target` an der grafischen Sitzung, so starten Benutzerdienste der App von selbst; ein ruhiges
+  Ersatzbild (Uhrzeit, «Anzeige startet …», Rechnername), wenn die App nicht läuft; optional Bildschirmzeiten. Ports
+  der App gibt die Firewall nur aus den lokalen Netzen frei, wie SSH. Persönliche Konten sperren wie immer und melden
+  sich nie automatisch an (MANIFEST: Grundsatz 0 und Leitplanke «Ausnahme Anzeigegerät»). Nur root richtet es ein:
+  `sudo zen anzeige einrichten|entfernen|neustart`, Konfiguration `/etc/zenos/anzeige.json` (Schema, neutrales
+  Beispiel), Modul `77-anzeige`, Abschnitt in `zen doctor`, Doku `docs/module/anzeige.md`, Testliste ANLEITUNG I.
+  Ohne Profil ändert sich auf bestehenden Geräten nichts.
 - **Installer-Stick für x86-Rechner (amd64):** `image/x86-stick.sh` baut aus dem offiziellen ISO von Ubuntu Desktop
   einen Stick mit dem grafischen Installer von Ubuntu und der Einrichtung von zenOS, nur aus einem gültig signierten Tag
   (`image/tag-pruefen.sh`) und mit dem gegen die signierten Prüfsummen von Ubuntu geprüften ISO; die Bootteile bleiben
@@ -55,6 +67,8 @@ Alles seit `v0.1.0-rc7`: der Installer-Stick für x86-Rechner, x86 im Allgemeine
   Auf dem Pi bleibt es `thermal_zone0`.
 - **Argon-Pakete nur auf arm64:** `python3-smbus`, `i2c-tools` und `python3-libgpiod` kommen nur noch auf den Pi (Zeile
   `# architektur: arm64` in `scripts/pakete/argon.txt`, beachtet von `20-pakete`, `80-argon` und `zen doctor`).
+- **Updates auf einem Anzeigegerät:** Die Automatik von Kanal und Basis zählt die Anzeige-Sitzung beim Zeitpunkt «bei
+  Sperre» als ruhig; sonst kämen dort nie Updates. `scripts/module/77-anzeige.sh` ist ein Rückfrage-Pfad (Firewall).
 - **App-Leiste bei mehreren Bildschirmen:** Die Auslösezone liegt nur noch am rechten Rand eines Bildschirms, rechts
   von dem kein anderer liegt. Am inneren Rand zweier Bildschirme läuft der Zeiger ungestört hinüber.
 

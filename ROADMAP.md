@@ -79,6 +79,14 @@ Jeder Checkpoint endet mit einem Tag und einer Abnahme durch Zeno auf echter Har
 
 Projekt-Starter · Arbeitsstand pro Modus · zenOS-Check · Dev-Server-Übersicht · «Heute»-Ansicht mit Kalender und planbar · Tagesabschluss · Mikropausen · Zeiterfassung aus den Modi · Textbausteine pro Modus · Messen und Kontrast · Clip aufnehmen · Text aus Bild · QR-Codes · Notizzettel · Ans iPhone senden · Musiksteuerung · Abendlicht · Datei-Verlauf · Diktieren · Claude im Befehlsfeld · Fokus-Fenster (Zustand `fenster: fokus`) · Auslöser «Kalender» für Zustände
 
+## Öffentlicher Bildschirm
+
+- Geräteprofil `anzeige` (0.1: ab `v0.1.0-rc8`, Zenos Auftrag vom 15.10.2026): ein Anzeige-Konto ohne Rechte meldet sich
+  von selbst an und zeigt eine App im Vollbild, ohne Sperre; persönliche Konten sperren wie immer. `zen anzeige`,
+  `docs/module/anzeige.md`, Testliste in ANLEITUNG I.
+
+**Abnahme:** Auf dem x86-Rechner und dem Pi nach ANLEITUNG I, mit SlateDesk.
+
 ## Später
 
 - Bürorechner (amd64) als eigener Installer (0.1: ab `v0.1.0-rc8` als Installer-Stick zum Selbstbauen,

@@ -1,7 +1,8 @@
 # Anleitung: zenOS installieren und testen
 
 Von Ubuntu Server auf dem Pi bis zum getesteten zenOS. Führe die Befehle einzeln aus und schau nach jedem, ob er ohne
-Fehler durchlief. Für einen x86-Rechner (Installer-Stick) gilt Abschnitt H.
+Fehler durchlief. Für einen x86-Rechner (Installer-Stick) gilt Abschnitt H, für ein Gerät als öffentlicher Bildschirm
+Abschnitt I.
 
 **Voraussetzungen:**
 - Raspberry Pi 5 mit mindestens 4 GB RAM
@@ -1378,3 +1379,64 @@ cd ~/zenOS
 ```
 sudo reboot
 ```
+
+---
+
+## I · Öffentlicher Bildschirm (Testliste)
+
+Ein Gerät mit zenOS zeigt nach dem Einschalten von selbst eine App im Vollbild, ohne Sperre. Dafür gibt es ein
+technisches Anzeige-Konto ohne Rechte; dein Konto sperrt weiter wie immer. Hintergrund: `docs/module/anzeige.md`.
+Per SSH mit deinem Konto, ein Befehl nach dem anderen.
+
+**I1.** Konfiguration anlegen, aus der Vorlage (danach App und Ports darin anpassen, etwa `"einheit"` und `[7380]`):
+
+```
+sudo install -m 0644 /opt/zenos/config/beispiele/anzeige.beispiel.json /etc/zenos/anzeige.json
+```
+
+**I2.** Anpassen:
+
+```
+sudo nano /etc/zenos/anzeige.json
+```
+
+**I3.** Einrichten. Es zeigt den Plan; zum Bestätigen `einrichten` eintippen:
+
+```
+sudo zen anzeige einrichten
+```
+
+**I4.** Neu starten (oder `sudo zen anzeige neustart`, wenn niemand am Gerät angemeldet ist):
+
+```
+sudo reboot
+```
+
+**Testliste**
+- [ ] Nach dem Start meldet sich das Gerät ohne Eingabe an. Die App erscheint im Vollbild, ohne Leiste und ohne
+  Befehlsfeld. Ohne App zeigt die Anzeige ruhig die Uhrzeit, «Anzeige startet …» und den Rechnernamen.
+- [ ] 30 Minuten ohne Eingabe: keine Sperre, kein Standby, der Bildschirm bleibt an (ausser die App oder die
+  Bildschirmzeiten schalten ihn).
+- [ ] `Super + Leertaste`, `Super + Enter`, `Alt + Tab`, Rechtsklick auf den Hintergrund: nichts passiert.
+- [ ] `Strg + Alt + Shift + Rücktaste` beendet die Anzeige, der Login von zenOS erscheint. Mit deinem Passwort
+  anmelden: deine Sitzung wie immer, `Super + L` sperrt, die automatische Sperre kommt nach deiner Zeit.
+- [ ] Abmelden, dann per SSH `sudo zen anzeige neustart`: Die Anzeige kommt zurück.
+- [ ] Die App beenden oder abstürzen lassen: das Ersatzbild erscheint, nach dem Neustart der App wieder die App.
+- [ ] Der Port der App ist aus dem Büronetz erreichbar, von ausserhalb der lokalen Netze nicht
+  (`sudo ufw status numbered` zeigt die Regeln mit Kommentar `zenos-anzeige`).
+- [ ] `zen doctor` zeigt den Abschnitt «Öffentlicher Bildschirm» ohne Fehler (mit `sudo zen doctor` auch Passwort,
+  Schlüssel und App).
+- [ ] `ssh anzeige@<gerät>` und eine Anmeldung als `anzeige` an der Textkonsole (`Ctrl + Alt + F3`) gehen nicht.
+- [ ] `sudo zen anzeige entfernen` (Wort `entfernen`, Daten nur mit `löschen`), dann Neustart: kein Autologin mehr,
+  dein Login, der Port wieder zu, das Konto weg.
+
+**Mit SlateDesk**, nach I3 und vor I4:
+
+```
+sudo bash ~anzeige/SlateDesk/scripts/setup.sh --user anzeige --branch grosses-update --ufw
+```
+
+Ohne `--autologin` (den Login macht greetd, nicht gdm); fragt das Skript danach, mit Nein antworten. Danach startet
+SlateDesk in der Anzeige-Sitzung von selbst (`slatedesk.service`, `WantedBy=graphical-session.target`), die
+Fernsteuerung ist erreichbar, und Bildschirm aus/an aus SlateDesk funktioniert über `wlr-randr`. Das Setup schaltet
+Linger für `anzeige` ein (für seine Updates); `zen doctor` zeigt das als Hinweis.

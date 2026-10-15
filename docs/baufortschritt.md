@@ -26,6 +26,7 @@ Status: `offen` · `in Arbeit` · `fertig` · `offener Punkt`
 | Docks und Bildschirm über USB | fertig | direkt auf dem Pi (Argon ONE UP) gebaut: zenos-dock, udev-Regel 73-zenos-dock (nur Markierung für systemd), Benutzerdienst zenos-dock.service, Modul 84-dock, Abschnitt in zen doctor. Befund und Mitteilung am Gerät mit dem i-tec-Dock geprüft; der Weg über udev nach install.sh. Details: `docs/module/dock.md` |
 | Bluetooth im System-Menü | fertig | direkt auf dem Pi gebaut: BluetoothQuelle (Quickshell.Bluetooth), BluetoothAbschnitt und bluetooth.js, Symbole, Paket bluez mit Modul 36-bluetooth, zen doctor. Headless hell und dunkel angesehen, Start-Test ohne Befund; Koppeln mit einem echten Gerät steht aus. Details: `docs/module/bluetooth.md` |
 | x86-Rechner und Installer-Stick | fertig, nicht abgenommen | `image/x86-stick.sh` baut aus dem offiziellen ISO von Ubuntu Desktop einen Stick mit dem grafischen Installer und der Einrichtung von zenOS (`image/x86/`), GRUB behält den Namen Ubuntu, Argon-Pakete nur auf arm64, Temperatur vom Fühler der CPU, App-Leiste nur am äusseren Rand, `zen doctor` Abschnitt «PC». In QEMU mit Secure Boot geprüft: Start und Installer (Testbau mit dem Server-ISO); Desktop-Stick und echte Hardware stehen aus. Details: `docs/image-und-releases.md`, «Bürorechner (x86)» |
+| Öffentlicher Bildschirm (Geräteprofil `anzeige`) | fertig, nicht abgenommen | Zenos Auftrag vom 15.10.2026: MANIFEST (Grundsatz 0, Leitplanke «Ausnahme Anzeigegerät»), `zenos-anzeige`, `zen anzeige`, Anzeige-Konto ohne Rechte, greetd `[initial_session]` nur mit Profil, eigene labwc-Sitzung, Ersatzbild, polkit-Regel, Firewall-Regeln wie SSH, Modul und doctor `77-anzeige`, Updates «ruhig». Einheitentests grün; `test/container/anzeige-e2e.sh` geschrieben, nicht gelaufen (kein Docker auf dem Bau-Rechner). Details: `docs/module/anzeige.md` |
 
 ## Wo gebaut wird
 
@@ -120,6 +121,10 @@ Abnahme in einer echten VM (lima/Apple Virtualization, Ubuntu 26.04 arm64, virti
   Stick aus dem offiziellen ISO, statt ein verändertes Ubuntu-ISO zu verteilen. Die Einrichtung im Installer folgt dem
   Bau des Pi-Images (`install.sh --image` im chroot). Zeitzone über geoip des Installers, weil kein fester Ort ins
   Repo darf. Alle Erweiterungen aus dev bleiben (Zenos Entscheid vom 13.10.2026), dazu nur der GRUB-Schutz.
+- **Öffentlicher Bildschirm** (Zenos Ja vom 15.10.2026, ohne Antwort auf die drei Entscheide, deshalb die
+  Vorschläge): Ausschalten, Neustart und Standby aus der Anzeige-Sitzung gesperrt; Ausweg `Strg + Alt + Shift +
+  Rücktaste`; Updates automatisch (die Anzeige-Sitzung gilt als ruhig). Bildschirmzeiten über `wlopm` statt
+  `wlr-randr` (schon installiert, schaltet nur die Anzeige). Fenster maximiert ohne Rahmen statt einer Vollbild-Regel.
 - **Stick mit dem grafischen Installer von Ubuntu Desktop** (Zenos Entscheid vom 14.10.2026, nach dem ersten Test: «die
   Installation grafisch wie Ubuntu Desktop»): Grundlage ist das Desktop-ISO, zenOS kommt auf Ubuntu Desktop. GNOME
   bleibt installiert, gdm wird beim Einrichten deaktiviert (greetd übernimmt), die Netzumstellung beim ersten Start
@@ -136,6 +141,8 @@ Abnahme in einer echten VM (lima/Apple Virtualization, Ubuntu 26.04 arm64, virti
 - **Abnahme auf dem Pi** nach `ANLEITUNG.md` (C bis E). Danach `CHANGELOG.md` ergänzen und `v0.1.0` taggen (G).
 - **`v0.1.0-rc8` signieren** am Mac mit `scripts/release-signieren.sh v0.1.0-rc8` (Touch ID); erst dann baut GitHub das
   Release. Das Update auf rc8 fragt auf den Geräten nach Zustimmung (neuer Rückfrage-Pfad `system/grub/`).
+- **Öffentlicher Bildschirm abnehmen** nach ANLEITUNG I, auf dem EliteDesk und dem Pi, mit SlateDesk;
+  `test/container/anzeige-e2e.sh` im Testcontainer laufen lassen (auf dem Bau-Rechner fehlt Docker).
 - **Abnahme auf einem x86-Rechner** mit dem Stick (ANLEITUNG H): Secure Boot an, LUKS gewählt, Login, Einrichtung,
   `zen doctor` Abschnitt «PC», Testliste E ohne Argon. GNOME als Rückfall-Sitzung fehlt noch.
 - **`zen update` auf dev aus Claude Code:** `CLAUDE.md` nennt `zen update --nur-zenos` für den Weg über `dev`. Die Commits

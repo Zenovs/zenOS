@@ -287,12 +287,26 @@ Damit Browser und Apps dort speichern, zeigen die XDG-Benutzerordner in `~/.conf
   Temperatur nie fallend. `hysterese` 0–10 °C, `absenkenNachSekunden` 0–600. Ab 80 °C läuft der Lüfter immer mit
   100 % (Code). Prüfen: `/opt/zenos/scripts/bin/zenos-argon --konfig-pruefen`.
 
+- **`/etc/zenos/anzeige.json`** (optional, Geräteprofil «Öffentlicher Bildschirm», root, 0644): Anzeige-Konto, App
+  (systemd-Benutzereinheit oder Befehl als Argumentliste), TCP-Ports und Bildschirmzeiten. Wirksam erst mit
+  `sudo zen anzeige einrichten`; danach zieht `install.sh` Änderungen nach. Schema `config/schema/anzeige.schema.json`,
+  Beispiel `config/beispiele/anzeige.beispiel.json`, Prüfen: `zen anzeige status` bzw.
+  `/opt/zenos/scripts/bin/zenos-anzeige konfig`. Einzelheiten: `docs/module/anzeige.md`.
+
+  ```json
+  { "version": 1, "konto": "anzeige", "app": { "einheit": "beispiel-anzeige.service" }, "ports": [8080],
+    "bildschirmzeiten": [ { "tage": ["mo", "di", "mi", "do", "fr"], "an": "07:00", "aus": "19:00" } ] }
+  ```
+
 ## Leitplanken
 
 Sie sind im Code verankert, nicht in der Konfiguration:
 
 - Bei Bildschirmfreigabe bleiben Mitteilungsinhalte verborgen.
 - Der Sperrbildschirm zeigt nie Inhalte.
+- Ausnahme Anzeigegerät: Auf einem Gerät mit dem Profil «Öffentlicher Bildschirm» läuft automatisch nur das
+  Anzeige-Konto, ohne Rechte, ohne Passwort, ohne Sperre. Persönliche Konten sperren dort wie überall und melden sich nie
+  automatisch an. Kein Modus, Zustand und keine Einstellung macht ein Gerät dazu, nur root (`docs/module/anzeige.md`).
 - Die automatische Sperre bleibt aktiv, nach 1 bis 15 Minuten ohne Eingabe. Ein Programm, das den Leerlauf hemmt
   (Video), hält sie höchstens 60 Minuten ohne Eingabe auf.
 - Dunkel heisst gesperrt: Der Bildschirm geht nur gesperrt aus, 1 bis 10 Minuten nach der Sperre.

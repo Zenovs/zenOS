@@ -274,6 +274,33 @@ zeigt den Passwortdialog, wenn ein Programm Rechte verlangt, die polkit nur nach
   Apps, keine Zeiten und keine Fenstertitel (`~/.local/share/zenos/`, nur für den Benutzer lesbar).
 - Eine Zwischenablage-Historie, falls sie kommt, ignoriert 1Password und löscht sich selbst.
 
+## Öffentlicher Bildschirm (Geräteprofil)
+
+Ein Gerät kann als öffentlicher Bildschirm laufen (`docs/module/anzeige.md`). Die Leitplanke «Die automatische Sperre
+lässt sich nicht abschalten» gilt dabei für jedes persönliche Konto weiter; die Ausnahme betrifft nur ein technisches
+Anzeige-Konto (MANIFEST, «Ausnahme Anzeigegerät»).
+
+- **Nur root:** `sudo zen anzeige einrichten|entfernen`, mit Plan und getipptem Wort; jede Änderung in
+  `/var/log/zenos/anzeige.log`. Kein Schalter in der Oberfläche, kein Modus, kein Zustand.
+- **Anzeige-Konto ohne Rechte:** Systemkonto (UID unter 1000), Passwort gesperrt, Login-Shell `nologin`, keine
+  Gruppen, keine SSH-Schlüssel, keine Benutzerteile von zenOS. greetd startet die Sitzung über `/bin/sh -c`; Konsole und
+  SSH lehnen das Konto ab, die SSH-Konfiguration bleibt unberührt. Ein vorhandenes Konto wird nur genommen, wenn es
+  genau so aussieht; ein persönliches nie.
+- **polkit:** `/etc/polkit-1/rules.d/50-zenos-anzeige.rules` lehnt für das Anzeige-Konto alles ab ausser den Hemmern
+  gegen Leerlauf, Standby und Deckel. Ausschalten, Neustart und Standby gehen aus der Anzeige-Sitzung nicht, auch nicht
+  über eine ferngesteuerte App.
+- **Login:** `[initial_session]` steht nur bei aktivem Profil in `/etc/greetd/config.toml`, nur für das Anzeige-Konto.
+  Endet die Anzeige (Ausweg `Strg + Alt + Shift + Rücktaste`), kommt der Login von zenOS mit Passwort; das persönliche
+  Konto sperrt wie immer. `zen doctor` meldet einen Autologin ohne Profil oder für ein persönliches Konto als Fehler.
+- **Sitzung:** labwc ohne Tastenkürzel ausser dem Ausweg, ohne Menü, ohne Terminal und Befehlsfeld. Was am Gerät
+  zu sehen ist, ist öffentlich: Die App zeigt keine persönlichen Inhalte, und zenOS legt dort keine ab.
+- **Firewall:** Die Ports der App nur aus den lokalen Netzen, wie SSH (`zenos-firewall anzeige`, Kommentar
+  `zenos-anzeige`); fremde Regeln bleiben, wie sie sind. Ist die Firewall bewusst aus, wird nichts erzwungen, `zen
+  doctor` warnt. Eine App mit Fernsteuerung im LAN ist ein Angriffsziel: Sie läuft als Konto ohne Rechte, kann das
+  Gerät weder ausschalten noch etwas ausserhalb ihres Homes ändern.
+- **Updates:** Die Anzeige-Sitzung gilt für den Zeitpunkt «bei Sperre» als ruhig, damit Sicherheitsupdates auch dort
+  ankommen (`zenos-kanal`, `display_account`; nur aus dem Zustand von root).
+
 ## Energie
 
 Bildschirm aus, Ausschalten nach langer Sperre und die Ein/Aus-Taste (`docs/module/energie.md`). Grundsatz: Energie

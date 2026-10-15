@@ -55,6 +55,14 @@ Ubuntu-Hauptversion ist gesperrt und kommt nur als neue zenOS-Hauptversion mit n
 Das System startet mit `graphical.target`. Die Installation aktiviert greetd, startet es aber nicht; der Login
 erscheint erst nach dem Neustart, und eine SSH-Verbindung bleibt während der Installation bestehen.
 
+**Öffentlicher Bildschirm (Geräteprofil, `docs/module/anzeige.md`):** Nur mit `sudo zen anzeige einrichten` bekommt
+greetd zusätzlich `[initial_session]`: Beim Start meldet sich das Anzeige-Konto (Systemkonto ohne Rechte, Passwort und
+Sperre) an, `zenos-anzeige-sitzung` startet labwc mit `system/anzeige/labwc` (nur der Ausweg
+`Strg + Alt + Shift + Rücktaste`, Fenster maximiert ohne Rahmen), `autostart` startet `zenos-anzeige.target`
+(`BindsTo=graphical-session.target`) mit dem Hemmer gegen Standby, dem Ersatzbild (`shell/anzeige.qml`), der App und
+optional den Bildschirmzeiten. Keine Oberfläche von zenOS, kein `zenos-idle`. Endet die Anzeige, erscheint der Login
+von zenOS wie oben, persönliche Konten sperren wie immer.
+
 ## Komponenten
 
 ### Fenstermanager
@@ -185,6 +193,8 @@ Die Tastenkürzel von labwc rufen dieselben Ziele auf (Liste in `docs/module/m9.
 | `zenos-basis` | Paket-Updates der Ubuntu-Basis (root, ausgeführt wird die Kopie unter `/usr/local/libexec/zenos`): `pruefen` (ein unterbrochenes dpkg nachholen, apt-get update, Auswertung von `apt-get -s full-upgrade`), `installieren` (genau die geprüfte Liste, mit Inhibitor, danach `install.sh` und Gesundheitsprüfung), `update [--ja]` (Schritt 2 von `zen update`), `jetzt` und `zustimmen` (Einstellungen), `automatik lauf\|gelegenheit` (Timer), `status` (ohne root) |
 | `zenos-netzwerk` | Netz von netplan/systemd-networkd auf NetworkManager umstellen und zurück (`zen netzwerk`) |
 | `zenos-firewall` | Firewall ein- und ausschalten (root: über pkexec, sudo oder `install.sh`), bewussten Zustand merken |
+| `zenos-anzeige` | Geräteprofil «Öffentlicher Bildschirm»: Konfiguration prüfen, einrichten und entfernen (root, über `zen anzeige`), greetd-Konfiguration und polkit-Regel erzeugen, nachziehen für install.sh; in der Anzeige-Sitzung die App als Argumentliste starten und die Bildschirmzeiten schalten |
+| `zenos-anzeige-sitzung` | startet die Anzeige-Sitzung für das Anzeige-Konto (greetd `[initial_session]`): labwc mit `system/anzeige/labwc`, ohne Benutzerteile |
 | `zenos-temperatur` | nennt die Datei mit der Temperatur der CPU für die Leiste (einmal beim Start der Oberfläche; Pi `cpu-thermal`, Intel `x86_pkg_temp`/`coretemp`, AMD `k10temp`), liest nur `/sys` |
 | `zenos-sicherheitsquelle` | prüft mit unattended-upgrades selbst, ob die Ubuntu-Sicherheitsquelle erlaubt ist (nur lesend, für `zen doctor` und die Vorab-Prüfung von `72-kennung`) |
 | `zenos-kennung` | Systemkennung zenOS: os-release, Konsole, `/etc/legal` und Begrüssung per dpkg-divert und dpkg-statoverride einrichten, nachziehen (apt-Hook), prüfen und zurück zu Ubuntu (root; ausgeführt wird die Kopie unter `/usr/local/sbin`) |
@@ -365,6 +375,7 @@ Die Logik läuft in Quickshell selbst, ohne eigenen Hintergrunddienst.
 | polkit-Aktionen | `/usr/share/polkit-1/actions/org.zenos.firewall.policy`, `org.zenos.luefter.policy`, `org.zenos.kanal.policy`, `org.zenos.installer.policy` | ja (Kopie von `system/polkit/`) |
 | Quickshell | `/usr/local/bin/quickshell`, Stempel `/usr/local/share/zenos/quickshell.version` | nein, Quellbau |
 | Systemkennung | `/usr/lib/os-release`, `/etc/issue`, `/etc/legal` (umgelenkt, Ubuntu-Fassung jeweils als `<datei>.ubuntu`), `/etc/update-motd.d/00-zenos`, statoverrides für Ubuntus motd-Skripte, Verweise `zenos.info`/`zenos.mirrors`/`zenos.csv`, Version `/usr/local/share/zenos/version`, Merker `/var/lib/zenos/kennung` (nur nach `zenos-kennung ubuntu`) | nein, von `zenos-kennung` |
+| Öffentlicher Bildschirm | `/etc/zenos/anzeige.json` (Konfiguration), `/var/lib/zenos/anzeige.json` (Zustand), `/etc/polkit-1/rules.d/50-zenos-anzeige.rules`, `/etc/systemd/user/zenos-anzeige*` und `zenos-anzeige.target.d/zenos-app.conf`, `/var/log/zenos/anzeige.log`, Home des Anzeige-Kontos | Konfiguration nie (Beispiel ja); Einheiten ja (Kopien), Regel und Drop-in erzeugt |
 | GRUB (nur x86) | `/etc/default/grub.d/zenos-distributor.cfg` (`GRUB_DISTRIBUTOR=Ubuntu`, damit der Bootloader trotz Kennung zenOS bei `EFI/ubuntu` bleibt) | ja (Kopie aus `system/grub/`) |
 | `zenos-kennung` und Hook | `/usr/local/sbin/zenos-kennung` (Kopie, root, 0755), `/etc/apt/apt.conf.d/60zenos-kennung` | ja (Kopien) |
 | Logo `zenos` | `/usr/local/share/icons/hicolor/scalable/apps/zenos.svg` | ja (`assets/zeichen/zenos-app-icon.svg`) |
@@ -434,6 +445,7 @@ Systemteile, dann alle Benutzerteile.
 | `76-installer` | zen Installer: `zenos-installer` als root-eigene Kopie (nur, wenn der Weg dorthin nur für root schreibbar ist), Units `zenos-installer-installieren@` und `-entfernen@` (statisch), polkit-Aktionen, Starter `zenos-installer.desktop`, `/var/lib/zenos/installer` mit `ablage/`. Keine Pakete, läuft auch im Image |
 | `80-argon` | Argon-Dienst (V3 und ONE UP) und Shutdown-Hook |
 | `82-gesten` | Wischen mit drei Fingern: Dienstbenutzer `zenos-gesten` (systemd-sysusers), udev-Regel für reine Touchpads, `zenos-gesten.service` (startet ihn, wenn es ein Touchpad gibt; nach Änderungen neu); keine Pakete. Mit Notschalter `/etc/xdg/zenos/gesten-aus` nimmt es alles zurück |
+| `77-anzeige` | Geräteprofil «Öffentlicher Bildschirm», nur wenn es aktiv ist: `zenos-anzeige anwenden` (polkit-Regel, Einheiten, Drop-in; greetd schreibt `40-sitzung`), dann `zenos-firewall anzeige`. Ohne Profil nichts; Konten legt nur `zen anzeige` an |
 | `84-dock` | Docks und Bildschirm über USB: udev-Regel (markiert Billboards und DisplayLink-Geräte nur für systemd), Benutzerdienst `zenos-dock.service`; nach einer neuen Regel stösst es nur diese Geräte an (`change`). Keine Pakete, kein Treiber |
 | `90-benutzer` | Oberfläche verknüpfen, Ordner für persönliche Daten |
 | `95-zen` | `/usr/local/bin/zen`, Log-Ordner |
