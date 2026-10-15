@@ -1,0 +1,11 @@
+# zenOS: Folien während der Installation (image/x86-stick.sh macht daraus slides/<Nr>/slide_<Sprache>.html).
+# Je Zeile: Nummer|Sprache|Titel|Zeile 1|Zeile 2. Sprache «de» gilt für de_DE, de_CH und de_AT, «en» ist der Rückfall
+# des Installers (en_US) für alle anderen Sprachen. Kein HTML in den Texten.
+1|de|zenOS wird eingerichtet|Zuerst kommt Ubuntu auf die Platte, danach richtet sich zenOS von selbst ein.|Das dauert 20 bis 40 Minuten und braucht Netz. Danach startet der Rechner in den Login von zenOS.
+1|en|Setting up zenOS|Ubuntu goes onto the disk first, then zenOS sets itself up.|This takes 20 to 40 minutes and needs a network. Afterwards the computer starts into the zenOS login.
+2|de|Alles über eine Stelle|Super + Leertaste öffnet das Befehlsfeld: Apps, Dateien, Rechnen, Werkzeuge, Modi und Einstellungen.|Die Tastatur hat Vorrang, die Maus geht immer auch.
+2|en|One place for everything|Super + Space opens the command field: apps, files, calculator, tools, modes and settings.|The keyboard comes first, the mouse always works too.
+3|de|Ruhe ist der Normalzustand|Mitteilungen kommen gebündelt statt einzeln. Modi und Zustände wie Fokus richten den Rechner nach dir.|Fenster rasten per Tastendruck ein, bis zum 4er-Raster.
+3|en|Calm by default|Notifications arrive bundled instead of one by one. Modes and states such as focus adapt the computer to you.|Windows snap into place with a key press, up to a 2×2 grid.
+4|de|Sicher ab Werk|Verschlüsselte Platte, Secure Boot, Firewall und eine Sperre, die sich nicht abschalten lässt.|Keine Telemetrie: Nichts verlässt den Rechner ohne deine ausdrückliche Aktion.
+4|en|Secure out of the box|Encrypted disk, Secure Boot, a firewall and a lock that cannot be switched off.|No telemetry: nothing leaves the computer without your explicit action.

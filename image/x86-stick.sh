@@ -14,9 +14,15 @@
 #   3. Auf das ISO kommen /autoinstall.yaml und /zenos/ (einrichten.sh, README, stand, zenos.bundle), alles aus dem
 #      Commit des Tags, nicht aus dem Arbeitsstand. Bootteile bleiben unverändert (xorriso «-boot_image any replay»):
 #      Der Stick startet mit UEFI und Secure Boot wie das ISO von Ubuntu, und im BIOS-Modus.
-#   4. Ergebnis zenos-<version>-x86-installer.iso und daneben die Prüfsumme (.sha256).
-# Am Rechner zeigt der grafische Installer von Ubuntu alle gewohnten Schritte (mit Verschlüsselung); am Ende richtet er
-# zenOS ein. GNOME aus Ubuntu Desktop bleibt installiert, den Login übernimmt zenOS (greetd).
+#   4. Anpassung an zenOS (image/x86/installer/): eine zusätzliche Schicht des Live-Systems
+#      /casper/minimal.standard.live.zenos.squashfs mit /usr/share/desktop-provision/ (whitelabel.yaml mit den Farben
+#      aus shell/theme/tokens.json, das Zeichen von zenOS als Bilder, eigene Folien während der Installation). Das
+#      Startmenü heisst «zenOS installieren» und lädt die Schicht über layerfs-path; md5sum.txt kennt die geänderten
+#      Dateien, damit die Prüfung des Mediums nicht anschlägt. Die Schichten von Ubuntu bleiben unverändert.
+#   5. Ergebnis zenos-<version>-x86-installer.iso und daneben die Prüfsumme (.sha256).
+# Am Rechner zeigt der grafische Installer von Ubuntu die gewohnten Schritte im Look von zenOS (mit Verschlüsselung); am
+# Ende richtet er zenOS ein. GNOME aus Ubuntu Desktop bleibt installiert, den Login übernimmt zenOS (greetd). Die Texte
+# des Installers bleiben die von Ubuntu.
 # Das fertige ISO (rund 6,5 GB) ist grösser als 2 GiB und liegt deshalb nicht im Release: Jeder baut es selbst aus dem
 # offiziellen Ubuntu-ISO. So wird auch kein verändertes Ubuntu-Image weitergegeben.
 #
@@ -30,10 +36,14 @@
 #                      nur für Tests: Stand ohne gültig signierten Tag (Zweig, HEAD, unsignierter Tag), Kanal dev,
 #                      Version mit «-testbau», ohne Zustand ab Werk. Nie für den Alltag
 #   --nur-pruefen      nur Stand, Signatur, Kanal und Version zeigen, ohne Download und ohne Bau
+#   --nur-anpassung ORDNER
+#                      nur für Tests: legt den Inhalt der Schicht (usr/share/desktop-provision/…) unter ORDNER an,
+#                      ohne Download und ohne ISO
 #   -h, --hilfe        diese Hilfe
 #
-# Braucht git, curl, gpgv (Paket gpgv bzw. gnupg), xorriso, ssh-keygen und sha256sum oder shasum. Läuft ohne root,
-# unter Linux und auf dem Mac (bash 3.2; xorriso und gnupg aus Homebrew).
+# Braucht git, curl, gpgv (Paket gpgv bzw. gnupg), xorriso, mksquashfs (squashfs-tools), python3, ssh-keygen,
+# sha256sum oder shasum und md5sum oder md5. Läuft ohne root, unter Linux und auf dem Mac (bash 3.2; xorriso, gnupg und
+# squashfs aus Homebrew).
 # Exit 0 gebaut (bzw. geprüft), 1 Fehler, 2 falscher Aufruf.
 
 set -uo pipefail
@@ -54,6 +64,9 @@ opt_cache=${XDG_CACHE_HOME:-$HOME/.cache}/zenos/ubuntu
 opt_ubuntu=26.04
 opt_testbau=0
 opt_nur_pruefen=0
+opt_nur_anpassung=""
+# Zusätzliche Schicht des Live-Systems: casper hängt sie über layerfs-path an die Schicht minimal.standard.live
+SCHICHT=minimal.standard.live.zenos.squashfs
 
 TMP=""
 
@@ -83,6 +96,15 @@ sha256_von() {
 }
 
 groesse_von() { wc -c < "$1" | tr -d ' '; }
+
+# MD5 einer Datei für md5sum.txt des ISOs (Linux: md5sum, Mac: md5)
+md5_von() {
+  if command -v md5sum >/dev/null 2>&1; then
+    md5sum -- "$1" | awk '{ print $1 }'
+  else
+    md5 -q -- "$1"
+  fi
+}
 
 # Nur https; «gross»: auch nach abgerissenen Verbindungen weiterladen
 laden() { # URL ZIEL [gross]
@@ -165,7 +187,7 @@ optionen_lesen() {
       -h | --hilfe | --help) hilfe; exit 0 ;;
       --testbau-ohne-signatur) opt_testbau=1; shift; continue ;;
       --nur-pruefen) opt_nur_pruefen=1; shift; continue ;;
-      --ref | --quelle | --ausgabe | --cache | --ubuntu)
+      --ref | --quelle | --ausgabe | --cache | --ubuntu | --nur-anpassung)
         if (( $# < 2 )); then
           printf 'x86-stick.sh: %s braucht einen Wert\n' "$1" >&2
           exit 2
@@ -179,6 +201,7 @@ optionen_lesen() {
       --ausgabe) opt_ausgabe=$2 ;;
       --cache) opt_cache=$2 ;;
       --ubuntu) opt_ubuntu=$2 ;;
+      --nur-anpassung) opt_nur_anpassung=$2 ;;
     esac
     shift 2
   done
@@ -191,10 +214,14 @@ werkzeuge_pruefen() {
     command -v "$w" >/dev/null 2>&1 || die "$w fehlt"
   done
   (( opt_nur_pruefen )) && return 0
-  for w in curl gpgv xorriso; do
-    command -v "$w" >/dev/null 2>&1 || die "$w fehlt (Linux: sudo apt install curl gpgv xorriso · Mac: brew install gnupg xorriso)"
+  command -v python3 >/dev/null 2>&1 || die "python3 fehlt"
+  [[ -z "$opt_nur_anpassung" ]] || return 0
+  for w in curl gpgv xorriso mksquashfs; do
+    command -v "$w" >/dev/null 2>&1 ||
+      die "$w fehlt (Linux: sudo apt install curl gpgv xorriso squashfs-tools · Mac: brew install gnupg xorriso squashfs)"
   done
   command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 || die "sha256sum oder shasum fehlt"
+  command -v md5sum >/dev/null 2>&1 || command -v md5 >/dev/null 2>&1 || die "md5sum oder md5 fehlt"
 }
 
 # Stand, Tag und Signatur, Kanal, Version und origin
@@ -357,6 +384,96 @@ stick_inhalt() {
   info "autoinstall.yaml, zenos/einrichten.sh, README, stand und Bundle ($(( $(groesse_von "$ordner/zenos.bundle") / 1024 )) KiB)"
 }
 
+# Farben für den Installer aus shell/theme/tokens.json des Stands: Akzent (Standard «salbei»), Grund, Text, Fläche.
+# Ausgabe «NAME=#RRGGBB» je Zeile. Die Werte prüft das Programm (nur #RRGGBB), sonst Abbruch.
+farben_lesen() {
+  g show "$COMMIT:shell/theme/tokens.json" | python3 -I -c '
+import json, re, sys
+t = json.load(sys.stdin)
+f = t["farben"]
+a = f["akzente"][f["standardAkzent"]]
+werte = {"AKZENT_HELL": a["hell"], "AKZENT_DUNKEL": a["dunkel"],
+         "KNOPFTEXT_HELL": f["hell"]["flaeche"], "KNOPFTEXT_DUNKEL": f["dunkel"]["grund"],
+         "GRUND": f["dunkel"]["grund"], "TEXT": f["dunkel"]["text"], "TEXT2": f["dunkel"]["gedaempft"]}
+for name, wert in werte.items():
+    if not re.fullmatch(r"#[0-9A-Fa-f]{6}", wert):
+        sys.exit("Farbe %s ist kein #RRGGBB: %r" % (name, wert))
+    print("%s=%s" % (name, wert))
+' || die "Farben aus shell/theme/tokens.json nicht lesbar"
+}
+
+# Inhalt der Schicht unter ZIEL/usr/share/desktop-provision: whitelabel.yaml mit den Farben, Bilder, Folien
+anpassung_anlegen() { # ZIEL
+  local ziel=$1/usr/share/desktop-provision vorlage text name wert nr sprache titel z1 z2 html land
+  local -a farben=()
+  mkdir -p -- "$ziel/images" "$ziel/slides"
+  while IFS= read -r wert; do farben+=("$wert"); done < <(farben_lesen)
+  (( ${#farben[@]} == 7 )) || die "Farben aus shell/theme/tokens.json unvollständig"
+
+  text=$(g show "$COMMIT:image/x86/installer/whitelabel.yaml") || die "image/x86/installer/whitelabel.yaml fehlt im Stand"
+  for wert in "${farben[@]}"; do text=${text//@${wert%%=*}@/${wert#*=}}; done
+  [[ "$text" != *@[A-Z]*@* ]] || die "whitelabel.yaml: Platzhalter ohne Farbe"
+  printf '%s\n' "$text" > "$ziel/whitelabel.yaml"
+
+  for name in zenos-schriftzug-hell.svg zenos-schriftzug-dunkel.svg zenos-zeichen-hell.svg zenos-zeichen-dunkel.svg; do
+    g show "$COMMIT:assets/zeichen/$name" > "$ziel/images/$name" || die "assets/zeichen/$name fehlt im Stand"
+  done
+
+  vorlage=$(g show "$COMMIT:image/x86/installer/folie.html.in") || die "image/x86/installer/folie.html.in fehlt"
+  for wert in "${farben[@]}"; do vorlage=${vorlage//@${wert%%=*}@/${wert#*=}}; done
+  while IFS='|' read -r nr sprache titel z1 z2; do
+    case "$nr" in '' | '#'*) continue ;; esac
+    [[ "$nr" =~ ^[1-9]$ && "$sprache" =~ ^(de|en)$ && -n "$titel" && -n "$z1" ]] ||
+      die "image/x86/installer/folien.txt: Zeile «$nr|$sprache|…» ungültig"
+    case "$titel$z1$z2" in *'<'* | *'>'* | *'&'*) die "folien.txt: kein HTML in den Texten (Folie $nr)" ;; esac
+    html=${vorlage//@TITEL@/$titel}
+    html=${html//@ZEILE1@/$z1}
+    html=${html//@ZEILE2@/$z2}
+    mkdir -p -- "$ziel/slides/$nr"
+    g show "$COMMIT:assets/zeichen/zenos-zeichen-dunkel.svg" > "$ziel/slides/$nr/zenos-zeichen.svg"
+    if [[ "$sprache" == de ]]; then
+      for land in DE CH AT; do printf '%s\n' "$html" > "$ziel/slides/$nr/slide_de_$land.html"; done
+    else
+      printf '%s\n' "$html" > "$ziel/slides/$nr/slide_en_US.html"
+    fi
+  done < <(g show "$COMMIT:image/x86/installer/folien.txt")
+  for nr in "$ziel"/slides/*; do
+    [[ -f "$nr/slide_en_US.html" ]] || die "Folie ${nr##*/} hat keinen englischen Rückfall (slide_en_US.html)"
+  done
+  find "$1" -type d -exec chmod 0755 {} + && find "$1" -type f -exec chmod 0644 {} +
+}
+
+# Schicht, Startmenü und md5sum.txt für das ISO
+installer_anpassen() {
+  local menue="$TMP/grub.cfg" summen="$TMP/md5sum.txt" eintraege
+  xorriso -indev "$ISO" -ls /casper/minimal.standard.live.squashfs >/dev/null 2>&1 ||
+    die "Im ISO fehlt /casper/minimal.standard.live.squashfs: Aufbau unbekannt, die Schicht von zenOS passte nicht"
+  anpassung_anlegen "$TMP/schicht"
+  mkdir -p -- "$TMP/stick/casper"
+  mksquashfs "$TMP/schicht" "$TMP/stick/casper/$SCHICHT" -noappend -all-root -comp xz >"$TMP/mksquashfs.log" 2>&1 ||
+    { sed 's/^/     /' -- "$TMP/mksquashfs.log" >&2; die "mksquashfs ist gescheitert"; }
+
+  # Startmenü: «zenOS installieren», jede Kernel-Zeile lädt die Schicht dazu
+  xorriso -osirrox on -indev "$ISO" -extract /boot/grub/grub.cfg "$menue.ubuntu" -extract /md5sum.txt "$summen.ubuntu" \
+    >/dev/null 2>&1 || die "grub.cfg oder md5sum.txt im ISO nicht lesbar"
+  chmod u+w -- "$menue.ubuntu" "$summen.ubuntu"
+  sed -e 's|^menuentry "Try or Install Ubuntu" {|menuentry "zenOS installieren" {|' \
+    -e 's|^menuentry "Ubuntu (safe graphics)" {|menuentry "zenOS installieren (einfache Grafik)" {|' \
+    -e "s|^\([[:space:]]*linux[[:space:]][[:space:]]*/casper/vmlinuz\)|\1 layerfs-path=$SCHICHT|" \
+    -- "$menue.ubuntu" > "$menue"
+  eintraege=$(grep -c '^[[:space:]]*linux[[:space:]].*/casper/vmlinuz' "$menue")
+  if (( eintraege == 0 )) || (( $(grep -c "layerfs-path=$SCHICHT" "$menue") != eintraege )) ||
+    ! grep -q '^menuentry "zenOS installieren" {' "$menue"; then
+    die "Das Startmenü des ISOs sieht anders aus als erwartet (boot/grub/grub.cfg)"
+  fi
+
+  # md5sum.txt: neue Prüfsumme für grub.cfg, die Schicht dazu (die Prüfung beim Start meldet sonst einen Fehler)
+  awk -v neu="$(md5_von "$menue")" '$2 == "./boot/grub/grub.cfg" { print neu "  " $2; next } { print }' \
+    "$summen.ubuntu" > "$summen"
+  printf '%s  ./casper/%s\n' "$(md5_von "$TMP/stick/casper/$SCHICHT")" "$SCHICHT" >> "$summen"
+  info "Schicht $SCHICHT ($(( $(groesse_von "$TMP/stick/casper/$SCHICHT") / 1024 )) KiB), Startmenü «zenOS installieren»"
+}
+
 iso_bauen() {
   local ziel
   mkdir -p -- "$opt_ausgabe" || die "Ausgabe $opt_ausgabe lässt sich nicht anlegen"
@@ -366,6 +483,9 @@ iso_bauen() {
   if ! xorriso -indev "$ISO" -outdev "$ziel.teil" \
     -map "$TMP/stick/autoinstall.yaml" /autoinstall.yaml \
     -map "$TMP/stick/zenos" /zenos \
+    -map "$TMP/stick/casper/$SCHICHT" "/casper/$SCHICHT" \
+    -map "$TMP/grub.cfg" /boot/grub/grub.cfg \
+    -map "$TMP/md5sum.txt" /md5sum.txt \
     -boot_image any replay >"$TMP/xorriso.log" 2>&1; then
     sed 's/^/     /' -- "$TMP/xorriso.log" >&2
     rm -f -- "$ziel.teil"
@@ -389,11 +509,16 @@ main() {
   fi
   TMP=$(mktemp -d "${TMPDIR:-/tmp}/zenos-x86-stick.XXXXXX") || die "Temp-Ordner fehlt"
   trap aufraeumen EXIT
+  if [[ -n "$opt_nur_anpassung" ]]; then
+    anpassung_anlegen "$opt_nur_anpassung"
+    exit 0
+  fi
   schritt "Ubuntu-Desktop-ISO"
   ubuntu_waehlen
   ubuntu_laden
   schritt "Inhalt für den Stick"
   stick_inhalt
+  installer_anpassen
   schritt "ISO bauen"
   iso_bauen
   schritt "Fertig: $ERGEBNIS"
@@ -401,7 +526,7 @@ main() {
    Weiter (ANLEITUNG.md, Abschnitt «x86»):
    1. Mit balenaEtcher auf einen USB-Stick schreiben (mindestens 8 GB; alles darauf wird gelöscht).
    2. Am Rechner vom Stick starten (Boot-Menü, oft F9, F12 oder Esc). Secure Boot darf an bleiben.
-   3. Im grafischen Installer «Ubuntu installieren», dann Sprache, Tastatur und Netz (Kabel empfohlen).
+   3. Im Startmenü «zenOS installieren». Im Installer Sprache, Tastatur und Netz (Kabel empfohlen).
    4. Festplatte: «Festplatte löschen und Ubuntu installieren», unter «Erweiterte Funktionen» «LVM und Verschlüsselung».
    5. Konto (Name, Rechnername, Benutzer, Passwort) und Zeitzone.
    6. Danach richtet der Installer zenOS ein (20 bis 40 Minuten, Netz nötig). Neu starten: Es kommt der Login von zenOS.

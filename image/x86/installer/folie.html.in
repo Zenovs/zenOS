@@ -1,0 +1,45 @@
+<html>
+  <head>
+    <style>
+body {
+  height: 600px;
+  background-color: @GRUND@;
+  color: @TEXT@;
+}
+
+img {
+  height: 200px;
+  width: 200px;
+}
+
+table {
+  padding: 20% 100px;
+  height: 600px;
+}
+
+p {
+  margin-bottom: 12px;
+  color: @TEXT2@;
+}
+
+.h1 {
+  font-size: 40px;
+  color: @TEXT@;
+}
+    </style>
+  </head>
+  <body>
+    <table>
+      <tr>
+        <td>
+          <p class="h1">@TITEL@</p>
+          <p>@ZEILE1@</p>
+          <p>@ZEILE2@</p>
+        </td>
+        <td>
+          <img src="zenos-zeichen.svg" />
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

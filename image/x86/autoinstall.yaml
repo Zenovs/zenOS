@@ -17,6 +17,17 @@ autoinstall:
   interactive-sections:
     - "*"
 
+  # Pakete vom Hauptspiegel von Ubuntu statt vom Spiegel, den die Standortabfrage wählt, dazu Wiederholungen und Geduld
+  # bei langsamen Verbindungen. Am Testgerät brach die Installation beim Laden des Kernels ab (apt Exit 100), in den
+  # Tests in QEMU jedes Mal mit «Connection failed» zum Landesspiegel. Die Einstellung bleibt im System
+  # (/etc/apt/apt.conf.d/94curtin-config) und hilft dort ebenso.
+  apt:
+    geoip: false
+    conf: |
+      Acquire::Retries "10";
+      Acquire::http::Timeout "120";
+      Acquire::https::Timeout "120";
+
   # git braucht einrichten.sh für /opt/zenos (fehlt es trotzdem, installiert einrichten.sh es nach)
   packages:
     - git

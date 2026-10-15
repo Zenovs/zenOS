@@ -1,0 +1,36 @@
+# zenOS: Anpassung des grafischen Installers von Ubuntu Desktop (ubuntu-desktop-provision, «whitelabel»). Liegt im
+# Live-System des Sticks unter /usr/share/desktop-provision/whitelabel.yaml, in der Schicht
+# minimal.standard.live.zenos.squashfs (image/x86-stick.sh). Der Installer führt sie mit seiner eigenen Vorgabe zusammen.
+# Die Farben setzt x86-stick.sh beim Bauen aus shell/theme/tokens.json ein (Akzent «salbei»), hier stehen nur Platzhalter.
+# Bilder ohne Pfad sucht der Installer unter /usr/share/desktop-provision/images/.
+
+app-name: zenOS installieren
+
+theme:
+  light:
+    accent-color: "@AKZENT_HELL@"
+    elevated-button-color: "@AKZENT_HELL@"
+    elevated-button-text-color: "@KNOPFTEXT_HELL@"
+  dark:
+    accent-color: "@AKZENT_DUNKEL@"
+    elevated-button-color: "@AKZENT_DUNKEL@"
+    elevated-button-text-color: "@KNOPFTEXT_DUNKEL@"
+
+pages:
+  # Begrüssung und Abschluss mit dem Zeichen von zenOS statt Logo und Maskottchen von Ubuntu
+  locale:
+    image: zenos-schriftzug-hell.svg
+    image-dark: zenos-schriftzug-dunkel.svg
+  done:
+    image: zenos-zeichen-hell.svg
+    image-dark: zenos-zeichen-dunkel.svg
+  # Ohne Umweg: kein «Ausprobieren oder installieren», kein Update des Installers, keine Werbung für Ubuntu Pro, kein
+  # Umfang (es kommt die schlanke Grundlage, «Standardauswahl»; zenOS bringt seine Programme selbst)
+  try-or-install:
+    visible: false
+  refresh:
+    visible: false
+  ubuntu-pro-onboarding:
+    visible: false
+  source-selection:
+    visible: false
