@@ -1309,9 +1309,9 @@ Die Namen der Schritte stehen hier sinngemäss; sie hängen von der Sprache ab, 
 **H6.** Den Stick einstecken und den Rechner davon starten. Bei HP-Rechnern öffnet `F9` das Boot-Menü (`F10` die
 Einstellungen), bei anderen oft `F12` oder `Esc`. Secure Boot darf an bleiben. Im Menü «zenOS installieren» wählen.
 
-**H7.** Der grafische Installer startet im Look von zenOS (Farben, Zeichen, Titel «zenOS installieren»; die Texte sind
-die von Ubuntu). Sprache, Barrierefreiheit, Tastatur (für die Schweiz «Deutsch (Schweiz)») und Netz. Mit Kabel steht
-das Netz von selbst.
+**H7.** Der grafische Installer startet im Look von zenOS (dunkel, Farben, Zeichen, Titel «zenOS installieren»; die
+Texte sind die von Ubuntu, einige nennen noch «Ubuntu»). Sprache, Barrierefreiheit, Tastatur (für die Schweiz
+«Deutsch (Schweiz)») und Netz. Mit Kabel steht das Netz von selbst.
 
 **H8.** Fragt der Installer nach der Art der Installation, «Interaktive Installation» wählen. Zusätzliche Treiber und
 Medienformate nach Wunsch. Den Umfang wählt der Stick selbst (die schlanke Grundlage).

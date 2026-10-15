@@ -32,10 +32,10 @@ Alles seit `v0.1.0-rc7`: der Installer-Stick für x86-Rechner, x86 im Allgemeine
   richtet `image/x86/einrichten.sh` zenOS im installierten System ein wie den Bau des Pi-Images (`install.sh --image`
   im chroot, Kanal und Zustand ab Werk aus dem Tag); gdm von Ubuntu Desktop weicht greetd mit dem Login von zenOS,
   GNOME bleibt installiert. Der Installer hat den Look von zenOS (Farben aus den Tokens, Zeichen, eigene Folien,
-  Startmenü «zenOS installieren»; über die offizielle Anpassung `whitelabel.yaml` in einer eigenen Schicht des
-  Live-Systems), und er lädt vom Hauptspiegel von Ubuntu mit Wiederholungen (am Testgerät brach die erste
-  Installation beim Laden des Kernels ab). Das ISO (rund 6,5 GB) liegt nicht im Release, jeder baut es selbst. Läuft unter Linux und
-  auf dem Mac.
+  Produktname «zenOS», dunkle Live-Sitzung, Startmenü «zenOS installieren»; über die offizielle Anpassung
+  `whitelabel.yaml` in einer eigenen Schicht des Live-Systems), und er lädt vom Hauptspiegel von Ubuntu mit
+  Wiederholungen (am Testgerät brach die erste Installation beim Laden des Kernels ab). Das ISO (rund 6,5 GB) liegt
+  nicht im Release, jeder baut es selbst. Läuft unter Linux und auf dem Mac.
   Doku `docs/image-und-releases.md` («Bürorechner (x86)»), Bedienung ANLEITUNG H. Auf echter Hardware noch nicht
   abgenommen.
 - **`zen doctor` auf x86:** Abschnitt «PC: Systemplatte und Start» (nur amd64): ob die Systemplatte auf LUKS liegt und

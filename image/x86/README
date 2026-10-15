@@ -5,7 +5,9 @@ Dieser Stick ist das offizielle ISO von Ubuntu Desktop mit seinem grafischen Ins
 
   /autoinstall.yaml       zeigt alle Schritte des Installers wie gewohnt und hängt die Einrichtung von zenOS an
   /casper/minimal.standard.live.zenos.squashfs
-                          Look von zenOS für den Installer (Farben, Zeichen, Folien; Startmenü «zenOS installieren»)
+                          Look von zenOS für den Installer (Farben, Zeichen, Folien, dunkle Live-Sitzung)
+  /.disk/info             Produktname «zenOS» im Installer (Ubuntu folgt in Anführungszeichen)
+  /boot/grub/grub.cfg     Startmenü «zenOS installieren»
   /zenos/einrichten.sh    richtet zenOS am Ende der Installation ein
   /zenos/stand            welcher Stand von zenOS (Tag, Commit, Kanal)
   /zenos/zenos.bundle     der Code von zenOS zu diesem Stand (git bundle)

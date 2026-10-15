@@ -499,7 +499,7 @@ installer_anpassen() {
     die "md5sum.txt im ISO sieht anders aus als erwartet"
   printf '%s  ./casper/%s\n' "$(md5_von "$TMP/stick/casper/$SCHICHT")" "$SCHICHT" >> "$summen"
   info "Schicht $SCHICHT ($(( $(groesse_von "$TMP/stick/casper/$SCHICHT") / 1024 )) KiB), Startmenü «zenOS installieren»"
-  info "Produktname im Installer: $(cut -d'"' -f1 < "$produkt")"
+  info "Produktname im Installer: zenOS $VERSION"
 }
 
 iso_bauen() {

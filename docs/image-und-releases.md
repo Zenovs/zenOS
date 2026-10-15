@@ -1318,12 +1318,21 @@ ssh-keygen):
    - eigene Folien während der Installation (`folien.txt`, deutsch für de_DE/de_CH/de_AT, englisch als Rückfall)
    - ausgeblendet: «Ausprobieren oder installieren», Update des Installers, Ubuntu Pro und die Wahl des Umfangs (es
      kommt die schlanke Grundlage `ubuntu-desktop-minimal`)
+   - Produktname «zenOS <Version>» statt «Ubuntu 26.04.1 LTS»: Der Installer liest ihn aus `/.disk/info` (Kopfzeile
+     während der Installation, Übersicht vor dem Löschen, «zenOS … ist installiert»). Der Stick legt dort
+     `zenOS <version> "Ubuntu 26.04.1 LTS" - Release amd64 (<datum>)` hin. casper nimmt das erste Wort klein als Namen
+     des Live-Kontos (`zenos`), pollinate die Seriennummer in Klammern. Weil Subiquity aus dem zweiten Wort den Kanal
+     für ein Update des Installers ableitet, steht in `autoinstall.yaml` `refresh-installer: update: false`; der Stick
+     ist ohnehin mit genau diesem Installer gebaut und geprüft.
+   - Live-Sitzung dunkel, mit einfarbigem Hintergrund in der Grundfarbe (`dunkel.grund`) statt des Bildes von Ubuntu:
+     ein Autostart-Eintrag der Schicht (`live-look.sh.in`, `live-look.desktop`), nur im Live-System.
    - Startmenü «zenOS installieren» und «zenOS installieren (einfache Grafik)»; `md5sum.txt` bekommt die neuen
      Prüfsummen, damit die Prüfung des Mediums nicht anschlägt.
-   Grenzen: Die Texte des Installers bleiben die von Ubuntu («Festplatte löschen und Ubuntu installieren»), ebenso das
-   Logo beim Start (Plymouth im initrd, vor den Schichten) und der Desktop des Live-Systems hinter dem Installer. Ein
-   eigener Installer wäre selbst gebaute Partitionierung und Verschlüsselung für ein Programm, das einmal je Gerät läuft
-   (Grundsatz 1, «Der Rest kommt von Ubuntu»).
+   Grenzen: Wo der Installer den Namen des Flavors einsetzt, bleibt «Ubuntu» («Willkommen bei Ubuntu», «Festplatte
+   löschen und Ubuntu installieren»), denn er kennt nur Flavors aus einer festen Liste; die übrigen Texte sind die von
+   Ubuntu. Ebenso bleiben das Logo beim Start (Plymouth im initrd, vor den Schichten) und die obere Leiste von GNOME im
+   Live-System. Ein eigener Installer wäre selbst gebaute Partitionierung und Verschlüsselung für ein Programm, das
+   einmal je Gerät läuft (Grundsatz 1, «Der Rest kommt von Ubuntu»).
 
 **Die Installation am Rechner** (`image/x86/autoinstall.yaml`, Format «autoinstall» von Ubuntu):
 

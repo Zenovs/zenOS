@@ -117,13 +117,14 @@ Abnahme in einer echten VM (lima/Apple Virtualization, Ubuntu 26.04 arm64, virti
   «Entscheidungen»).
 
 - **x86 über einen Stick zum Selbstbauen** (Zenos Auftrag vom 13.10.2026: «auf x86-Rechnern installieren», dazu
-  `v0.1.0-rc8`): Das Ubuntu-ISO ist für eine Release-Datei zu gross (2,9 GB), deshalb baut `image/x86-stick.sh` den
+  `v0.1.0-rc8`): Das Ubuntu-ISO ist für eine Release-Datei zu gross (rund 6,5 GB), deshalb baut `image/x86-stick.sh` den
   Stick aus dem offiziellen ISO, statt ein verändertes Ubuntu-ISO zu verteilen. Die Einrichtung im Installer folgt dem
   Bau des Pi-Images (`install.sh --image` im chroot). Zeitzone über geoip des Installers, weil kein fester Ort ins
   Repo darf. Alle Erweiterungen aus dev bleiben (Zenos Entscheid vom 13.10.2026), dazu nur der GRUB-Schutz.
 - **Installer im Look von zenOS** (Zeno, 15.10.2026: «sieht genau so aus wie Ubuntu, soll angepasst für zenOS sein»):
   über die offizielle Anpassung des Installers (`whitelabel.yaml`, eigene Schicht im Live-System), nicht mit einem
-  eigenen Installer (Grundsatz 1, «Der Rest kommt von Ubuntu»). Texte und Startlogo bleiben die von Ubuntu. Dazu
+  eigenen Installer (Grundsatz 1, «Der Rest kommt von Ubuntu»). Dazu der Produktname «zenOS» über `/.disk/info` und
+  eine dunkle Live-Sitzung. Texte mit dem Namen des Flavors («Willkommen bei Ubuntu») und das Startlogo bleiben. Dazu
   Downloads vom Hauptspiegel mit Wiederholungen, nachdem die erste Installation am EliteDesk beim Kernel abbrach.
 - **Öffentlicher Bildschirm** (Zenos Ja vom 15.10.2026, ohne Antwort auf die drei Entscheide, deshalb die
   Vorschläge): Ausschalten, Neustart und Standby aus der Anzeige-Sitzung gesperrt; Ausweg `Strg + Alt + Shift +
