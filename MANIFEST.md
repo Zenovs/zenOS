@@ -6,6 +6,8 @@ Die Reihenfolge ist die Rangordnung. Bei einem Konflikt gewinnt immer der höher
 
 zenOS ist für mich gebaut, enthält aber nichts von mir. Im Repo und im Image stehen keine Namen, Konten, Modi, Orte oder geheimen Schlüssel. Einzige Ausnahme sind die öffentlichen Prüfschlüssel von zenOS, mit denen Geräte Updates prüfen. Persönliches entsteht lokal beim ersten Start und bleibt dort.
 
+Ein Gerät kann als öffentlicher Bildschirm eingerichtet sein. Dann gibt es dort zusätzlich ein technisches Anzeige-Konto. Es ist kein zweiter Benutzer: Es hat keine Rechte, kein Passwort und keine persönlichen Daten und zeigt nur eine App. Einrichten und entfernen kann es nur root.
+
 ## 1. Sicherheit ist Standard.
 
 Sicherheit geht vor Design und Bequemlichkeit. Sie wird nicht selbst erfunden, sondern von Ubuntu und erprobten Werkzeugen übernommen.
@@ -37,6 +39,7 @@ Diese Regeln kann kein Modus, kein Zustand und keine Einstellung aushebeln:
 - Bei Bildschirmfreigabe bleiben Mitteilungsinhalte verborgen.
 - Der Sperrbildschirm zeigt nie Inhalte.
 - Die automatische Sperre lässt sich nicht abschalten.
+- **Ausnahme Anzeigegerät:** Ist ein Gerät als öffentlicher Bildschirm eingerichtet, läuft dort automatisch nur das Anzeige-Konto: ohne Rechte, ohne Passwort, ohne persönliche Daten, ohne Sperre. Persönliche Konten sperren dort wie überall und melden sich nie automatisch an.
 - Es liegen keine Geheimnisse im Repo, und es gibt keine Telemetrie.
 - Terminal-Ausgaben und Bildschirminhalte verlassen den Rechner nie automatisch.
 
