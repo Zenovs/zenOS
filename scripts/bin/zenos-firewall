@@ -1,5 +1,5 @@
 #!/bin/bash
-# zenos-firewall ein|aus|standard|pruefen – Firewall (ufw) ein- oder ausschalten. Läuft nur als root: über
+# zenos-firewall ein|aus|standard|pruefen|anzeige – Firewall (ufw) ein- oder ausschalten, Regeln der Anzeige. Läuft nur als root: über
 # pkexec (Schalter «Firewall» in den Einstellungen, polkit-Aktionen in system/polkit/org.zenos.firewall.policy),
 # über sudo («zen firewall») oder aus install.sh («standard»).
 #
@@ -8,6 +8,9 @@
 #   standard  für install.sh: einschalten, ausser sie wurde bewusst ausgeschaltet; merkt sich nichts
 #   pruefen   nur prüfen, ob Einschalten geht: SSH-Regeln für alle lokalen Netze vorhanden, sshd nur auf Port 22,
 #             jede laufende SSH-Verbindung kommt aus einem erlaubten Netz (sonst bliebe sie hängen)
+#   anzeige   Regeln für die Ports der Anzeige-App (Geräteprofil «Öffentlicher Bildschirm», zen anzeige) an das Profil
+#             angleichen: je Port und lokalem Netz «allow tcp» mit Kommentar zenos-anzeige, wie die SSH-Regel; ohne
+#             aktives Profil gehen genau diese Regeln weg. Schaltet die Firewall nie ein oder aus.
 #
 # Laufende Verbindungen bleiben beim Einschalten bestehen (before.rules lässt ESTABLISHED durch); die Prüfung
 # deckt Verbindungen ab, die conntrack erst mitten im Strom aufnimmt.
@@ -33,13 +36,13 @@ _melden() { printf '%s\n' "$*"; }
 _fehler() { printf '%s: %s\n' "$_name" "$*" >&2; }
 
 if (( $# != 1 )); then
-  _fehler "Aufruf: zenos-firewall ein|aus|standard|pruefen"
+  _fehler "Aufruf: zenos-firewall ein|aus|standard|pruefen|anzeige"
   exit 2
 fi
 case "$1" in
-  ein | aus | standard | pruefen) _modus=$1 ;;
+  ein | aus | standard | pruefen | anzeige) _modus=$1 ;;
   *)
-    _fehler "unbekannter Modus (erlaubt: ein, aus, standard, pruefen)"
+    _fehler "unbekannter Modus (erlaubt: ein, aus, standard, pruefen, anzeige)"
     exit 2
     ;;
 esac
@@ -186,6 +189,56 @@ _ausschalten() {
   _melden "Die Firewall ist aus. Eingehende Verbindungen sind nicht gesperrt."
 }
 
+# Ports der Anzeige-App: Soll aus dem aktiven Profil (zenos-anzeige ports, leer ohne Profil), Ist aus den Regeln mit
+# dem Kommentar der Anzeige. Fehlende kommen dazu, überzählige gehen weg; fremde Regeln bleiben, wie sie sind.
+_anzeige() {
+  local tupel ausgabe programm eintrag port netz
+  local -a ports=() netze=() ist=() soll=()
+  programm=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/zenos-anzeige
+  if [[ -f "$programm" ]]; then
+    mapfile -t ports < <(/usr/bin/python3 -I "$programm" ports 2>/dev/null || true)
+  fi
+  mapfile -t netze < <(_firewall_netze)
+  if ! tupel=$(_firewall_tupel); then
+    _fehler "Die Regeln von ufw sind nicht lesbar (/etc/ufw/user.rules)"
+    return 1
+  fi
+  if ! ausgabe=$(_firewall_auswerten anzeige <<< "$tupel"); then
+    _fehler "Die Regeln liessen sich nicht auswerten (python3)"
+    return 1
+  fi
+  mapfile -t ist < <(printf '%s' "$ausgabe" | sed '/^$/d')
+  for port in "${ports[@]}"; do
+    if [[ ! "$port" =~ ^[1-9][0-9]{0,4}$ ]] || (( port > 65535 || port == 22 )); then continue; fi
+    for netz in "${netze[@]}"; do soll+=("$port $netz"); done
+  done
+  for eintrag in "${soll[@]}"; do
+    printf '%s\n' "${ist[@]}" | grep -qxF -- "$eintrag" && continue
+    port=${eintrag%% *}
+    netz=${eintrag#* }
+    if ! ausgabe=$(ufw allow proto tcp from "$netz" to any port "$port" comment "$_FIREWALL_ANZEIGE" 2>&1); then
+      _fehler "Regel für $port/tcp aus $netz liess sich nicht anlegen: ${ausgabe##*$'\n'}"
+      return 1
+    fi
+    _melden "Anzeige: $port/tcp aus $netz erlaubt"
+    _journal "Anzeige: $port/tcp aus $netz erlaubt ($(_weg))"
+  done
+  for eintrag in "${ist[@]}"; do
+    printf '%s\n' "${soll[@]}" | grep -qxF -- "$eintrag" && continue
+    port=${eintrag%% *}
+    netz=${eintrag#* }
+    if ! ausgabe=$(ufw delete allow proto tcp from "$netz" to any port "$port" 2>&1); then
+      _fehler "Regel für $port/tcp aus $netz liess sich nicht entfernen: ${ausgabe##*$'\n'}"
+      return 1
+    fi
+    _melden "Anzeige: $port/tcp aus $netz wieder zu"
+    _journal "Anzeige: $port/tcp aus $netz entfernt ($(_weg))"
+  done
+  if ! _firewall_aktiv && (( ${#soll[@]} > 0 )); then
+    _melden "Hinweis: Die Firewall ist aus, die Regeln für die Anzeige liegen bereit (zen doctor)."
+  fi
+}
+
 if ! _firewall_installiert; then
   _fehler "ufw ist nicht installiert (install.sh ausführen)"
   exit 4
@@ -210,6 +263,7 @@ case "$_modus" in
     fi
     _einschalten 0
     ;;
+  anzeige) _anzeige ;;
   pruefen)
     if ! _grund=$(_pruefen); then
       _fehler "$_grund"

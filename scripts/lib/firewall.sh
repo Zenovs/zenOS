@@ -21,6 +21,7 @@
 #   _firewall_ssh_gegenstellen        Gegenstellen aller laufenden SSH-Verbindungen (eingehend auf Port 22)
 #   _firewall_ssh_ports               Ports von sshd aus «sshd -T» (stdin), «22» oder z. B. «22 2222»
 #   _firewall_liste WERT…             «a, b, c»
+#   _FIREWALL_ANZEIGE                 Kommentar der Regeln für die Ports der Anzeige-App (zenos-firewall anzeige)
 #
 # Der bewusste Zustand: Schaltet der Benutzer die Firewall über den Schalter in den Einstellungen oder mit
 # «zen firewall deaktivieren» aus, steht dort «zustand=aus». install.sh und zen update schalten sie dann nicht
@@ -28,6 +29,9 @@
 
 _FIREWALL_NETZE=(10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 fe80::/10 fd00::/8)
 _FIREWALL_ZUSTAND=/var/lib/zenos/firewall
+# Kommentar der Regeln für die Ports der Anzeige-App (Geräteprofil «Öffentlicher Bildschirm»): So findet
+# «zenos-firewall anzeige» genau seine Regeln wieder und entfernt keine fremden.
+_FIREWALL_ANZEIGE=zenos-anzeige
 
 _firewall_installiert() { dpkg-query -W -f='${db:Status-Status}' ufw 2>/dev/null | grep -qx installed; }
 
@@ -88,6 +92,8 @@ _firewall_tupel() { # [--still]
 #   fehlend NETZ…     druckt die Netze ohne SSH-Regel «allow» oder «limit» für tcp 22 von NETZ
 #   unbegrenzt NETZ…  druckt die Netze, deren SSH-Regel «allow» statt «limit» ist (ohne Schutz vor Durchprobieren)
 #   offen ADRESSE…    druckt die Adressen, deren SSH-Verbindungen (22/tcp) keine Regel erlaubt
+#   anzeige           druckt «PORT NETZ» für jede Regel der Anzeige-App (allow tcp PORT von NETZ, Kommentar
+#                     $_FIREWALL_ANZEIGE)
 # Rückgabe ungleich 0, wenn die Auswertung scheitert – dann gilt nichts als geprüft.
 _firewall_auswerten() {
   local tupel
@@ -105,12 +111,19 @@ for zeile in os.environ.get("_FIREWALL_TUPEL", "").splitlines():
     t = zeile.split()
     if t[:3] != ["###", "tuple", "###"]:
         continue
+    kommentar = ""
+    for x in t[3:]:
+        if x.startswith("comment="):
+            try:
+                kommentar = bytes.fromhex(x[len("comment="):]).decode("utf-8", "replace")
+            except ValueError:
+                kommentar = "?"
     t = [x for x in t[3:] if not x.startswith("comment=")]
     # Aktion Protokoll Zielport Ziel Quellport Quelle [Ziel-App Quell-App] Richtung
     if len(t) not in (7, 9):
         continue
     regeln.append({"aktion": t[0], "proto": t[1], "dport": t[2], "dst": t[3],
-                   "sport": t[4], "src": t[5], "richtung": t[-1]})
+                   "sport": t[4], "src": t[5], "richtung": t[-1], "kommentar": kommentar})
 
 
 def port_22(dport):
@@ -168,6 +181,12 @@ elif modus == "offen":
                 break
         if not erlaubt:
             print(wert)
+elif modus == "anzeige":
+    for r in regeln:
+        if (r["kommentar"] == "zenos-anzeige" and r["aktion"] == "allow" and r["proto"] == "tcp"
+                and r["dport"].isdigit() and r["dst"] in ("0.0.0.0/0", "::/0") and r["sport"] == "any"
+                and r["richtung"] == "in"):
+            print(r["dport"], r["src"])
 else:
     sys.exit(2)
 PY
