@@ -295,6 +295,9 @@ TIMESYNC_FLAG = "/run/systemd/timesync/synchronized"
 # Akku: Statusdatei von zenos-argon (Argon ONE UP), sonst /sys/class/power_supply. Automatisch installiert wird nur am
 # Netzteil oder ab MIN_BATTERY Prozent; ein unbekannter Stand gilt wie in der Oberfläche als Netzteil.
 POWER_STATUS = "/run/zenos/geraet.json"
+# Geräteprofil «Öffentlicher Bildschirm» (scripts/bin/zenos-anzeige): Die Sitzung des Anzeige-Kontos zählt für den
+# Zeitpunkt «bei Sperre» wie ein gesperrtes Gerät. Sie wird nie gesperrt, und niemand arbeitet darin.
+DISPLAY_STATE = "/var/lib/zenos/anzeige.json"
 POWER_SUPPLY_DIR = "/sys/class/power_supply"
 POWER_STATUS_MAX_AGE = datetime.timedelta(minutes=5)
 MIN_BATTERY = 50
@@ -3910,6 +3913,22 @@ def login_screen_quiet():
     return False, f"eben gestartet (mindestens {minutes} Min.)"
 
 
+def display_account():
+    """Name des Anzeige-Kontos bei aktivem Profil «Öffentlicher Bildschirm», sonst None. Nur eine Datei von root zählt
+    (TRUSTED_UIDS), wie sie zenos-anzeige schreibt."""
+    try:
+        st = os.lstat(DISPLAY_STATE)
+    except OSError:
+        return None
+    if not stat.S_ISREG(st.st_mode) or st.st_uid not in TRUSTED_UIDS or st.st_mode & 0o022:
+        return None
+    data = load_json(DISPLAY_STATE)
+    if not isinstance(data, dict) or data.get("aktiv") is not True:
+        return None
+    name = data.get("konto")
+    return name if isinstance(name, str) and USER_RE.fullmatch(name) else None
+
+
 def quiet_now(schedule):
     """(ruhig, Grund): Darf die Automatik jetzt installieren, nach dem Zeitpunkt des Geräts?"""
     art = schedule.get("art")
@@ -3937,7 +3956,11 @@ def quiet_now(schedule):
     if not seat:
         return login_screen_quiet()
     t = now()
-    for _sid, uid, name, kind in seat:
+    display = display_account()
+    people = [s for s in seat if display is None or s[2] != display]
+    if not people:
+        return True, "nur die Anzeige-Sitzung (öffentlicher Bildschirm)"
+    for _sid, uid, name, kind in people:
         if kind == "tty":
             # Auf der Textkonsole (Ctrl+Alt+F3) gibt es keine Sperre der Oberfläche; Marker und Bestätigung gehören
             # zur grafischen Sitzung desselben Benutzers

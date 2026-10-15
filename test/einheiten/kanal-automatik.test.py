@@ -162,6 +162,7 @@ class Ruhe(unittest.TestCase):
                  "POWER_SUPPLY_DIR": os.path.join(self.ordner, "power_supply"),
                  "AUTOMATIC_OFF_FILE": os.path.join(self.ordner, "etc", "kanal-automatik-aus"),
                  "SCHEDULE_FILE": os.path.join(self.ordner, "etc", "kanal-zeitpunkt"),
+                 "DISPLAY_STATE": os.path.join(self.ordner, "anzeige.json"),
                  "TRUSTED_UIDS": (0, self.uid)}
         for name, wert in werte.items():
             self.addCleanup(setattr, K, name, getattr(K, name))
@@ -205,6 +206,31 @@ class Ruhe(unittest.TestCase):
                        {"c1": "active", "c4": "online", "c5": "closing"})
         self.assertEqual(K.seat_sessions(), [("c1", self.uid, self.name, "wayland"),
                                              ("c4", self.uid, self.name, "wayland")])
+
+    def anzeige(self, konto, aktiv=True, modus=0o644):
+        pfad = os.path.join(self.ordner, "anzeige.json")
+        schreiben(pfad, json.dumps({"version": 1, "aktiv": aktiv, "konto": konto, "angelegt": True}))
+        os.chmod(pfad, modus)
+
+    def test_anzeige_sitzung_gilt_als_ruhig(self):
+        """Öffentlicher Bildschirm: Die Sitzung des Anzeige-Kontos wird nie gesperrt und hält die Automatik nicht auf."""
+        self.sitzungen([self.sitzung()], {"c1": "active"})
+        self.assertFalse(K.quiet_now({"art": "sperre"})[0], "ohne Profil zählt die Sitzung wie jede")
+        self.anzeige(self.name)
+        self.assertEqual(K.quiet_now({"art": "sperre"}), (True, "nur die Anzeige-Sitzung (öffentlicher Bildschirm)"))
+        self.anzeige(self.name, aktiv=False)
+        self.assertFalse(K.quiet_now({"art": "sperre"})[0])
+        self.anzeige(self.name, modus=0o666)
+        self.assertFalse(K.quiet_now({"art": "sperre"})[0], "eine für alle schreibbare Datei zählt nicht")
+
+    def test_anzeige_und_mensch(self):
+        """Meldet sich jemand nach dem Ausweg selbst an, gilt wieder seine Sperre."""
+        self.sitzungen([self.sitzung(user="anzeige", uid=990), self.sitzung(session="c2")],
+                       {"c1": "active", "c2": "active"})
+        self.anzeige("anzeige")
+        self.assertFalse(K.quiet_now({"art": "sperre"})[0])
+        self.gesperrt()
+        self.assertEqual(K.quiet_now({"art": "sperre"}), (True, "gesperrt"))
 
     def test_sitzungen_nicht_pruefbar(self):
         self.verhalten("loginctl.list-sessions", "kein json\n")
