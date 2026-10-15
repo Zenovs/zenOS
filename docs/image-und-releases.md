@@ -1345,11 +1345,18 @@ GRUB behält den Namen Ubuntu (`/etc/default/grub.d/zenos-distributor.cfg`), und
 Verschlüsselung der Systemplatte und Secure Boot.
 
 **Geprüft (Oktober 2026):** In QEMU (q35, OVMF mit Secure Boot und den Schlüsseln von Microsoft, ohne KVM), mit
-Testbauten aus dem Arbeitsstand: Das ISO hat dieselbe Bootstruktur wie das von Ubuntu (`xorriso -report_el_torito`),
-der Stick mit dem Server-ISO (bis zum Umbau auf Ubuntu Desktop) startet unter Secure Boot, und der Installer nimmt `/autoinstall.yaml` an. Mit dem
-Desktop-ISO wird hier nachgetragen, was der Test zeigt. Für unbeaufsichtigte Tests waren die Antworten vorbelegt und
-`autoinstall` auf der Kernel-Kommandozeile gesetzt; das gilt nur für Test-Sticks, nie für das Repo. Auf echter Hardware
-ist der Stick noch nicht abgenommen.
+Testbauten aus dem Arbeitsstand:
+- Das ISO hat dieselbe Bootstruktur wie das von Ubuntu (`xorriso -report_el_torito`), der Stick startet unter Secure
+  Boot, und der Installer nimmt `/autoinstall.yaml` an (Server- und Desktop-ISO).
+- `einrichten.sh` läuft im Installer bis zum Ende (Server-ISO, von Hand im Live-System gegen `/target` gestartet,
+  nachdem Ubuntus eigener Schritt «installing kernel» an der Verbindung zu `security.ubuntu.com` im emulierten Netz
+  scheiterte): `install.sh --image` mit 219 Änderungen und einer erwarteten Warnung (der Snap `hwctl` von Ubuntu
+  Server hält snapd), Sicherheitsquelle erlaubt, GRUB mit dem Namen Ubuntu, keine Argon-Pakete, Protokoll im System.
+- Mit dem Desktop-ISO brach die unbeaufsichtigte Testinstallation ebenfalls vor dem Bootloader ab (Ursache nicht mehr
+  lesbar); ein Lauf mit Protokoll bei Fehlern steht aus. Die Teile für Ubuntu Desktop in `einrichten.sh` (gdm weicht,
+  keine Netzumstellung, leere Umgebung) sind in Einheitentests geprüft.
+Für unbeaufsichtigte Tests waren die Antworten vorbelegt und `autoinstall` auf der Kernel-Kommandozeile gesetzt; das
+gilt nur für Test-Sticks, nie für das Repo. Auf echter Hardware ist der Stick noch nicht abgenommen.
 
 **Grenzen:** Ohne Netz scheitert die Einrichtung von zenOS (Pakete aus den Ubuntu-Quellen, Quickshell aus dem
 Quellcode); Ubuntu ist dann trotzdem installiert und startet mit dem Login von Ubuntu, weiter von Hand nach ANLEITUNG H.
