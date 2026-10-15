@@ -348,6 +348,9 @@ class NurPruefen(unittest.TestCase):
                 for name in (angaben.get("image"), angaben.get("image-dark")):
                     if name:
                         self.assertTrue(os.path.isfile(os.path.join(basis, "images", name)), (seite, name))
+                # Live-Sitzung immer dunkel: auch das helle Bild ist die Fassung für dunkel
+                if "image" in angaben:
+                    self.assertEqual(angaben["image"], angaben["image-dark"], seite)
         folien = sorted(os.listdir(os.path.join(basis, "slides")))
         self.assertEqual(folien, ["1", "2", "3", "4"])
         for nr in folien:
@@ -360,8 +363,10 @@ class NurPruefen(unittest.TestCase):
         # Look der Live-Sitzung als Vorgabe für GSettings, nach allen Vorgaben von Ubuntu (zz-) übersetzt
         look = lesen(os.path.join(ziel, "usr", "share", "glib-2.0", "schemas", "zz-zenos-live.gschema.override"))
         self.assertNotIn("@", look)
-        self.assertIn("primary-color='%s'" % tokens["dunkel"]["grund"], look)
-        self.assertIn("color-scheme='prefer-dark'", look)
+        self.assertEqual(look.count("primary-color='%s'" % tokens["dunkel"]["grund"]), 2)
+        self.assertEqual(look.count("color-scheme='prefer-dark'"), 2)
+        # Ubuntu setzt sein Bild nur für die Sitzung «ubuntu»
+        self.assertIn("[org.gnome.desktop.background:ubuntu]", look)
         self.assertFalse(os.path.exists(os.path.join(ziel, "etc")), "kein Autostart mehr")
 
     def test_falscher_aufruf(self):

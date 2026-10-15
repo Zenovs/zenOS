@@ -1327,8 +1327,10 @@ ssh-keygen):
    - Live-Sitzung dunkel, mit einfarbigem Hintergrund in der Grundfarbe (`dunkel.grund`) statt des Bildes von Ubuntu:
      eine Vorgabe für GSettings in der Schicht (`live-look.gschema.override.in`, im Live-System
      `/usr/share/glib-2.0/schemas/zz-zenos-live.gschema.override`). casper übersetzt die Vorgaben beim Start, also
-     bevor der Installer startet; nur so nimmt er die dunklen Bilder (er wählt sie einmal beim Start). Ein
-     Autostart-Eintrag ging nicht: systemd übergeht Einträge mit Startphase, und ohne Phase käme er zu spät.
+     bevor der Installer startet. Gesetzt je allgemein und für die Sitzung «ubuntu», denn Ubuntu setzt sein Bild nur
+     dort. Ein Autostart-Eintrag ging nicht: systemd übergeht Einträge mit Startphase, und ohne Phase käme er zu spät.
+     Der Installer malt seine erste Seite, bevor er das Farbschema kennt, und tauscht das Bild danach nicht mehr;
+     `whitelabel.yaml` nennt deshalb für hell und dunkel die Bilder für dunkel.
    - Startmenü «zenOS installieren» und «zenOS installieren (einfache Grafik)»; `md5sum.txt` bekommt die neuen
      Prüfsummen, damit die Prüfung des Mediums nicht anschlägt.
    Grenzen: Wo der Installer den Namen des Flavors einsetzt, bleibt «Ubuntu» («Willkommen bei Ubuntu», «Festplatte

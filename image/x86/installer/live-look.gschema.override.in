@@ -5,10 +5,22 @@
 # Dunkles Farbschema (der Installer folgt ihm und nimmt die dunklen Bilder) und ein ruhiger, einfarbiger Hintergrund in
 # der Grundfarbe statt des Bildes von Ubuntu. Die Farbe setzt x86-stick.sh beim Bauen aus shell/theme/tokens.json ein.
 
+# Je zweimal: allgemein und für die Sitzung «ubuntu» (Ubuntu setzt sein Bild in 10_ubuntu-settings.gschema.override nur
+# unter [org.gnome.desktop.background:ubuntu], das übersteuert die allgemeine Vorgabe).
+
 [org.gnome.desktop.interface]
 color-scheme='prefer-dark'
 
+[org.gnome.desktop.interface:ubuntu]
+color-scheme='prefer-dark'
+
 [org.gnome.desktop.background]
+picture-uri=''
+picture-uri-dark=''
+color-shading-type='solid'
+primary-color='@GRUND@'
+
+[org.gnome.desktop.background:ubuntu]
 picture-uri=''
 picture-uri-dark=''
 color-shading-type='solid'

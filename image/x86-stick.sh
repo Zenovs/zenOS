@@ -416,7 +416,7 @@ anpassung_anlegen() { # ZIEL
   [[ "$text" != *@[A-Z]*@* ]] || die "whitelabel.yaml: Platzhalter ohne Farbe"
   printf '%s\n' "$text" > "$ziel/whitelabel.yaml"
 
-  for name in zenos-schriftzug-hell.svg zenos-schriftzug-dunkel.svg zenos-zeichen-hell.svg zenos-zeichen-dunkel.svg; do
+  for name in zenos-schriftzug-dunkel.svg zenos-zeichen-dunkel.svg; do
     g show "$COMMIT:assets/zeichen/$name" > "$ziel/images/$name" || die "assets/zeichen/$name fehlt im Stand"
   done
 

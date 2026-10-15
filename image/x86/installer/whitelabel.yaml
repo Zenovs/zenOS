@@ -17,12 +17,14 @@ theme:
     elevated-button-text-color: "@KNOPFTEXT_DUNKEL@"
 
 pages:
-  # Begrüssung und Abschluss mit dem Zeichen von zenOS statt Logo und Maskottchen von Ubuntu
+  # Begrüssung und Abschluss mit dem Zeichen von zenOS statt Logo und Maskottchen von Ubuntu. Beide Male die Fassung für
+  # dunkel: Die Live-Sitzung ist immer dunkel (live-look.gschema.override.in), und der Installer malt die erste Seite,
+  # bevor er das Farbschema kennt, und tauscht das Bild danach nicht mehr (in QEMU blieb sonst dunkle Schrift auf dunkel).
   locale:
-    image: zenos-schriftzug-hell.svg
+    image: zenos-schriftzug-dunkel.svg
     image-dark: zenos-schriftzug-dunkel.svg
   done:
-    image: zenos-zeichen-hell.svg
+    image: zenos-zeichen-dunkel.svg
     image-dark: zenos-zeichen-dunkel.svg
   # Ohne Umweg: kein «Ausprobieren oder installieren», kein Update des Installers, keine Werbung für Ubuntu Pro, kein
   # Umfang (es kommt die schlanke Grundlage, «Standardauswahl»; zenOS bringt seine Programme selbst)
