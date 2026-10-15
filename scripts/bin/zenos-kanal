@@ -333,6 +333,7 @@ CONSENT_PATHS = (
     "scripts/module/70-sicherheit.sh",
     "scripts/pakete/sicherheit.txt",
     "system/polkit/org.zenos.firewall.policy",
+    "scripts/module/77-anzeige.sh",
     "scripts/module/35-netzwerk.sh",
     "scripts/bin/zenos-netzwerk",
     "scripts/zen.d/netzwerk.sh",

@@ -1,0 +1,800 @@
+#!/usr/bin/python3 -I
+"""zenos-anzeige: Geräteprofil «Öffentlicher Bildschirm». Ein technisches Anzeige-Konto meldet sich beim Start von selbst
+an und zeigt genau eine App im Vollbild, ohne Sperre (MANIFEST, Leitplanke «Ausnahme Anzeigegerät»). Für Menschen ist
+«zen anzeige …» gedacht: Es zeigt vorher den Plan und verlangt die getippte Bestätigung.
+
+Aufruf:
+  zenos-anzeige status                 Profil, Konto, App, Ports, Bildschirmzeiten (ohne root)
+  zenos-anzeige konfig [DATEI]         prüft /etc/zenos/anzeige.json (oder DATEI), gibt sie geordnet aus
+  zenos-anzeige plan einrichten|entfernen
+                                       zeigt, was geschähe, und ändert nichts
+  zenos-anzeige einrichten --ja        richtet das Profil ein (root)
+  zenos-anzeige entfernen --ja [--daten-loeschen]
+                                       entfernt es (root); das Home des Kontos nur mit --daten-loeschen
+  zenos-anzeige neustart               startet greetd neu, die Anzeige kommt zurück (root; nicht während einer
+                                       persönlichen Sitzung am Gerät)
+  zenos-anzeige anwenden [--melden]    für install.sh (Modul 77-anzeige): zieht ein aktives Profil nach (root)
+Für andere Teile von zenOS:
+  zenos-anzeige aktiv                  Exit 0, wenn das Profil aktiv ist
+  zenos-anzeige konto                  Name des Anzeige-Kontos (nur bei aktivem Profil)
+  zenos-anzeige ports                  freizugebende TCP-Ports, einer je Zeile (nur bei aktivem Profil)
+  zenos-anzeige greetd-konfig          /etc/greetd/config.toml zum Zustand (für 40-sitzung)
+In der Anzeige-Sitzung (als Anzeige-Konto, systemd-Benutzereinheiten):
+  zenos-anzeige hat-befehl             Exit 0, wenn die App ein Befehl ist (ExecCondition von zenos-anzeige-app)
+  zenos-anzeige app                    startet den Befehl als Argumentliste (execv, nie über eine Shell)
+  zenos-anzeige hat-bildschirmzeiten   Exit 0, wenn Bildschirmzeiten gesetzt sind
+  zenos-anzeige bildschirm             schaltet die Bildschirme nach den Bildschirmzeiten (wlopm)
+
+Dateien:
+  /etc/zenos/anzeige.json              Konfiguration (root, 0644; Schema config/schema/anzeige.schema.json)
+  /var/lib/zenos/anzeige.json          Zustand: aktiv, Konto, ob zenOS es angelegt hat, seit (root, 0644)
+  /etc/greetd/config.toml              mit [initial_session] für das Anzeige-Konto, nur bei aktivem Profil
+  /etc/polkit-1/rules.d/50-zenos-anzeige.rules
+                                       das Anzeige-Konto darf über polkit nichts ausser den Hemmern gegen Leerlauf,
+                                       Standby und Deckel (auch nicht ausschalten, neu starten, Standby)
+  /etc/systemd/user/zenos-anzeige*     Einheiten der Anzeige-Sitzung, Drop-in für eine App als Einheit
+  /var/log/zenos/anzeige.log           jede Änderung
+Die Firewall-Regeln für die Ports legt «zenos-firewall anzeige» an und entfernt sie (nur aus den lokalen Netzen, wie
+SSH); dieses Programm ruft es auf.
+
+Das Anzeige-Konto ist ein Systemkonto: gesperrtes Passwort, Login-Shell /usr/sbin/nologin, keine Gruppen, keine
+Schlüssel. greetd startet Sitzungen immer über /bin/sh -c, die Login-Shell spielt dort keine Rolle; Konsole und SSH
+bleiben damit zu, ohne dass zenOS die SSH-Konfiguration anfasst. Ein vorhandenes Konto nimmt «einrichten» nur, wenn es
+genauso aussieht (nie ein persönliches Konto).
+
+Nur für Tests: --wurzel ORDNER legt alle Pfade unter diesen Ordner, --code ORDNER nimmt den Code von dort statt aus
+/opt/zenos; Befehle (useradd, systemctl, loginctl, zenos-firewall …) stehen dann nur in der Ausgabe.
+
+Exit: 0 in Ordnung · 1 Fehler oder abgebrochen · 2 Aufruf · 3 Profil nicht aktiv (aktiv, konto, ports)
+"""
+
+import argparse
+import datetime
+import grp
+import json
+import os
+import pwd
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+CODE_DIR = "/opt/zenos"
+KONFIG = "etc/zenos/anzeige.json"
+ZUSTAND = "var/lib/zenos/anzeige.json"
+GREETD = "etc/greetd/config.toml"
+POLKIT = "etc/polkit-1/rules.d/50-zenos-anzeige.rules"
+EINHEITEN_DIR = "etc/systemd/user"
+DROPIN = "etc/systemd/user/zenos-anzeige.target.d/zenos-app.conf"
+LOG = "var/log/zenos/anzeige.log"
+SHADOW = "etc/shadow"
+EINHEITEN = ("zenos-anzeige.target", "zenos-anzeige-ersatz.service", "zenos-anzeige-wach.service",
+             "zenos-anzeige-app.service", "zenos-anzeige-bildschirm.service")
+SITZUNG = "/opt/zenos/scripts/bin/zenos-anzeige-sitzung"
+NOLOGIN = ("/usr/sbin/nologin", "/sbin/nologin", "/usr/bin/false", "/bin/false")
+# Gruppen, die einem Anzeige-Konto nie gehören dürfen (Verwaltung, Protokolle, Geräte ausserhalb der Sitzung)
+VERBOTENE_GRUPPEN = ("sudo", "admin", "wheel", "adm", "lpadmin", "sambashare", "plugdev", "netdev", "docker", "lxd",
+                     "libvirt", "systemd-journal", "input", "disk", "shadow")
+STANDARD_KONTO = "anzeige"
+KONTO_RE = re.compile(r"[a-z_][a-z0-9_-]{0,30}")
+EINHEIT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9:_.@-]{0,250}\.service")
+UHR_RE = re.compile(r"([01][0-9]|2[0-3]):([0-5][0-9])")
+TAGE = ("mo", "di", "mi", "do", "fr", "sa", "so")
+RESERVIERT = ("root", "_greetd", "nobody", "zenos-gesten")
+SYS_UID_MAX = 999
+KOMMENTAR = "zenOS Anzeige (öffentlicher Bildschirm)"
+
+
+class Abort(Exception):
+    pass
+
+
+def say(text=""):
+    print(text, flush=True)
+
+
+def warn(text):
+    print("zenos-anzeige: " + text, file=sys.stderr, flush=True)
+
+
+# --- Pfade ---------------------------------------------------------------------------------------------------
+
+class Paths:
+    def __init__(self, root, code):
+        self.root = os.path.abspath(root)
+        self.code = os.path.abspath(code)
+        self.test = self.root != "/"
+
+    def __call__(self, relative):
+        return os.path.join(self.root, relative)
+
+
+def read_text(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def write_atomic(path, content, mode=0o644):
+    """Schreibt nur, wenn sich der Inhalt ändert. True bei einer Änderung."""
+    if read_text(path) == content:
+        try:
+            if (os.stat(path).st_mode & 0o7777) == mode:
+                return False
+        except OSError:
+            pass
+    folder = os.path.dirname(path)
+    os.makedirs(folder, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=folder, prefix=".zenos-neu.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+    return True
+
+
+def remove(path):
+    try:
+        os.unlink(path)
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def run(paths, argv, check=True, timeout=120):
+    if paths.test:
+        say("  (Test, nicht ausgeführt) " + " ".join(argv))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+    result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False,
+                            env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"})
+    if check and result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip().splitlines()
+        raise Abort("«%s» ist gescheitert (Exit %d)%s" % (" ".join(argv), result.returncode,
+                                                          ": " + detail[-1] if detail else ""))
+    return result
+
+
+def protokoll(paths, text):
+    """Eine Zeile nach /var/log/zenos/anzeige.log (Zeit, Aufrufer, Text)."""
+    wer = os.environ.get("SUDO_USER") or os.environ.get("PKEXEC_UID") or "root"
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,32}", wer):
+        wer = "?"
+    zeile = "%s %s %s\n" % (datetime.datetime.now().astimezone().isoformat(timespec="seconds"), wer, text)
+    path = paths(LOG)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o640)
+    with os.fdopen(fd, "a", encoding="utf-8") as f:
+        f.write(zeile)
+
+
+# --- Konfiguration -------------------------------------------------------------------------------------------
+
+def check_config(data):
+    """Prüft die Konfiguration (dieselben Regeln wie config/schema/anzeige.schema.json) und gibt sie geordnet zurück.
+    Wirft Abort mit dem ersten Fehler."""
+    if not isinstance(data, dict):
+        raise Abort("die Konfiguration ist kein JSON-Objekt")
+    erlaubt = {"version", "konto", "app", "ports", "bildschirmzeiten"}
+    fremd = sorted(set(data) - erlaubt)
+    if fremd:
+        raise Abort("unbekannter Schlüssel «%s»" % fremd[0])
+    if data.get("version") != 1:
+        raise Abort("«version» muss 1 sein")
+    out = {"version": 1}
+
+    konto = data.get("konto", STANDARD_KONTO)
+    if not isinstance(konto, str) or not KONTO_RE.fullmatch(konto) or konto in RESERVIERT:
+        raise Abort("«konto» ist kein erlaubter Kontoname: %r" % (konto,))
+    out["konto"] = konto
+
+    if "app" in data:
+        app = data["app"]
+        if not isinstance(app, dict) or len(app) != 1 or not set(app) <= {"einheit", "befehl"}:
+            raise Abort("«app» braucht genau einen Eintrag: «einheit» oder «befehl»")
+        if "einheit" in app:
+            einheit = app["einheit"]
+            if not isinstance(einheit, str) or not EINHEIT_RE.fullmatch(einheit) or einheit.startswith("zenos-"):
+                raise Abort("«app.einheit» ist keine erlaubte Benutzereinheit (Name.service): %r" % (einheit,))
+            out["app"] = {"einheit": einheit}
+        else:
+            befehl = app["befehl"]
+            if (not isinstance(befehl, list) or not 1 <= len(befehl) <= 64
+                    or not all(isinstance(a, str) and "\0" not in a and len(a) <= 4096 for a in befehl)):
+                raise Abort("«app.befehl» muss eine Liste von 1 bis 64 Zeichenketten sein")
+            if not befehl[0].startswith("/") or any(ord(c) < 32 for c in befehl[0]) or len(befehl[0]) > 1024:
+                raise Abort("«app.befehl» beginnt mit dem Programm als absolutem Pfad: %r" % (befehl[0],))
+            out["app"] = {"befehl": list(befehl)}
+
+    ports = data.get("ports", [])
+    if (not isinstance(ports, list) or len(ports) > 16
+            or not all(isinstance(p, int) and not isinstance(p, bool) and 1 <= p <= 65535 for p in ports)):
+        raise Abort("«ports» muss eine Liste von höchstens 16 TCP-Ports (1–65535) sein")
+    if 22 in ports:
+        raise Abort("Port 22 gehört SSH und steht nicht in «ports»")
+    if len(set(ports)) != len(ports):
+        raise Abort("«ports» enthält einen Port doppelt")
+    out["ports"] = sorted(ports)
+
+    zeiten = data.get("bildschirmzeiten", [])
+    if not isinstance(zeiten, list) or len(zeiten) > 14:
+        raise Abort("«bildschirmzeiten» muss eine Liste von höchstens 14 Einträgen sein")
+    geprueft = []
+    for i, z in enumerate(zeiten, 1):
+        if not isinstance(z, dict) or set(z) != {"tage", "an", "aus"}:
+            raise Abort("Bildschirmzeit %d braucht genau «tage», «an» und «aus»" % i)
+        tage = z["tage"]
+        if (not isinstance(tage, list) or not tage or len(set(tage)) != len(tage)
+                or not all(t in TAGE for t in tage)):
+            raise Abort("Bildschirmzeit %d: «tage» aus %s, ohne Doppelte" % (i, ", ".join(TAGE)))
+        for feld in ("an", "aus"):
+            if not isinstance(z[feld], str) or not UHR_RE.fullmatch(z[feld]):
+                raise Abort("Bildschirmzeit %d: «%s» als HH:MM" % (i, feld))
+        if z["an"] == z["aus"]:
+            raise Abort("Bildschirmzeit %d: «an» und «aus» sind gleich" % i)
+        geprueft.append({"tage": [t for t in TAGE if t in tage], "an": z["an"], "aus": z["aus"]})
+    out["bildschirmzeiten"] = geprueft
+    return out
+
+
+def load_config(paths, path=None):
+    path = path or paths(KONFIG)
+    text = read_text(path)
+    if text is None:
+        raise Abort("%s fehlt (Vorlage: %s/config/beispiele/anzeige.beispiel.json)" % (
+            "/" + KONFIG if not paths.test and path == paths(KONFIG) else path, paths.code))
+    try:
+        data = json.loads(text)
+    except ValueError as error:
+        raise Abort("%s ist kein gültiges JSON: %s" % (path, error)) from error
+    return check_config(data)
+
+
+def load_state(paths):
+    """Zustand oder None (nicht aktiv). Ein kaputter Zustand gilt als nicht aktiv."""
+    text = read_text(paths(ZUSTAND))
+    if text is None:
+        return None
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return None
+    if (not isinstance(data, dict) or data.get("aktiv") is not True or not isinstance(data.get("konto"), str)
+            or not KONTO_RE.fullmatch(data["konto"]) or data["konto"] in RESERVIERT):
+        return None
+    return data
+
+
+def active_config(paths):
+    """(Zustand, Konfiguration) bei aktivem Profil, sonst (None, None). Ist die Konfiguration kaputt, gilt das Konto
+    aus dem Zustand mit leerer App und ohne Ports (die Anzeige läuft weiter, doctor meldet den Fehler)."""
+    state = load_state(paths)
+    if state is None:
+        return None, None
+    try:
+        config = load_config(paths)
+    except Abort:
+        config = check_config({"version": 1, "konto": state["konto"]})
+    if config["konto"] != state["konto"]:
+        config = dict(config, konto=state["konto"])
+    return state, config
+
+
+# --- erzeugte Dateien ----------------------------------------------------------------------------------------
+
+def greetd_config(paths, state):
+    base = read_text(os.path.join(paths.code, "system", "greetd", "config.toml"))
+    if base is None:
+        raise Abort("system/greetd/config.toml fehlt in %s" % paths.code)
+    if state is None:
+        return base
+    return base + (
+        "\n"
+        "# zenOS: Geräteprofil «Öffentlicher Bildschirm» (zen anzeige, docs/module/anzeige.md). Nur beim Start von\n"
+        "# greetd meldet sich das Anzeige-Konto an (ohne Rechte, ohne Passwort, ohne Sperre). Endet die Anzeige-Sitzung,\n"
+        "# erscheint [default_session], der Login von zenOS. Persönliche Konten melden sich nie automatisch an.\n"
+        "[initial_session]\n"
+        "command = \"%s\"\n"
+        "user = \"%s\"\n" % (SITZUNG, state["konto"]))
+
+
+def polkit_rule(konto):
+    return (
+        "// zenOS: Anzeige-Konto «%s» ohne Rechte (Geräteprofil «Öffentlicher Bildschirm», scripts/bin/zenos-anzeige,\n"
+        "// docs/module/anzeige.md). Erlaubt sind nur die Hemmer gegen Leerlauf, Standby und Deckel, damit die Anzeige\n"
+        "// wach bleibt. Alles andere lehnt polkit für dieses Konto ab, auch Ausschalten, Neustart und Standby.\n"
+        "polkit.addRule(function (action, subject) {\n"
+        "    if (subject.user !== \"%s\") {\n"
+        "        return polkit.Result.NOT_HANDLED;\n"
+        "    }\n"
+        "    if (action.id === \"org.freedesktop.login1.inhibit-block-idle\" ||\n"
+        "        action.id === \"org.freedesktop.login1.inhibit-block-sleep\" ||\n"
+        "        action.id === \"org.freedesktop.login1.inhibit-handle-lid-switch\") {\n"
+        "        return polkit.Result.YES;\n"
+        "    }\n"
+        "    return polkit.Result.NO;\n"
+        "});\n" % (konto, konto))
+
+
+def dropin(config):
+    app = config.get("app") or {}
+    if "einheit" not in app:
+        return None
+    return ("# zenOS: Die Anzeige-App als Benutzereinheit (/etc/zenos/anzeige.json, «app.einheit»), erzeugt von\n"
+            "# zenos-anzeige. Startet mit der Anzeige-Sitzung.\n"
+            "[Unit]\nWants=%s\nAfter=graphical-session.target\n" % app["einheit"])
+
+
+def sync_files(paths, state, config, melden):
+    """Bringt greetd, polkit-Regel, Einheiten und Drop-in auf den Zustand. Gibt die Zahl der Änderungen zurück."""
+    changes = []
+    if write_atomic(paths(GREETD), greetd_config(paths, state)):
+        changes.append("/" + GREETD + (" mit [initial_session] für %s" % state["konto"] if state else " ohne Autologin"))
+    if state is None:
+        if remove(paths(POLKIT)):
+            changes.append("/" + POLKIT + " entfernt")
+        for name in EINHEITEN:
+            if remove(os.path.join(paths(EINHEITEN_DIR), name)):
+                changes.append("/%s/%s entfernt" % (EINHEITEN_DIR, name))
+        if remove(paths(DROPIN)):
+            changes.append("/" + DROPIN + " entfernt")
+        with_dir = os.path.dirname(paths(DROPIN))
+        if os.path.isdir(with_dir) and not os.listdir(with_dir):
+            os.rmdir(with_dir)
+    else:
+        if write_atomic(paths(POLKIT), polkit_rule(state["konto"])):
+            changes.append("/" + POLKIT)
+        for name in EINHEITEN:
+            src = os.path.join(paths.code, "system", "systemd", "user", name)
+            text = read_text(src)
+            if text is None:
+                raise Abort("system/systemd/user/%s fehlt in %s" % (name, paths.code))
+            if write_atomic(os.path.join(paths(EINHEITEN_DIR), name), text):
+                changes.append("/%s/%s" % (EINHEITEN_DIR, name))
+        inhalt = dropin(config)
+        if inhalt is None:
+            if remove(paths(DROPIN)):
+                changes.append("/" + DROPIN + " entfernt")
+        elif write_atomic(paths(DROPIN), inhalt):
+            changes.append("/" + DROPIN)
+    for c in changes:
+        if melden:
+            say("geändert: " + c)
+        else:
+            say("  " + c)
+    return len(changes)
+
+
+# --- Konto ---------------------------------------------------------------------------------------------------
+
+def passwd_entry(paths, konto):
+    """(uid, gid, home, shell) aus passwd, None wenn es das Konto nicht gibt. In Tests aus <wurzel>/etc/passwd."""
+    if paths.test:
+        text = read_text(paths("etc/passwd")) or ""
+        for line in text.splitlines():
+            f = line.split(":")
+            if len(f) == 7 and f[0] == konto:
+                return int(f[2]), int(f[3]), f[5], f[6]
+        return None
+    try:
+        p = pwd.getpwnam(konto)
+    except KeyError:
+        return None
+    return p.pw_uid, p.pw_gid, p.pw_dir, p.pw_shell
+
+
+def groups_of(paths, konto, gid):
+    if paths.test:
+        names = []
+        for line in (read_text(paths("etc/group")) or "").splitlines():
+            f = line.split(":")
+            if len(f) == 4 and konto in f[3].split(","):
+                names.append(f[0])
+        return names
+    names = [g.gr_name for g in grp.getgrall() if konto in g.gr_mem]
+    try:
+        names.append(grp.getgrgid(gid).gr_name)
+    except KeyError:
+        pass
+    return names
+
+
+def password_locked(paths, konto):
+    """True, wenn das Passwort gesperrt oder keines gesetzt ist (shadow: «!…» oder «*»), None ohne Leserecht."""
+    text = read_text(paths(SHADOW))
+    if text is None:
+        return None
+    for line in text.splitlines():
+        f = line.split(":")
+        if len(f) >= 2 and f[0] == konto:
+            return f[1].startswith("!") or f[1] in ("*", "!")
+    return None
+
+
+def account_problems(paths, konto):
+    """Was ein vorhandenes Konto als Anzeige-Konto ausschliesst (leer: in Ordnung). Nie ein persönliches Konto."""
+    entry = passwd_entry(paths, konto)
+    if entry is None:
+        return ["das Konto gibt es nicht"]
+    uid, gid, home, shell = entry
+    problems = []
+    if uid == 0 or uid > SYS_UID_MAX:
+        problems.append("UID %d ist kein Systemkonto (höchstens %d) – ein persönliches Konto wird nie zur Anzeige"
+                        % (uid, SYS_UID_MAX))
+    if shell not in NOLOGIN:
+        problems.append("Login-Shell %s statt /usr/sbin/nologin" % shell)
+    locked = password_locked(paths, konto)
+    if locked is False:
+        problems.append("es hat ein Passwort")
+    bad = sorted(set(groups_of(paths, konto, gid)) & set(VERBOTENE_GRUPPEN))
+    if bad:
+        problems.append("es ist in der Gruppe %s" % ", ".join(bad))
+    for name in ("authorized_keys", "authorized_keys2"):
+        if os.path.exists(os.path.join(paths.root, home.lstrip("/"), ".ssh", name)):
+            problems.append("es hat SSH-Schlüssel (~/.ssh/%s)" % name)
+    return problems
+
+
+# --- Ablauf --------------------------------------------------------------------------------------------------
+
+def _require_root(paths):
+    if not paths.test and os.geteuid() != 0:
+        raise Abort("braucht Root-Rechte (sudo zen anzeige …)")
+
+
+def describe(config):
+    lines = ["  Anzeige-Konto: %s (Systemkonto, Passwort gesperrt, Login-Shell nologin, keine Gruppen)"
+             % config["konto"]]
+    app = config.get("app")
+    if not app:
+        lines.append("  App: keine in der Konfiguration (Einheiten mit WantedBy=graphical-session.target starten von "
+                     "selbst, sonst das Ersatzbild)")
+    elif "einheit" in app:
+        lines.append("  App: Benutzereinheit %s" % app["einheit"])
+    else:
+        lines.append("  App: Befehl %s" % json.dumps(app["befehl"], ensure_ascii=False))
+    lines.append("  Ports (nur aus den lokalen Netzen, wie SSH): %s" % (
+        ", ".join("%d/tcp" % p for p in config["ports"]) or "keine"))
+    if config["bildschirmzeiten"]:
+        for z in config["bildschirmzeiten"]:
+            lines.append("  Bildschirm an: %s %s–%s" % (",".join(z["tage"]), z["an"], z["aus"]))
+    else:
+        lines.append("  Bildschirmzeiten: keine (zenOS schaltet den Bildschirm nie, die App darf)")
+    return lines
+
+
+def plan_einrichten(paths, config):
+    entry = passwd_entry(paths, config["konto"])
+    say("Geräteprofil «Öffentlicher Bildschirm» einrichten:")
+    for line in describe(config):
+        say(line)
+    if entry is None:
+        say("  Konto %s wird angelegt (Home /home/%s)." % (config["konto"], config["konto"]))
+    else:
+        problems = account_problems(paths, config["konto"])
+        if problems:
+            raise Abort("Das Konto %s gibt es schon und taugt nicht als Anzeige-Konto: %s"
+                        % (config["konto"], "; ".join(problems)))
+        say("  Konto %s gibt es schon und bleibt (geprüft: Systemkonto ohne Passwort und Rechte)." % config["konto"])
+    say("  Login: Beim Start meldet sich %s ohne Eingabe an (greetd [initial_session]). Endet die Anzeige,"
+        % config["konto"])
+    say("         erscheint dein Login. Ausweg vor Ort: Strg + Alt + Shift + Rücktaste.")
+    say("  Keine Sperre, kein Standby in der Anzeige-Sitzung. Dein Konto sperrt wie immer und meldet sich nie")
+    say("  automatisch an.")
+    say("  Wirksam nach dem nächsten Start von greetd: sudo zen anzeige neustart oder ein Neustart.")
+
+
+def cmd_einrichten(paths, ja):
+    _require_root(paths)
+    config = load_config(paths)
+    plan_einrichten(paths, config)
+    if not ja:
+        raise Abort("ohne --ja nichts geändert (zen anzeige einrichten fragt nach)")
+    konto = config["konto"]
+    old = load_state(paths)
+    if old and old.get("konto") != konto:
+        raise Abort("Das Profil ist schon für das Konto %s eingerichtet; zuerst zen anzeige entfernen" % old["konto"])
+    angelegt = bool(old and old.get("angelegt"))
+    if passwd_entry(paths, konto) is None:
+        run(paths, ["useradd", "--system", "--create-home", "--home-dir", "/home/" + konto,
+                    "--shell", "/usr/sbin/nologin", "--user-group", "--comment", KOMMENTAR, konto])
+        angelegt = True
+        protokoll(paths, "Konto %s angelegt" % konto)
+    run(paths, ["usermod", "--lock", konto])
+    state = {"version": 1, "aktiv": True, "konto": konto, "angelegt": angelegt,
+             "seit": (old or {}).get("seit") or datetime.datetime.now().astimezone().isoformat(timespec="seconds")}
+    write_atomic(paths(ZUSTAND), json.dumps(state, ensure_ascii=False, indent=2) + "\n")
+    say("Dateien:")
+    sync_files(paths, state, config, melden=False)
+    firewall(paths)
+    run(paths, ["systemctl", "daemon-reload"], check=False)
+    protokoll(paths, "eingerichtet: Konto %s, App %s, Ports %s" % (
+        konto, json.dumps(config.get("app"), ensure_ascii=False), config["ports"]))
+    say("Eingerichtet. Wirksam nach: sudo zen anzeige neustart (oder einem Neustart).")
+    return 0
+
+
+def plan_entfernen(paths, state, daten):
+    konto = state["konto"]
+    say("Geräteprofil «Öffentlicher Bildschirm» entfernen:")
+    say("  Login: kein Autologin mehr, /etc/greetd/config.toml wie ohne Profil.")
+    say("  Ports der Anzeige in der Firewall wieder zu, polkit-Regel und Einheiten der Anzeige weg.")
+    say("  Läuft die Anzeige-Sitzung, endet sie jetzt (loginctl terminate-user %s)." % konto)
+    if state.get("angelegt"):
+        say("  Konto %s wird gelöscht. Sein Home /home/%s %s." % (
+            konto, konto, "wird mit gelöscht" if daten else "bleibt (Daten nur auf Rückfrage löschen)"))
+    else:
+        say("  Konto %s gab es schon vorher, es bleibt." % konto)
+
+
+def cmd_entfernen(paths, ja, daten):
+    _require_root(paths)
+    state = load_state(paths)
+    if state is None:
+        say("Das Profil ist nicht aktiv; nichts zu entfernen.")
+        sync_files(paths, None, None, melden=False)
+        return 0
+    plan_entfernen(paths, state, daten)
+    if not ja:
+        raise Abort("ohne --ja nichts geändert (zen anzeige entfernen fragt nach)")
+    konto = state["konto"]
+    remove(paths(ZUSTAND))
+    say("Dateien:")
+    sync_files(paths, None, None, melden=False)
+    firewall(paths)
+    run(paths, ["systemctl", "daemon-reload"], check=False)
+    run(paths, ["loginctl", "disable-linger", konto], check=False)
+    run(paths, ["loginctl", "terminate-user", konto], check=False)
+    if state.get("angelegt") and passwd_entry(paths, konto) is not None:
+        # Prozesse brauchen nach terminate-user einen Moment
+        for _ in range(10):
+            r = run(paths, ["userdel"] + (["--remove"] if daten else []) + [konto], check=False)
+            if r.returncode == 0:
+                break
+            time.sleep(1)
+        else:
+            raise Abort("userdel %s ist gescheitert (läuft noch etwas als %s?)" % (konto, konto))
+        protokoll(paths, "Konto %s gelöscht%s" % (konto, ", Home mit gelöscht" if daten else ", Home bleibt"))
+    protokoll(paths, "entfernt (Konto %s)" % konto)
+    say("Entfernt. Beim nächsten Start von greetd erscheint dein Login.")
+    return 0
+
+
+def firewall(paths):
+    """Firewall-Regeln der Anzeige an den Zustand angleichen (zenos-firewall anzeige; schaltet nie ein)."""
+    helper = os.path.join(paths.code, "scripts", "bin", "zenos-firewall")
+    r = run(paths, [helper, "anzeige"], check=False)
+    for line in (r.stdout or "").splitlines():
+        say("  " + line)
+    if r.returncode == 4:
+        say("  ufw ist nicht installiert: keine Regeln für die Ports (zen doctor meldet es)")
+    elif r.returncode != 0:
+        raise Abort("zenos-firewall anzeige ist gescheitert (Exit %d)%s" % (
+            r.returncode, ": " + r.stderr.strip().splitlines()[-1] if (r.stderr or "").strip() else ""))
+
+
+def seat_sessions(paths):
+    """Sitzungen von Menschen auf seat0 als [(Name, Klasse)]; [] in Tests."""
+    if paths.test:
+        return []
+    r = run(paths, ["loginctl", "list-sessions", "--json=short"], check=False)
+    try:
+        items = json.loads(r.stdout or "[]")
+    except ValueError:
+        raise Abort("loginctl antwortet nicht verständlich")
+    return [(str(i.get("user")), str(i.get("class", ""))) for i in items
+            if i.get("seat") == "seat0" and str(i.get("class", "")).startswith("user")]
+
+
+def cmd_neustart(paths):
+    _require_root(paths)
+    state = load_state(paths)
+    if state is None:
+        raise Abort("das Profil ist nicht aktiv (sudo zen anzeige einrichten)")
+    andere = sorted({name for name, _ in seat_sessions(paths) if name != state["konto"]})
+    if andere:
+        raise Abort("am Gerät ist %s angemeldet; ein Neustart von greetd beendete diese Sitzung. Erst abmelden."
+                    % ", ".join(andere))
+    run(paths, ["systemctl", "restart", "greetd.service"])
+    protokoll(paths, "greetd neu gestartet (Anzeige)")
+    say("greetd neu gestartet: Die Anzeige startet.")
+    return 0
+
+
+def cmd_anwenden(paths, melden):
+    _require_root(paths)
+    state, config = active_config(paths)
+    if state is None:
+        return 0
+    problems = account_problems(paths, state["konto"])
+    if problems:
+        warn("Anzeige-Konto %s: %s (zen doctor)" % (state["konto"], "; ".join(problems)))
+    sync_files(paths, state, config, melden)
+    return 0
+
+
+def cmd_status(paths):
+    state = load_state(paths)
+    try:
+        config = load_config(paths)
+        fehler = None
+    except Abort as error:
+        config, fehler = None, str(error)
+    if state is None:
+        say("Öffentlicher Bildschirm: nicht eingerichtet")
+    else:
+        say("Öffentlicher Bildschirm: eingerichtet seit %s" % state.get("seit", "?"))
+    if config:
+        for line in describe(config):
+            say(line)
+    elif fehler and state is not None:
+        say("  Konfiguration: %s" % fehler)
+    if state is not None:
+        greetd = read_text(paths(GREETD))
+        try:
+            soll = greetd_config(paths, state)
+        except Abort:
+            soll = None
+        say("  greetd: %s" % ("passt (Autologin nur für %s)" % state["konto"] if greetd == soll
+                              else "weicht ab (install.sh stellt es wieder her)"))
+        if not paths.test:
+            r = run(paths, ["loginctl", "list-sessions", "--json=short"], check=False)
+            with_session = False
+            try:
+                with_session = any(i.get("user") == state["konto"] for i in json.loads(r.stdout or "[]"))
+            except ValueError:
+                pass
+            say("  Anzeige-Sitzung: %s" % ("läuft" if with_session else "läuft nicht"))
+    say("Einrichten: sudo zen anzeige einrichten · Entfernen: sudo zen anzeige entfernen")
+    return 0
+
+
+# --- in der Anzeige-Sitzung ----------------------------------------------------------------------------------
+
+def cmd_app(paths):
+    state, config = active_config(paths)
+    app = (config or {}).get("app") or {}
+    if "befehl" not in app:
+        warn("keine App als Befehl in /etc/zenos/anzeige.json")
+        return 1
+    befehl = app["befehl"]
+    if paths.test:
+        say(json.dumps(befehl, ensure_ascii=False))
+        return 0
+    os.execv(befehl[0], befehl)
+    return 1
+
+
+def screen_on(zeiten, moment):
+    """Soll der Bildschirm zu MOMENT (Ortszeit) an sein? Ohne Zeiten immer an. Über Mitternacht (an 22:00, aus 06:00)
+    zählt der Tag von «an»."""
+    if not zeiten:
+        return True
+    minute = moment.hour * 60 + moment.minute
+    heute = TAGE[moment.weekday()]
+    gestern = TAGE[(moment.weekday() - 1) % 7]
+    for z in zeiten:
+        a = int(z["an"][:2]) * 60 + int(z["an"][3:])
+        b = int(z["aus"][:2]) * 60 + int(z["aus"][3:])
+        if a < b:
+            if heute in z["tage"] and a <= minute < b:
+                return True
+        else:
+            if (heute in z["tage"] and minute >= a) or (gestern in z["tage"] and minute < b):
+                return True
+    return False
+
+
+def cmd_bildschirm(paths):
+    """Schaltet alle Bildschirme nach den Bildschirmzeiten (wlopm, wie am Login). Prüft jede halbe Minute und schaltet
+    nur bei einem Wechsel; nach einem neuen Bildschirm (Kabel) noch einmal."""
+    zuletzt = None
+    while True:
+        _state, config = active_config(paths)
+        zeiten = (config or {}).get("bildschirmzeiten") or []
+        an = screen_on(zeiten, datetime.datetime.now())
+        r = subprocess.run(["wlopm"], capture_output=True, text=True, timeout=10, check=False)
+        ausgaben = r.stdout.strip()
+        if (an, ausgaben) != zuletzt:
+            subprocess.run(["wlopm", "--on" if an else "--off", "*"], capture_output=True, timeout=10, check=False)
+            say("Bildschirm %s (Bildschirmzeiten)" % ("an" if an else "aus"))
+            r = subprocess.run(["wlopm"], capture_output=True, text=True, timeout=10, check=False)
+            zuletzt = (an, r.stdout.strip())
+        time.sleep(30)
+
+
+# --- Aufruf --------------------------------------------------------------------------------------------------
+
+def main(argv):
+    parser = argparse.ArgumentParser(prog="zenos-anzeige", add_help=False)
+    parser.add_argument("befehl")
+    parser.add_argument("argumente", nargs="*")
+    parser.add_argument("--ja", action="store_true")
+    parser.add_argument("--daten-loeschen", action="store_true")
+    parser.add_argument("--melden", action="store_true")
+    parser.add_argument("--wurzel", default="/")
+    parser.add_argument("--code", default=CODE_DIR)
+    parser.add_argument("-h", "--hilfe", "--help", action="store_true")
+    if any(a in ("-h", "--hilfe", "--help") for a in argv) or not argv:
+        say(__doc__.strip())
+        return 0 if argv else 2
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit:
+        return 2
+    paths = Paths(args.wurzel, args.code)
+    b, rest = args.befehl, args.argumente
+    try:
+        if b == "konfig" and len(rest) <= 1:
+            config = load_config(paths, rest[0] if rest else None)
+            say(json.dumps(config, ensure_ascii=False, indent=2))
+            return 0
+        if rest and not (b == "plan" and len(rest) == 1):
+            warn("unerwartete Argumente: %s" % " ".join(rest))
+            return 2
+        if b == "status":
+            return cmd_status(paths)
+        if b == "plan":
+            if rest[0] == "einrichten":
+                plan_einrichten(paths, load_config(paths))
+                return 0
+            if rest[0] == "entfernen":
+                state = load_state(paths)
+                if state is None:
+                    say("Das Profil ist nicht aktiv; nichts zu entfernen.")
+                    return 0
+                plan_entfernen(paths, state, args.daten_loeschen)
+                return 0
+            return 2
+        if b == "einrichten":
+            return cmd_einrichten(paths, args.ja)
+        if b == "entfernen":
+            return cmd_entfernen(paths, args.ja, args.daten_loeschen)
+        if b == "neustart":
+            return cmd_neustart(paths)
+        if b == "anwenden":
+            return cmd_anwenden(paths, args.melden)
+        if b == "aktiv":
+            return 0 if load_state(paths) else 3
+        if b in ("konto", "ports"):
+            state, config = active_config(paths)
+            if state is None:
+                return 3
+            if b == "konto":
+                say(state["konto"])
+            else:
+                for p in config["ports"]:
+                    say(str(p))
+            return 0
+        if b == "greetd-konfig":
+            sys.stdout.write(greetd_config(paths, load_state(paths)))
+            return 0
+        if b == "hat-befehl":
+            _state, config = active_config(paths)
+            return 0 if "befehl" in ((config or {}).get("app") or {}) else 1
+        if b == "hat-bildschirmzeiten":
+            _state, config = active_config(paths)
+            return 0 if (config or {}).get("bildschirmzeiten") else 1
+        if b == "app":
+            return cmd_app(paths)
+        if b == "bildschirm":
+            return cmd_bildschirm(paths)
+        warn("unbekannter Befehl «%s» (zenos-anzeige --hilfe)" % b)
+        return 2
+    except Abort as error:
+        warn(str(error))
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

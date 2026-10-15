@@ -13,7 +13,7 @@
 modul_system() {
   local code=$ZENOS_CODE einheit
 
-  datei_installieren "$code/system/greetd/config.toml" /etc/greetd/config.toml 0644 root:root
+  _sitzung_greetd_konfig
   _sitzung_greetd_aktivieren
   _sitzung_standardziel
 
@@ -32,6 +32,18 @@ modul_benutzer() {
   for datei in autostart environment shutdown; do
     verknuepfen "$ZENOS_CODE/system/labwc/$datei" "$ordner/$datei"
   done
+}
+
+# /etc/greetd/config.toml: ohne Geräteprofil «Öffentlicher Bildschirm» genau system/greetd/config.toml (kein Autologin).
+# Ist es aktiv (zen anzeige einrichten), kommt [initial_session] für das Anzeige-Konto dazu; den Text erzeugt
+# zenos-anzeige, damit install.sh und «zen anzeige» dieselbe Datei schreiben (docs/module/anzeige.md).
+_sitzung_greetd_konfig() {
+  local programm=$ZENOS_CODE/scripts/bin/zenos-anzeige
+  if [[ -f "$programm" ]] && python3 -I "$programm" aktiv > /dev/null 2>&1; then
+    python3 -I "$programm" greetd-konfig | datei_schreiben /etc/greetd/config.toml 0644 root:root
+  else
+    datei_installieren "$ZENOS_CODE/system/greetd/config.toml" /etc/greetd/config.toml 0644 root:root
+  fi
 }
 
 # greetd aktivieren (display-manager.service), ausser ein anderer Anmeldedienst ist schon eingerichtet

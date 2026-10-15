@@ -22,6 +22,7 @@ firewall scripts/zen.d/firewall.sh
 firewall scripts/module/70-sicherheit.sh
 firewall scripts/pakete/sicherheit.txt
 firewall system/polkit/org.zenos.firewall.policy
+firewall scripts/module/77-anzeige.sh
 
 netz scripts/module/35-netzwerk.sh
 netz scripts/bin/zenos-netzwerk
@@ -50,6 +51,11 @@ anmeldung shell/greeter/
 anmeldung shell/sperre/
 anmeldung shell/polkit/
 anmeldung image/erststart/
+anmeldung scripts/bin/zenos-anzeige*
+anmeldung scripts/zen.d/anzeige.sh
+anmeldung system/anzeige/
+anmeldung system/systemd/user/zenos-anzeige*
+anmeldung shell/anzeige.qml
 
 vertrauen system/vertrauen/
 vertrauen scripts/release-signieren.sh
