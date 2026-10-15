@@ -5,17 +5,41 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
+import qs.dienste
 import qs.theme
 
 // Ersatzbild der Anzeige-Sitzung (Geräteprofil «Öffentlicher Bildschirm», docs/module/anzeige.md). Läuft als
 // zenos-anzeige-ersatz.service des Anzeige-Kontos auf der Ebene Background unter jedem Fenster: Läuft die App, liegt sie
 // im Vollbild darüber; läuft sie nicht oder stürzt sie ab, steht hier ruhig die Uhrzeit, «Anzeige startet …» und der
-// Rechnername, nie ein leerer Desktop. Keine Eingaben, keine Tastatur, nichts geht nach aussen. Die Uhr tickt
-// minutengenau (sparsam für den Pi).
+// Rechnername, nie ein leerer Desktop. Fehlt die App (nicht installiert, keine eingerichtet), steht statt «Anzeige
+// startet …», was fehlt («zenos-anzeige hinweis», alle 30 s neu, so verschwindet es, sobald die App installiert ist).
+// Keine Eingaben, keine Tastatur, nichts geht nach aussen. Die Uhr tickt minutengenau (sparsam für den Pi).
 ShellRoot {
     id: root
 
     property string rechnername: ""
+    property string hinweis: "Anzeige startet …"
+
+    Process {
+        id: hinweisAbfrage
+
+        command: ["/usr/bin/python3", "-I", Pfade.bin + "/zenos-anzeige", "hinweis"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                const zeile = text.trim().split("\n")[0];
+                if (zeile.length > 0 && zeile.length <= 160)
+                    root.hinweis = zeile;
+            }
+        }
+    }
+
+    Timer {
+        interval: 30000
+        running: true
+        repeat: true
+        triggeredOnStart: true
+        onTriggered: hinweisAbfrage.running = true
+    }
 
     SystemClock {
         id: uhr
@@ -64,7 +88,7 @@ ShellRoot {
 
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    text: "Anzeige startet …"
+                    text: root.hinweis
                     color: Theme.text2
                     font.family: Theme.schriftText
                     font.pixelSize: Theme.groesseGross

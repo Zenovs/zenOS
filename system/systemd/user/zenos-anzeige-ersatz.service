@@ -1,6 +1,6 @@
-# zenOS: Ersatzbild der Anzeige (shell/anzeige.qml): Uhrzeit, «Anzeige startet …» und Rechnername im zenOS-Look, als
-# Hintergrund unter jedem Fenster. Läuft die App, liegt sie darüber; läuft sie nicht oder stürzt sie ab, sieht man das
-# Ersatzbild, nie einen leeren Desktop.
+# zenOS: Ersatzbild der Anzeige (shell/anzeige.qml): Uhrzeit, «Anzeige startet …» (oder was an der App fehlt) und
+# Rechnername im zenOS-Look, als Hintergrund unter jedem Fenster. Läuft die App, liegt sie darüber; läuft sie nicht oder
+# stürzt sie ab, sieht man das Ersatzbild, nie einen leeren Desktop.
 [Unit]
 Description=zenOS-Anzeige: Ersatzbild
 Documentation=file:///opt/zenos/docs/module/anzeige.md

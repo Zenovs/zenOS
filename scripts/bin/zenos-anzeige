@@ -24,6 +24,7 @@ In der Anzeige-Sitzung (als Anzeige-Konto, systemd-Benutzereinheiten):
   zenos-anzeige app                    startet den Befehl als Argumentliste (execv, nie über eine Shell)
   zenos-anzeige hat-bildschirmzeiten   Exit 0, wenn Bildschirmzeiten gesetzt sind
   zenos-anzeige bildschirm             schaltet die Bildschirme nach den Bildschirmzeiten (wlopm)
+  zenos-anzeige hinweis                eine Zeile für das Ersatzbild: was an der App fehlt, sonst «Anzeige startet …»
 
 Dateien:
   /etc/zenos/anzeige.json              Konfiguration (root, 0644; Schema config/schema/anzeige.schema.json)
@@ -85,6 +86,11 @@ TAGE = ("mo", "di", "mi", "do", "fr", "sa", "so")
 RESERVIERT = ("root", "_greetd", "nobody", "zenos-gesten")
 SYS_UID_MAX = 999
 KOMMENTAR = "zenOS Anzeige (öffentlicher Bildschirm)"
+# Wo systemd Benutzereinheiten sucht (systemd.unit(5)), ohne die Laufzeitordner: erst im Home des Kontos, dann im System
+EINHEIT_ORDNER_HOME = (".config/systemd/user", ".local/share/systemd/user")
+EINHEIT_ORDNER = ("etc/systemd/user", "etc/xdg/systemd/user", "usr/local/share/systemd/user", "usr/share/systemd/user",
+                  "usr/local/lib/systemd/user", "usr/lib/systemd/user")
+STARTET = "Anzeige startet …"
 
 
 class Abort(Exception):
@@ -445,6 +451,41 @@ def account_problems(paths, konto):
     return problems
 
 
+# --- App ---------------------------------------------------------------------------------------------------
+
+def unit_installed(paths, konto, einheit):
+    """Liegt die Benutzereinheit EINHEIT für KONTO als Datei bereit (bei name@instanz.service auch die Vorlage
+    name@.service)? True, False, oder None, wenn das Home des Kontos nicht lesbar ist und sie sonst nirgends liegt."""
+    namen = {einheit}
+    if "@" in einheit:
+        namen.add(einheit.split("@", 1)[0] + "@.service")
+    ordner = [paths(o) for o in EINHEIT_ORDNER]
+    unlesbar = False
+    entry = passwd_entry(paths, konto)
+    if entry is not None:
+        home = os.path.join(paths.root, entry[2].lstrip("/"))
+        if os.path.isdir(home) and not os.access(home, os.R_OK | os.X_OK):
+            unlesbar = True
+        ordner = [os.path.join(home, o) for o in EINHEIT_ORDNER_HOME] + ordner
+    if any(os.path.isfile(os.path.join(o, n)) for o in ordner for n in namen):
+        return True
+    return None if unlesbar else False
+
+
+def app_hinweis(paths, config):
+    """Was an der App fehlt, als ein Satz (für das Ersatzbild, den Plan und den Status), sonst None."""
+    app = (config or {}).get("app") or {}
+    if "einheit" in app:
+        if unit_installed(paths, config["konto"], app["einheit"]) is False:
+            return "App %s ist nicht installiert" % app["einheit"]
+        return None
+    if "befehl" in app:
+        if not os.access(os.path.join(paths.root, app["befehl"][0].lstrip("/")), os.X_OK):
+            return "App %s fehlt" % app["befehl"][0]
+        return None
+    return "Keine App eingerichtet"
+
+
 # --- Ablauf --------------------------------------------------------------------------------------------------
 
 def _require_root(paths):
@@ -492,6 +533,14 @@ def plan_einrichten(paths, config):
     say("  Keine Sperre, kein Standby in der Anzeige-Sitzung. Dein Konto sperrt wie immer und meldet sich nie")
     say("  automatisch an.")
     say("  Wirksam nach dem nächsten Start von greetd: sudo zen anzeige neustart oder ein Neustart.")
+    hinweis = app_hinweis(paths, config)
+    if hinweis is not None:
+        say("")
+        say("  Hinweis: %s. Bis dahin zeigt die Anzeige das Ersatzbild mit diesem Satz." % hinweis)
+        if "einheit" in (config.get("app") or {}):
+            say("  Die App installiert ihr eigenes Setup ins Konto %s (~/.config/systemd/user) oder ins System" %
+                config["konto"])
+            say("  (/etc/systemd/user); siehe docs/module/anzeige.md, «App installieren».")
 
 
 def cmd_einrichten(paths, ja):
@@ -637,6 +686,9 @@ def cmd_status(paths):
     if config:
         for line in describe(config):
             say(line)
+        hinweis = app_hinweis(paths, config)
+        if hinweis is not None:
+            say("  Hinweis: %s" % hinweis)
     elif fehler and state is not None:
         say("  Konfiguration: %s" % fehler)
     if state is not None:
@@ -660,6 +712,18 @@ def cmd_status(paths):
 
 
 # --- in der Anzeige-Sitzung ----------------------------------------------------------------------------------
+
+def cmd_hinweis(paths):
+    """Eine Zeile für das Ersatzbild (shell/anzeige.qml). Nie ein Fehler: im Zweifel «Anzeige startet …»."""
+    _state, config = active_config(paths)
+    if config is None:
+        try:
+            config = load_config(paths)
+        except Abort:
+            config = None
+    say((app_hinweis(paths, config) if config else None) or STARTET)
+    return 0
+
 
 def cmd_app(paths):
     state, config = active_config(paths)
@@ -789,6 +853,8 @@ def main(argv):
             return cmd_app(paths)
         if b == "bildschirm":
             return cmd_bildschirm(paths)
+        if b == "hinweis":
+            return cmd_hinweis(paths)
         warn("unbekannter Befehl «%s» (zenos-anzeige --hilfe)" % b)
         return 2
     except Abort as error:

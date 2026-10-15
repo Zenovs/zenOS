@@ -272,6 +272,43 @@ class Testwurzel(unittest.TestCase):
         r = self.lauf("app")
         self.assertEqual(json.loads(r.stdout), befehl)
 
+    def test_hinweis_zur_app(self):
+        """Fehlt die App, sagt das Ersatzbild, was fehlt (statt endlos «Anzeige startet …»); der Plan warnt, ohne
+        abzubrechen. Am EliteDesk stand nach dem Einrichten mit der Vorlage nur «Anzeige startet …»."""
+        self.assertEqual(self.lauf("hinweis").stdout, "App beispiel-anzeige.service ist nicht installiert\n",
+                         "auch vor dem Einrichten, aus der Konfiguration")
+        r = self.lauf("plan", "einrichten")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Hinweis: App beispiel-anzeige.service ist nicht installiert", r.stdout)
+        self.assertEqual(self.lauf("einrichten", "--ja").returncode, 0)
+        self.assertIn("Hinweis: App beispiel-anzeige.service ist nicht installiert", self.lauf("status").stdout)
+        # Das Setup der App legt die Einheit ins Home des Kontos: der Hinweis verschwindet
+        with open(self.p("/etc/passwd"), "a", encoding="utf-8") as f:
+            f.write("anzeige:x:990:990:zenOS Anzeige:/home/anzeige:/usr/sbin/nologin\n")
+        schreiben(self.p("/home/anzeige/.config/systemd/user/beispiel-anzeige.service"), "[Service]\n")
+        self.assertEqual(self.lauf("hinweis").stdout, A.STARTET + "\n")
+        self.assertNotIn("Hinweis:", self.lauf("plan", "einrichten").stdout)
+        self.assertNotIn("Hinweis:", self.lauf("status").stdout)
+        # ohne App, und ein Befehl, den es nicht gibt
+        self.konfig({"version": 1})
+        self.assertEqual(self.lauf("hinweis").stdout, "Keine App eingerichtet\n")
+        self.konfig({"version": 1, "app": {"befehl": ["/usr/bin/gibt-es-nicht", "--vollbild"]}})
+        self.assertEqual(self.lauf("hinweis").stdout, "App /usr/bin/gibt-es-nicht fehlt\n")
+        # kaputte Konfiguration: nie ein Fehler im Ersatzbild
+        schreiben(self.p("/etc/zenos/anzeige.json"), "{ kaputt")
+        r = self.lauf("hinweis")
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(r.stdout, "Keine App eingerichtet\n")
+
+    def test_einheit_im_system_und_als_vorlage(self):
+        p = A.Paths(self.w, WURZEL)
+        self.assertIs(A.unit_installed(p, "anzeige", "kiosk.service"), False)
+        schreiben(self.p("/usr/lib/systemd/user/kiosk.service"), "[Service]\n")
+        self.assertIs(A.unit_installed(p, "anzeige", "kiosk.service"), True)
+        self.assertIs(A.unit_installed(p, "anzeige", "tafel@flur.service"), False)
+        schreiben(self.p("/etc/systemd/user/tafel@.service"), "[Service]\n")
+        self.assertIs(A.unit_installed(p, "anzeige", "tafel@flur.service"), True)
+
     def test_kaputte_konfiguration_haelt_die_anzeige(self):
         self.lauf("einrichten", "--ja")
         schreiben(self.p("/etc/zenos/anzeige.json"), "{ kaputt")
@@ -347,6 +384,12 @@ class Dateien(unittest.TestCase):
         sitzung = lesen(os.path.join(WURZEL, "scripts", "bin", "zenos-anzeige-sitzung"))
         self.assertNotIn("install.sh", sitzung.split("set -uo pipefail", 1)[1])
         self.assertIn('--config-dir "$code/system/anzeige/labwc"', sitzung)
+
+    def test_ersatzbild_fragt_den_hinweis_ohne_shell(self):
+        qml = lesen(os.path.join(WURZEL, "shell", "anzeige.qml"))
+        self.assertIn('command: ["/usr/bin/python3", "-I", Pfade.bin + "/zenos-anzeige", "hinweis"]', qml)
+        self.assertIn("text: root.hinweis", qml)
+        self.assertNotIn('"-c"', qml)
 
     def test_kein_autologin_im_repo(self):
         self.assertNotRegex(lesen(GREETD), r"(?m)^\[initial_session\]")
