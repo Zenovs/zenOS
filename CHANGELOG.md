@@ -18,7 +18,8 @@ Alles seit `v0.1.0-rc7`: der Installer-Stick für x86-Rechner, x86 im Allgemeine
   die Hemmer gegen Standby (kein Ausschalten, kein Neustart). Eigene schlanke labwc-Sitzung ohne Leiste, Befehlsfeld,
   Mitteilungen und Tastenkürzel ausser dem Ausweg `Strg + Alt + Shift + Rücktaste`; Fenster maximiert ohne Rahmen;
   `zenos-anzeige.target` an der grafischen Sitzung, so starten Benutzerdienste der App von selbst; ein ruhiges
-  Ersatzbild (Uhrzeit, «Anzeige startet …», Rechnername), wenn die App nicht läuft; optional Bildschirmzeiten. Ports
+  Ersatzbild (Uhrzeit, «Anzeige startet …», Rechnername), wenn die App nicht läuft, und was fehlt, wenn sie nicht
+  installiert ist (auch als Hinweis im Plan von `einrichten` und in `status`); optional Bildschirmzeiten. Ports
   der App gibt die Firewall nur aus den lokalen Netzen frei, wie SSH. Persönliche Konten sperren wie immer und melden
   sich nie automatisch an (MANIFEST: Grundsatz 0 und Leitplanke «Ausnahme Anzeigegerät»). Nur root richtet es ein:
   `sudo zen anzeige einrichten|entfernen|neustart`, Konfiguration `/etc/zenos/anzeige.json` (Schema, neutrales

@@ -117,7 +117,24 @@ den Zustand vor dem Profil her.
   - `zenos-anzeige-bildschirm.service`: die Bildschirmzeiten (sonst übersprungen).
 - Kein `zenos-idle`, keine Leiste, kein Befehlsfeld, keine Mitteilungen, keine Oberfläche von zenOS.
 - **Ersatzbild:** Es liegt immer unter der App. Läuft sie, sieht man es nicht; läuft sie nicht oder stürzt sie ab,
-  steht dort ruhig die Uhrzeit (minutengenau), «Anzeige startet …» und der Rechnername, nie ein leerer Desktop.
+  steht dort ruhig die Uhrzeit (minutengenau), «Anzeige startet …» und der Rechnername, nie ein leerer Desktop. Fehlt
+  die App, steht statt «Anzeige startet …», was fehlt: «App slatedesk.service ist nicht installiert», «App /pfad
+  fehlt» oder «Keine App eingerichtet». Das liefert `zenos-anzeige hinweis` (alle 30 s neu, Argumentliste); der
+  Hinweis verschwindet von selbst, sobald die App installiert ist.
+
+### App installieren
+
+zenOS installiert keine App; es startet nur die, die in der Konfiguration steht. Eine App als Einheit
+(`app.einheit`) bringt ihr eigenes Setup als Benutzereinheit ins Anzeige-Konto (`~/.config/systemd/user` des Kontos,
+mit `runuser -u <konto>`, denn das Konto hat keine Login-Shell) oder ins System (`/etc/systemd/user`). Gesucht wird
+wie bei systemd: im Home des Kontos (`.config/systemd/user`, `.local/share/systemd/user`), dann in `/etc/systemd/user`,
+`/etc/xdg/systemd/user`, `/usr/local/share/systemd/user`, `/usr/share/systemd/user`, `/usr/local/lib/systemd/user` und
+`/usr/lib/systemd/user`, bei `name@instanz.service` auch die Vorlage `name@.service`. Fehlt sie, warnen der Plan von
+`zen anzeige einrichten` und `zen anzeige status` (ohne abzubrechen), und das Ersatzbild sagt es. Der Ablauf für
+SlateDesk steht in ANLEITUNG, Abschnitt I.
+
+Eine geänderte Konfiguration gilt erst nach `sudo zen anzeige einrichten` (oder dem nächsten `zen update`), nicht
+schon nach einem Neustart: Drop-in der App und Firewall-Regeln schreibt `zenos-anzeige`, nicht der Start.
 
 ### Firewall
 
@@ -165,8 +182,9 @@ Einheit und Ports, nie der Befehl der App, Inhalte oder Adressen.
   Schema, greetd, polkit-Regel in node, einrichten und entfernen in einer Testwurzel, persönliches Konto abgelehnt,
   Befehl als Argumentliste, Bildschirmzeiten, Regeln der Firewall) und in `test/container/anzeige-e2e.sh`. Der
   Container-Test ist geschrieben, aber bis zur Abnahme nicht gelaufen (auf dem Bau-Rechner fehlt Docker).
-- Auf echter Hardware nicht abgenommen: Autologin nach dem Start, 30 Minuten ohne Standby, Ausweg, Ersatzbild, Ports
-  aus dem Büronetz, SlateDesk. Testliste in ANLEITUNG, Abschnitt «Öffentlicher Bildschirm».
+- Auf echter Hardware (EliteDesk, 15.10.2026) gesehen: Autologin nach dem Start und das Ersatzbild. Noch nicht
+  abgenommen: 30 Minuten ohne Standby, Ausweg, Ports aus dem Büronetz, SlateDesk. Testliste in ANLEITUNG, Abschnitt
+  «Öffentlicher Bildschirm».
 - Eine App, die zusätzlich einen anderen Anmeldedienst einrichtet (etwa Autologin für gdm), gehört hier nicht dazu: Den
   Login macht greetd.
 - Das Konto sieht man nicht im Login von zenOS (Systemkonto), wohl aber in `loginctl` und `zen doctor`.

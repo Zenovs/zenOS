@@ -1396,13 +1396,14 @@ Per SSH mit deinem Konto, ein Befehl nach dem anderen.
 sudo install -m 0644 /opt/zenos/config/beispiele/anzeige.beispiel.json /etc/zenos/anzeige.json
 ```
 
-**I2.** Anpassen:
+**I2.** Anpassen (eine geänderte Konfiguration gilt erst nach I3, nicht schon nach einem Neustart):
 
 ```
 sudo nano /etc/zenos/anzeige.json
 ```
 
-**I3.** Einrichten. Es zeigt den Plan; zum Bestätigen `einrichten` eintippen:
+**I3.** Einrichten. Es zeigt den Plan; zum Bestätigen `einrichten` eintippen. Ist die App noch nicht installiert,
+steht im Plan ein Hinweis; einrichten geht trotzdem:
 
 ```
 sudo zen anzeige einrichten
@@ -1416,7 +1417,8 @@ sudo reboot
 
 **Testliste**
 - [ ] Nach dem Start meldet sich das Gerät ohne Eingabe an. Die App erscheint im Vollbild, ohne Leiste und ohne
-  Befehlsfeld. Ohne App zeigt die Anzeige ruhig die Uhrzeit, «Anzeige startet …» und den Rechnernamen.
+  Befehlsfeld. Läuft die App nicht, zeigt die Anzeige ruhig die Uhrzeit, «Anzeige startet …» und den Rechnernamen;
+  fehlt sie, steht dort, was fehlt (etwa «App slatedesk.service ist nicht installiert»).
 - [ ] 30 Minuten ohne Eingabe: keine Sperre, kein Standby, der Bildschirm bleibt an (ausser die App oder die
   Bildschirmzeiten schalten ihn).
 - [ ] `Super + Leertaste`, `Super + Enter`, `Alt + Tab`, Rechtsklick auf den Hintergrund: nichts passiert.
@@ -1432,13 +1434,27 @@ sudo reboot
 - [ ] `sudo zen anzeige entfernen` (Wort `entfernen`, Daten nur mit `löschen`), dann Neustart: kein Autologin mehr,
   dein Login, der Port wieder zu, das Konto weg.
 
-**Mit SlateDesk**, nach I3 und vor I4:
+**Mit SlateDesk.** In I2 als App `"einheit": "slatedesk.service"` und als Ports `[7380]`, ohne Bildschirmzeiten
+(SlateDesk schaltet den Bildschirm selbst):
+
+```json
+{ "version": 1, "konto": "anzeige", "app": { "einheit": "slatedesk.service" }, "ports": [7380] }
+```
+
+Nach I3 und vor I4 das Setup von SlateDesk holen (es klont SlateDesk danach selbst ins Konto `anzeige`):
 
 ```
-sudo bash ~anzeige/SlateDesk/scripts/setup.sh --user anzeige --branch grosses-update --ufw
+curl -fsSL -o /tmp/slatedesk-setup.sh https://raw.githubusercontent.com/Zenovs/SlateDesk/grosses-update/scripts/setup.sh
 ```
 
-Ohne `--autologin` (den Login macht greetd, nicht gdm); fragt das Skript danach, mit Nein antworten. Danach startet
+und für das Anzeige-Konto ausführen (baut SlateDesk, das dauert):
+
+```
+sudo bash /tmp/slatedesk-setup.sh --user anzeige --branch grosses-update
+```
+
+Ohne `--autologin` (den Login macht greetd, nicht gdm) und ohne `--ufw`: Den Port 7380 gibt zenOS aus den lokalen
+Netzen frei (Kommentar `zenos-anzeige`). Fragt das Skript nach der Firewall, mit Nein antworten. Danach startet
 SlateDesk in der Anzeige-Sitzung von selbst (`slatedesk.service`, `WantedBy=graphical-session.target`), die
 Fernsteuerung ist erreichbar, und Bildschirm aus/an aus SlateDesk funktioniert über `wlr-randr`. Das Setup schaltet
 Linger für `anzeige` ein (für seine Updates); `zen doctor` zeigt das als Hinweis.
