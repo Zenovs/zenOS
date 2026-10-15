@@ -12,6 +12,7 @@ Ohne Netz, ohne Download und ohne root:
   python3 test/einheiten/x86-stick.test.py
 """
 
+import json
 import os
 import re
 import shutil
@@ -25,6 +26,9 @@ BAUEN = os.path.join(WURZEL, "image", "bauen.sh")
 YAML = os.path.join(WURZEL, "image", "x86", "autoinstall.yaml")
 EINRICHTEN = os.path.join(WURZEL, "image", "x86", "einrichten.sh")
 README = os.path.join(WURZEL, "image", "x86", "README")
+INSTALLER = os.path.join(WURZEL, "image", "x86", "installer")
+TOKENS = os.path.join(WURZEL, "shell", "theme", "tokens.json")
+ZEICHEN = os.path.join(WURZEL, "assets", "zeichen")
 
 try:
     import yaml
@@ -76,7 +80,11 @@ class Autoinstall(unittest.TestCase):
         self.assertIn("git", a["packages"])
         # Argumentliste, keine Shell
         self.assertEqual(a["late-commands"], [["bash", "/cdrom/zenos/einrichten.sh", "/target"]])
-        self.assertEqual(set(a), {"version", "interactive-sections", "packages", "late-commands"})
+        self.assertEqual(set(a), {"version", "interactive-sections", "apt", "packages", "late-commands"})
+        # Hauptspiegel statt Standortwahl, Wiederholungen bei langsamen Verbindungen (Abbruch beim Kernel)
+        self.assertIs(a["apt"]["geoip"], False)
+        self.assertIn('Acquire::Retries "10";', a["apt"]["conf"])
+        self.assertEqual(set(a["apt"]), {"geoip", "conf"})
 
 
 STAND = r"""
@@ -86,6 +94,34 @@ QUELLE=$2
 stand_lesen
 printf 'ERGEBNIS %s|%s|%s|%s|%s|%s\n' "$TAG" "$COMMIT" "$KANAL" "$VERSION" "$ORIGIN" "$SIGNIERT"
 """
+
+
+class Vorlagen(unittest.TestCase):
+    """image/x86/installer: whitelabel.yaml und Folien für den grafischen Installer."""
+
+    def test_platzhalter_nur_farben(self):
+        text = lesen(os.path.join(INSTALLER, "whitelabel.yaml"))
+        self.assertEqual(sorted(set(re.findall(r"@([A-Z_]+)@", text))),
+                         ["AKZENT_DUNKEL", "AKZENT_HELL", "KNOPFTEXT_DUNKEL", "KNOPFTEXT_HELL"])
+        self.assertNotRegex(text, r"#[0-9A-Fa-f]{6}", "Farben nur aus tokens.json")
+
+    def test_folien(self):
+        zeilen = [z.split("|") for z in lesen(os.path.join(INSTALLER, "folien.txt")).splitlines()
+                  if z.strip() and not z.startswith("#")]
+        paare = {(z[0], z[1]) for z in zeilen}
+        nummern = sorted({z[0] for z in zeilen})
+        for nr in nummern:
+            self.assertIn((nr, "de"), paare)
+            self.assertIn((nr, "en"), paare, "ohne englischen Rückfall zeigte der Installer Ubuntus Folien")
+        for z in zeilen:
+            self.assertEqual(len(z), 5, z)
+            self.assertFalse(set("<>&") & set("".join(z[2:])), z)
+
+    def test_startmenue_und_schicht(self):
+        text = lesen(STICK)
+        self.assertIn("SCHICHT=minimal.standard.live.zenos.squashfs", text)
+        self.assertIn('menuentry "zenOS installieren" {', text)
+        self.assertIn("layerfs-path=$SCHICHT", text)
 
 
 class Stand(unittest.TestCase):
@@ -225,6 +261,10 @@ class NurPruefen(unittest.TestCase):
         os.makedirs(os.path.join(self.repo, "image", "x86"))
         for pfad in (YAML, EINRICHTEN, README):
             shutil.copy(pfad, os.path.join(self.repo, "image", "x86", os.path.basename(pfad)))
+        shutil.copytree(INSTALLER, os.path.join(self.repo, "image", "x86", "installer"))
+        os.makedirs(os.path.join(self.repo, "shell", "theme"))
+        shutil.copy(TOKENS, os.path.join(self.repo, "shell", "theme", "tokens.json"))
+        shutil.copytree(ZEICHEN, os.path.join(self.repo, "assets", "zeichen"))
         self.env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1",
                         GIT_AUTHOR_NAME="Test", GIT_AUTHOR_EMAIL="test@example.invalid",
                         GIT_COMMITTER_NAME="Test", GIT_COMMITTER_EMAIL="test@example.invalid")
@@ -263,6 +303,38 @@ class NurPruefen(unittest.TestCase):
         r = self.lauf("--testbau-ohne-signatur")
         self.assertEqual(r.returncode, 1)
         self.assertIn("ab v0.1.0-rc8", r.stderr)
+
+    def test_anpassung_des_installers(self):
+        """--nur-anpassung legt die Schicht für den Installer an: Farben aus tokens.json, Bilder, Folien."""
+        ziel = os.path.join(self.tmp.name, "schicht")
+        r = subprocess.run([STICK, "--quelle", self.repo, "--testbau-ohne-signatur", "--nur-anpassung", ziel],
+                           capture_output=True, text=True, timeout=60, check=False, env=self.env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        basis = os.path.join(ziel, "usr", "share", "desktop-provision")
+        weiss = lesen(os.path.join(basis, "whitelabel.yaml"))
+        self.assertNotIn("@", weiss.split("\n# ")[-1].split("app-name")[1], "kein Platzhalter übrig")
+        tokens = json.loads(lesen(TOKENS))["farben"]
+        akzent = tokens["akzente"][tokens["standardAkzent"]]
+        self.assertIn('accent-color: "%s"' % akzent["hell"], weiss)
+        self.assertIn('accent-color: "%s"' % akzent["dunkel"], weiss)
+        if yaml is not None:
+            daten = yaml.safe_load(weiss)
+            self.assertEqual(daten["app-name"], "zenOS installieren")
+            for seite in ("try-or-install", "refresh", "ubuntu-pro-onboarding", "source-selection"):
+                self.assertIs(daten["pages"][seite]["visible"], False, seite)
+            for seite, angaben in daten["pages"].items():
+                for name in (angaben.get("image"), angaben.get("image-dark")):
+                    if name:
+                        self.assertTrue(os.path.isfile(os.path.join(basis, "images", name)), (seite, name))
+        folien = sorted(os.listdir(os.path.join(basis, "slides")))
+        self.assertEqual(folien, ["1", "2", "3", "4"])
+        for nr in folien:
+            ordner = os.path.join(basis, "slides", nr)
+            for name in ("slide_en_US.html", "slide_de_CH.html", "slide_de_DE.html", "zenos-zeichen.svg"):
+                self.assertTrue(os.path.isfile(os.path.join(ordner, name)), (nr, name))
+            html = lesen(os.path.join(ordner, "slide_de_CH.html"))
+            self.assertNotIn("@", html)
+            self.assertIn(tokens["dunkel"]["grund"], html)
 
     def test_falscher_aufruf(self):
         for argumente in (("--ref",), ("--ubuntu", "26"), ("--unbekannt",)):
