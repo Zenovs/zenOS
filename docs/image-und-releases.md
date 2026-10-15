@@ -1325,7 +1325,10 @@ ssh-keygen):
      für ein Update des Installers ableitet, steht in `autoinstall.yaml` `refresh-installer: update: false`; der Stick
      ist ohnehin mit genau diesem Installer gebaut und geprüft.
    - Live-Sitzung dunkel, mit einfarbigem Hintergrund in der Grundfarbe (`dunkel.grund`) statt des Bildes von Ubuntu:
-     ein Autostart-Eintrag der Schicht (`live-look.sh.in`, `live-look.desktop`), nur im Live-System.
+     eine Vorgabe für GSettings in der Schicht (`live-look.gschema.override.in`, im Live-System
+     `/usr/share/glib-2.0/schemas/zz-zenos-live.gschema.override`). casper übersetzt die Vorgaben beim Start, also
+     bevor der Installer startet; nur so nimmt er die dunklen Bilder (er wählt sie einmal beim Start). Ein
+     Autostart-Eintrag ging nicht: systemd übergeht Einträge mit Startphase, und ohne Phase käme er zu spät.
    - Startmenü «zenOS installieren» und «zenOS installieren (einfache Grafik)»; `md5sum.txt` bekommt die neuen
      Prüfsummen, damit die Prüfung des Mediums nicht anschlägt.
    Grenzen: Wo der Installer den Namen des Flavors einsetzt, bleibt «Ubuntu» («Willkommen bei Ubuntu», «Festplatte

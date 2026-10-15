@@ -1,0 +1,15 @@
+# zenOS: Look der Live-Sitzung auf dem Installer-Stick, nur im Live-System (Schicht minimal.standard.live.zenos.squashfs,
+# image/x86-stick.sh), nie im installierten System. Liegt als
+# /usr/share/glib-2.0/schemas/zz-zenos-live.gschema.override in der Schicht; casper übersetzt die Vorgaben beim Start
+# (casper-bottom/22desktop_settings, glib-compile-schemas), also bevor die Sitzung und der Installer starten.
+# Dunkles Farbschema (der Installer folgt ihm und nimmt die dunklen Bilder) und ein ruhiger, einfarbiger Hintergrund in
+# der Grundfarbe statt des Bildes von Ubuntu. Die Farbe setzt x86-stick.sh beim Bauen aus shell/theme/tokens.json ein.
+
+[org.gnome.desktop.interface]
+color-scheme='prefer-dark'
+
+[org.gnome.desktop.background]
+picture-uri=''
+picture-uri-dark=''
+color-shading-type='solid'
+primary-color='@GRUND@'

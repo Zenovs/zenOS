@@ -402,8 +402,8 @@ for name, wert in werte.items():
 ' || die "Farben aus shell/theme/tokens.json nicht lesbar"
 }
 
-# Inhalt der Schicht unter ZIEL: usr/share/desktop-provision (whitelabel.yaml mit den Farben, Bilder, Folien, der Look der
-# Live-Sitzung) und etc/xdg/autostart/zenos-live-look.desktop
+# Inhalt der Schicht unter ZIEL: usr/share/desktop-provision (whitelabel.yaml mit den Farben, Bilder, Folien) und
+# usr/share/glib-2.0/schemas/zz-zenos-live.gschema.override (Look der Live-Sitzung)
 anpassung_anlegen() { # ZIEL
   local ziel=$1/usr/share/desktop-provision vorlage text name wert nr sprache titel z1 z2 html land
   local -a farben=()
@@ -441,15 +441,14 @@ anpassung_anlegen() { # ZIEL
   for nr in "$ziel"/slides/*; do
     [[ -f "$nr/slide_en_US.html" ]] || die "Folie ${nr##*/} hat keinen englischen Rückfall (slide_en_US.html)"
   done
-  # Live-Sitzung: dunkles Farbschema und die Grundfarbe von zenOS statt des Hintergrunds von Ubuntu
-  text=$(g show "$COMMIT:image/x86/installer/live-look.sh.in") || die "image/x86/installer/live-look.sh.in fehlt"
+  # Live-Sitzung: dunkles Farbschema und die Grundfarbe von zenOS statt des Hintergrunds von Ubuntu, als Vorgabe für
+  # GSettings (casper übersetzt sie beim Start, bevor der Installer startet)
+  text=$(g show "$COMMIT:image/x86/installer/live-look.gschema.override.in") ||
+    die "image/x86/installer/live-look.gschema.override.in fehlt"
   for wert in "${farben[@]}"; do text=${text//@${wert%%=*}@/${wert#*=}}; done
-  printf '%s\n' "$text" > "$ziel/zenos-live-look"
-  mkdir -p -- "$1/etc/xdg/autostart"
-  g show "$COMMIT:image/x86/installer/live-look.desktop" > "$1/etc/xdg/autostart/zenos-live-look.desktop" ||
-    die "image/x86/installer/live-look.desktop fehlt"
+  mkdir -p -- "$1/usr/share/glib-2.0/schemas"
+  printf '%s\n' "$text" > "$1/usr/share/glib-2.0/schemas/zz-zenos-live.gschema.override"
   find "$1" -type d -exec chmod 0755 {} + && find "$1" -type f -exec chmod 0644 {} +
-  chmod 0755 -- "$ziel/zenos-live-look"
 }
 
 # Produktname: Der Installer zeigt, was in .disk/info vor dem ersten Anführungszeichen steht («zenOS 0.1.0» statt
