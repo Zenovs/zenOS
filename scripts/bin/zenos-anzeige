@@ -645,6 +645,13 @@ def seat_sessions(paths):
             if i.get("seat") == "seat0" and str(i.get("class", "")).startswith("user")]
 
 
+def display_session_running(items, konto):
+    """Läuft die Anzeige-Sitzung? Nur eine Sitzung des Kontos am Bildschirm (seat0, Klasse user…) zählt; der
+    Diensteverwalter des Kontos (Klasse manager…, ohne Sitz) läuft auch ohne sie weiter (Linger der App)."""
+    return any(isinstance(i, dict) and i.get("user") == konto and i.get("seat") == "seat0"
+               and str(i.get("class", "")).startswith("user") for i in items)
+
+
 def cmd_neustart(paths):
     _require_root(paths)
     state = load_state(paths)
@@ -701,12 +708,12 @@ def cmd_status(paths):
                               else "weicht ab (install.sh stellt es wieder her)"))
         if not paths.test:
             r = run(paths, ["loginctl", "list-sessions", "--json=short"], check=False)
-            with_session = False
             try:
-                with_session = any(i.get("user") == state["konto"] for i in json.loads(r.stdout or "[]"))
+                items = json.loads(r.stdout or "[]")
             except ValueError:
-                pass
-            say("  Anzeige-Sitzung: %s" % ("läuft" if with_session else "läuft nicht"))
+                items = []
+            say("  Anzeige-Sitzung: %s" % ("läuft" if display_session_running(items, state["konto"])
+                                           else "läuft nicht"))
     say("Einrichten: sudo zen anzeige einrichten · Entfernen: sudo zen anzeige entfernen")
     return 0
 

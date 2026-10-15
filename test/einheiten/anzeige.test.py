@@ -300,6 +300,16 @@ class Testwurzel(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
         self.assertEqual(r.stdout, "Keine App eingerichtet\n")
 
+    def test_sitzung_nur_am_bildschirm(self):
+        """Am EliteDesk meldete status «läuft», obwohl nur der Diensteverwalter des Kontos lief (Klasse
+        manager-early, ohne Sitz) und Zeno selbst am Bildschirm angemeldet war."""
+        eliteDesk = [{"session": "1", "uid": 997, "user": "anzeige", "seat": None, "class": "manager-early"},
+                     {"session": "5", "uid": 1000, "user": "mensch", "seat": "seat0", "class": "user"}]
+        self.assertFalse(A.display_session_running(eliteDesk, "anzeige"))
+        anzeige = eliteDesk + [{"session": "9", "uid": 997, "user": "anzeige", "seat": "seat0", "class": "user-early"}]
+        self.assertTrue(A.display_session_running(anzeige, "anzeige"))
+        self.assertFalse(A.display_session_running(anzeige, "kiosk"))
+
     def test_einheit_im_system_und_als_vorlage(self):
         p = A.Paths(self.w, WURZEL)
         self.assertIs(A.unit_installed(p, "anzeige", "kiosk.service"), False)
