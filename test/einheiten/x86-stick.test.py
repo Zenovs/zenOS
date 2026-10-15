@@ -104,6 +104,7 @@ class Vorlagen(unittest.TestCase):
         self.assertEqual(sorted(set(re.findall(r"@([A-Z_]+)@", text))),
                          ["AKZENT_DUNKEL", "AKZENT_HELL", "KNOPFTEXT_DUNKEL", "KNOPFTEXT_HELL"])
         self.assertNotRegex(text, r"#[0-9A-Fa-f]{6}", "Farben nur aus tokens.json")
+        self.assertNotRegex(lesen(os.path.join(INSTALLER, "live-look.sh.in")), r"#[0-9A-Fa-f]{6}")
 
     def test_folien(self):
         zeilen = [z.split("|") for z in lesen(os.path.join(INSTALLER, "folien.txt")).splitlines()
@@ -335,6 +336,11 @@ class NurPruefen(unittest.TestCase):
             html = lesen(os.path.join(ordner, "slide_de_CH.html"))
             self.assertNotIn("@", html)
             self.assertIn(tokens["dunkel"]["grund"], html)
+        look = os.path.join(basis, "zenos-live-look")
+        self.assertTrue(os.access(look, os.X_OK))
+        self.assertIn("primary-color '%s'" % tokens["dunkel"]["grund"], lesen(look))
+        self.assertIn("Exec=/usr/share/desktop-provision/zenos-live-look",
+                      lesen(os.path.join(ziel, "etc", "xdg", "autostart", "zenos-live-look.desktop")))
 
     def test_falscher_aufruf(self):
         for argumente in (("--ref",), ("--ubuntu", "26"), ("--unbekannt",)):

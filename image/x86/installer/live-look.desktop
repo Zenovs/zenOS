@@ -1,0 +1,7 @@
+[Desktop Entry]
+# zenOS: Look der Live-Sitzung auf dem Installer-Stick (image/x86/installer/live-look.sh.in)
+Type=Application
+Name=zenOS Live-Look
+Exec=/usr/share/desktop-provision/zenos-live-look
+NoDisplay=true
+X-GNOME-Autostart-Phase=Initialization

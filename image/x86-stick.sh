@@ -402,7 +402,8 @@ for name, wert in werte.items():
 ' || die "Farben aus shell/theme/tokens.json nicht lesbar"
 }
 
-# Inhalt der Schicht unter ZIEL/usr/share/desktop-provision: whitelabel.yaml mit den Farben, Bilder, Folien
+# Inhalt der Schicht unter ZIEL: usr/share/desktop-provision (whitelabel.yaml mit den Farben, Bilder, Folien, der Look der
+# Live-Sitzung) und etc/xdg/autostart/zenos-live-look.desktop
 anpassung_anlegen() { # ZIEL
   local ziel=$1/usr/share/desktop-provision vorlage text name wert nr sprache titel z1 z2 html land
   local -a farben=()
@@ -440,7 +441,15 @@ anpassung_anlegen() { # ZIEL
   for nr in "$ziel"/slides/*; do
     [[ -f "$nr/slide_en_US.html" ]] || die "Folie ${nr##*/} hat keinen englischen Rückfall (slide_en_US.html)"
   done
+  # Live-Sitzung: dunkles Farbschema und die Grundfarbe von zenOS statt des Hintergrunds von Ubuntu
+  text=$(g show "$COMMIT:image/x86/installer/live-look.sh.in") || die "image/x86/installer/live-look.sh.in fehlt"
+  for wert in "${farben[@]}"; do text=${text//@${wert%%=*}@/${wert#*=}}; done
+  printf '%s\n' "$text" > "$ziel/zenos-live-look"
+  mkdir -p -- "$1/etc/xdg/autostart"
+  g show "$COMMIT:image/x86/installer/live-look.desktop" > "$1/etc/xdg/autostart/zenos-live-look.desktop" ||
+    die "image/x86/installer/live-look.desktop fehlt"
   find "$1" -type d -exec chmod 0755 {} + && find "$1" -type f -exec chmod 0644 {} +
+  chmod 0755 -- "$ziel/zenos-live-look"
 }
 
 # Schicht, Startmenü und md5sum.txt für das ISO
