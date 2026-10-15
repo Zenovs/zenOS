@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "konto": "anzeige",
+  "app": { "einheit": "beispiel-anzeige.service" },
+  "ports": [8080],
+  "bildschirmzeiten": [
+    { "tage": ["mo", "di", "mi", "do", "fr"], "an": "07:00", "aus": "19:00" }
+  ]
+}

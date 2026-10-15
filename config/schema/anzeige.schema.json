@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "zenOS Geräteprofil «Öffentlicher Bildschirm» (/etc/zenos/anzeige.json)",
+  "description": "Konfiguration des Anzeigegeräts: Anzeige-Konto, App, freigegebene Ports und optionale Bildschirmzeiten. Gehört root, nur root ändert sie; wirksam erst mit «sudo zen anzeige einrichten». Geprüft von scripts/bin/zenos-anzeige (dieselben Regeln, docs/module/anzeige.md). Persönliches gehört nicht hinein.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version"],
+  "properties": {
+    "version": { "const": 1 },
+    "konto": {
+      "description": "Name des Anzeige-Kontos (Systemkonto ohne Rechte, ohne Passwort, Login-Shell nologin). Standard: anzeige.",
+      "type": "string",
+      "pattern": "^[a-z_][a-z0-9_-]{0,30}$",
+      "not": { "enum": ["root", "_greetd", "nobody", "zenos-gesten"] }
+    },
+    "app": {
+      "description": "Die Anzeige-App: entweder eine systemd-Benutzereinheit, die zenOS in der Anzeige-Sitzung startet, oder ein Befehl als Argumentliste (nie über eine Shell). Ohne App zeigt die Sitzung nur das Ersatzbild; Einheiten mit WantedBy=graphical-session.target starten trotzdem von selbst.",
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "maxProperties": 1,
+      "properties": {
+        "einheit": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,250}\\.service$"
+        },
+        "befehl": {
+          "description": "Programm mit absolutem Pfad, danach die Argumente. Jedes Element ein eigenes Argument.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "prefixItems": [{ "type": "string", "pattern": "^/[^\\u0000-\\u001f]{0,1023}$" }],
+          "items": { "type": "string", "maxLength": 4096, "pattern": "^[^\\u0000]*$" }
+        }
+      }
+    },
+    "ports": {
+      "description": "TCP-Ports, die die Firewall nur aus den lokalen Netzen freigibt (wie SSH). Port 22 gehört SSH und ist ausgeschlossen.",
+      "type": "array",
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": { "type": "integer", "minimum": 1, "maximum": 65535, "not": { "const": 22 } }
+    },
+    "bildschirmzeiten": {
+      "description": "Optional: Bildschirm an zu diesen Zeiten, sonst aus (zenOS über wlr-randr). Leer oder fehlend: zenOS schaltet nie, das darf die App selbst.",
+      "type": "array",
+      "maxItems": 14,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["tage", "an", "aus"],
+        "properties": {
+          "tage": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "enum": ["mo", "di", "mi", "do", "fr", "sa", "so"] }
+          },
+          "an": { "$ref": "#/$defs/uhrzeit" },
+          "aus": { "$ref": "#/$defs/uhrzeit" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "uhrzeit": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$" }
+  }
+}
