@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<!--
+  zenOS: labwc in der Anzeige-Sitzung (Geräteprofil «Öffentlicher Bildschirm», scripts/bin/zenos-anzeige-sitzung).
+  Gilt nur für das Anzeige-Konto. Keine Tastenkürzel für Terminal, Befehlsfeld oder Apps: Die Liste unten ersetzt
+  die Vorgaben von labwc ganz. Einziges Kürzel ist der Ausweg vor Ort, Strg + Alt + Shift + Rücktaste: Er beendet die
+  Anzeige-Sitzung, danach erscheint der Login von zenOS. Maus ohne Menü und ohne Verschieben von Fenstern.
+  Jedes Fenster erscheint maximiert und ohne Rahmen (ohne Leiste füllt es den ganzen Bildschirm).
+-->
+<labwc_config>
+  <core>
+    <decoration>server</decoration>
+    <gap>0</gap>
+  </core>
+
+  <theme>
+    <cornerRadius>0</cornerRadius>
+  </theme>
+
+  <windowRules>
+    <windowRule identifier="*" serverDecoration="no">
+      <action name="Maximize" />
+    </windowRule>
+  </windowRules>
+
+  <keyboard>
+    <keybind key="C-A-S-BackSpace">
+      <action name="Exit" />
+    </keybind>
+  </keyboard>
+
+  <mouse>
+    <context name="Root">
+      <mousebind button="Right" action="Press">
+        <action name="Focus" />
+      </mousebind>
+    </context>
+  </mouse>
+</labwc_config>

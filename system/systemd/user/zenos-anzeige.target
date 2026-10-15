@@ -1,0 +1,12 @@
+# zenOS: Anzeige-Sitzung (Geräteprofil «Öffentlicher Bildschirm», docs/module/anzeige.md). Startet mit labwc
+# (system/anzeige/labwc/autostart), endet mit labwc (shutdown). Hängt an graphical-session.target: Benutzerdienste der
+# App mit WantedBy=graphical-session.target starten so von selbst. Die App als Einheit aus /etc/zenos/anzeige.json
+# kommt über das Drop-in zenos-anzeige.target.d/zenos-app.conf dazu (zenos-anzeige). Kein zenos-idle: keine Sperre.
+# Nur das Anzeige-Konto startet dieses Ziel; für persönliche Konten liegen die Einheiten ungenutzt da.
+[Unit]
+Description=zenOS-Anzeige-Sitzung (öffentlicher Bildschirm)
+Documentation=file:///opt/zenos/docs/module/anzeige.md
+BindsTo=graphical-session.target
+Wants=graphical-session-pre.target
+After=graphical-session-pre.target
+Wants=zenos-anzeige-wach.service zenos-anzeige-ersatz.service zenos-anzeige-app.service zenos-anzeige-bildschirm.service

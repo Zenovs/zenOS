@@ -1,0 +1,15 @@
+# zenOS: Die Anzeige-App als Befehl («app.befehl» in /etc/zenos/anzeige.json). zenos-anzeige startet ihn als
+# Argumentliste (execv, nie über eine Shell). Ist die App eine Einheit oder fehlt sie, startet dieser Dienst nicht
+# (ExecCondition). Stürzt sie ab, startet sie nach 5 s neu; dazwischen zeigt das Ersatzbild «Anzeige startet …».
+[Unit]
+Description=zenOS-Anzeige: App
+Documentation=file:///opt/zenos/docs/module/anzeige.md
+PartOf=graphical-session.target
+After=graphical-session.target zenos-anzeige-ersatz.service
+StartLimitIntervalSec=0
+
+[Service]
+ExecCondition=/usr/bin/python3 -I /opt/zenos/scripts/bin/zenos-anzeige hat-befehl
+ExecStart=/usr/bin/python3 -I /opt/zenos/scripts/bin/zenos-anzeige app
+Restart=always
+RestartSec=5

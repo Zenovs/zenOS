@@ -1,0 +1,11 @@
+# zenOS: Die Anzeige bleibt wach. Ein logind-Hemmer gegen Leerlauf, Standby und den Deckel, solange die
+# Anzeige-Sitzung läuft. polkit erlaubt dem Anzeige-Konto genau diese Hemmer (50-zenos-anzeige.rules), sonst nichts.
+[Unit]
+Description=zenOS-Anzeige: kein Standby
+Documentation=file:///opt/zenos/docs/module/anzeige.md
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/systemd-inhibit --what=idle:sleep:handle-lid-switch --mode=block --who=zenOS-Anzeige "--why=Öffentlicher Bildschirm: kein Standby" /usr/bin/sleep infinity
+Restart=on-failure
+RestartSec=5

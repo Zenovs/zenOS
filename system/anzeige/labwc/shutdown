@@ -1,0 +1,6 @@
+#!/bin/sh
+# zenOS: Ende der Anzeige-Sitzung (labwc startet es beim Beenden). Stoppt die Dienste der Anzeige und der App,
+# danach zeigt nichts mehr auf den beendeten Wayland-Bildschirm.
+
+systemctl --user stop zenos-anzeige.target graphical-session.target
+systemctl --user unset-environment WAYLAND_DISPLAY DISPLAY LABWC_PID XDG_SESSION_ID

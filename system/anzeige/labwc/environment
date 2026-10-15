@@ -1,0 +1,14 @@
+# zenOS: Umgebung der Anzeige-Sitzung (labwc liest KEY=VALUE, eine Zuweisung pro Zeile). autostart gibt die Werte an
+# systemd und D-Bus weiter.
+XDG_CURRENT_DESKTOP=labwc:wlroots
+XDG_SESSION_DESKTOP=zenos-anzeige
+XDG_SESSION_TYPE=wayland
+
+# Qt, Firefox und Electron nativ unter Wayland
+QT_QPA_PLATFORM=wayland;xcb
+QT_WAYLAND_DISABLE_WINDOWDECORATION=1
+MOZ_ENABLE_WAYLAND=1
+ELECTRON_OZONE_PLATFORM_HINT=auto
+
+XCURSOR_THEME=Adwaita
+XCURSOR_SIZE=24

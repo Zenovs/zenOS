@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# zenos-anzeige-sitzung – startet die Anzeige-Sitzung (Geräteprofil «Öffentlicher Bildschirm», zen anzeige).
+#
+# greetd ruft es über [initial_session] für das Anzeige-Konto auf, einmal beim Start (immer über /bin/sh -c; die
+# Login-Shell nologin des Kontos spielt dabei keine Rolle). labwc läuft mit der Konfiguration aus
+# /opt/zenos/system/anzeige/labwc: ohne Leiste, Befehlsfeld, Mitteilungen und Sperre, ohne Tastenkürzel ausser dem
+# Ausweg Strg + Alt + Shift + Rücktaste, Fenster im Vollbild ohne Rahmen. autostart startet zenos-anzeige.target.
+# Keine Benutzerteile von zenOS (install.sh --nur-benutzer): Das Anzeige-Konto hat keine Einstellungen, Modi oder Apps.
+# Endet labwc (Ausweg, Absturz), erscheint der Login von zenOS ([default_session]).
+
+set -uo pipefail
+
+code=/opt/zenos
+
+meldung() { printf 'zenos-anzeige-sitzung: %s\n' "$*" >&2; }
+
+export XDG_SESSION_TYPE=wayland
+export XDG_SESSION_DESKTOP=zenos-anzeige
+export XDG_CURRENT_DESKTOP=labwc:wlroots
+if [[ -z "${XDG_RUNTIME_DIR:-}" ]]; then
+  XDG_RUNTIME_DIR=/run/user/$(id -u)
+  export XDG_RUNTIME_DIR
+fi
+case ":${PATH:-}:" in
+  *:/usr/local/bin:*) ;;
+  *) export PATH="/usr/local/bin:${PATH:-/usr/bin:/bin}" ;;
+esac
+
+# Tastaturbelegung des Systems (wie zenos-sitzung), sofern nicht schon gesetzt
+tastatur() {
+  local datei=/etc/default/keyboard paar quelle ziel wert
+  [[ -r "$datei" ]] || return 0
+  for paar in XKBMODEL:XKB_DEFAULT_MODEL XKBLAYOUT:XKB_DEFAULT_LAYOUT \
+    XKBVARIANT:XKB_DEFAULT_VARIANT XKBOPTIONS:XKB_DEFAULT_OPTIONS; do
+    quelle=${paar%%:*}
+    ziel=${paar#*:}
+    [[ -z "${!ziel:-}" ]] || continue
+    wert=$(sed -n "s/^$quelle=[\"']\{0,1\}\([^\"']*\)[\"']\{0,1\}[[:space:]]*\$/\1/p" "$datei" | tail -n 1)
+    [[ -n "$wert" && "$wert" =~ ^[A-Za-z0-9_,:()+-]+$ ]] || continue
+    export "$ziel=$wert"
+  done
+}
+tastatur
+
+# Reste einer abgebrochenen Anzeige-Sitzung beenden, Startsperren der Dienste lösen
+if systemctl --user --quiet is-active zenos-anzeige.target 2> /dev/null; then
+  meldung "Anzeige-Sitzung von vorher läuft noch, wird beendet"
+  systemctl --user stop zenos-anzeige.target graphical-session.target 2> /dev/null || true
+fi
+systemctl --user reset-failed zenos-anzeige-ersatz.service zenos-anzeige-wach.service zenos-anzeige-app.service \
+  zenos-anzeige-bildschirm.service 2> /dev/null || true
+
+if [[ ! -d "$code/system/anzeige/labwc" ]]; then
+  meldung "$code/system/anzeige/labwc fehlt, Anzeige-Sitzung nicht möglich"
+  exit 1
+fi
+
+# Ausgaben von labwc und der App ins Journal (journalctl -t labwc-anzeige)
+if command -v systemd-cat > /dev/null && [[ -S /run/systemd/journal/stdout ]]; then
+  exec systemd-cat --identifier=labwc-anzeige -- labwc --config-dir "$code/system/anzeige/labwc"
+fi
+exec labwc --config-dir "$code/system/anzeige/labwc"

@@ -1,0 +1,13 @@
+# zenOS: Bildschirm nach den Bildschirmzeiten aus /etc/zenos/anzeige.json an und aus (wlopm, wie am Login). Ohne
+# Bildschirmzeiten startet der Dienst nicht (ExecCondition); dann darf die App den Bildschirm selbst schalten.
+[Unit]
+Description=zenOS-Anzeige: Bildschirmzeiten
+Documentation=file:///opt/zenos/docs/module/anzeige.md
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecCondition=/usr/bin/python3 -I /opt/zenos/scripts/bin/zenos-anzeige hat-bildschirmzeiten
+ExecStart=/usr/bin/python3 -I /opt/zenos/scripts/bin/zenos-anzeige bildschirm
+Restart=on-failure
+RestartSec=30
