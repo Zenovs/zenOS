@@ -1308,12 +1308,33 @@ ssh-keygen):
    BIOS und UEFI, MBR und GPT mit der angehängten EFI-Partition) übernimmt xorriso unverändert; Shim und GRUB bleiben die
    signierten von Ubuntu, der Stick startet also auch mit Secure Boot. Dazu `zenos-<version>-x86-installer.iso.sha256`.
 
+5. **Look von zenOS** (`image/x86/installer/`): Der grafische Installer von Ubuntu (Snap `ubuntu-desktop-bootstrap`,
+   Projekt `ubuntu-desktop-provision`) sieht eine Anpassung für Flavors und OEMs vor: `whitelabel.yaml` unter
+   `/usr/share/desktop-provision/`, mit der eingebauten Vorgabe zusammengeführt. Sie liegt in einer zusätzlichen Schicht
+   des Live-Systems, `/casper/minimal.standard.live.zenos.squashfs`; casper legt sie über `layerfs-path` über
+   `minimal.standard.live` (das Startmenü nennt sie, die Schichten von Ubuntu bleiben unverändert):
+   - Akzentfarben und Knöpfe aus `shell/theme/tokens.json` (Akzent `salbei`), beim Bauen eingesetzt (Grundsatz 5)
+   - Fenstertitel «zenOS installieren», Schriftzug und Zeichen von zenOS statt Logo und Maskottchen von Ubuntu
+   - eigene Folien während der Installation (`folien.txt`, deutsch für de_DE/de_CH/de_AT, englisch als Rückfall)
+   - ausgeblendet: «Ausprobieren oder installieren», Update des Installers, Ubuntu Pro und die Wahl des Umfangs (es
+     kommt die schlanke Grundlage `ubuntu-desktop-minimal`)
+   - Startmenü «zenOS installieren» und «zenOS installieren (einfache Grafik)»; `md5sum.txt` bekommt die neuen
+     Prüfsummen, damit die Prüfung des Mediums nicht anschlägt.
+   Grenzen: Die Texte des Installers bleiben die von Ubuntu («Festplatte löschen und Ubuntu installieren»), ebenso das
+   Logo beim Start (Plymouth im initrd, vor den Schichten) und der Desktop des Live-Systems hinter dem Installer. Ein
+   eigener Installer wäre selbst gebaute Partitionierung und Verschlüsselung für ein Programm, das einmal je Gerät läuft
+   (Grundsatz 1, «Der Rest kommt von Ubuntu»).
+
 **Die Installation am Rechner** (`image/x86/autoinstall.yaml`, Format «autoinstall» von Ubuntu):
 
 - Der grafische Installer liest `/autoinstall.yaml` vom Stick. Mit `interactive-sections: ["*"]` zeigt er alle
   gewohnten Schritte: Sprache, Tastatur, Netz, Umfang, Festplatte (unter «Erweiterte Funktionen» LVM mit
   Verschlüsselung), Konto und Zeitzone. Die Passphrase und das Passwort stehen in keiner Datei.
-- Die Datei fügt nur hinzu, was der Installer nicht fragt: `git` als Paket und die `late-commands`.
+- Die Datei fügt nur hinzu, was der Installer nicht fragt: `git` als Paket, die `late-commands` und die Downloads:
+  der Hauptspiegel von Ubuntu statt der Standortwahl (`apt: geoip: false`), `Acquire::Retries 10` und 120 s Geduld.
+  Am EliteDesk brach die erste Installation beim Laden des Kernels ab (`apt-get install --download-only
+  linux-generic-hwe-24.04`, Exit 100), in den Tests in QEMU derselbe Schritt jedes Mal mit «Connection failed» zum
+  Landesspiegel. Die Einstellung bleibt im System (`/etc/apt/apt.conf.d/94curtin-config`).
 - **`late-commands`:** `image/x86/einrichten.sh /target`, als Argumentliste ohne Shell. Das Skript startet sich zuerst
   mit leerer Umgebung neu (der Desktop-Installer läuft als Snap, dessen Umgebung gehört nicht in die Werkzeuge des
   Systems). Dann macht es im neu installierten System, was `image/bauen.sh` für das Pi-Image macht (Schritt 4 und 5):

@@ -291,6 +291,7 @@ image/x86-stick.sh [--ref vX.Y.Z[-rcN]] [--ausgabe ORDNER] [--cache ORDNER]
 
 Baut `zenos-<version>-x86-installer.iso` (und `.sha256`) aus dem offiziellen ISO von Ubuntu Desktop für amd64: Tag prüfen
 (`tag-pruefen.sh`), `SHA256SUMS` von releases.ubuntu.com mit dem Ubuntu-CD-Schlüssel prüfen, ISO laden und prüfen,
-`/autoinstall.yaml` und `/zenos/` aus dem Commit des Tags dazulegen (xorriso, Bootteile unverändert). Ablauf, Inhalt und
+`/autoinstall.yaml`, `/zenos/` und die Schicht mit dem Look von zenOS (`image/x86/installer/`) aus dem Commit des
+Tags dazulegen, das Startmenü umbenennen (xorriso, Bootteile unverändert). Ablauf, Inhalt und
 Installation: `docs/image-und-releases.md`, «Bürorechner (x86)»; Bedienung: ANLEITUNG, Abschnitt H.
 

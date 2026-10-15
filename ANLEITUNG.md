@@ -1272,10 +1272,10 @@ installiert, den Login übernimmt zenOS. Hintergrund: `docs/image-und-releases.m
 
 ### Stick bauen (Mac)
 
-**H1.** Werkzeuge für den Bau (Linux: `sudo apt install xorriso gpgv`):
+**H1.** Werkzeuge für den Bau (Linux: `sudo apt install xorriso gpgv squashfs-tools`):
 
 ```
-brew install xorriso gnupg
+brew install xorriso gnupg squashfs
 ```
 
 **H2.** Den Stand des Releases holen:
@@ -1307,13 +1307,14 @@ nicht: nicht weitermachen.
 Die Namen der Schritte stehen hier sinngemäss; sie hängen von der Sprache ab, die du im Installer wählst.
 
 **H6.** Den Stick einstecken und den Rechner davon starten. Bei HP-Rechnern öffnet `F9` das Boot-Menü (`F10` die
-Einstellungen), bei anderen oft `F12` oder `Esc`. Secure Boot darf an bleiben. Im Menü «Try or Install Ubuntu» wählen.
+Einstellungen), bei anderen oft `F12` oder `Esc`. Secure Boot darf an bleiben. Im Menü «zenOS installieren» wählen.
 
-**H7.** Der grafische Installer startet. «Ubuntu installieren», dann Sprache, Barrierefreiheit, Tastatur (für die
-Schweiz «Deutsch (Schweiz)») und Netz. Mit Kabel steht das Netz von selbst.
+**H7.** Der grafische Installer startet im Look von zenOS (Farben, Zeichen, Titel «zenOS installieren»; die Texte sind
+die von Ubuntu). Sprache, Barrierefreiheit, Tastatur (für die Schweiz «Deutsch (Schweiz)») und Netz. Mit Kabel steht
+das Netz von selbst.
 
-**H8.** Fragt der Installer nach der Art der Installation, «Interaktive Installation» wählen. Beim Umfang genügt die
-Standardauswahl. Zusätzliche Treiber und Medienformate nach Wunsch.
+**H8.** Fragt der Installer nach der Art der Installation, «Interaktive Installation» wählen. Zusätzliche Treiber und
+Medienformate nach Wunsch. Den Umfang wählt der Stick selbst (die schlanke Grundlage).
 
 **H9.** Festplatte: «Festplatte löschen und Ubuntu installieren». Unter «Erweiterte Funktionen» **«LVM und
 Verschlüsselung verwenden»** wählen und eine Passphrase setzen. Auf dem Bürorechner ist die Verschlüsselung Pflicht.
@@ -1322,7 +1323,8 @@ Erst mit «Installieren» am Ende der Übersicht wird gelöscht.
 **H10.** Konto: dein Name, ein Rechnername, Benutzername und Passwort. Dann die Zeitzone.
 
 **H11.** Warten. Nach dem Kopieren richtet der Installer zenOS ein: 20 bis 40 Minuten, das meiste ist der Bau von
-Quickshell. Die Anzeige steht dabei eine Weile still, das ist normal. Danach «Jetzt neu starten» und den Stick abziehen.
+Quickshell. Während der Installation zeigen Folien, was zenOS kann; gegen Ende steht die Anzeige eine Weile still, das
+ist normal. Danach «Jetzt neu starten» und den Stick abziehen.
 
 **H12.** Beim Start die Passphrase eingeben. Es erscheint der Login von zenOS (nicht der von Ubuntu). Anmelden; die
 Einrichtung beim ersten Start fragt nach Name, Ort, Erscheinungsbild und erstem Modus und bietet Chrome, VS Code und

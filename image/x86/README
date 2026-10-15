@@ -1,9 +1,11 @@
 zenOS – Installer-Stick für x86-Rechner (amd64)
 ================================================
 
-Dieser Stick ist das offizielle ISO von Ubuntu Desktop mit seinem grafischen Installer und zwei Zusätzen:
+Dieser Stick ist das offizielle ISO von Ubuntu Desktop mit seinem grafischen Installer und diesen Zusätzen:
 
   /autoinstall.yaml       zeigt alle Schritte des Installers wie gewohnt und hängt die Einrichtung von zenOS an
+  /casper/minimal.standard.live.zenos.squashfs
+                          Look von zenOS für den Installer (Farben, Zeichen, Folien; Startmenü «zenOS installieren»)
   /zenos/einrichten.sh    richtet zenOS am Ende der Installation ein
   /zenos/stand            welcher Stand von zenOS (Tag, Commit, Kanal)
   /zenos/zenos.bundle     der Code von zenOS zu diesem Stand (git bundle)
@@ -12,15 +14,14 @@ Gebaut mit image/x86-stick.sh aus dem Repo https://github.com/Zenovs/zenOS. Der 
 (image/tag-pruefen.sh) und wird im installierten System noch einmal geprüft. Bootteile und Pakete sind die von Ubuntu.
 
 Ablauf am Rechner (die Namen der Schritte sinngemäss, je nach Sprache des Installers):
-  1. Vom Stick starten, «Ubuntu installieren» wählen.
+  1. Vom Stick starten, im Startmenü «zenOS installieren».
   2. Sprache, Barrierefreiheit, Tastatur und Netz. Ohne Netz geht es nicht (Pakete für zenOS); Kabel empfohlen.
-  3. Fragt der Installer nach der Art der Installation: «Interaktive Installation».
-  4. Umfang: «Standardauswahl» genügt.
-  5. Festplatte: «Festplatte löschen und Ubuntu installieren», unter «Erweiterte Funktionen» «LVM und
+  3. Fragt der Installer nach der Art der Installation: «Interaktive Installation». Den Umfang wählt der Stick selbst.
+  4. Festplatte: «Festplatte löschen und Ubuntu installieren», unter «Erweiterte Funktionen» «LVM und
      Verschlüsselung verwenden» und eine Passphrase. Sie steht nirgends in einer Datei. Alles auf der Platte wird
      gelöscht.
-  6. Konto: Name, Rechnername, Benutzer und Passwort. Zeitzone.
-  7. Nach dem Kopieren richtet der Installer zenOS ein (20 bis 40 Minuten). Dann «Jetzt neu starten», Stick abziehen.
+  5. Konto: Name, Rechnername, Benutzer und Passwort. Zeitzone.
+  6. Nach dem Kopieren richtet der Installer zenOS ein (20 bis 40 Minuten). Dann «Jetzt neu starten», Stick abziehen.
      Nach der Passphrase erscheint der Login von zenOS.
 
 GNOME aus Ubuntu Desktop bleibt installiert, den Login übernimmt zenOS (greetd statt gdm).
