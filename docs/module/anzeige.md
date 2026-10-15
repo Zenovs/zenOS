@@ -69,6 +69,10 @@ Eine kaputte Konfiguration hält die Anzeige nicht an: Das Konto kommt dann aus 
 
 - Angelegt mit `useradd --system --create-home --home-dir /home/<konto> --shell /usr/sbin/nologin --user-group`, dann
   `usermod --lock`. Keine weiteren Gruppen: labwc bekommt Bildschirm und Eingabe über logind (Sitz der Sitzung).
+- **Ohne Dateien aus `/etc/skel`** (`--skel` mit einem leeren Ordner): Das Konto meldet sich nie an einer Konsole an.
+  Ubuntus `~/.bash_logout` ruft `clear_console` auf; ohne Konsole scheitert das, und am EliteDesk brach daran das
+  Setup von SlateDesk ab, das sein Update als Login-Shell (`bash -l`) mit Fehlerfalle startet. Auf Konten, die vor
+  dieser Änderung angelegt wurden, liegt die Datei noch; `sudo rm /home/anzeige/.bash_logout` behebt es.
 - **Login-Shell `nologin`:** greetd startet jede Sitzung über `/bin/sh -c` (Quelltext `greetd/src/session/worker.rs`),
   die Login-Shell spielt dort keine Rolle. Konsole und SSH lehnen das Konto ab, ohne dass zenOS die
   SSH-Konfiguration anfasst. Das gesperrte Passwort schliesst jede Anmeldung mit Passwort zusätzlich aus.

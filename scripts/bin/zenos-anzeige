@@ -555,8 +555,13 @@ def cmd_einrichten(paths, ja):
         raise Abort("Das Profil ist schon für das Konto %s eingerichtet; zuerst zen anzeige entfernen" % old["konto"])
     angelegt = bool(old and old.get("angelegt"))
     if passwd_entry(paths, konto) is None:
-        run(paths, ["useradd", "--system", "--create-home", "--home-dir", "/home/" + konto,
-                    "--shell", "/usr/sbin/nologin", "--user-group", "--comment", KOMMENTAR, konto])
+        # Ohne die Dateien aus /etc/skel (leere Vorlage): Das Konto meldet sich nie an einer Konsole an, und Ubuntus
+        # ~/.bash_logout ruft clear_console auf. Das scheitert ohne Konsole und liess am EliteDesk das Setup von
+        # SlateDesk abbrechen, das sein Update als Login-Shell (bash -l) mit Fehlerfalle startet.
+        with tempfile.TemporaryDirectory(prefix="zenos-anzeige-skel.") as leer:
+            run(paths, ["useradd", "--system", "--create-home", "--home-dir", "/home/" + konto,
+                        "--shell", "/usr/sbin/nologin", "--user-group", "--comment", KOMMENTAR,
+                        "--skel", leer, konto])
         angelegt = True
         protokoll(paths, "Konto %s angelegt" % konto)
     run(paths, ["usermod", "--lock", konto])

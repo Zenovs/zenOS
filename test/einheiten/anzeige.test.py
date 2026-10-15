@@ -184,6 +184,7 @@ class Testwurzel(unittest.TestCase):
         r = self.lauf("einrichten", "--ja")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("useradd --system --create-home --home-dir /home/anzeige --shell /usr/sbin/nologin", r.stdout)
+        self.assertRegex(r.stdout, r"--skel \S*zenos-anzeige-skel\.\S+ anzeige", "ohne Dateien aus /etc/skel")
         self.assertIn("usermod --lock anzeige", r.stdout)
         self.assertIn("scripts/bin/zenos-firewall anzeige", r.stdout)
         zustand = json.loads(lesen(self.p("/var/lib/zenos/anzeige.json")))
