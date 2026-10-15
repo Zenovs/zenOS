@@ -28,6 +28,11 @@ autoinstall:
       Acquire::http::Timeout "120";
       Acquire::https::Timeout "120";
 
+  # Den Installer nicht während der Installation neu laden: Der Stick ist mit genau dieser Version gebaut und geprüft
+  # (Look von zenOS), und Subiquity leitet den Kanal sonst aus .disk/info ab, wo jetzt «zenOS <Version>» steht.
+  refresh-installer:
+    update: false
+
   # git braucht einrichten.sh für /opt/zenos (fehlt es trotzdem, installiert einrichten.sh es nach)
   packages:
     - git

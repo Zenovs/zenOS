@@ -452,9 +452,18 @@ anpassung_anlegen() { # ZIEL
   chmod 0755 -- "$ziel/zenos-live-look"
 }
 
-# Schicht, Startmenü und md5sum.txt für das ISO
+# Produktname: Der Installer zeigt, was in .disk/info vor dem ersten Anführungszeichen steht («zenOS 0.1.0» statt
+# «Ubuntu 26.04.1 LTS»: Kopfzeile, Festplatte, Fertig). casper nimmt das erste Wort klein als Namen der Live-Sitzung
+# (zenos), die Seriennummer am Ende in Klammern bleibt. Ubuntu steht danach in Anführungszeichen.
+produkt_zeile() { # VERSION ZEILE_VON_UBUNTU
+  local muster='^([^"]+) "[^"]*"(.*)$'
+  [[ "$2" =~ $muster ]] || return 1
+  printf 'zenOS %s "%s"%s' "$1" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+}
+
+# Schicht, Startmenü, Produktname (.disk/info) und md5sum.txt für das ISO
 installer_anpassen() {
-  local menue="$TMP/grub.cfg" summen="$TMP/md5sum.txt" eintraege
+  local menue="$TMP/grub.cfg" summen="$TMP/md5sum.txt" produkt="$TMP/info" eintraege ubuntu_info
   xorriso -indev "$ISO" -ls /casper/minimal.standard.live.squashfs >/dev/null 2>&1 ||
     die "Im ISO fehlt /casper/minimal.standard.live.squashfs: Aufbau unbekannt, die Schicht von zenOS passte nicht"
   anpassung_anlegen "$TMP/schicht"
@@ -464,8 +473,8 @@ installer_anpassen() {
 
   # Startmenü: «zenOS installieren», jede Kernel-Zeile lädt die Schicht dazu
   xorriso -osirrox on -indev "$ISO" -extract /boot/grub/grub.cfg "$menue.ubuntu" -extract /md5sum.txt "$summen.ubuntu" \
-    >/dev/null 2>&1 || die "grub.cfg oder md5sum.txt im ISO nicht lesbar"
-  chmod u+w -- "$menue.ubuntu" "$summen.ubuntu"
+    -extract /.disk/info "$produkt.ubuntu" >/dev/null 2>&1 || die "grub.cfg, md5sum.txt oder .disk/info im ISO nicht lesbar"
+  chmod u+w -- "$menue.ubuntu" "$summen.ubuntu" "$produkt.ubuntu"
   sed -e 's|^menuentry "Try or Install Ubuntu" {|menuentry "zenOS installieren" {|' \
     -e 's|^menuentry "Ubuntu (safe graphics)" {|menuentry "zenOS installieren (einfache Grafik)" {|' \
     -e "s|^\([[:space:]]*linux[[:space:]][[:space:]]*/casper/vmlinuz\)|\1 layerfs-path=$SCHICHT|" \
@@ -476,11 +485,21 @@ installer_anpassen() {
     die "Das Startmenü des ISOs sieht anders aus als erwartet (boot/grub/grub.cfg)"
   fi
 
-  # md5sum.txt: neue Prüfsumme für grub.cfg, die Schicht dazu (die Prüfung beim Start meldet sonst einen Fehler)
-  awk -v neu="$(md5_von "$menue")" '$2 == "./boot/grub/grub.cfg" { print neu "  " $2; next } { print }' \
-    "$summen.ubuntu" > "$summen"
+  # Produktname «zenOS <Version>» (produkt_zeile)
+  ubuntu_info=$(<"$produkt.ubuntu")
+  produkt_zeile "$VERSION" "$ubuntu_info" > "$produkt" || die ".disk/info sieht anders aus als erwartet: $ubuntu_info"
+
+  # md5sum.txt: neue Prüfsummen für grub.cfg und .disk/info, die Schicht dazu (die Prüfung beim Start meldet sonst
+  # einen Fehler)
+  awk -v menue="$(md5_von "$menue")" -v produkt="$(md5_von "$produkt")" '
+    $2 == "./boot/grub/grub.cfg" { print menue "  " $2; next }
+    $2 == "./.disk/info" { print produkt "  " $2; next }
+    { print }' "$summen.ubuntu" > "$summen"
+  (( $(grep -c -e '  ./boot/grub/grub.cfg$' -e '  ./.disk/info$' "$summen") == 2 )) ||
+    die "md5sum.txt im ISO sieht anders aus als erwartet"
   printf '%s  ./casper/%s\n' "$(md5_von "$TMP/stick/casper/$SCHICHT")" "$SCHICHT" >> "$summen"
   info "Schicht $SCHICHT ($(( $(groesse_von "$TMP/stick/casper/$SCHICHT") / 1024 )) KiB), Startmenü «zenOS installieren»"
+  info "Produktname im Installer: $(cut -d'"' -f1 < "$produkt")"
 }
 
 iso_bauen() {
@@ -494,6 +513,7 @@ iso_bauen() {
     -map "$TMP/stick/zenos" /zenos \
     -map "$TMP/stick/casper/$SCHICHT" "/casper/$SCHICHT" \
     -map "$TMP/grub.cfg" /boot/grub/grub.cfg \
+    -map "$TMP/info" /.disk/info \
     -map "$TMP/md5sum.txt" /md5sum.txt \
     -boot_image any replay >"$TMP/xorriso.log" 2>&1; then
     sed 's/^/     /' -- "$TMP/xorriso.log" >&2
@@ -542,4 +562,4 @@ main() {
 EOF
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; fi

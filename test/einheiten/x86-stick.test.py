@@ -80,7 +80,10 @@ class Autoinstall(unittest.TestCase):
         self.assertIn("git", a["packages"])
         # Argumentliste, keine Shell
         self.assertEqual(a["late-commands"], [["bash", "/cdrom/zenos/einrichten.sh", "/target"]])
-        self.assertEqual(set(a), {"version", "interactive-sections", "apt", "packages", "late-commands"})
+        self.assertEqual(set(a), {"version", "interactive-sections", "refresh-installer", "apt", "packages",
+                                  "late-commands"})
+        # Kein Neuladen des Installers: sonst Kanal aus .disk/info («zenOS <Version>») und ein ungeprüfter Installer
+        self.assertEqual(a["refresh-installer"], {"update": False})
         # Hauptspiegel statt Standortwahl, Wiederholungen bei langsamen Verbindungen (Abbruch beim Kernel)
         self.assertIs(a["apt"]["geoip"], False)
         self.assertIn('Acquire::Retries "10";', a["apt"]["conf"])
@@ -123,6 +126,24 @@ class Vorlagen(unittest.TestCase):
         self.assertIn("SCHICHT=minimal.standard.live.zenos.squashfs", text)
         self.assertIn('menuentry "zenOS installieren" {', text)
         self.assertIn("layerfs-path=$SCHICHT", text)
+        self.assertIn('-map "$TMP/info" /.disk/info', text)
+
+    def produkt(self, version, zeile):
+        r = subprocess.run(["bash", "-c", 'source "$1"; produkt_zeile "$2" "$3"', "test", STICK, version, zeile],
+                           capture_output=True, text=True)
+        return r.returncode, r.stdout
+
+    def test_produktname(self):
+        """Der Installer liest Name und Version vor dem ersten Anführungszeichen, casper das erste Wort (Live-Konto)
+        und die Seriennummer am Ende in Klammern (pollinate)."""
+        ubuntu = 'Ubuntu 26.04.1 LTS "Resolute Raccoon" - Release amd64 (20260826)'
+        rc, zeile = self.produkt("0.1.0-rc8", ubuntu)
+        self.assertEqual(rc, 0)
+        self.assertEqual(zeile, 'zenOS 0.1.0-rc8 "Ubuntu 26.04.1 LTS" - Release amd64 (20260826)')
+        self.assertEqual(zeile.split('"')[0].strip(), "zenOS 0.1.0-rc8")
+        self.assertEqual(zeile.split()[0], "zenOS")
+        self.assertTrue(zeile.endswith("(20260826)"))
+        self.assertEqual(self.produkt("0.1.0", "Ubuntu 26.04 ohne Anführungszeichen")[0], 1)
 
 
 class Stand(unittest.TestCase):
