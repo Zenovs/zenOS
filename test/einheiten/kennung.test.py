@@ -467,15 +467,32 @@ class Durchlauf(unittest.TestCase):
 
 
 class Grub(unittest.TestCase):
-    """x86: GRUB_DISTRIBUTOR bleibt Ubuntu (system/grub/zenos-distributor.cfg, _kennung_grub in 72-kennung)."""
+    """x86: Für grub-install bleibt GRUB_DISTRIBUTOR Ubuntu (EFI/ubuntu), nur grub-mkconfig bekommt zenOS
+    (system/grub/zenos-distributor.cfg, _kennung_grub in 72-kennung)."""
 
     DROPIN = os.path.join(WURZEL, "system", "grub", "zenos-distributor.cfg")
     DOCTOR = os.path.join(WURZEL, "scripts", "doctor.d", "72-kennung.sh")
 
+    def name(self, self_wert=None):
+        """GRUB_DISTRIBUTOR nach dem Einlesen wie in grub-mkconfig (self gesetzt) oder grub-install (ohne)."""
+        vorher = "" if self_wert is None else "self=%s; " % self_wert
+        skript = vorher + '. "$1"; printf %s "$GRUB_DISTRIBUTOR"'
+        r = subprocess.run(["sh", "-c", skript, "test", self.DROPIN], capture_output=True, text=True, timeout=30,
+                           check=True)
+        return r.stdout
+
     def test_dropin_setzt_nur_den_namen(self):
         with open(self.DROPIN, encoding="utf-8") as f:
-            zeilen = [z.strip() for z in f if z.strip() and not z.lstrip().startswith("#")]
-        self.assertEqual(zeilen, ["GRUB_DISTRIBUTOR=Ubuntu"])
+            text = "\n".join(z for z in f if not z.lstrip().startswith("#"))
+        zuweisungen = re.findall(r"^\s*(?:export\s+)?([A-Z_]+)=", text, re.M)
+        self.assertEqual(set(zuweisungen), {"GRUB_DISTRIBUTOR"})
+
+    def test_grub_install_bleibt_bei_ubuntu(self):
+        self.assertEqual(self.name(), "Ubuntu")
+        self.assertEqual(self.name("grub-install"), "Ubuntu")
+
+    def test_menue_heisst_zenos(self):
+        self.assertEqual(self.name("grub-mkconfig"), "zenOS")
 
     def test_vor_der_umstellung_und_nur_mit_grub(self):
         with open(MODUL, encoding="utf-8") as f:

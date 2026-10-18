@@ -53,8 +53,9 @@ _kennung_werkzeug() {
   fi
 }
 
-# Mit GRUB (x86): Das Drop-in hält GRUB_DISTRIBUTOR bei Ubuntu (scripts/module/72-kennung.sh). Ohne es legte das
-# nächste grub-install einen EFI-Eintrag «zenOS» an. Gelesen wird nur, nichts ausgeführt.
+# Mit GRUB (x86): Das Drop-in hält GRUB_DISTRIBUTOR für grub-install bei Ubuntu (scripts/module/72-kennung.sh), nur
+# das Startmenü heisst zenOS. Ohne es legte das nächste grub-install einen EFI-Eintrag «zenOS» an. Gelesen wird nur,
+# nichts ausgeführt.
 _kennung_grub() {
   local dropin=/etc/default/grub.d/zenos-distributor.cfg datei spaeter=""
   [[ -f /etc/default/grub ]] || return 0
@@ -71,9 +72,9 @@ _kennung_grub() {
     if grep -qE '^[[:space:]]*(export[[:space:]]+)?GRUB_DISTRIBUTOR=' -- "$datei" 2>/dev/null; then spaeter=$datei; fi
   done
   if [[ -n "$spaeter" ]]; then
-    warnung "$spaeter setzt GRUB_DISTRIBUTOR nach $dropin – der Name im Bootloader ist dann nicht mehr Ubuntu"
+    warnung "$spaeter setzt GRUB_DISTRIBUTOR nach $dropin – grub-install legte dann einen anderen EFI-Ordner an als EFI/ubuntu"
   else
-    ok "GRUB behält den Namen Ubuntu (EFI/ubuntu)"
+    ok "GRUB: Ordner und EFI-Eintrag bleiben bei EFI/ubuntu, das Startmenü heisst zenOS"
   fi
 }
 
