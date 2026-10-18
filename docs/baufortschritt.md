@@ -25,7 +25,7 @@ Status: `offen` · `in Arbeit` · `fertig` · `offener Punkt`
 | Bootsplash (Plymouth) | fertig, nicht aktiv | Theme `system/plymouth/zenos/` (Gleiten, Überblenden, atmender Spalt, Passwortfeld, 1x/2x), Modul 42-bootsplash legt es ab, `zen bootsplash` schaltet nach Rückfrage ein, `zen doctor` meldet den Stand. Details: `docs/module/bootsplash.md` |
 | Docks und Bildschirm über USB | fertig | direkt auf dem Pi (Argon ONE UP) gebaut: zenos-dock, udev-Regel 73-zenos-dock (nur Markierung für systemd), Benutzerdienst zenos-dock.service, Modul 84-dock, Abschnitt in zen doctor. Befund und Mitteilung am Gerät mit dem i-tec-Dock geprüft; der Weg über udev nach install.sh. Details: `docs/module/dock.md` |
 | Bluetooth im System-Menü | fertig | direkt auf dem Pi gebaut: BluetoothQuelle (Quickshell.Bluetooth), BluetoothAbschnitt und bluetooth.js, Symbole, Paket bluez mit Modul 36-bluetooth, zen doctor. Headless hell und dunkel angesehen, Start-Test ohne Befund; Koppeln mit einem echten Gerät steht aus. Details: `docs/module/bluetooth.md` |
-| x86-Rechner und Installer-Stick | fertig, nicht abgenommen | `image/x86-stick.sh` baut aus dem offiziellen ISO von Ubuntu Desktop einen Stick mit dem grafischen Installer und der Einrichtung von zenOS (`image/x86/`), GRUB behält den Namen Ubuntu, Argon-Pakete nur auf arm64, Temperatur vom Fühler der CPU, App-Leiste nur am äusseren Rand, `zen doctor` Abschnitt «PC». In QEMU mit Secure Boot geprüft: Start und Installer (Testbau mit dem Server-ISO); Desktop-Stick und echte Hardware stehen aus. Details: `docs/image-und-releases.md`, «Bürorechner (x86)» |
+| x86-Rechner: Installations-ISO mit Calamares | in Arbeit, ungetestet | Entscheid Zeno vom 18.10.2026: grafischer Installer, einfache Installation, nichts von Ubuntu Desktop, «Ubuntu» nirgends sichtbar. `image/x86/bauen.sh` baut ein eigenes ISO (System-Schicht mit zenOS, Live-Schicht mit Calamares), ersetzt den Stick aus Ubuntu Desktop (`image/x86-stick.sh`, wird entfernt). Noch nie gebaut. Stand und nächste Schritte: unten «Stand», 18. Oktober 2026 |
 | Öffentlicher Bildschirm (Geräteprofil `anzeige`) | fertig, nicht abgenommen | Zenos Auftrag vom 15.10.2026: MANIFEST (Grundsatz 0, Leitplanke «Ausnahme Anzeigegerät»), `zenos-anzeige`, `zen anzeige`, Anzeige-Konto ohne Rechte, greetd `[initial_session]` nur mit Profil, eigene labwc-Sitzung, Ersatzbild, polkit-Regel, Firewall-Regeln wie SSH, Modul und doctor `77-anzeige`, Updates «ruhig». Einheitentests grün; `test/container/anzeige-e2e.sh` geschrieben, nicht gelaufen (kein Docker auf dem Bau-Rechner). Details: `docs/module/anzeige.md` |
 
 ## Wo gebaut wird
@@ -36,6 +36,60 @@ siehe `test/container/`. Was nur auf echter Hardware prüfbar ist (Grafik über 
 I2C/GPIO des Argon ONE, Tastatur), ist pro Modul unter «am Pi prüfen» notiert.
 
 ## Stand
+
+**18. Oktober 2026: Installations-ISO für x86 (in Arbeit, hier weitermachen).** Entscheid Zeno: Für x86 einen
+grafischen Installer und eine einfache Installation, bei der nichts von Ubuntu Desktop mitkommt und «Ubuntu» nirgends
+zu sehen ist; Ubuntu bleibt vorerst der Unterbau. Grund: Der Stick aus dem ISO von Ubuntu Desktop installierte auch in
+der kleinsten Auswahl 1550 Pakete und 13 Snaps (GNOME, Firefox-Snap, App Center, whoopsie, ubuntu-report,
+ubuntu-insights), und sein Installer sagt «Ubuntu». Einen eigenen Branch für x86 gibt es nicht und braucht es nicht
+(gleicher Code, Unterschiede zur Laufzeit).
+
+Geschrieben (auf `dev`, noch nie gebaut):
+- `image/x86/bauen.sh`: debootstrap `resolute`, `ubuntu-server` wie auf dem Pi, Kernel, Firmware, GRUB und shim
+  (signiert), dann `install.sh --image` und dieselben Prüfungen wie `image/bauen.sh`. System-Schicht
+  `casper/zenos.squashfs` (kommt auf die Platte), Live-Schicht `casper/zenos.live.squashfs` (overlayfs: casper,
+  Calamares, Installer-Sitzung), ISO nur UEFI mit shim und `gcdx64.efi` von Ubuntu. Testbau auch in GitHub Actions
+  (Ausnahme zur Regel beim Pi-Image, weil amd64 auf dem Pi nicht geht).
+- `image/x86/calamares/`: Ablauf und Module nach Lubuntu 26.04, Branding mit Platzhaltern aus `tokens.json`, Folien;
+  `geoip` aus, `uploadServer: none`, LUKS2 vorgewählt mit unverschlüsselter `/boot`, Starteintrag «zenOS».
+- `image/x86/live/`: Installer-Sitzung (labwc als root auf tty1, nur Calamares), Abgleich der Tastaturbelegung,
+  `abschluss` (Starteintrag «zenOS», Rückfallpfad EFI/BOOT mit shim, `grub2/update_nvram` false, SSH-Schlüssel),
+  `protokoll`.
+- `image/x86/iso/`: Startmenü des ISO. `test/x86/qemu-test.py`: Start in QEMU mit Secure Boot, Bildschirmfotos,
+  erfolgreich, wenn Calamares erscheint. `system/grub/zenos-distributor.cfg`: Startmenü «zenOS», EFI-Ordner bleibt
+  `ubuntu` (signierter GRUB sucht fest dort).
+
+Nächste Schritte, in dieser Reihenfolge:
+1. **Workflow an seinen Platz:** Der GitHub-Zugang auf dem Pi hat das Recht `workflow` nicht, der Push von
+   `.github/workflows/x86.yml` wurde abgelehnt. Die Datei liegt deshalb vorübergehend unter
+   `image/x86/x86-workflow.yml`. Am Rechner mit dem Recht (oder nach `gh auth refresh -h github.com -s workflow`):
+   `git mv image/x86/x86-workflow.yml .github/workflows/x86.yml`, die drei Kopfzeilen «VORÜBERGEHEND HIER» löschen,
+   committen, pushen. Dann startet der Testbau (etwa eine Stunde).
+2. **shellcheck rot:** SC2016 in `image/x86/bauen.sh` bei `info "Kernel …"` (`-f='${Version}'` ist das Format von
+   dpkg-query). Hinweis `# shellcheck disable=SC2016` davor, wie in `image/bauen.sh`. Bis dahin ist die Prüfung auf
+   `dev` rot; sonst war sie grün.
+3. **Testbau auswerten:** Artefakt `x86-testbau-bilder` (Bildschirmfotos, `seriell.log`, `install.log`), Fehler
+   beheben, bis Calamares mit Secure Boot erscheint.
+4. **Vollständige Installation in QEMU** (Tasten über QMP `send-key`), danach Start von der Platte mit Passphrase;
+   prüfen, dass `/var/log/zenos/installer-calamares.log` keine Passwörter enthält.
+5. **Altes Verfahren entfernen:** `image/x86-stick.sh`, `image/x86/README`, `autoinstall.yaml`, `einrichten.sh`,
+   `installer/`, `test/einheiten/x86-stick.test.py`, Eintrag in `scripts/lib/sensible-pfade`; Texte anpassen in
+   `.github/workflows/image.yml` (Versionshinweise), `README.md`, `ROADMAP.md` (GNOME als Rückfall-Sitzung entfällt),
+   `docs/funktionen.md`, `docs/sicherheit.md`, `docs/architektur.md`, `docs/module/kennung.md`, `image/README.md`,
+   `docs/image-und-releases.md` («Bürorechner (x86)» neu), `ANLEITUNG.md` H, `CHANGELOG.md`,
+   `scripts/doctor.d/74-pc.sh` (Hinweis auf den Stick).
+6. **Hosting und Releases:** Das ISO wird grösser als 2 GiB (GitHub-Grenze für Release-Dateien). Zeno will es auf
+   zenos-linux.com anbieten; die Prüfsumme bleibt auf der Release-Seite. Offen: Darf die Domain ins Repo (Regel 1
+   nennt Hostnamen), Upload von Hand oder aus GitHub Actions, Bau aus signierten Tags in `image.yml`, Quellcode der
+   Pakete des ISO (`image/quellen.sh` kennt nur die Paketliste des Pi).
+7. **Abnahme am EliteDesk:** Installation, Passphrase mit Startbild, Login von zenOS, Starteintrag «zenOS» in der
+   Firmware (HP: `F9`), `zen doctor` Abschnitt «PC». Rechner vom alten Stick neu installieren.
+
+Ungeklärt: Verschlüsselung nur vorgewählt oder erzwingen (`docs/sicherheit.md` nennt sie auf dem Bürorechner Pflicht;
+Calamares kann sie nicht erzwingen, nur die Installation abbrechen, wenn sie fehlt). pollinate aus `ubuntu-server`
+geht beim ersten Start zu entropy.ubuntu.com (auch auf dem Pi) – prüfen und entscheiden. Den Tag `v0.1.0-rc8` gibt es
+nicht, obwohl CHANGELOG und Doku ihn nennen. Auf dem Pi ist keine Git-Identität eingetragen; die Commits liefen mit
+`git -c user.name=Zeno -c user.email=34447646+Zenovs@users.noreply.github.com`.
 
 **13. Oktober 2026:** Nach `v0.1.0-rc2` kamen der signierte Update-Kanal, Energie, die Systemkennung zenOS, das Image
 als eigenständige Distribution (Release-Seite, Quellcode) und die Fensterübersicht mit Wischen dazu. `v0.1.0-rc4` ist
