@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# tastatur – Umgebung der Installer-Sitzung schreiben, mit der Tastaturbelegung aus /etc/default/keyboard:
+#
+#   /usr/local/libexec/zenos-iso/tastatur               schreiben, dann labwc neu laden (SIGHUP)
+#   /usr/local/libexec/zenos-iso/tastatur --vor-start   nur schreiben (vor dem Start von labwc)
+#
+# labwc liest /run/zenos-iso/labwc/environment beim Start und bei SIGHUP neu und baut dabei die Belegung neu auf
+# (labwc 0.20, session_environment_init und seat_reconfigure). Calamares setzt die Belegung über locale1, das
+# /etc/default/keyboard schreibt; zenos-iso-tastatur.path ruft dann dieses Skript. Werte nur aus [A-Za-z0-9_,:+-].
+set -Eeuo pipefail
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+DATEI=/etc/default/keyboard
+ZIEL=/run/zenos-iso/labwc/environment
+
+# Wert aus /etc/default/keyboard (nur bekannte Zeichen, sonst leer)
+wert() {
+  local zeile
+  zeile=$(sed -n "s/^[[:space:]]*$1=//p" -- "$DATEI" 2>/dev/null | tail -n 1)
+  zeile=${zeile//\"/}
+  if [[ "$zeile" =~ ^[A-Za-z0-9_,:+-]*$ ]]; then printf '%s' "$zeile"; fi
+}
+
+install -d -m 0700 -- "${ZIEL%/*}"
+{
+  printf '%s\n' '# zenOS-ISO: Umgebung der Installer-Sitzung (geschrieben von /usr/local/libexec/zenos-iso/tastatur)'
+  printf '%s\n' 'XDG_CURRENT_DESKTOP=labwc:wlroots' 'XDG_SESSION_TYPE=wayland' 'QT_QPA_PLATFORM=wayland' \
+    'QT_WAYLAND_DISABLE_WINDOWDECORATION=1' 'XCURSOR_THEME=Adwaita' 'XCURSOR_SIZE=24' \
+    'WLR_RENDERER_ALLOW_SOFTWARE=1'
+  layout=$(wert XKBLAYOUT)
+  printf 'XKB_DEFAULT_LAYOUT=%s\n' "${layout:-us}"
+  for paar in XKBMODEL:XKB_DEFAULT_MODEL XKBVARIANT:XKB_DEFAULT_VARIANT XKBOPTIONS:XKB_DEFAULT_OPTIONS; do
+    inhalt=$(wert "${paar%%:*}")
+    if [[ -n "$inhalt" ]]; then printf '%s=%s\n' "${paar#*:}" "$inhalt"; fi
+  done
+} > "$ZIEL.neu"
+mv -- "$ZIEL.neu" "$ZIEL"
+
+if [[ "${1:-}" != --vor-start ]]; then
+  pkill -HUP -x labwc || true
+fi

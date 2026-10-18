@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# abschluss – letzter Schritt des Installers (Calamares, shellprocess@zenos-abschluss), läuft im Live-System:
+#
+#   /usr/local/libexec/zenos-iso/abschluss ZIEL      (ZIEL: das eingehängte Zielsystem, ${ROOT} von Calamares)
+#
+# 1. Rückfallpfad EFI/BOOT/BOOTX64.EFI: shim mit GRUB und MokManager aus EFI/ubuntu, ohne fbx64.efi (der legte beim
+#    Start über den Rückfallpfad wieder einen Eintrag «ubuntu» an). Manche Firmware vergisst ihre Starteinträge;
+#    zenOS startet dann über diesen Pfad weiter, auch mit Secure Boot.
+# 2. Starteintrag der Firmware «zenOS»: grub-install legt ihn als «ubuntu» an, nach dem Ordner, den der signierte
+#    GRUB verlangt (/EFI/ubuntu ist dort fest eingebaut). Hier kommt zuerst ein neuer Eintrag «zenOS» auf
+#    \EFI\ubuntu\shimx64.efi derselben Partition (efibootmgr setzt ihn an den Anfang der Startreihenfolge), danach
+#    gehen die alten Einträge dieser Partition weg. Lässt die Firmware das nicht zu, bleibt «ubuntu» (Warnung).
+# 3. grub2/update_nvram auf false: Updates von GRUB und shim legten sonst wieder einen Eintrag «ubuntu» an.
+# 4. SSH-Schlüssel des Rechners: Das ISO enthält keine, jede Installation bekommt eigene (ssh-keygen -A).
+# Exit 0, wenn alles erledigt ist (auch wenn nur der Name des Starteintrags nicht geklappt hat), sonst 1: Calamares
+# meldet dann den Fehler und bricht ab.
+set -Eeuo pipefail
+export LC_ALL=C.UTF-8
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+ZIEL=${1:-}
+NAME=zenOS
+LADER='\EFI\ubuntu\shimx64.efi'
+
+info() { printf 'zenos-abschluss: %s\n' "$*"; }
+warn() { printf 'zenos-abschluss: Warnung: %s\n' "$*" >&2; }
+die() {
+  printf 'zenos-abschluss: Fehler: %s\n' "$*" >&2
+  exit 1
+}
+
+# Befehl im Zielsystem, mit sauberer Umgebung
+im_ziel() {
+  chroot "$ZIEL" /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    HOME=/root LANG=C.UTF-8 DEBIAN_FRONTEND=noninteractive "$@"
+}
+
+# Ordner unter ELTERN ohne Rücksicht auf Gross- und Kleinschreibung (vfat), sonst ELTERN/NAME
+vfat_ordner() { # ELTERN NAME
+  local eintrag name
+  for eintrag in "$1"/*; do
+    name=${eintrag##*/}
+    if [[ -d "$eintrag" && "${name,,}" == "${2,,}" ]]; then
+      printf '%s' "$eintrag"
+      return 0
+    fi
+  done
+  printf '%s/%s' "$1" "$2"
+}
+
+rueckfall() {
+  local efi="$ESP/EFI" boot
+  boot=$(vfat_ordner "$efi" BOOT)
+  mkdir -p -- "$boot"
+  # cp statt install: vfat kennt keine Rechte (umask beim Einhängen)
+  cp -- "$QUELLE/shimx64.efi" "$boot/BOOTX64.EFI"
+  cp -- "$QUELLE/grubx64.efi" "$boot/grubx64.efi"
+  if [[ -f "$QUELLE/mmx64.efi" ]]; then cp -- "$QUELLE/mmx64.efi" "$boot/mmx64.efi"; fi
+  rm -f -- "$boot/fbx64.efi"
+  info "Rückfallpfad ${boot#"$ZIEL"}/BOOTX64.EFI (shim, GRUB und MokManager aus EFI/ubuntu)"
+}
+
+starteintrag() {
+  local geraet teil platte partuuid zeile nummer rest label
+  local -a alte=()
+  if [[ ! -d /sys/firmware/efi/efivars ]]; then
+    warn "Keine EFI-Variablen: der Starteintrag bleibt, wie er ist"
+    return 0
+  fi
+  geraet=$(findmnt -n -o SOURCE --target "$ESP") || die "Gerät von $ESP nicht gefunden"
+  teil=$(cat -- "/sys/class/block/${geraet##*/}/partition" 2>/dev/null) || die "Partitionsnummer von $geraet nicht gefunden"
+  platte=$(lsblk -n -d -o PKNAME -- "$geraet") || die "Platte von $geraet nicht gefunden"
+  platte=/dev/${platte//[[:space:]]/}
+  partuuid=$(blkid -s PARTUUID -o value -- "$geraet") || die "PARTUUID von $geraet nicht gefunden"
+  partuuid=${partuuid,,}
+  [[ "$teil" =~ ^[0-9]+$ && -b "$platte" && -n "$partuuid" ]] || die "EFI-Partition nicht erkannt ($geraet)"
+
+  # Einträge dieser Partition, die auf shim in EFI/ubuntu zeigen
+  while IFS= read -r zeile; do
+    [[ "$zeile" =~ ^Boot([0-9A-Fa-f]{4})\*?[[:space:]](.*)$ ]] || continue
+    nummer=${BASH_REMATCH[1]}
+    rest=${BASH_REMATCH[2]}
+    if [[ "${rest,,}" == *"$partuuid"* && "${rest,,}" == *'\efi\ubuntu\shimx64.efi'* ]]; then
+      label=${rest%%$'\t'*}
+      alte+=("$nummer")
+      info "Vorhandener Starteintrag Boot$nummer «$label»"
+    fi
+  done < <(efibootmgr -v 2>/dev/null || true)
+
+  if ! efibootmgr -q -c -d "$platte" -p "$teil" -L "$NAME" -l "$LADER"; then
+    warn "Starteintrag «$NAME» liess sich nicht anlegen; es bleibt der von grub-install"
+    return 0
+  fi
+  info "Starteintrag «$NAME» angelegt ($platte, Partition $teil, $LADER) und an den Anfang gesetzt"
+  for nummer in "${alte[@]}"; do
+    if efibootmgr -q -b "$nummer" -B; then
+      info "Alten Starteintrag Boot$nummer entfernt"
+    else
+      warn "Alten Starteintrag Boot$nummer nicht entfernt"
+    fi
+  done
+}
+
+[[ -n "$ZIEL" && "$ZIEL" == /* && "$ZIEL" != / && -d "$ZIEL/etc" ]] || die "Aufruf: abschluss ZIEL"
+ESP="$ZIEL/boot/efi"
+mountpoint -q -- "$ESP" || die "$ESP ist nicht eingehängt"
+QUELLE="$ESP/EFI/ubuntu"
+[[ -f "$QUELLE/shimx64.efi" && -f "$QUELLE/grubx64.efi" ]] ||
+  die "shimx64.efi oder grubx64.efi fehlt in EFI/ubuntu (grub-install ohne Secure Boot?)"
+
+rueckfall
+starteintrag
+printf 'grub-efi-amd64 grub2/update_nvram boolean false\n' | im_ziel debconf-set-selections
+info "grub2/update_nvram: false (Updates von GRUB und shim ändern die Starteinträge nicht)"
+if [[ -x "$ZIEL/usr/bin/ssh-keygen" ]]; then
+  im_ziel ssh-keygen -A
+  info "SSH-Schlüssel des Rechners erzeugt"
+fi

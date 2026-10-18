@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<!--
+  zenOS-ISO: labwc in der Installer-Sitzung. Nur Calamares, ohne Fensterrahmen, ohne Menü auf dem Hintergrund und
+  ohne Tastenkürzel (kein <default/>): Man kann den Installer nicht wegklicken oder verschieben. Klicks geben den
+  Fokus an das Fenster unter der Maus (Calamares und seine Dialoge).
+-->
+<labwc_config>
+  <core>
+    <decoration>client</decoration>
+    <gap>0</gap>
+  </core>
+
+  <theme>
+    <cornerRadius>0</cornerRadius>
+  </theme>
+
+  <windowRules>
+    <windowRule identifier="*" serverDecoration="no" />
+  </windowRules>
+
+  <keyboard>
+    <repeatRate>25</repeatRate>
+    <repeatDelay>600</repeatDelay>
+  </keyboard>
+
+  <mouse>
+    <context name="Client">
+      <mousebind button="Left" action="Press">
+        <action name="Focus" />
+        <action name="Raise" />
+      </mousebind>
+      <mousebind button="Right" action="Press">
+        <action name="Focus" />
+        <action name="Raise" />
+      </mousebind>
+    </context>
+  </mouse>
+</labwc_config>

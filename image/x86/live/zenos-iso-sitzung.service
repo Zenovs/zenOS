@@ -1,0 +1,31 @@
+# zenOS-ISO: Installer-Sitzung auf tty1 (labwc nur mit Calamares, als root). Nur in der Live-Schicht des ISO
+# (casper/zenos.live.squashfs), nie im installierten System. Doku: docs/image-und-releases.md, «Bürorechner (x86)».
+[Unit]
+Description=zenOS installieren
+Documentation=file:///opt/zenos/docs/image-und-releases.md
+ConditionKernelCommandLine=boot=casper
+After=systemd-user-sessions.service plymouth-quit-wait.service systemd-logind.service
+Wants=systemd-logind.service
+Conflicts=getty@tty1.service
+After=getty@tty1.service
+
+[Service]
+Type=simple
+User=root
+PAMName=login
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+StandardInput=tty-fail
+StandardOutput=journal
+StandardError=journal
+UtmpIdentifier=tty1
+UtmpMode=user
+ExecStartPre=-/usr/bin/plymouth quit --retain-splash
+ExecStart=/usr/local/libexec/zenos-iso/sitzung
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

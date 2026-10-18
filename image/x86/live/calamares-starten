@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# calamares-starten – Calamares in der Installer-Sitzung (von labwc gestartet, als root). Bricht man ab, kommt der
+# Installer wieder auf die erste Seite. Ist die Installation durch (/run/zenos-iso/fertig, von protokoll) und hat
+# man «Jetzt neu starten» abgewählt, schaltet der Rechner nach dem Schliessen aus: Danach kann der Stick ab.
+set -Eeuo pipefail
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+while true; do
+  calamares || true
+  if [[ -e /run/zenos-iso/fertig ]]; then
+    # Mit «Jetzt neu starten» hat Calamares den Neustart schon angestossen
+    sleep 3
+    if [[ "$(systemctl is-system-running 2>/dev/null || true)" != stopping ]]; then systemctl poweroff; fi
+    exit 0
+  fi
+  sleep 1
+done

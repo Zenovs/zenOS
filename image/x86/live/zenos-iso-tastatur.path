@@ -1,0 +1,12 @@
+# zenOS-ISO: Ändert Calamares die Tastaturbelegung (locale1 schreibt /etc/default/keyboard), übernimmt die
+# Installer-Sitzung sie (zenos-iso-tastatur.service). Nur in der Live-Schicht des ISO.
+[Unit]
+Description=zenOS-ISO: Tastaturbelegung für die Installer-Sitzung übernehmen
+ConditionKernelCommandLine=boot=casper
+
+[Path]
+PathChanged=/etc/default/keyboard
+Unit=zenos-iso-tastatur.service
+
+[Install]
+WantedBy=multi-user.target

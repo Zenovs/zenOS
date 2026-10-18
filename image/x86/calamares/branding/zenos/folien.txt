@@ -1,0 +1,13 @@
+# zenOS: Folien während der Installation (image/x86/bauen.sh macht daraus die Liste in show.qml).
+# Je Zeile: Nummer|Sprache|Titel|Zeile 1|Zeile 2. «de» gilt für alle deutschen Sprachen, «en» für alle anderen.
+# Kein HTML und kein «|» in den Texten.
+1|de|zenOS wird installiert|zenOS kommt fertig eingerichtet auf die Platte, ohne Netz und ohne Zusätze.|Das dauert ein paar Minuten. Danach startet der Rechner in den Login von zenOS.
+1|en|Installing zenOS|zenOS goes onto the disk fully set up, without a network and without extras.|This takes a few minutes. Afterwards the computer starts into the zenOS login.
+2|de|Alles über eine Stelle|Super + Leertaste öffnet das Befehlsfeld: Apps, Dateien, Rechnen, Werkzeuge, Modi und Einstellungen.|Die Tastatur hat Vorrang, die Maus geht immer auch.
+2|en|One place for everything|Super + Space opens the command field: apps, files, calculator, tools, modes and settings.|The keyboard comes first, the mouse always works too.
+3|de|Ruhe ist der Normalzustand|Mitteilungen kommen gebündelt statt einzeln. Modi und Zustände wie Fokus richten den Rechner nach dir.|Fenster rasten per Tastendruck ein, bis zum 4er-Raster.
+3|en|Calm by default|Notifications arrive bundled instead of one by one. Modes and states such as focus adapt the computer to you.|Windows snap into place with a key press, up to a 2×2 grid.
+4|de|Sicher ab Werk|Verschlüsselte Platte, Secure Boot, Firewall und eine Sperre, die sich nicht abschalten lässt.|Keine Telemetrie: Nichts verlässt den Rechner ohne deine ausdrückliche Aktion.
+4|en|Secure out of the box|Encrypted disk, Secure Boot, a firewall and a lock that cannot be switched off.|No telemetry: nothing leaves the computer without your explicit action.
+5|de|Beim ersten Start|Die Einrichtung fragt nach Name, Erscheinungsbild und erstem Modus.|Chrome, VS Code und 1Password kommen auf Wunsch aus den Quellen der Hersteller.
+5|en|At first start|The setup asks for your name, appearance and first mode.|Chrome, VS Code and 1Password come from the vendors' sources if you want them.

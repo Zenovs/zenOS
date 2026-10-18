@@ -1,0 +1,5 @@
+# zenOS: erste GRUB-Konfiguration auf der EFI-Partition des ISO (boot/grub/grub.cfg). Der signierte GRUB für
+# Datenträger (gcdx64.efi) sucht sie dort; sie findet das ISO an seiner Kennung und lädt das Startmenü von dort.
+search --no-floppy --set=root --file /.disk/zenos-@KENNUNG@
+set prefix=($root)/boot/grub
+configfile $prefix/grub.cfg

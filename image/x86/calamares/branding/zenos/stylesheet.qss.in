@@ -1,0 +1,138 @@
+/*
+ * zenOS: Look des Installers (Calamares, Qt Widgets), dunkel. image/x86/bauen.sh setzt die Platzhalter @…@ aus
+ * shell/theme/tokens.json ein (Farben dunkel, Akzent wie standardAkzent, Schrift «text», Radien).
+ */
+
+QWidget {
+  background-color: @GRUND@;
+  color: @TEXT@;
+  font-family: "@SCHRIFT@";
+  font-size: @GROESSE@px;
+  selection-background-color: @AKZENT@;
+  selection-color: @AKZENT_TEXT@;
+}
+
+#sidebarApp,
+#sidebarApp QWidget,
+#logoApp {
+  background-color: @FLAECHE@;
+}
+
+QLabel {
+  background-color: transparent;
+}
+
+QPushButton {
+  background-color: @FLAECHE2@;
+  color: @TEXT@;
+  border: 1px solid @LINIE@;
+  border-radius: @RADIUS@px;
+  padding: 7px 18px;
+}
+
+QPushButton:hover {
+  border-color: @AKZENT@;
+}
+
+QPushButton:pressed {
+  background-color: @LINIE@;
+}
+
+QPushButton:disabled {
+  color: @GEDAEMPFT@;
+  border-color: @FLAECHE2@;
+}
+
+QPushButton#view-button-next {
+  background-color: @AKZENT@;
+  color: @AKZENT_TEXT@;
+  border-color: @AKZENT@;
+}
+
+QPushButton#view-button-next:disabled {
+  background-color: @FLAECHE2@;
+  color: @GEDAEMPFT@;
+  border-color: @FLAECHE2@;
+}
+
+QLineEdit,
+QComboBox,
+QSpinBox,
+QTextEdit,
+QPlainTextEdit,
+QListView,
+QTreeView,
+QTableView {
+  background-color: @FLAECHE@;
+  color: @TEXT@;
+  border: 1px solid @EINGABERAND@;
+  border-radius: @RADIUS_KLEIN@px;
+  padding: 4px 8px;
+}
+
+QLineEdit:focus,
+QComboBox:focus,
+QSpinBox:focus,
+QListView:focus,
+QTreeView:focus {
+  border-color: @AKZENT@;
+}
+
+QComboBox QAbstractItemView {
+  background-color: @FLAECHE@;
+  border: 1px solid @LINIE@;
+  selection-background-color: @AKZENT@;
+  selection-color: @AKZENT_TEXT@;
+}
+
+QHeaderView::section {
+  background-color: @FLAECHE2@;
+  color: @TEXT2@;
+  border: none;
+  padding: 4px 8px;
+}
+
+QGroupBox {
+  border: 1px solid @LINIE@;
+  border-radius: @RADIUS@px;
+  margin-top: 12px;
+  padding-top: 8px;
+}
+
+QProgressBar {
+  background-color: @FLAECHE@;
+  border: 1px solid @LINIE@;
+  border-radius: @RADIUS_KLEIN@px;
+  color: @TEXT@;
+  text-align: center;
+}
+
+QProgressBar::chunk {
+  background-color: @AKZENT@;
+  border-radius: @RADIUS_KLEIN@px;
+}
+
+QScrollBar:vertical,
+QScrollBar:horizontal {
+  background-color: transparent;
+  border: none;
+}
+
+QScrollBar::handle {
+  background-color: @LINIE@;
+  border-radius: 4px;
+  min-height: 24px;
+  min-width: 24px;
+}
+
+QScrollBar::add-line,
+QScrollBar::sub-line {
+  width: 0px;
+  height: 0px;
+}
+
+QToolTip {
+  background-color: @FLAECHE2@;
+  color: @TEXT@;
+  border: 1px solid @LINIE@;
+}

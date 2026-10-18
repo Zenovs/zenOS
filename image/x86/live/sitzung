@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# sitzung – Installer-Sitzung des ISO (zenos-iso-sitzung.service, root auf tty1): labwc ohne Rahmen, Menüs und
+# Tastenkürzel, darin nur Calamares (calamares-starten). Konfiguration aus /etc/zenos-iso/labwc, Umgebung mit der
+# Tastaturbelegung aus /etc/default/keyboard (tastatur).
+set -Eeuo pipefail
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+LAUFZEIT=/run/zenos-iso/labwc
+
+install -d -m 0700 -- "$LAUFZEIT"
+install -m 0600 -- /etc/zenos-iso/labwc/rc.xml "$LAUFZEIT/rc.xml"
+/usr/local/libexec/zenos-iso/tastatur --vor-start
+
+# Sprache des Installers: Deutsch, umschaltbar auf der ersten Seite
+export LANG=de_DE.UTF-8
+exec labwc --config-dir "$LAUFZEIT" --startup /usr/local/libexec/zenos-iso/calamares-starten

@@ -1,0 +1,44 @@
+# zenOS: Branding des Installers (Calamares). image/x86/bauen.sh setzt die Platzhalter @…@ ein: Version aus dem Stand,
+# Farben aus shell/theme/tokens.json (dunkel, Akzent wie standardAkzent). Liegt in der Live-Schicht unter
+# /etc/calamares/branding/zenos/ mit den Zeichen aus assets/zeichen/, show.qml und stylesheet.qss.
+---
+componentName: zenos
+welcomeStyleCalamares: false
+welcomeExpandingLogo: true
+windowExpanding: fullscreen
+windowSize: 1024px,640px
+windowPlacement: center
+sidebar: widget
+navigation: widget
+
+strings:
+  productName: zenOS
+  shortProductName: zenOS
+  version: "@VERSION@"
+  shortVersion: "@VERSION@"
+  versionedName: "zenOS @VERSION@"
+  shortVersionedName: "zenOS @VERSION@"
+  bootloaderEntryName: zenOS
+  productUrl: ""
+  supportUrl: ""
+  knownIssuesUrl: ""
+  releaseNotesUrl: ""
+  donateUrl: ""
+
+images:
+  productIcon: "zenos-zeichen-dunkel.svg"
+  productLogo: "zenos-zeichen-dunkel.svg"
+  productWelcome: "zenos-schriftzug-dunkel.svg"
+
+style:
+  SidebarBackground: "@FLAECHE@"
+  SidebarText: "@GEDAEMPFT@"
+  SidebarTextCurrent: "@TEXT@"
+  SidebarBackgroundCurrent: "@FLAECHE2@"
+
+slideshow: "show.qml"
+slideshowAPI: 2
+
+# Kein Hochladen des Protokolls (Calamares bietet es sonst bei einem Fehler an): Nichts verlässt den Rechner
+uploadServer:
+  type: "none"

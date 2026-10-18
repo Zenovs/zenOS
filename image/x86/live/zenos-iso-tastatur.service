@@ -1,0 +1,9 @@
+# zenOS-ISO: Tastaturbelegung aus /etc/default/keyboard in die Installer-Sitzung (labwc) übernehmen. Ausgelöst von
+# zenos-iso-tastatur.path. Nur in der Live-Schicht des ISO.
+[Unit]
+Description=zenOS-ISO: Tastaturbelegung übernehmen
+ConditionKernelCommandLine=boot=casper
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/zenos-iso/tastatur

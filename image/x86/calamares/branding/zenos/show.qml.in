@@ -1,0 +1,98 @@
+// zenOS: Folien während der Installation (Calamares, slideshowAPI 2). image/x86/bauen.sh setzt die Platzhalter @…@
+// ein: die Folien aus folien.txt und Farben und Schriften aus shell/theme/tokens.json. Wechsel alle 9 s mit 200 ms
+// Überblendung (OutCubic), wie überall in zenOS.
+import QtQuick
+
+Item {
+    id: root
+
+    readonly property var folien: @FOLIEN@
+    readonly property bool deutsch: Qt.locale().name.substring(0, 2) === "de"
+    property int nummer: 0
+    readonly property var folie: {
+        const f = folien[nummer % folien.length];
+        return deutsch ? f.de : f.en;
+    }
+
+    // Calamares ruft beide auf (slideshowAPI 2)
+    function onActivate() {
+        nummer = 0;
+        inhalt.opacity = 1;
+        wechsel.restart();
+    }
+
+    function onLeave() {
+        wechsel.stop();
+        blende.stop();
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        color: "@GRUND@"
+    }
+
+    Column {
+        id: inhalt
+
+        anchors.centerIn: parent
+        width: Math.min(parent.width - 96, 640)
+        spacing: 16
+
+        Text {
+            width: parent.width
+            text: root.folie.titel
+            color: "@TEXT@"
+            font.family: "@SCHRIFT_ANZEIGE@"
+            font.pixelSize: @GROESSE_TITEL@
+            wrapMode: Text.WordWrap
+        }
+
+        Text {
+            width: parent.width
+            text: root.folie.zeile1
+            color: "@TEXT2@"
+            font.family: "@SCHRIFT@"
+            font.pixelSize: @GROESSE_GROSS@
+            wrapMode: Text.WordWrap
+        }
+
+        Text {
+            width: parent.width
+            text: root.folie.zeile2
+            color: "@GEDAEMPFT@"
+            font.family: "@SCHRIFT@"
+            font.pixelSize: @GROESSE@
+            wrapMode: Text.WordWrap
+        }
+    }
+
+    SequentialAnimation {
+        id: blende
+
+        NumberAnimation {
+            target: inhalt
+            property: "opacity"
+            to: 0
+            duration: @DAUER@
+            easing.type: Easing.OutCubic
+        }
+        ScriptAction {
+            script: root.nummer = (root.nummer + 1) % root.folien.length
+        }
+        NumberAnimation {
+            target: inhalt
+            property: "opacity"
+            to: 1
+            duration: @DAUER@
+            easing.type: Easing.OutCubic
+        }
+    }
+
+    Timer {
+        id: wechsel
+
+        interval: 9000
+        repeat: true
+        onTriggered: blende.start()
+    }
+}

@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# protokoll – Protokoll des Installers ins installierte System (Calamares, shellprocess@zenos-protokoll):
+#
+#   /usr/local/libexec/zenos-iso/protokoll ZIEL
+#
+# Kopiert ~/.cache/calamares/session.log von root nach ZIEL/var/log/zenos/installer-calamares.log, nur für root
+# lesbar (0600): Es nennt Platten, Partitionen und den Benutzernamen.
+set -Eeuo pipefail
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+ZIEL=${1:-}
+QUELLE=/root/.cache/calamares/session.log
+
+[[ -n "$ZIEL" && "$ZIEL" == /* && "$ZIEL" != / && -d "$ZIEL/var/log" ]] || {
+  printf 'zenos-protokoll: Aufruf: protokoll ZIEL\n' >&2
+  exit 1
+}
+# Die Installer-Sitzung schaltet nach dem Ende von Calamares aus, statt ihn neu zu starten (calamares-starten)
+install -d -m 0755 /run/zenos-iso
+: > /run/zenos-iso/fertig
+[[ -f "$QUELLE" ]] || exit 0
+install -d -m 0755 -o root -g root -- "$ZIEL/var/log/zenos"
+install -m 0600 -o root -g root -- "$QUELLE" "$ZIEL/var/log/zenos/installer-calamares.log"
+printf 'zenos-protokoll: /var/log/zenos/installer-calamares.log\n'
