@@ -48,6 +48,15 @@ def starte(arbeit: Path) -> pexpect.spawn:
                          logfile=sys.stdout, dimensions=(50, 200))
 
 
+def monitor(vm: pexpect.spawn, kommando: str) -> None:
+    """Befehl an den QEMU-Monitor (Strg-A c wechselt zwischen Konsole und Monitor)."""
+    vm.send("\x01c")
+    vm.expect(r"\(qemu\) ")
+    vm.sendline(kommando)
+    if kommando != "quit":
+        vm.send("\x01c")
+
+
 def anmelden(vm: pexpect.spawn) -> None:
     vm.expect(r"login: ")
     vm.sendline(KONTO)
@@ -58,8 +67,11 @@ def anmelden(vm: pexpect.spawn) -> None:
 
 def befehl(vm: pexpect.spawn, zeilen: str) -> str:
     vm.sendline(f"echo {ANFANG}; {zeilen}; echo {ENDE}")
-    vm.expect(f"\r\n{ANFANG}\r\n")
-    vm.expect(f"\r\n{ENDE}\r\n")
+    # Über die serielle Leitung und das pty enden Zeilen mit \r\r\n; vor der ersten Ausgabe schaltet bash mit
+    # ESC[?2004l das Einfügen in Klammern ab und beginnt die Zeile mit \r.
+    # Ist die Ausgabe leer, hat die Anfangsmarke das Zeilenende vor der Endmarke schon verbraucht (^).
+    vm.expect(f"[\r\n]{ANFANG}\r*\n")
+    vm.expect(f"(?:^|[\r\n]){ENDE}\r*\n")
     return vm.before.replace("\r", "")
 
 
@@ -78,11 +90,14 @@ def pruefe_system(vm: pexpect.spawn) -> None:
         pruefe("Read-only file system" in befehl(vm, f"touch {pfad} 2>&1"), f"{pfad} lässt sich nicht anlegen")
 
     lauscht = [z for z in befehl(vm, "ss -Hltnu").splitlines() if z.strip()]
-    fremd = [z for z in lauscht if not re.search(r"\s(127\.0\.0\.5[34]|\[::1\]|127\.0\.0\.1):\d+\s", z)]
+    # Erlaubt ist nur Lokales: der Resolver von systemd (127.0.0.53/54, auch als «%lo» angegeben) und ::1.
+    fremd = [z for z in lauscht if not re.search(r"\s(127\.0\.0\.5[34]|\[::1\]|127\.0\.0\.1)(%lo)?:\d+\s", z)]
     pruefe(not fremd, "kein Dienst nimmt Verbindungen von aussen an" + (f": {fremd}" if fremd else ""))
 
-    werte = befehl(vm, "sysctl -n kernel.io_uring_disabled kernel.kptr_restrict kernel.unprivileged_bpf_disabled "
-                       "kernel.yama.ptrace_scope kernel.kexec_load_disabled 2>&1").split()
+    # sysctl liegt unter /usr/sbin, ausserhalb des Pfads eines Benutzers; die Werte stehen auch in /proc/sys.
+    werte = befehl(vm, "cat /proc/sys/kernel/io_uring_disabled /proc/sys/kernel/kptr_restrict "
+                       "/proc/sys/kernel/unprivileged_bpf_disabled /proc/sys/kernel/yama/ptrace_scope "
+                       "/proc/sys/kernel/kexec_load_disabled 2>&1").split()
     pruefe(werte[:5] == ["2", "2", "1", "2", "1"], f"Kernel-Härtung wirkt (io_uring, kptr, bpf, ptrace, kexec: {werte})")
 
     erlaubt = {"/usr/lib/polkit-1/polkit-agent-helper-1", "/usr/sbin/unix_chkpwd"}
@@ -123,24 +138,43 @@ def main() -> int:
     pruefe(True, "Wiederherstellungsschlüssel wird angezeigt")
     vm.expect("Aufgeschrieben\\? Enter")
     vm.sendline("")
-    vm.expect(r"(?i)passphrase for disk.*:")
+    vm.expect(r"(?i)passphrase.*for disk.*:")
     vm.sendline(DATEN_PASSWORT)
-    vm.expect(r"(?i)user name")
+    # homectl firstboot wartet zuerst auf eine Taste, damit die Meldungen davor lesbar bleiben.
+    if vm.expect([r"(?i)press any key", r"(?i)user name"]) == 0:
+        vm.send("\r")
+        vm.expect(r"(?i)user name")
     vm.sendline(KONTO)
-    for _ in range(2):
-        vm.expect(r"(?i)password")
-        vm.sendline(KONTO_PASSWORT)
-    anmelden(vm)
+    # homectl fragt nach Zusatzgruppen (keine: kein Admin, keine Sonderrechte), dann zweimal nach dem Passwort.
+    while True:
+        frage = vm.expect([r"(?i)auxiliary group", r"(?i)shell", r"(?i)password", r"login: "])
+        if frage in (0, 1):
+            vm.sendline("")
+        elif frage == 2:
+            vm.sendline(KONTO_PASSWORT)
+        else:
+            break
+    vm.sendline(KONTO)
+    vm.expect(r"[Pp]assword: ")
+    vm.sendline(KONTO_PASSWORT)
+    vm.expect(r"\$ ")
     pruefe_system(vm)
-    vm.sendline("systemctl reboot")
+
+    # Die serielle Konsole ist keine Sitzung am Gerät. Neu starten ginge von dort nur als Admin, und den gibt es
+    # nicht (root ist gesperrt). Am Gerät selbst darf die angemeldete Person neu starten.
+    antwort = befehl(vm, "systemctl reboot --no-ask-password 2>&1")
+    pruefe(re.search(r"(?i)authentication required|access denied|not authorized", antwort) is not None,
+           "ohne Sitzung am Gerät kein Neustart (kein Admin)")
 
     print("\n--- Zweiter Start", flush=True)
-    index = vm.expect([r"(?i)passphrase for disk.*:", "Nummer: "])
+    monitor(vm, "system_reset")
+    index = vm.expect([r"(?i)passphrase.*for disk.*:", "Nummer: "])
     pruefe(index == 0, "die Einrichtung kommt nicht wieder; der Start fragt nur nach dem Passwort")
     vm.sendline(DATEN_PASSWORT)
     anmelden(vm)
     pruefe("Read-only file system" in befehl(vm, "touch /etc/zenos-test 2>&1"), "System nach dem Neustart unverändert")
-    vm.sendline("systemctl poweroff")
+    pruefe(KONTO in befehl(vm, "id -un"), "das Konto ist nach dem Neustart noch da")
+    monitor(vm, "quit")
     vm.expect(pexpect.EOF)
 
     print(f"\n--- {'Alle Prüfungen bestanden' if not befunde else f'{len(befunde)} Befunde'}", flush=True)
