@@ -115,8 +115,9 @@ Nicht abgedeckt: Lücken in Prozessor und Firmware, Seitenkanäle, wer das Gerä
   USB-Datenträger.
 - setuid nur auf einer kurzen Liste, AppArmor erzwungen, Dienste mit systemd-Sandbox.
 - **Nur Pakete mit voller Sicherheitsunterstützung von Debian** (`check-support-status` im Bau). Ausnahmen mit Grund:
-  Firmware (ohne sie startet nichts), der Kernel (4.2) und Quickshell (nicht in trixie; zenOS baut das Debian-Quellpaket
-  aus forky nach, bis Debian 14 es mitbringt).
+  Firmware (ohne sie startet nichts), der Kernel (4.2) und Quickshell. Quickshell ist nicht in trixie, und forky hat
+  erst 0.2.1; die Oberfläche von 0.1 braucht 0.3.1. zenOS baut deshalb wie 0.1 genau den Commit von v0.3.1 aus dem
+  Quellcode, im Bau des Images (mkosi-Build-Skript), damit kein Compiler aufs Gerät kommt.
 - Nicht im Image: apt und die Paketdatenbank, Compiler, SSH-Server, XWayland, avahi, Druckdienst, udisks2.
 
 ### 4.4 Netz

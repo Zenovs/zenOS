@@ -11,14 +11,31 @@ Bauauftrag vom 08.11.2026 (`BAUAUFTRAG.md`), Konzept in `docs/neubau.md`.
 | Schritt | Status | Notiz |
 |---|---|---|
 | Konzept, Manifest, CLAUDE.md, Bauauftrag | fertig | Grundsatz 1 und Leitplanken neu, CLAUDE.md für 1.0 |
-| Bauumgebung | in Arbeit | Colima, Debian-Container mit mkosi und QEMU (`mkosi/umgebung/`) |
-| Grundsystem | offen | Debian trixie arm64, `/` mit dm-verity, `/var` und `/home` auf LUKS2 |
-| Start auf dem CM5 | offen | Kernel und Firmware von Raspberry Pi, Bootpartition |
-| Härtung | offen | Pakete, Dienste, setuid, Kernel, nftables, chrony mit NTS |
-| Browser | offen | Chromium mit Richtlinien, udev-Regeln für Wallets |
-| Oberfläche | offen | Quickshell nachgebaut, Login, Leiste, Sperre |
-| Angriffstests | offen | QEMU |
-| Anleitung für den Stick | offen | `mkosi/README.md` |
+| Bauumgebung | fertig | eigene Colima-VM «zenos» (6 Kerne, 6 GB), Docker-Kontext `colima-zenos`; Debian-Container mit mkosi 25.3 und QEMU 10 (`mkosi/umgebung/`). Der Kontext der anderen Projekte bleibt `colima`. |
+| Grundsystem | fertig, in QEMU im Test | Debian trixie arm64 vom Stand 20261108T000000Z, `/` als erofs mit dm-verity, `/var` und `/home` auf LUKS2 (beim ersten Start), B-Hälfte beim ersten Start. `mkosi.finalize` prüft setuid, root und Verbotenes. |
+| Start auf dem CM5 | gebaut, nicht auf Hardware getestet | Kernel 6.18.60 und WLAN-Firmware von Raspberry Pi, Bootpartition (GPT, Typ ESP) mit Kernel, initrd, 8 Gerätebäumen, Overlays, `config.txt`, `cmdline.txt` mit Wurzel-Hash. USB-Speicher, NVMe, dwc2 sind im Kernel fest eingebaut; dm-verity, erofs, vc4 im initrd. |
+| Härtung | fertig | sysctl, Befehlszeile, nftables, chrony mit NTS, resolved, NetworkManager, feste Dienstliste |
+| Browser | fertig, ungetestet | Chromium 156 mit Richtlinien, udev-Regeln für Trezor und Ledger. JIT als Vorgabe: offen (welche Einstellung lässt sich pro Seite ändern?) |
+| Oberfläche | offen | Vorschau 1a: greetd (Text), labwc mit Kürzeln und Menü, swaylock und swayidle. Quickshell 0.3.1 (Commit `1a4716c…`, wie 0.1) als mkosi-Build-Skript: Vorschau 1b |
+| Angriffstests | in Arbeit | `mkosi/test/erster-start.py` |
+| Anleitung für den Stick | in Arbeit | `mkosi/README.md`; Boot-Reihenfolge im EEPROM (USB vor NVMe) macht Zeno selbst |
+
+**Befunde aus den QEMU-Tests (08.11.2026), alle behoben:**
+
+- systemd-resolved startete nicht: `PrivateTmp=disconnected` braucht `/var/tmp` als Einhängepunkt, bevor die
+  Daten entsperrt sind. Das System behält jetzt die leeren Grundverzeichnisse von `/var`.
+- `tastatur-laden` endete mit `[ -n "$variante" ] && …` und damit mit Fehlercode 1 bei Belegungen ohne Variante;
+  daran scheiterte die Einrichtung. `loadkeys` ist auf seriellen Konsolen kein Fehler mehr.
+- Das Paket `login` fehlte (Debian 13 zählt es nicht mehr zur Grundausstattung); ohne `/etc/pam.d/login` brach
+  greetd ab. `agreety` liegt unter `/usr/sbin`, ausserhalb des Suchpfads von `_greetd`.
+- `systemd-homed-firstboot` läuft nur beim allerersten Start (ConditionFirstBoot); mit schreibgeschütztem `/etc`
+  wäre das nie. Eigener Dienst `zenos-konto`.
+- Die B-Hälfte entsteht erst beim ersten Start: Das Image schrumpfte von 7,8 auf 1,7 GB.
+- AppArmor fand `/var/cache/apparmor` nicht (tmpfiles legt es an).
+- mkosi 25.3 mit `Incremental=yes` scheitert am Entfernen von dpkg im wiederverwendeten initrd (aus).
+- `ManifestFormat=changelog` holte Änderungslisten aus dem Netz und scheiterte an Sicherheitsupdates (nur json).
+- Der Archivschlüssel von Raspberry Pi von der Webseite hat Bindungen mit SHA-1; `sqv` lehnt ihn ab. Erneuerter
+  Schlüssel aus `raspberrypi-archive-keyring`, über InRelease → Packages.gz → .deb geprüft.
 
 ## zenOS 0.1 (eingefroren)
 
