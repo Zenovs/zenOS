@@ -1,8 +1,26 @@
-# Baufortschritt zenOS 0.1
+# Baufortschritt
 
 Claude Code führt diese Liste während des Bauauftrags nach. Eine neue Sitzung macht hier weiter.
 
 Status: `offen` · `in Arbeit` · `fertig` · `offener Punkt`
+
+## zenOS 1.0, Vorschau 1 (Branch `neubau`)
+
+Bauauftrag vom 08.11.2026 (`BAUAUFTRAG.md`), Konzept in `docs/neubau.md`.
+
+| Schritt | Status | Notiz |
+|---|---|---|
+| Konzept, Manifest, CLAUDE.md, Bauauftrag | fertig | Grundsatz 1 und Leitplanken neu, CLAUDE.md für 1.0 |
+| Bauumgebung | in Arbeit | Colima, Debian-Container mit mkosi und QEMU (`mkosi/umgebung/`) |
+| Grundsystem | offen | Debian trixie arm64, `/` mit dm-verity, `/var` und `/home` auf LUKS2 |
+| Start auf dem CM5 | offen | Kernel und Firmware von Raspberry Pi, Bootpartition |
+| Härtung | offen | Pakete, Dienste, setuid, Kernel, nftables, chrony mit NTS |
+| Browser | offen | Chromium mit Richtlinien, udev-Regeln für Wallets |
+| Oberfläche | offen | Quickshell nachgebaut, Login, Leiste, Sperre |
+| Angriffstests | offen | QEMU |
+| Anleitung für den Stick | offen | `mkosi/README.md` |
+
+## zenOS 0.1 (eingefroren)
 
 | Modul | Status | Notiz |
 |---|---|---|
