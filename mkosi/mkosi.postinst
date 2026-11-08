@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# mkosi.postinst: läuft nach der Paketinstallation, solange die Paketdatenbank noch da ist.
+#
+# Manche Pakete kommen nur als Abhängigkeit ins Image und tun auf dem Gerät nichts (Leitplanke: nur, was gebraucht
+# wird). apt kann sie nicht weglassen, ohne das Paket zu entfernen, das sie verlangt. Ihre Dateien werden hier
+# gelöscht; was übrig bleibt, ist nur der Eintrag in der Paketliste.
+#
+#   xwayland, xserver-common  X-Server; labwc verlangt ihn, startet ohne ihn aber einfach ohne X
+#   x11-utils, x11-xkb-utils  X-Werkzeuge (xev, xprop, xkbcomp …), von chromium-common und xkb-data verlangt
+#   man-db, groff-base        Handbuchseiten ohne Handbücher, von fish verlangt
+#   initramfs-tools*, klibc-utils, dracut-install
+#                             Werkzeuge für ein initrd, das mkosi selbst baut; vom Kernel-Paket verlangt
+set -euo pipefail
+R="$BUILDROOT"
+
+pakete=(xwayland xserver-common x11-utils x11-xkb-utils man-db groff-base initramfs-tools initramfs-tools-core
+	initramfs-tools-bin klibc-utils dracut-install)
+
+for paket in "${pakete[@]}"; do
+	liste=""
+	for kandidat in "$R/var/lib/dpkg/info/$paket.list" "$R/var/lib/dpkg/info/$paket:arm64.list"; do
+		[[ -f "$kandidat" ]] && liste=$kandidat
+	done
+	[[ -n "$liste" ]] || continue
+	while IFS= read -r pfad; do
+		[[ -n "$pfad" && "$pfad" != "/." ]] || continue
+		if [[ -f "$R$pfad" || -L "$R$pfad" ]]; then
+			rm -f "$R$pfad"
+		fi
+	done < "$liste"
+	echo "zenOS: Dateien von $paket entfernt"
+done
+
+# Was die Kernel-Pakete nach /boot legen: mkosi nimmt den Kernel aus /usr/lib/modules/<version>/vmlinuz und baut
+# das initrd selbst. Ohne das Löschen landete alles zusätzlich auf der Startpartition.
+rm -f "$R"/boot/initrd.img-* "$R"/boot/vmlinuz-* "$R"/boot/System.map-* "$R"/boot/config-* "$R"/vmlinuz* "$R"/initrd.img*

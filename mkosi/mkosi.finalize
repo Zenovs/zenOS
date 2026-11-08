@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# Letzter Schritt vor dem fertigen Image (mkosi.finalize, läuft in der Bauumgebung mit $BUILDROOT).
+#
+# 1. /var vorbereiten: Das System ist schreibgeschützt, /var bekommt beim ersten Start eine eigene, verschlüsselte
+#    Partition. Was die Pakete unter /var mitbringen, wandert nach /usr/share/factory/var; systemd-tmpfiles legt es
+#    bei jedem Start dort an, wo es fehlt.
+# 2. Erhöhte Rechte prüfen: setuid und setgid nur für Programme auf der Liste unten. Steht etwas anderes im Image,
+#    bricht der Bau ab (Leitplanke: Jede Regel hat einen Test).
+# 3. Verbotenes prüfen: kein SSH-Server, kein sudo, kein Paketmanager, kein Compiler.
+set -euo pipefail
+R="$BUILDROOT"
+
+fehler() { echo "zenOS-Prüfung: $*" >&2; exit 1; }
+
+# --- 1. /var ---------------------------------------------------------------------------------------------------
+# Paketdatenbank und Caches gehören nicht aufs Gerät.
+rm -rf "${R:?}/var/cache/"* "$R/var/log/"* "$R/var/tmp/"* "$R/var/lib/dpkg" "$R/var/lib/apt"
+rm -rf "$R/usr/share/factory/var"
+mkdir -p "$R/usr/share/factory"
+cp -a "$R/var" "$R/usr/share/factory/var"
+
+tmpfiles="$R/usr/lib/tmpfiles.d/zenos-var.conf"
+{
+	echo "# Erzeugt von mkosi/mkosi.finalize: Inhalte aus den Paketen auf der verschlüsselten /var-Partition anlegen."
+	(cd "$R/usr/share/factory" && find var -mindepth 1 -maxdepth 1 | sort) | while read -r eintrag; do
+		quelle="$R/usr/share/factory/$eintrag"
+		if [[ -L "$quelle" ]]; then
+			echo "L /$eintrag - - - - $(readlink "$quelle")"
+		elif [[ -d "$quelle" ]]; then
+			echo "d /$eintrag $(stat -c '%a %u %g' "$quelle") -"
+			(cd "$R/usr/share/factory" && find "$eintrag" -mindepth 1 -maxdepth 1 | sort) | while read -r kind; do
+				echo "C /$kind - - - -"
+			done
+		else
+			echo "C /$eintrag - - - -"
+		fi
+	done
+} > "$tmpfiles"
+
+# --- 2. Erhöhte Rechte ------------------------------------------------------------------------------------------
+# Niemand mountet von Hand, niemand wechselt den Benutzer, Passwörter verwaltet systemd-homed. Chromium nimmt für
+# seine Sandbox die User-Namespaces des Kernels, nicht das setuid-Hilfsprogramm. fusermount3 (vom Desktop-Portal)
+# hängt FUSE-Dateisysteme für Flatpak-Apps ein; Flatpak gibt es nicht, also braucht es kein setuid.
+for datei in usr/bin/su usr/bin/mount usr/bin/umount usr/bin/passwd usr/bin/chsh usr/bin/chfn usr/bin/gpasswd \
+	usr/bin/newgrp usr/bin/chage usr/bin/expiry usr/lib/chromium/chrome-sandbox usr/bin/fusermount3; do
+	[[ -e "$R/$datei" ]] && chmod ug-s "$R/$datei"
+done
+
+# Erlaubt: polkit fragt über dieses Hilfsprogramm nach dem Passwort; unix_chkpwd prüft es für die Sperre (PAM).
+erlaubt=(
+	usr/lib/polkit-1/polkit-agent-helper-1
+	usr/sbin/unix_chkpwd
+)
+unbekannt=()
+while read -r datei; do
+	bekannt=0
+	for e in "${erlaubt[@]}"; do [[ "$datei" == "$e" ]] && bekannt=1; done
+	((bekannt)) || unbekannt+=("$datei")
+done < <(cd "$R" && find . -xdev -type f \( -perm -4000 -o -perm -2000 \) | sed 's|^\./||' | sort)
+((${#unbekannt[@]} == 0)) || fehler "setuid oder setgid ohne Eintrag in der Liste: ${unbekannt[*]}"
+
+# Leere machine-id: systemd erzeugt bei jedem Start eine flüchtige. «uninitialized» liesse jeden Start als ersten
+# Start gelten, weil /etc schreibgeschützt ist und die ID nie gespeichert würde.
+: > "$R/etc/machine-id"
+
+# root ist gesperrt: kein Passwort, also auch keine Notfall-Shell.
+root_pw=$(awk -F: '$1 == "root" { print $2 }' "$R/etc/shadow")
+[[ "$root_pw" == "*" || "$root_pw" == "!"* ]] || fehler "root hat ein Passwort (${root_pw:0:3}…)"
+
+# --- 3. Verbotenes ----------------------------------------------------------------------------------------------
+for verboten in usr/sbin/sshd usr/bin/ssh usr/bin/sudo usr/bin/apt usr/bin/apt-get usr/bin/dpkg usr/bin/gcc \
+	usr/bin/cc usr/bin/make usr/bin/pkexec usr/sbin/avahi-daemon usr/bin/Xwayland usr/lib/udisks2/udisksd; do
+	[[ ! -e "$R/$verboten" ]] || fehler "darf nicht ins Image: /$verboten"
+done
+
+echo "zenOS-Prüfung: setuid, root, verbotene Programme in Ordnung"
+
+# --- 4. Bootpartition (nur Profil argon) ------------------------------------------------------------------------
+# Gerätebäume und Overlays des Kernels von Raspberry Pi und config.txt für mkosi.postoutput bereitlegen.
+if [[ ",${PROFILES:-}," == *",argon,"* ]]; then
+	start="$OUTPUTDIR/zenos-start"
+	rm -rf "$start"
+	mkdir -p "$start/overlays"
+	mapfile -t baeume < <(find "$R/usr/lib" "$R/boot" -name 'bcm2712*.dtb' 2>/dev/null | sort)
+	((${#baeume[@]} > 0)) || fehler "keine Gerätebäume für den BCM2712 gefunden"
+	cp "${baeume[@]}" "$start/"
+	overlays=$(dirname "$(find "$R/usr/lib" "$R/boot" -name 'dwc2.dtbo' 2>/dev/null | head -1)")
+	[[ -d "$overlays" && "$overlays" != "." ]] || fehler "Overlays (dwc2.dtbo) nicht gefunden"
+	cp -r "$overlays/." "$start/overlays/"
+	cp "$SRCDIR/start/config.txt" "$start/config.txt"
+	echo "zenOS-Prüfung: ${#baeume[@]} Gerätebäume und Overlays aus $overlays bereitgelegt"
+fi

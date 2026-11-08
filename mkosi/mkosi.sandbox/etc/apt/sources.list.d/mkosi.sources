@@ -1,0 +1,19 @@
+# Paketquellen für den Bau von zenOS 1.0: ein fester Stand von snapshot.debian.org.
+# Diese Datei ersetzt die Quellen, die mkosi sonst selbst schreibt; mkosi nähme die Sicherheitsupdates
+# sonst ungeprüft vom laufenden Server (security.debian.org) statt vom selben festen Zeitpunkt.
+# Den Zeitpunkt hebt jeder neue Bau an (zuerst bei jeder Sicherheitsmeldung zu einem Paket im Image).
+# Check-Valid-Until: Die Release-Dateien eines älteren Stands sind abgelaufen; der Stand ist bewusst fest.
+
+Types: deb
+URIs: https://snapshot.debian.org/archive/debian/20261108T000000Z/
+Suites: trixie trixie-updates
+Components: main non-free-firmware
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+Check-Valid-Until: no
+
+Types: deb
+URIs: https://snapshot.debian.org/archive/debian-security/20261108T000000Z/
+Suites: trixie-security
+Components: main non-free-firmware
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+Check-Valid-Until: no
