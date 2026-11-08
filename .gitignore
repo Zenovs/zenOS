@@ -1,3 +1,4 @@
 .DS_Store
 test/container/cache/
 shell/.qmlls.ini
+mkosi/ausgabe/
