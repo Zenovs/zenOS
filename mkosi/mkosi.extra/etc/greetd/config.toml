@@ -1,0 +1,7 @@
+# Login von zenOS 1.0. Vorschau 1 nimmt den Text-Login von greetd; der Login im Look von zenOS kommt mit Quickshell.
+[terminal]
+vt = 1
+
+[default_session]
+command = "agreety --cmd labwc"
+user = "_greetd"

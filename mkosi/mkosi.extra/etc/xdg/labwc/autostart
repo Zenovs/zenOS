@@ -1,0 +1,3 @@
+# Beim Start der Sitzung (labwc): automatische Sperre nach 5 Minuten ohne Eingabe und vor dem Standby.
+# Leitplanke: Die automatische Sperre lässt sich nicht abschalten. swaylock sperrt über ext-session-lock und PAM.
+swayidle -w timeout 300 'swaylock -f' before-sleep 'swaylock -f' >/dev/null 2>&1 &

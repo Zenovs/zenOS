@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<!--
+  labwc in zenOS 1.0, Vorschau 1: Tastenkürzel, bis die Oberfläche von zenOS (Quickshell) dazukommt.
+  Die Belegung der Tastatur kommt aus environment (vom ersten Start).
+-->
+<labwc_config>
+  <core>
+    <decoration>server</decoration>
+  </core>
+  <keyboard>
+    <default />
+    <keybind key="W-Return"><action name="Execute" command="kitty" /></keybind>
+    <keybind key="W-b"><action name="Execute" command="chromium" /></keybind>
+    <keybind key="W-l"><action name="Execute" command="swaylock -f" /></keybind>
+    <keybind key="W-q"><action name="Close" /></keybind>
+    <keybind key="W-Up"><action name="ToggleMaximize" /></keybind>
+  </keyboard>
+</labwc_config>
