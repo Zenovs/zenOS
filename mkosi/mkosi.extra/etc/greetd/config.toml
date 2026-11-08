@@ -3,5 +3,6 @@
 vt = 1
 
 [default_session]
-command = "agreety --cmd labwc"
+# Debian legt agreety nach /usr/sbin, das nicht im Suchpfad des Benutzers _greetd liegt.
+command = "/usr/sbin/agreety --cmd labwc"
 user = "_greetd"

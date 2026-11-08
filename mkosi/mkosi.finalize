@@ -37,6 +37,12 @@ tmpfiles="$R/usr/lib/tmpfiles.d/zenos-var.conf"
 	done
 } > "$tmpfiles"
 
+# Im System bleiben nur die leeren Grundverzeichnisse von /var. Dienste, die vor dem Entsperren der Daten starten
+# (systemd-resolved mit PrivateTmp=disconnected), brauchen /var/tmp als Einhängepunkt.
+find "$R/var" -mindepth 1 -delete
+install -d -m 0755 "$R/var/lib" "$R/var/cache" "$R/var/log" "$R/var/spool" "$R/var/lib/systemd"
+install -d -m 1777 "$R/var/tmp"
+
 # --- 2. Erhöhte Rechte ------------------------------------------------------------------------------------------
 # Niemand mountet von Hand, niemand wechselt den Benutzer, Passwörter verwaltet systemd-homed. Chromium nimmt für
 # seine Sandbox die User-Namespaces des Kernels, nicht das setuid-Hilfsprogramm. fusermount3 (vom Desktop-Portal)

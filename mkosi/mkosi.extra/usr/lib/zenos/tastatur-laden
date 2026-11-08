@@ -35,5 +35,8 @@ loadkeys -q "$konsole" 2>/dev/null || loadkeys -q us 2>/dev/null || true
 umask 022
 {
 	printf 'XKB_DEFAULT_LAYOUT=%s\n' "$layout"
-	[ -n "$variante" ] && printf 'XKB_DEFAULT_VARIANT=%s\n' "$variante"
+	if [ -n "$variante" ]; then
+		printf 'XKB_DEFAULT_VARIANT=%s\n' "$variante"
+	fi
 } > /run/zenos/labwc-environment
+exit 0
