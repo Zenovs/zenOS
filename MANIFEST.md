@@ -10,7 +10,7 @@ Ein Gerät kann als öffentlicher Bildschirm eingerichtet sein. Dann gibt es dor
 
 ## 1. Sicherheit ist Standard.
 
-Sicherheit geht vor Design und Bequemlichkeit. Sie wird nicht selbst erfunden, sondern von Ubuntu und erprobten Werkzeugen übernommen.
+Sicherheit geht vor Design und Bequemlichkeit. Was nicht gebraucht wird, ist nicht da. Das System ist unveränderlich, signiert und startet nur, was zenOS gebaut hat. Die Bausteine dafür werden nicht selbst erfunden, sondern von Debian, systemd, Raspberry Pi und erprobten Werkzeugen übernommen.
 
 ## 2. Ruhe ist der Normalzustand.
 
@@ -42,12 +42,19 @@ Diese Regeln kann kein Modus, kein Zustand und keine Einstellung aushebeln:
 - **Ausnahme Anzeigegerät:** Ist ein Gerät als öffentlicher Bildschirm eingerichtet, läuft dort automatisch nur das Anzeige-Konto: ohne Rechte, ohne Passwort, ohne persönliche Daten, ohne Sperre. Persönliche Konten sperren dort wie überall und melden sich nie automatisch an.
 - Es liegen keine Geheimnisse im Repo, und es gibt keine Telemetrie.
 - Terminal-Ausgaben und Bildschirminhalte verlassen den Rechner nie automatisch.
+- Das Release-Image hat keinen Fernzugang, keine Entwicklerwerkzeuge und keine KI.
+- Kein Dienst nimmt Verbindungen von aussen an.
+- Auf dem Gerät läuft nur, was im Image von zenOS ist.
+- Ein Gerät installiert nur, was zenOS signiert hat. Signiert wird nie auf einem Rechner, auf dem eine KI arbeitet.
+- Jede Leitplanke hat einen Test, der versucht, sie zu brechen.
 
 ## Was zenOS bewusst nicht ist
 
-- Kein eigener Kernel, kein eigener Browser, kein eigener Dateimanager, kein eigener Netzwerk-Stack. Das WLAN-Menü
-  oben rechts bedient nur den NetworkManager von Ubuntu.
+- Kein eigener Kernel, kein eigener Browser, kein eigener Dateimanager, kein eigener Netzwerk-Stack. Der Kernel kommt
+  von Raspberry Pi; zenOS baut ihn höchstens mit eigener Konfiguration. Das WLAN-Menü oben rechts bedient nur den
+  NetworkManager von Debian.
+- Kein Hypervisor. Wer Bereiche räumlich trennen will, nimmt Qubes OS.
 - Keine Geschmacksoptionen für andere Menschen.
 - Kein Gemeinschaftsprojekt: keine Issues, keine Pull Requests.
 
-Selbst gebaut wird, was man sieht und täglich anfasst. Der Rest kommt von Ubuntu.
+Selbst gebaut wird, was man sieht und täglich anfasst. Der Rest kommt von Debian und Raspberry Pi.
