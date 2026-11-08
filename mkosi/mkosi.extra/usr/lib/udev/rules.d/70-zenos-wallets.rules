@@ -1,0 +1,14 @@
+# Hardware-Wallets: Die angemeldete Person darf sie benutzen (uaccess), damit Chromium sie über WebUSB und WebHID
+# erreicht. Ohne diese Regeln gehören die Geräte nur root. Gilt nur für die aktive Sitzung am Gerät.
+
+# Trezor One
+SUBSYSTEM=="usb", ATTR{idVendor}=="534c", ATTR{idProduct}=="0001", TAG+="uaccess"
+KERNEL=="hidraw*", ATTRS{idVendor}=="534c", ATTRS{idProduct}=="0001", TAG+="uaccess"
+# Trezor Model T, Safe 3 und Safe 5 (Gerät und Bootloader)
+SUBSYSTEM=="usb", ATTR{idVendor}=="1209", ATTR{idProduct}=="53c0", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="1209", ATTR{idProduct}=="53c1", TAG+="uaccess"
+KERNEL=="hidraw*", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="53c1", TAG+="uaccess"
+
+# Ledger (alle Modelle)
+SUBSYSTEM=="usb", ATTR{idVendor}=="2c97", TAG+="uaccess"
+KERNEL=="hidraw*", ATTRS{idVendor}=="2c97", TAG+="uaccess"

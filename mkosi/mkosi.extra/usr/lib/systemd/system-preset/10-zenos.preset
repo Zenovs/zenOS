@@ -1,0 +1,19 @@
+# Feste Liste der Systemdienste von zenOS 1.0 (docs/neubau.md, 4.3). Nur diese laufen; alles andere ist aus,
+# auch was ein Paket beim Installieren eingeschaltet hätte. mkosi wendet die Liste beim Bau an.
+
+enable dbus-broker.service
+enable systemd-resolved.service
+enable systemd-homed.service
+enable systemd-homed-activate.service
+enable systemd-homed-firstboot.service
+enable systemd-userdbd.socket
+enable NetworkManager.service
+enable nftables.service
+enable chrony.service
+enable greetd.service
+enable apparmor.service
+enable zenos-tastatur.service
+enable zenos-daten-schuetzen.service
+enable zenos-konto.service
+
+disable *

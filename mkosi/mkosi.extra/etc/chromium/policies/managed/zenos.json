@@ -1,0 +1,31 @@
+{
+  "BrowserSignin": 0,
+  "SyncDisabled": true,
+  "PasswordManagerEnabled": false,
+  "PasswordLeakDetectionEnabled": false,
+  "AutofillAddressEnabled": false,
+  "AutofillCreditCardEnabled": false,
+  "HttpsOnlyMode": "force_enabled",
+  "BlockThirdPartyCookies": true,
+  "DeveloperToolsAvailability": 2,
+  "BackgroundModeEnabled": false,
+  "DefaultBrowserSettingEnabled": false,
+  "MetricsReportingEnabled": false,
+  "UrlKeyedAnonymizedDataCollectionEnabled": false,
+  "SpellCheckServiceEnabled": false,
+  "SearchSuggestEnabled": false,
+  "AlternateErrorPagesEnabled": false,
+  "NetworkPredictionOptions": 2,
+  "WebRtcIPHandling": "default_public_interface_only",
+  "SafeBrowsingProtectionLevel": 1,
+  "PrivacySandboxPromptEnabled": false,
+  "PrivacySandboxAdTopicsEnabled": false,
+  "PrivacySandboxSiteEnabledAdsEnabled": false,
+  "PrivacySandboxAdMeasurementEnabled": false,
+  "ExtensionInstallBlocklist": ["*"],
+  "ExtensionInstallAllowlist": [
+    "aeblfdkhhhdcdjpifhhbdiojplfjncoa",
+    "nkbihfbeogaeaoehlefnkodbefgpgknn",
+    "acmacodkjbdgmoleebolmdjonilkdbch"
+  ]
+}
