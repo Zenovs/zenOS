@@ -21,6 +21,24 @@ Bauauftrag vom 08.11.2026 (`BAUAUFTRAG.md`), Konzept in `docs/neubau.md`.
 | Anleitung für den Stick | fertig | `mkosi/README.md`; Boot-Reihenfolge im EEPROM (USB vor NVMe) macht Zeno selbst |
 | Abnahme auf dem Argon ONE UP | offen | Image `mkosi/ausgabe/argon/zenos_1.0.0~vorschau1.raw`, SHA-256 `7bc27d71f10d1530051a832782b7d5e3f6fdb5b48daea22d9628e3e06f54cc6c` |
 
+**Hier geht es weiter** (Pause seit 08.11.2026; Image gebaut, Prüfsumme nachgeprüft, Tests grün):
+
+1. Zeno führt am Argon unter 0.1 `rpi-eeprom-config` aus (liest nur) und schickt die Ausgabe.
+2. Zeno setzt `BOOT_ORDER=0xf641` mit `sudo rpi-eeprom-config --edit`; `PCIE_PROBE=1` bleibt. Ohne Stick startet
+   weiter 0.1 von der SSD.
+3. Zeno schreibt das Image am Mac auf einen Stick (`mkosi/README.md`), ein Befehl nach dem anderen.
+4. Erster Start am Argon: Einrichtung, Anmeldung, labwc, WLAN über `nmtui`, Chromium, Neustart. Befunde hier
+   eintragen.
+5. Danach Vorschau 1b (Quickshell 0.3.1 im Bau, Oberfläche von zenOS), die dauerhafte machine-id und die Vorgabe
+   für JIT; dann Vorschau 2 (Updates A/B, signierter Start).
+
+Offene Fragen an Zeno: Gibt es einen Test-Pi 5 für den signierten Start (das OTP lässt sich nicht zurücksetzen)?
+Welche Hardware-Wallet wird am Argon getestet, Trezor oder Ledger? Wird SSH auf dem Argon unter 0.1 bis dahin
+abgeschaltet (Zenos Entscheid)?
+
+Die Bau-VM «zenos» ist angehalten. Weiter mit `colima start zenos`, danach `docker context use colima` (Colima
+stellt den Kontext beim Start um). Der Paket-Cache im Volume `zenos-bau-pakete` bleibt erhalten.
+
 **Offener Punkt:** Die machine-id ist bei jedem Start neu (schreibgeschütztes `/etc`). systemd-homed meldet beim
 zweiten Start «Failed to allocate new home object» und «Fixation failed: Required key not available»; die
 Anmeldung geht trotzdem. Vor Vorschau 2 muss die machine-id dauerhaft werden (Vorschlag: Daten im initrd
