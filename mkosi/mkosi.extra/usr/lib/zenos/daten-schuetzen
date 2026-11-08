@@ -1,0 +1,58 @@
+#!/bin/bash
+# Erster Start, auf der Konsole (zenos-daten-schuetzen.service): Tastaturbelegung wählen, Passwort für die
+# verschlüsselten Daten setzen, Wiederherstellungsschlüssel zeigen, Einmal-Schlüssel löschen.
+#
+# Läuft nur, solange der Einmal-Schlüssel aus daten-anlegen in /run liegt, also nur beim allerersten Start.
+# Das Passwort tippt Zeno direkt in systemd-cryptenroll; dieses Skript sieht es nie.
+set -euo pipefail
+
+schluessel=/run/zenos/daten-einmalschluessel
+partition=/dev/disk/by-partlabel/zenos-daten
+
+[[ -s "$schluessel" ]] || exit 0
+udevadm settle --timeout=10 || true
+[[ -e "$partition" ]] || { echo "Die Datenpartition fehlt; systemd-repart hat sie nicht angelegt." >&2; exit 1; }
+
+clear || true
+cat <<'TEXT'
+
+  zenOS – erster Start
+
+  Deine Daten (alles ausser dem System selbst) liegen auf einer verschlüsselten Partition.
+  Zuerst die Tastaturbelegung, damit dein Passwort bei jedem Start gleich ankommt.
+
+TEXT
+
+/usr/lib/zenos/tastatur-waehlen
+
+cat <<'TEXT'
+
+  Jetzt das Passwort für deine Daten. Du tippst es bei jedem Start.
+  Nimm ein langes: zum Beispiel sechs zufällige Wörter. Ohne TPM schützt nur seine Länge.
+
+TEXT
+until systemd-cryptenroll --unlock-key-file="$schluessel" --password "$partition"; do
+	echo "  Das hat nicht geklappt. Noch einmal."
+done
+
+cat <<'TEXT'
+
+  Gleich erscheint dein Wiederherstellungsschlüssel. Schreib ihn auf Papier und bewahr ihn
+  getrennt vom Laptop auf. Mit ihm kommst du an deine Daten, falls du das Passwort vergisst.
+  Fotografier ihn nicht und speichere ihn nirgends.
+
+TEXT
+read -r -p "  Bereit? Enter drücken. " _
+systemd-cryptenroll --unlock-key-file="$schluessel" --recovery-key "$partition"
+echo
+read -r -p "  Aufgeschrieben? Enter drücken. " _
+
+# Der Einmal-Schlüssel steckt in Platz 0 (systemd-repart hat ihn dort angelegt). Erst löschen, wenn Passwort und
+# Wiederherstellungsschlüssel eingetragen sind.
+systemd-cryptenroll --unlock-key-file="$schluessel" --wipe-slot=0 "$partition"
+shred -u "$schluessel" 2>/dev/null || rm -f "$schluessel"
+
+clear || true
+echo
+echo "  Fertig. Gib jetzt dein Passwort ein, um die Daten zu öffnen."
+echo

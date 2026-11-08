@@ -1,0 +1,16 @@
+[Unit]
+Description=zenOS: Tastaturbelegung von der Bootpartition laden
+Documentation=https://github.com/Zenovs/zenOS/blob/neubau/docs/neubau.md
+DefaultDependencies=no
+Requires=dev-disk-by\x2dpartlabel-zenos\x2dstart.device
+After=dev-disk-by\x2dpartlabel-zenos\x2dstart.device systemd-vconsole-setup.service
+Before=cryptsetup-pre.target zenos-daten-schuetzen.service
+Wants=cryptsetup-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/zenos/tastatur-laden
+
+[Install]
+WantedBy=sysinit.target

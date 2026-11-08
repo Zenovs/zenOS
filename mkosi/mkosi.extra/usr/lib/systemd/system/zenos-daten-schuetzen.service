@@ -1,0 +1,21 @@
+[Unit]
+Description=zenOS: Passwort und Wiederherstellungsschlüssel für die verschlüsselten Daten (erster Start)
+Documentation=https://github.com/Zenovs/zenOS/blob/neubau/docs/neubau.md
+DefaultDependencies=no
+After=systemd-repart.service zenos-tastatur.service
+Before=systemd-cryptsetup@daten.service cryptsetup.target
+ConditionPathExists=/run/zenos/daten-einmalschluessel
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/zenos/daten-schuetzen
+StandardInput=tty-force
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/console
+TTYReset=yes
+TTYVHangup=yes
+
+[Install]
+WantedBy=cryptsetup.target

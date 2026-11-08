@@ -1,0 +1,4 @@
+# Dateisysteme von zenOS 1.0. Das System selbst (/) ist schreibgeschützt und geprüft (dm-verity, Kernel-Befehlszeile).
+# /var liegt auf der verschlüsselten Datenpartition, /home darin. Nichts auf ihr ist ausführbar.
+/dev/mapper/daten	/var	ext4	nosuid,nodev,noexec,x-systemd.requires=systemd-cryptsetup@daten.service	0	2
+/var/home	/home	none	bind,nosuid,nodev,noexec,x-systemd.requires-mounts-for=/var	0	0

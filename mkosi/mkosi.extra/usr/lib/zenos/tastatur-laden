@@ -1,0 +1,39 @@
+#!/bin/sh
+# Bei jedem Start (zenos-tastatur.service), bevor nach dem Passwort gefragt wird: die beim ersten Start gewählte
+# Tastaturbelegung von der Bootpartition laden. Dort liegt nur ihre Kennung (zenos/tastatur), unverschlüsselt, weil
+# sie vor dem Entsperren gebraucht wird. Übernommen wird nur eine Kennung aus /usr/lib/zenos/tastaturen; die Datei
+# wird nie als Skript gelesen. Ohne gültige Kennung gilt «us».
+#
+# Für die grafische Sitzung schreibt das Skript die XKB-Angaben nach /run/zenos/labwc-environment; darauf zeigt
+# /etc/xdg/labwc/environment.
+set -eu
+
+tabelle=/usr/lib/zenos/tastaturen
+start=/run/zenos/start
+kennung=us
+
+mkdir -p "$start"
+if mount -o ro,nosuid,nodev,noexec /dev/disk/by-partlabel/zenos-start "$start" 2>/dev/null; then
+	if [ -f "$start/zenos/tastatur" ]; then
+		gelesen=$(head -c 32 "$start/zenos/tastatur" | tr -cd 'a-z-')
+		if awk -F'\t' -v k="$gelesen" '$1 == k { gefunden = 1 } END { exit !gefunden }' "$tabelle"; then
+			kennung=$gelesen
+		fi
+	fi
+	umount "$start"
+fi
+
+zeile=$(awk -F'\t' -v k="$kennung" '$1 == k' "$tabelle")
+konsole=$(printf '%s\n' "$zeile" | cut -f3)
+layout=$(printf '%s\n' "$zeile" | cut -f4)
+variante=$(printf '%s\n' "$zeile" | cut -f5)
+[ "$variante" = "-" ] && variante=""
+
+# Auf einer seriellen Konsole (Tests in QEMU) gibt es keine Belegung zu laden; das ist kein Fehler.
+loadkeys -q "$konsole" 2>/dev/null || loadkeys -q us 2>/dev/null || true
+
+umask 022
+{
+	printf 'XKB_DEFAULT_LAYOUT=%s\n' "$layout"
+	[ -n "$variante" ] && printf 'XKB_DEFAULT_VARIANT=%s\n' "$variante"
+} > /run/zenos/labwc-environment

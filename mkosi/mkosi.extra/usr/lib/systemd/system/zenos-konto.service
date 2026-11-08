@@ -1,0 +1,22 @@
+# Erster Start: das Konto anlegen (systemd-homed). systemd-homed-firstboot.service liefe nur beim allerersten Start
+# (ConditionFirstBoot); weil /etc schreibgeschützt ist, gilt bei zenOS kein Start als erster. «homectl firstboot»
+# fragt nur, solange es noch kein Konto gibt; danach tut es nichts.
+[Unit]
+Description=zenOS: Konto anlegen, solange es keines gibt
+Documentation=man:homectl(1)
+Requires=systemd-homed.service
+After=home.mount systemd-homed.service zenos-tastatur.service
+Before=systemd-user-sessions.service greetd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=homectl firstboot --prompt-new-user
+StandardInput=tty-force
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/console
+TTYReset=yes
+
+[Install]
+WantedBy=multi-user.target

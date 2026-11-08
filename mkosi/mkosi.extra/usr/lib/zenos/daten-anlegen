@@ -1,0 +1,20 @@
+#!/bin/sh
+# Ersetzt den Aufruf von systemd-repart (systemd-repart.service.d/zenos.conf).
+#
+# Fehlt die Datenpartition noch (erster Start), entsteht ein Einmal-Schlüssel, nur im Arbeitsspeicher unter /run.
+# systemd-repart legt damit die Partition an und verschlüsselt sie. Später schützt daten-schuetzen die Partition mit
+# Zenos Passwort und löscht diesen Schlüssel. Gibt es die Partition schon, ruft das Skript systemd-repart ohne
+# Schlüssel auf; es gibt dann nichts zu tun.
+set -eu
+
+schluessel=/run/zenos/daten-einmalschluessel
+
+udevadm settle --timeout=10 || true
+if [ -e /dev/disk/by-partlabel/zenos-daten ]; then
+	exec systemd-repart --dry-run=no
+fi
+
+umask 077
+mkdir -p /run/zenos
+head -c 64 /dev/urandom > "$schluessel"
+exec systemd-repart --dry-run=no --key-file="$schluessel"

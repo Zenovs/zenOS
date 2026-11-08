@@ -1,0 +1,3 @@
+# Verschlüsselte Daten von zenOS 1.0 (/var und /home). Bei jedem Start fragt systemd-cryptsetup nach dem Passwort.
+# Die Partition entsteht beim ersten Start (/usr/lib/repart.d/50-zenos-daten.conf).
+daten	PARTLABEL=zenos-daten	none	luks,tries=0

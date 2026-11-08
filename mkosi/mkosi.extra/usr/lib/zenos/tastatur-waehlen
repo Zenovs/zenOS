@@ -1,0 +1,37 @@
+#!/bin/bash
+# Erster Start (aus daten-schuetzen): Tastaturbelegung wählen, sofort laden und ihre Kennung auf der Bootpartition
+# speichern (zenos/tastatur). Ab dann lädt tastatur-laden sie bei jedem Start, bevor nach dem Passwort gefragt wird.
+# Die Belegung darf sich danach nicht ändern, sonst käme das Passwort anders an.
+set -euo pipefail
+
+tabelle=/usr/lib/zenos/tastaturen
+mapfile -t zeilen < <(grep -v '^#' "$tabelle")
+
+echo "  Tastaturbelegung:"
+for i in "${!zeilen[@]}"; do
+	printf '    %d  %s\n' "$((i + 1))" "$(cut -f2 <<<"${zeilen[$i]}")"
+done
+while :; do
+	read -r -p "  Nummer: " wahl
+	if [[ "$wahl" =~ ^[0-9]+$ ]] && ((wahl >= 1 && wahl <= ${#zeilen[@]})); then
+		break
+	fi
+done
+zeile=${zeilen[$((wahl - 1))]}
+kennung=$(cut -f1 <<<"$zeile")
+konsole=$(cut -f3 <<<"$zeile")
+# Auf einer seriellen Konsole (Tests in QEMU) gibt es keine Tastaturbelegung zu laden; das ist kein Fehler.
+loadkeys -q "$konsole" 2>/dev/null || true
+
+start=/run/zenos/start
+mkdir -p "$start"
+mount -o rw,nosuid,nodev,noexec /dev/disk/by-partlabel/zenos-start "$start"
+mkdir -p "$start/zenos"
+printf '%s\n' "$kennung" > "$start/zenos/tastatur"
+sync
+umount "$start"
+
+# Für die grafische Sitzung dieselbe Belegung wie auf der Konsole.
+/usr/lib/zenos/tastatur-laden
+echo "  Belegung: $(cut -f2 <<<"$zeile"). Probier sie hier aus, bevor du das Passwort setzt."
+read -r -p "  Testeingabe (wird nicht gespeichert): " _
