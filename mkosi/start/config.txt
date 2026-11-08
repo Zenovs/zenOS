@@ -1,0 +1,19 @@
+# zenOS 1.0: Start auf dem Compute Module 5 (Argon ONE UP) und dem Raspberry Pi 5 (BCM2712).
+# Liegt auf der Bootpartition; mkosi/mkosi.postoutput kopiert sie dorthin. Ab 1.0 steckt sie im signierten boot.img.
+
+[all]
+arm_64bit=1
+kernel=kernel_2712.img
+initramfs initramfs_2712 followkernel
+cmdline=cmdline.txt
+dtoverlay=vc4-kms-v3d
+disable_overscan=1
+display_auto_detect=1
+# Keine Kamera am Kamera-Anschluss automatisch einschalten; die Kamera des Argon hängt an USB und hat einen Schalter.
+camera_auto_detect=0
+# Keine serielle Konsole: Sie wäre ein Weg ins System ohne Bildschirm.
+enable_uart=0
+
+[cm5]
+# USB-2-Anschluss im Host-Modus: Am Argon ONE UP hängen Tastatur und Touchpad daran.
+dtoverlay=dwc2,dr_mode=host

@@ -1,0 +1,11 @@
+# Paketquelle von Raspberry Pi, nur für Kernel, Gerätebäume und Firmware des BCM2712 (Profil argon).
+# Welche Pakete von hier kommen dürfen, legt ../preferences.d/zenos-raspberrypi fest; alles andere kommt von Debian.
+# Schlüssel: «Raspberry Pi Archive Signing Key», Fingerabdruck CF8A 1AF5 02A2 AA2D 763B AE7E 82B1 2992 7FA3 303E,
+# aus dem Paket raspberrypi-archive-keyring 2025.1+rpt1. Der Schlüssel von der Webseite (raspberrypi.gpg.key) hat
+# noch Bindungen mit SHA-1; sqv, mit dem apt in Debian 13 prüft, lehnt ihn ab. Geholt am 08.11.2026 über die Kette
+# InRelease (mit gpgv und dem alten Schlüssel geprüft) → Packages.gz → .deb, jeweils mit SHA-256.
+Types: deb
+URIs: https://archive.raspberrypi.com/debian/
+Suites: trixie
+Components: main
+Signed-By: /usr/share/keyrings/raspberrypi-archive-keyring.gpg

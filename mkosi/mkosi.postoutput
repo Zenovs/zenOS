@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# mkosi.postoutput: läuft, nachdem mkosi das Image geschrieben hat. Nur im Profil «argon» gibt es etwas zu tun.
+#
+# Der Bootloader des CM5 und des Pi 5 kennt kein UEFI. Er liest Kernel, initrd, Gerätebaum, config.txt und cmdline.txt
+# von der FAT-Partition am Anfang des Images. Dieses Skript schreibt cmdline.txt mit dem Verity-Wurzel-Hash und kopiert
+# alles mit mtools in die Partition, ohne das Image einzuhängen. Kernel und initrd hat mkosi als eigene Dateien
+# abgelegt (SplitArtifacts), Gerätebäume und config.txt liegen von mkosi.finalize in $OUTPUTDIR/zenos-start.
+set -euo pipefail
+[[ ",${PROFILES:-}," == *",argon,"* ]] || exit 0
+
+fehler() { echo "zenOS-Bootpartition: $*" >&2; exit 1; }
+
+start="$OUTPUTDIR/zenos-start"
+[[ -d "$start" ]] || fehler "$start fehlt (mkosi.finalize)"
+
+shopt -s nullglob
+images=("$OUTPUTDIR"/*.raw)
+kernel=("$OUTPUTDIR"/*.vmlinuz)
+initrd=("$OUTPUTDIR"/*.initrd)
+((${#images[@]} == 1)) || fehler "genau ein Image erwartet, gefunden: ${images[*]:-keins}"
+((${#kernel[@]} == 1 && ${#initrd[@]} == 1)) || fehler "Kernel oder initrd fehlt in $OUTPUTDIR"
+img=${images[0]}
+
+tabelle=$(sfdisk --json "$img")
+sektor=$(jq -r '.partitiontable.sectorsize // 512' <<<"$tabelle")
+beginn=$(jq -r '.partitiontable.partitions[] | select(.type == "C12A7328-F81F-11D2-BA4B-00A0C93EC93B") | .start' <<<"$tabelle")
+[[ "$beginn" =~ ^[0-9]+$ ]] || fehler "Bootpartition nicht gefunden"
+
+version=${IMAGE_VERSION:?IMAGE_VERSION fehlt}
+root_uuid=$(jq -r --arg n "zenos_$version" '.partitiontable.partitions[] | select(.name == $n) | .uuid' <<<"$tabelle")
+verity_uuid=$(jq -r --arg n "zenos_${version}_verity" '.partitiontable.partitions[] | select(.name == $n) | .uuid' <<<"$tabelle")
+[[ -n "$root_uuid" && -n "$verity_uuid" ]] || fehler "System- oder Verity-Partition nicht gefunden"
+root_uuid=${root_uuid,,}
+verity_uuid=${verity_uuid,,}
+
+# Nach der Discoverable Partitions Specification setzt systemd-repart die beiden Partitions-UUIDs aus dem Wurzel-Hash:
+# die ersten 128 Bit für das System, die letzten 128 Bit für die Prüfsummen. Zusammen ergeben sie ihn wieder.
+roothash=$(tr -d '-' <<<"$root_uuid$verity_uuid")
+[[ "$roothash" =~ ^[0-9a-f]{64}$ ]] || fehler "Wurzel-Hash unplausibel: $roothash"
+
+# Dieselbe Härtung wie in mkosi.conf (KernelCommandLine), dazu die Angaben für das geprüfte System.
+if [[ -f "${MKOSI_CONFIG:-}" ]]; then konfig=$(cat "$MKOSI_CONFIG"); else konfig=${MKOSI_CONFIG:?}; fi
+zusatz=$(jq -r '.KernelCommandLine | join(" ")' <<<"$konfig")
+printf 'root=/dev/mapper/root rootfstype=erofs ro rootwait roothash=%s systemd.verity_root_data=PARTUUID=%s systemd.verity_root_hash=PARTUUID=%s %s\n' \
+	"$roothash" "$root_uuid" "$verity_uuid" "$zusatz" > "$start/cmdline.txt"
+
+cp "${kernel[0]}" "$start/kernel_2712.img"
+cp "${initrd[0]}" "$start/initramfs_2712"
+
+export MTOOLS_SKIP_CHECK=1
+ziel="$img@@$((beginn * sektor))"
+mcopy -o -s -i "$ziel" "$start"/* ::/
+rm -rf "$start"
+
+echo "zenOS-Bootpartition: Kernel, initrd, Gerätebäume, config.txt und cmdline.txt geschrieben (Wurzel-Hash ${roothash:0:12}…)"

@@ -1,0 +1,11 @@
+# Aus der Paketquelle von Raspberry Pi kommen nur Kernel und Firmware für den BCM2712. Raspberry Pi bietet dort auch
+# eigene Fassungen von Chromium, Mesa, labwc und vielem mehr an; die kämen sonst mit höherer Versionsnummer an die
+# Stelle der Pakete von Debian und ihrer Sicherheitspflege.
+
+Package: *
+Pin: origin archive.raspberrypi.com
+Pin-Priority: -1
+
+Package: linux-image-rpi-2712 linux-image-*-rpi-2712 linux-base-rpi-2712 linux-base-*-rpi-2712 firmware-brcm80211
+Pin: origin archive.raspberrypi.com
+Pin-Priority: 990
