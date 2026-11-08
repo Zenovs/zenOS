@@ -17,8 +17,14 @@ Bauauftrag vom 08.11.2026 (`BAUAUFTRAG.md`), Konzept in `docs/neubau.md`.
 | Härtung | fertig | sysctl, Befehlszeile, nftables, chrony mit NTS, resolved, NetworkManager, feste Dienstliste |
 | Browser | fertig, ungetestet | Chromium 156 mit Richtlinien, udev-Regeln für Trezor und Ledger. JIT als Vorgabe: offen (welche Einstellung lässt sich pro Seite ändern?) |
 | Oberfläche | offen | Vorschau 1a: greetd (Text), labwc mit Kürzeln und Menü, swaylock und swayidle. Quickshell 0.3.1 (Commit `1a4716c…`, wie 0.1) als mkosi-Build-Skript: Vorschau 1b |
-| Angriffstests | in Arbeit | `mkosi/test/erster-start.py` |
-| Anleitung für den Stick | in Arbeit | `mkosi/README.md`; Boot-Reihenfolge im EEPROM (USB vor NVMe) macht Zeno selbst |
+| Angriffstests | grün in QEMU (08.11.2026) | `mkosi/test/starten.sh`: erster Start (Tastatur, Passwort, Wiederherstellungsschlüssel, Konto), 17 Prüfungen am laufenden System, zweiter Start (keine Einrichtung, Passwort, Konto, System unverändert) |
+| Anleitung für den Stick | fertig | `mkosi/README.md`; Boot-Reihenfolge im EEPROM (USB vor NVMe) macht Zeno selbst |
+| Abnahme auf dem Argon ONE UP | offen | Image `mkosi/ausgabe/argon/zenos_1.0.0~vorschau1.raw`, SHA-256 `7bc27d71f10d1530051a832782b7d5e3f6fdb5b48daea22d9628e3e06f54cc6c` |
+
+**Offener Punkt:** Die machine-id ist bei jedem Start neu (schreibgeschütztes `/etc`). systemd-homed meldet beim
+zweiten Start «Failed to allocate new home object» und «Fixation failed: Required key not available»; die
+Anmeldung geht trotzdem. Vor Vorschau 2 muss die machine-id dauerhaft werden (Vorschlag: Daten im initrd
+entsperren und `/etc/machine-id` auf `/var` zeigen lassen).
 
 **Befunde aus den QEMU-Tests (08.11.2026), alle behoben:**
 

@@ -33,6 +33,28 @@ mkosi/bauen.sh qemu      # Image für die Tests        → mkosi/ausgabe/qemu/ze
 mkosi/test/starten.sh    # erster und zweiter Start in QEMU mit Prüfungen
 ```
 
+## Auf einen USB-Stick schreiben (Zeno, auf dem Mac)
+
+Der Stick braucht mindestens 16 GB (System 1,7 GB, beim ersten Start kommen die B-Hälfte mit 6 GB und die
+Datenpartition dazu), besser 32 GB und USB 3. **Alles auf dem Stick wird gelöscht.** Die Nummer des Sticks
+(`/dev/diskN`) muss genau stimmen: Mit einer falschen Nummer überschreibt `dd` eine andere Platte.
+
+```
+diskutil list external physical
+diskutil unmountDisk /dev/diskN
+sudo dd if=mkosi/ausgabe/argon/zenos_1.0.0~vorschau1.raw of=/dev/rdiskN bs=4m status=progress
+diskutil eject /dev/diskN
+```
+
+## Am Argon ONE UP starten
+
+Der Bootloader des CM5 versucht die Datenträger in der Reihenfolge `BOOT_ORDER` aus dem EEPROM. Damit der Stick
+vor der SSD mit zenOS 0.1 kommt: `BOOT_ORDER=0xf641` (von rechts gelesen: SD-Karte, USB, NVMe, von vorn).
+`PCIE_PROBE=1` bleibt stehen. Ohne Stick startet weiter 0.1 von der SSD. Geändert wird das unter 0.1 mit
+`sudo rpi-eeprom-config --edit`; das macht Zeno selbst.
+
+Dann den Stick an einen USB-3-Anschluss stecken und einschalten.
+
 ## Erster Start
 
 1. Tastaturbelegung wählen (sie gilt ab dann immer, auch für das Passwort beim Start).
