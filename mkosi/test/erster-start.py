@@ -294,8 +294,12 @@ def pruefe_update(vm: pexpect.spawn) -> str:
     server = subprocess.Popen([sys.executable, "-m", "http.server", "8080", "--bind", "127.0.0.1",
                                "--directory", str(UPDATE)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
-        ausgabe = befehl(vm, "zen update 2>&1")
+        # Wie im Terminal der Sitzung (kitty läuft in der Benutzerinstanz): Die serielle Konsole ist keine Sitzung am
+        # Gerät, polkit liesse zenos-update.service von dort nicht starten.
+        ausgabe = befehl(vm, "systemd-run --user --quiet --wait --pipe --collect zen update 2>&1")
         print("\n".join("    " + z for z in ausgabe.splitlines()[-12:]), flush=True)
+        seriell = befehl(vm, "zen update 2>&1")
+        pruefe("liess sich nicht starten" in seriell, "zen update von der seriellen Konsole (keine Sitzung am Gerät) abgelehnt")
         pruefe(f"Neuer Stand {neu} ist installiert" in ausgabe, f"zen update installiert {neu} ohne Admin")
         teile = befehl(vm, "lsblk -nr -o PARTLABEL /dev/vda").split()
         pruefe(f"zenos_{neu}" in teile and f"zenos_{neu}_verity" in teile,
@@ -303,7 +307,7 @@ def pruefe_update(vm: pexpect.spawn) -> str:
         pruefe("wartet auf den Neustart" in befehl(vm, "zen status"), "zen status meldet den wartenden Neustart")
         time.sleep(40)
         foto(vm, "08-update-neustart")
-        nochmal = befehl(vm, "zen update 2>&1")
+        nochmal = befehl(vm, "systemd-run --user --quiet --wait --pipe --collect zen update 2>&1")
         pruefe("wartet auf den Neustart" in nochmal, "ein zweites zen update lädt nicht nochmals")
     finally:
         server.terminate()

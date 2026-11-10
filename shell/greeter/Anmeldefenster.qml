@@ -299,6 +299,18 @@ PanelWindow {
         }
     }
 
+    // Die Kontoliste kommt einen Moment nach dem Start (getent passwd, Konten.qml). Bis dahin ist sie leer, und der
+    // Fokus steht im Namensfeld; mit der Liste verschwindet es. Dann neu fokussieren (bei einem Konto: Passwortfeld),
+    // sonst landete alles Getippte im unsichtbaren Namensfeld.
+    Connections {
+        target: root.konten
+
+        function onListeChanged(): void {
+            if (root.mitFormular && !root.bildschirm.wecktasteOffen)
+                formular.fokussieren();
+        }
+    }
+
     // Klickfang über allem: Der Klick oder die Berührung, die den dunklen Bildschirm weckt, löst nichts aus (auch nicht
     // «Anmelden», «Neustart» oder «Ausschalten»). Nur solange die Wecktaste aussteht, sonst gehen Klicks durch.
     MouseArea {
