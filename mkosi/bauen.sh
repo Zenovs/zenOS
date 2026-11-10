@@ -26,6 +26,10 @@ docker --context "$kontext" build -q -t zenos-bau:1 "$hier/umgebung" >/dev/null
 # Zeitstempel aus dem letzten Commit: Derselbe Stand soll dasselbe Image ergeben.
 epoch=$(git -C "$repo" log -1 --format=%ct)
 
+# bauen-innen.sh holt und prüft zuerst die Quellen, die zenOS selbst baut (Quickshell), und startet dann mkosi.
+# Der Bauordner unter /var/cache/zenos/bau bleibt zwischen den Bauten erhalten (schneller Neubau von Quickshell).
+# Der Arbeitsordner von mkosi liegt ebenfalls im Volume: Das Overlay für die Bau-Pakete lässt sich nicht auf das
+# Overlay-Dateisystem des Containers legen (EINVAL).
 exec docker --context "$kontext" run --rm --privileged \
 	-v "$repo:/zenos:ro" \
 	-v "$hier/ausgabe/$profil:/ausgabe" \
@@ -33,7 +37,9 @@ exec docker --context "$kontext" run --rm --privileged \
 	-e SOURCE_DATE_EPOCH="$epoch" \
 	-w /zenos/mkosi \
 	zenos-bau:1 \
-	mkosi --profile="$profil" --force \
+	/zenos/mkosi/umgebung/bauen-innen.sh --profile="$profil" --force \
 	--cache-directory=/var/cache/zenos/pakete \
+	--build-directory=/var/cache/zenos/bau \
+	--workspace-directory=/var/cache/zenos/arbeit \
 	--output-directory=/ausgabe \
 	"$@" build

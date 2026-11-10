@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Quickshell 0.3.1 aus dem Quellcode (läuft im Image mit den BuildPackages darüber, .chroot).
+#
+# Debian 13 hat Quickshell nicht. Die Quelle holt und prüft mkosi/umgebung/bauen-innen.sh (Commit des Tags v0.3.1,
+# wie in zenOS 0.1); mkosi hängt sie unter $SRCDIR/quickshell ein. Quickshell nutzt private Qt-Schnittstellen und
+# wird deshalb gegen genau das Qt im Image gebaut. Was der Bau nach $DESTDIR installiert, übernimmt mkosi ins Image;
+# Compiler und Header bleiben draussen.
+#
+# Ausgeschaltet: der Absturzmelder (bräuchte cpptrace), Hyprland, i3/Sway und X11 (zenOS hat nur labwc unter Wayland).
+set -euo pipefail
+
+quelle="$SRCDIR/quickshell"
+bau="$BUILDDIR/quickshell"
+qml=lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH)/qt6/qml
+
+cmake -S "$quelle" -B "$bau" -G Ninja \
+	-DCMAKE_BUILD_TYPE=RelWithDebInfo \
+	-DCMAKE_INSTALL_PREFIX=/usr \
+	-DINSTALL_QML_PREFIX="$qml" \
+	"-DDISTRIBUTOR=zenOS 1.0 (Quellbau)" \
+	-DGIT_REVISION=1a4716cde794a59928d9d9fc15f2afc7a95de360 \
+	-DCRASH_HANDLER=OFF -DHYPRLAND=OFF -DI3=OFF -DX11=OFF
+# Je Compiler-Lauf braucht Quickshell bis zu 1,2 GB Speicher: nicht mehr Läufe, als der Speicher trägt.
+jobs=$(nproc)
+frei=$(awk '/^MemAvailable:/ { print int($2 / 1200000) }' /proc/meminfo)
+((frei >= 1 && frei < jobs)) && jobs=$frei
+cmake --build "$bau" --parallel "$jobs"
+DESTDIR="$DESTDIR" cmake --install "$bau"
+
+# Debug-Informationen entfernen (etwa 190 MB → 10 MB); die Symbole bleiben für lesbare Absturzmeldungen.
+strip --strip-debug "$DESTDIR/usr/bin/quickshell"
+find "$DESTDIR/usr/$qml/Quickshell" -type f -name '*.so*' -exec strip --strip-debug {} +
+
+# Den Starter für Quickshell selbst braucht niemand im Menü.
+rm -f "$DESTDIR/usr/share/applications/org.quickshell.desktop"
+
+# Lizenz (GNU LGPL 3) und Herkunft
+install -D -m 0644 "$quelle/LICENSE" "$DESTDIR/usr/share/licenses/quickshell/LICENSE"
+install -D -m 0644 "$quelle/LICENSE-GPL" "$DESTDIR/usr/share/licenses/quickshell/LICENSE-GPL"
+printf '%s\n' "Quickshell 0.3.1, unverändert aus dem Quellcode gebaut von zenOS (mkosi/mkosi.build.d/10-quickshell.sh.chroot)." \
+	"Quelle: https://git.outfoxxed.me/quickshell/quickshell, Commit 1a4716cde794a59928d9d9fc15f2afc7a95de360" \
+	"Lizenz: GNU LGPL 3 (LICENSE) auf Grundlage der GNU GPL 3 (LICENSE-GPL)." \
+	> "$DESTDIR/usr/share/licenses/quickshell/HERKUNFT"

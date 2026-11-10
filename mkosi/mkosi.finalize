@@ -81,6 +81,15 @@ done
 
 echo "zenOS-Prüfung: setuid, root, verbotene Programme in Ordnung"
 
+# --- 3b. Quickshell vollständig ----------------------------------------------------------------------------------
+# Quickshell kommt aus dem Quellbau, nicht aus einem Paket: Seine Bibliotheken stehen von Hand in Packages=. Fehlt
+# eine im Image, startete die Oberfläche nicht, auch die Sperre nicht. Der Bau bricht dann hier ab.
+[[ -x "$R/usr/bin/quickshell" ]] || fehler "Quickshell fehlt (mkosi.build.chroot)"
+fehlend=$(cd "$R" && find usr/bin/quickshell usr/lib/*/qt6/qml/Quickshell -type f \( -name quickshell -o -name '*.so*' \) \
+	-exec mkosi-chroot ldd /{} \; 2>&1 | awk '/not found/ { print $1 }' | sort -u | paste -sd ' ' -)
+[[ -z "$fehlend" ]] || fehler "Quickshell braucht Bibliotheken, die im Image fehlen: $fehlend"
+echo "zenOS-Prüfung: Quickshell und seine Bibliotheken vollständig"
+
 # --- 4. Bootpartition (nur Profil argon) ------------------------------------------------------------------------
 # Gerätebäume und Overlays des Kernels von Raspberry Pi und config.txt für mkosi.postoutput bereitlegen.
 if [[ ",${PROFILES:-}," == *",argon,"* ]]; then
@@ -93,6 +102,6 @@ if [[ ",${PROFILES:-}," == *",argon,"* ]]; then
 	overlays=$(dirname "$(find "$R/usr/lib" "$R/boot" -name 'dwc2.dtbo' 2>/dev/null | head -1)")
 	[[ -d "$overlays" && "$overlays" != "." ]] || fehler "Overlays (dwc2.dtbo) nicht gefunden"
 	cp -r "$overlays/." "$start/overlays/"
-	cp "$SRCDIR/start/config.txt" "$start/config.txt"
+	cp "$SRCDIR/mkosi/start/config.txt" "$start/config.txt"
 	echo "zenOS-Prüfung: ${#baeume[@]} Gerätebäume und Overlays aus $overlays bereitgelegt"
 fi

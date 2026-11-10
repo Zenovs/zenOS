@@ -11,6 +11,15 @@ Components: main non-free-firmware
 Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 Check-Valid-Until: no
 
+# Backports nur für den Bau von Quickshell: wayland-protocols ab 1.45 (reine XML-Dateien, die beim Bau zu C-Code
+# werden). Alles andere aus den Backports sperrt preferences.d/zenos-backports; mkosi.postinst prüft das Image.
+Types: deb
+URIs: https://snapshot.debian.org/archive/debian/20261108T000000Z/
+Suites: trixie-backports
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+Check-Valid-Until: no
+
 Types: deb
 URIs: https://snapshot.debian.org/archive/debian-security/20261108T000000Z/
 Suites: trixie-security

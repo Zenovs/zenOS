@@ -31,6 +31,13 @@ for paket in "${pakete[@]}"; do
 	echo "zenOS: Dateien von $paket entfernt"
 done
 
+# Aus den Backports darf nichts ins Image (sie dienen nur dem Bau von Quickshell, preferences.d/zenos-backports).
+if grep -q '^Version: .*~bpo' "$R/var/lib/dpkg/status"; then
+	echo "zenOS-Prüfung: Paket aus den Backports im Image:" >&2
+	awk '/^Package:/ { p = $2 } /^Version: .*~bpo/ { print "  " p " " $2 }' "$R/var/lib/dpkg/status" >&2
+	exit 1
+fi
+
 # Was die Kernel-Pakete nach /boot legen: mkosi nimmt den Kernel aus /usr/lib/modules/<version>/vmlinuz und baut
 # das initrd selbst. Ohne das Löschen landete alles zusätzlich auf der Startpartition.
 rm -f "$R"/boot/initrd.img-* "$R"/boot/vmlinuz-* "$R"/boot/System.map-* "$R"/boot/config-* "$R"/vmlinuz* "$R"/initrd.img*

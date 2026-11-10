@@ -1,0 +1,9 @@
+# Aus den Backports kommt nur wayland-protocols, und das nur ins Bau-Overlay für Quickshell (BuildPackages=).
+# Quickshell 0.3.1 braucht das Protokoll ext-background-effect, das erst ab wayland-protocols 1.45 dabei ist.
+Package: wayland-protocols
+Pin: release n=trixie-backports
+Pin-Priority: 990
+
+Package: *
+Pin: release n=trixie-backports
+Pin-Priority: -1
