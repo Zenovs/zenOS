@@ -19,11 +19,14 @@ hilfe() { sed -n '4,10p' "$0" | sed 's/^# \{0,1\}//'; }
 
 update() {
 	if [[ -e "$laufzeit/neustart" ]]; then
-		cat "$laufzeit/hinweis" 2>/dev/null || echo "Ein neuer Stand ist installiert und wartet auf den Neustart."
+		echo "Nichts geladen: Ein neuer Stand ist schon installiert und wartet auf den Neustart."
+		cat "$laufzeit/hinweis" 2>/dev/null || true
 		echo "Neu starten: zen neustart"
 		return 0
 	fi
-	if ! systemctl start --no-block zenos-update.service; then
+	# Ohne Passwortfrage: zenOS hat keinen Admin. polkit erlaubt den Start nur aus einer Sitzung am Gerät; von
+	# anderswo (etwa der seriellen Konsole) lehnt es sofort ab, statt nach einem Root-Passwort zu fragen, das es nicht gibt.
+	if ! systemctl --no-ask-password start --no-block zenos-update.service; then
 		echo "zen update: der Update-Dienst liess sich nicht starten" >&2
 		return 1
 	fi
@@ -57,6 +60,8 @@ update() {
 
 status() {
 	echo "zenOS $(version)"
+	# Alter der Pakete; ab 14 Tagen erinnert die Oberfläche an ein Update (/usr/lib/zenos/erinnerung)
+	/usr/lib/zenos/erinnerung stand 2>/dev/null || true
 	if [[ -e "$laufzeit/laeuft" ]]; then
 		echo "Ein Update läuft gerade."
 	elif [[ -e "$laufzeit/neustart" ]]; then

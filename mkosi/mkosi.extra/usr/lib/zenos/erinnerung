@@ -1,0 +1,100 @@
+#!/bin/bash
+# Erinnerung an Updates (Benutzerdienst zenos-erinnerung.service, stündlich über zenos-erinnerung.timer).
+#
+#   erinnerung          Sind die Pakete des laufenden Stands 14 Tage alt oder älter, eine Mitteilung, höchstens eine am
+#                       Tag. Wartet schon ein neuer Stand auf den Neustart, erinnert sie an den Neustart.
+#   erinnerung stand    eine Zeile für zen status: «Pakete vom 08.11.2026 (3 Tage alt)»
+#
+# Neue Stände gibt es nur, wenn Zeno sie signiert (docs/signieren.md); ohne Erinnerung altern Chromium und die Pakete
+# unbemerkt. Gezählt wird ab dem festen Stand von snapshot.debian.org, aus dem das Image gebaut ist
+# (/usr/lib/zenos/paketstand, geschrieben von mkosi.finalize), nicht ab dem Bau. Die Uhr zählt nur, wenn chrony sie
+# über NTS gestellt hat (timedatectl: NTPSynchronized); sonst gibt es keine Mitteilung. Kein Netz: Ob es einen neuen
+# Stand gibt, sagt erst zen update.
+#
+# Für Tests: ZENOS_ERINNERUNG_TESTWURZEL legt die Orte des Systems in einen Testordner, ZENOS_ERINNERUNG_JETZT
+# (Sekunden seit 1970) ersetzt die gestellte Uhr.
+set -euo pipefail
+
+wurzel=${ZENOS_ERINNERUNG_TESTWURZEL:-}
+stand_datei=$wurzel/usr/lib/zenos/paketstand
+neustart=$wurzel/run/zenos/update/neustart
+zustand=${XDG_STATE_HOME:-$HOME/.local/state}/zenos
+laufzeit=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/zenos
+grenze=14
+
+meldung() { printf 'zenos-erinnerung: %s\n' "$*" >&2; }
+
+# Paketstand in Sekunden seit 1970; scheitert, wenn er fehlt oder unlesbar ist
+stand_sekunden() {
+	local stand
+	stand=$(head -n 1 "$stand_datei" 2>/dev/null) || return 1
+	[[ "$stand" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || return 1
+	date -u -d "$stand" +%s
+}
+
+# Jetzt in Sekunden seit 1970; scheitert, solange die Uhr nicht über NTS gestellt ist
+jetzt_sekunden() {
+	if [[ -n "${ZENOS_ERINNERUNG_JETZT:-}" ]]; then
+		[[ "$ZENOS_ERINNERUNG_JETZT" =~ ^[0-9]+$ ]] || return 1
+		printf '%s' "$ZENOS_ERINNERUNG_JETZT"
+		return 0
+	fi
+	[[ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" == yes ]] || return 1
+	date -u +%s
+}
+
+tage_text() { if (($1 == 1)); then printf '1 Tag'; else printf '%s Tage' "$1"; fi; }
+
+if [[ "${1:-}" == stand ]]; then
+	s=$(stand_sekunden) || exit 0
+	datum=$(date -u -d "@$s" +%d.%m.%Y)
+	if j=$(jetzt_sekunden); then
+		printf 'Pakete vom %s (%s alt)\n' "$datum" "$(tage_text $(((j - s) / 86400)))"
+	else
+		printf 'Pakete vom %s (Uhr noch nicht über NTS gestellt)\n' "$datum"
+	fi
+	exit 0
+fi
+if (($# > 0)); then
+	meldung "unbekannter Aufruf: $*"
+	exit 64
+fi
+
+s=$(stand_sekunden) || {
+	meldung "kein lesbarer Paketstand ($stand_datei)"
+	exit 0
+}
+j=$(jetzt_sekunden) || {
+	meldung "Uhr nicht über NTS gestellt: keine Erinnerung"
+	exit 0
+}
+tage=$(((j - s) / 86400))
+((tage >= grenze)) || exit 0
+
+# Höchstens eine Erinnerung am Tag (Kalendertag in der eingestellten Zeitzone). Beide Ordner liegen in Orten, die nur
+# das Konto lesen kann (Home, Laufzeitordner); Datum und Nummer sind kein Geheimnis.
+heute=$(date -d "@$j" +%F)
+mkdir -p "$zustand" "$laufzeit"
+[[ "$(cat "$zustand/erinnerung" 2>/dev/null)" != "$heute" ]] || exit 0
+
+datum=$(date -u -d "@$s" +%d.%m.%Y)
+if [[ -e "$neustart" ]]; then
+	titel="Neuer Stand wartet auf den Neustart"
+	text="Ein Update ist installiert, es läuft noch der Stand mit Paketen vom $datum ($(tage_text "$tage") alt). Neu starten: zen neustart"
+else
+	titel="Zeit für ein Update"
+	text="Die Pakete sind $(tage_text "$tage") alt (Stand $datum). Sicherheitsupdates für Chromium und Debian kommen nur mit einem neuen Stand: signieren, dann im Terminal zen update."
+fi
+
+# Die Mitteilung von gestern ersetzen, solange die Oberfläche sie noch führt (Nummer gilt nur in dieser Sitzung)
+alt=$(cat "$laufzeit/erinnerung-id" 2>/dev/null) || alt=0
+[[ "$alt" =~ ^[0-9]+$ ]] || alt=0
+if ! antwort=$(busctl --user call org.freedesktop.Notifications /org/freedesktop/Notifications \
+	org.freedesktop.Notifications Notify 'susssasa{sv}i' zenOS "$alt" "" "$titel" "$text" 0 0 -1); then
+	meldung "Mitteilung liess sich nicht zustellen (läuft die Oberfläche?)"
+	exit 1
+fi
+id=${antwort#u }
+if [[ "$id" =~ ^[0-9]+$ ]]; then printf '%s\n' "$id" >"$laufzeit/erinnerung-id"; fi
+printf '%s\n' "$heute" >"$zustand/erinnerung"
+meldung "erinnert: Pakete $(tage_text "$tage") alt"

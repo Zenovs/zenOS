@@ -1,0 +1,10 @@
+# zenOS: an Updates erinnern, wenn die Pakete 14 Tage alt sind (/usr/lib/zenos/erinnerung). Gestartet von
+# zenos-erinnerung.timer; die Mitteilung zeigt die Oberfläche (zenos-shell.service).
+[Unit]
+Description=zenOS: Erinnerung an Updates
+PartOf=zenos-sitzung.target
+After=zenos-shell.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/zenos/erinnerung

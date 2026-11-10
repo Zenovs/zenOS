@@ -1,0 +1,10 @@
+# zenOS: fünf Minuten nach der Anmeldung und danach stündlich prüfen, ob die Pakete 14 Tage alt sind. Erinnert wird
+# höchstens einmal am Tag (/usr/lib/zenos/erinnerung). Im Standby steht der Zeitgeber still.
+[Unit]
+Description=zenOS: Erinnerung an Updates (stündlich)
+PartOf=zenos-sitzung.target
+
+[Timer]
+OnActiveSec=5min
+OnUnitActiveSec=1h
+AccuracySec=1min

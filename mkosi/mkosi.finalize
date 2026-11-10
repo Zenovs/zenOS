@@ -117,6 +117,17 @@ if [[ ",${PROFILES:-}," == *",argon,"* ]]; then
 fi
 [[ ! -e "$R/usr/lib/systemd/import-pubring.gpg" ]] || fehler "fremder Schlüsselbund für Updates im Image (/usr/lib/systemd/import-pubring.gpg)"
 
+# --- 3d. Paketstand ----------------------------------------------------------------------------------------------
+# Der feste Stand von snapshot.debian.org, aus dem das Image gebaut ist. Daran misst /usr/lib/zenos/erinnerung, wie alt
+# die Pakete sind (Mitteilung ab 14 Tagen), und zen status zeigt ihn. Alle Quellen müssen denselben Stand haben.
+quellen="$SRCDIR/mkosi/mkosi.sandbox/etc/apt/sources.list.d/mkosi.sources"
+staende=$(grep -oE 'snapshot\.debian\.org/archive/[a-z-]+/[0-9]{8}T[0-9]{6}Z/' "$quellen" | cut -d/ -f4 | sort -u)
+[[ "$staende" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || fehler "Paketquellen ohne einheitlichen Stand von snapshot.debian.org: ${staende//$'\n'/ }"
+printf '%s-%s-%sT%s:%s:%sZ\n' "${staende:0:4}" "${staende:4:2}" "${staende:6:2}" "${staende:9:2}" "${staende:11:2}" \
+	"${staende:13:2}" >"$R/usr/lib/zenos/paketstand"
+chmod 0644 "$R/usr/lib/zenos/paketstand"
+echo "zenOS-Prüfung: Paketstand $(cat "$R/usr/lib/zenos/paketstand")"
+
 # --- 4. Bootpartition (nur Profil argon) ------------------------------------------------------------------------
 # Gerätebäume und Overlays des Kernels von Raspberry Pi und config.txt für mkosi.postoutput bereitlegen.
 if [[ ",${PROFILES:-}," == *",argon,"* ]]; then

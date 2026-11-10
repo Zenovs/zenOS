@@ -4,4 +4,4 @@ Description=zenOS-Sitzung
 BindsTo=graphical-session.target
 Wants=graphical-session-pre.target
 After=graphical-session-pre.target
-Wants=zenos-shell.service zenos-idle.service
+Wants=zenos-shell.service zenos-idle.service zenos-erinnerung.timer

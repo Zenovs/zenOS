@@ -275,6 +275,23 @@ def pruefe_oberflaeche(vm: pexpect.spawn) -> None:
     time.sleep(20)
     foto(vm, "07-entsperrt")
 
+    # Erinnerung an Updates: Der Zeitgeber läuft, das Konto darf fragen, ob die Uhr über NTS gestellt ist, zen status
+    # nennt den Paketstand, und eine Erinnerung mit vorgestellter Uhr (Pakete 20 Tage alt) nimmt der Mitteilungsserver
+    # der Oberfläche an
+    zeitgeber = befehl(vm, "systemctl --user is-active zenos-erinnerung.timer").strip()
+    pruefe(zeitgeber == "active", f"die Erinnerung an Updates ist eingeplant ({zeitgeber})")
+    uhr = befehl(vm, "timedatectl show -p NTPSynchronized --value 2>&1").strip()
+    pruefe(uhr in ("yes", "no"), f"timedatectl meldet, ob die Uhr gestellt ist ({uhr})")
+    stand = [z for z in befehl(vm, "zen status").splitlines() if z.startswith("Pakete vom ")]
+    pruefe(len(stand) == 1, f"zen status nennt den Paketstand ({stand[0] if stand else 'fehlt'})")
+    erinnert = befehl(vm, "w=$(mktemp -d) && mkdir -p $w/usr/lib/zenos && cp /usr/lib/zenos/paketstand $w/usr/lib/zenos/ "
+                          "&& j=$(( $(date -u -d $(cat $w/usr/lib/zenos/paketstand) +%s) + 20 * 86400 )) "
+                          "&& systemd-run --user --quiet --wait --pipe --collect -E ZENOS_ERINNERUNG_TESTWURZEL=$w "
+                          "-E ZENOS_ERINNERUNG_JETZT=$j -E XDG_STATE_HOME=$w/zustand /usr/lib/zenos/erinnerung 2>&1; "
+                          "echo rc=$?")
+    pruefe("erinnert: Pakete 20 Tage alt" in erinnert and "rc=0" in erinnert,
+           "die Erinnerung kommt als Mitteilung bei der Oberfläche an" + ("" if "rc=0" in erinnert else f" ({erinnert.strip()})"))
+
     # Was die Oberfläche (zenos-shell.service) ins Journal schreibt; das Prüfkonto liest es (systemd-journal)
     protokoll = befehl(vm, "journalctl -b --no-pager -o cat _SYSTEMD_USER_UNIT=zenos-shell.service "
                            "| grep -viE 'inotify_add_watch|EGL|dri2' | grep -iE 'error|warn|fail|not' | tail -n 40")
@@ -297,12 +314,14 @@ def pruefe_update(vm: pexpect.spawn) -> str:
     server = subprocess.Popen([sys.executable, "-m", "http.server", "8080", "--bind", "127.0.0.1",
                                "--directory", str(UPDATE)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
-        # Wie im Terminal der Sitzung (kitty läuft in der Benutzerinstanz): Die serielle Konsole ist keine Sitzung am
-        # Gerät, polkit liesse zenos-update.service von dort nicht starten.
+        # Zuerst, solange noch kein Stand wartet: Die serielle Konsole ist keine Sitzung am Gerät, polkit lässt
+        # zenos-update.service von dort nicht starten (sofort, ohne nach einem Passwort zu fragen)
+        seriell = befehl(vm, "timeout 60 zen update 2>&1")
+        pruefe("liess sich nicht starten" in seriell and "Password" not in seriell,
+               "zen update von der seriellen Konsole (keine Sitzung am Gerät) abgelehnt, ohne Passwortfrage")
+        # Wie im Terminal der Sitzung (kitty läuft in der Benutzerinstanz)
         ausgabe = befehl(vm, "systemd-run --user --quiet --wait --pipe --collect zen update 2>&1")
         print("\n".join("    " + z for z in ausgabe.splitlines()[-12:]), flush=True)
-        seriell = befehl(vm, "zen update 2>&1")
-        pruefe("liess sich nicht starten" in seriell, "zen update von der seriellen Konsole (keine Sitzung am Gerät) abgelehnt")
         pruefe(f"Neuer Stand {neu} ist installiert" in ausgabe, f"zen update installiert {neu} ohne Admin")
         teile = befehl(vm, "lsblk -nr -o PARTLABEL /dev/vda").split()
         pruefe(f"zenos_{neu}" in teile and f"zenos_{neu}_verity" in teile,
