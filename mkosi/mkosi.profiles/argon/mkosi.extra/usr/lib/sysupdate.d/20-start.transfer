@@ -1,0 +1,18 @@
+# zenOS 1.0: die Startpartition des nächsten Stands (FAT mit Kernel, initrd, Gerätebäumen, config.txt und cmdline.txt)
+# in die freie Startpartition (2 oder 3). Sie kommt zuletzt: Erst wenn System und Prüfsummen geschrieben sind, gibt es
+# etwas, das starten kann. Partition 1 (zenos-start, autoboot.txt) passt nie auf das Muster und bleibt unberührt.
+[Transfer]
+ProtectVersion=%A
+Verify=yes
+
+[Source]
+Type=url-file
+Path=https://github.com/Zenovs/zenOS/releases/latest/download/
+MatchPattern=zenos_@v.start.raw.xz
+
+[Target]
+Type=partition
+Path=auto
+MatchPattern=zenos-start_@v
+MatchPartitionType=esp
+PartitionFlags=0

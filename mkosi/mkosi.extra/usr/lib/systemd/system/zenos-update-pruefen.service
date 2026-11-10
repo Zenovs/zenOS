@@ -1,0 +1,14 @@
+# zenOS: bei jedem Start einen Probestart nach einem Update bestätigen (der neue Stand wird fest) oder einen
+# gescheiterten Probestart festhalten. Läuft nur, wenn ein Update aussteht (/var/lib/zenos/update/probe).
+[Unit]
+Description=zenOS: Probestart eines Updates bestätigen
+After=multi-user.target greetd.service
+ConditionPathExists=/var/lib/zenos/update/probe
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/zenos/update pruefen
+TimeoutStartSec=5min
+
+[Install]
+WantedBy=multi-user.target

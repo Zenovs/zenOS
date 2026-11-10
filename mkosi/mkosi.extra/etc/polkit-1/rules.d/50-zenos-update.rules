@@ -1,0 +1,11 @@
+// zenOS 1.0: «zen update» ohne Admin. Wer an diesem Gerät angemeldet ist (lokale, aktive Sitzung), darf genau einen
+// Dienst starten: zenos-update.service. Er installiert nur, was mit Zenos Schlüssel signiert ist; alles andere an
+// systemd bleibt ohne Admin gesperrt.
+polkit.addRule(function (action, subject) {
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        action.lookup("unit") == "zenos-update.service" &&
+        action.lookup("verb") == "start" &&
+        subject.local && subject.active) {
+        return polkit.Result.YES;
+    }
+});

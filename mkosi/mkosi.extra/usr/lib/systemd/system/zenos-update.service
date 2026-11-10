@@ -1,0 +1,12 @@
+# zenOS: neuen Stand laden, Signatur und Prüfsummen prüfen und in die freie Hälfte schreiben (gestartet von «zen update»).
+# Nie automatisch: Nichts verlässt das Gerät ohne Zenos ausdrückliche Aktion.
+[Unit]
+Description=zenOS: Update laden, prüfen und installieren
+After=network-online.target time-sync.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/zenos/update installieren
+# Ein langsames Netz darf dauern
+TimeoutStartSec=2h

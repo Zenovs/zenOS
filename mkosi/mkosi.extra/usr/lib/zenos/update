@@ -1,0 +1,309 @@
+#!/bin/bash
+# zenOS 1.0: Updates laden, prüfen und installieren, A/B mit Probestart. Läuft als root.
+#
+#   update installieren   zenos-update.service (gestartet von «zen update»): neuen Stand laden, Signatur und Prüfsummen
+#                         prüfen, in die freie Hälfte schreiben, Probestart für den nächsten Neustart vorbereiten
+#   update pruefen        zenos-update-pruefen.service, bei jedem Start: Probestart bestätigen oder Fehlschlag festhalten
+#
+# Ablauf auf dem Argon ONE UP und dem Pi 5 (A/B-Schema von Raspberry Pi, Startpartitionen 2 und 3):
+#   1. systemd-sysupdate lädt System, Prüfsummen und Startpartition des neuen Stands. SHA256SUMS muss gültig signiert
+#      sein (SHA256SUMS.gpg, Schlüssel in /etc/systemd/import-pubring.gpg), jede Datei muss ihre Prüfsumme haben.
+#      Geschrieben wird nur in die freie Hälfte; der laufende Stand ist geschützt (ProtectVersion=%A).
+#   2. /run/systemd/reboot-param bekommt «0 tryboot»: Der nächste Neustart, egal wie ausgelöst, startet die andere
+#      Startpartition einmal zur Probe (autoboot.txt: [tryboot] boot_partition=…). autoboot.txt bleibt dabei, wie es ist.
+#   3. Im Probestart (tryboot=1, Startpartition und Version des neuen Stands, der Login läuft) wird der Stand fest:
+#      autoboot.txt tauscht die Ziffern 2 und 3 an Ort und Stelle, gleiche Länge, ein Sektor.
+#   4. Startet der neue Stand nicht (Absturz, hängt: ausschalten und wieder einschalten), startet beim nächsten Mal
+#      wieder der alte. Er hält den Fehlschlag fest und bietet diesen Stand nicht nochmals an.
+# Zustände: /run/zenos/update (flüchtig, für alle lesbar: laeuft, neustart, protokoll, hinweis) und
+# /var/lib/zenos/update (probe: «<version> bereit|bereit-2|probiert», fehlgeschlagen: eine Version pro Zeile).
+set -uo pipefail
+
+# Feste Orte. Nur der Einheitentest (mkosi/test/update-einheiten.sh) setzt ZENOS_UPDATE_TESTWURZEL; dann liegen alle
+# Orte unter diesem Ordner, und Einhängen, udev und Neustart werden dort nachgebildet.
+wurzel=${ZENOS_UPDATE_TESTWURZEL:-}
+laufzeit=$wurzel/run/zenos/update
+stand=$wurzel/var/lib/zenos/update
+protokoll=$laufzeit/protokoll
+bootloader=$wurzel/proc/device-tree/chosen/bootloader
+auswahl_ort=$laufzeit/auswahl
+reboot_param=$wurzel/run/systemd/reboot-param
+partlabel=$wurzel/dev/disk/by-partlabel
+os_release=$wurzel/usr/lib/os-release
+
+melden() {
+	printf '%s\n' "$*" >>"$protokoll"
+	printf 'zenos-update: %s\n' "$*" >&2
+}
+
+hinweis() {
+	printf '%s\n' "$*" >"$laufzeit/hinweis"
+	chmod 0644 "$laufzeit/hinweis"
+	melden "$*"
+}
+
+version() { (. "$os_release" && printf '%s' "${IMAGE_VERSION:-}"); }
+
+# Wert aus dem Gerätebaum des Bootloaders (32 Bit, big-endian), leer ohne Raspberry-Pi-Bootloader (z. B. QEMU)
+dt_wert() {
+	[[ -r "$bootloader/$1" ]] || return 0
+	od -An -tu4 --endian=big "$bootloader/$1" 2>/dev/null | tr -d ' \n'
+}
+
+pi() { [[ -d "$bootloader" ]]; }
+
+# Nummer der Partition mit dieser Bezeichnung (auf GPT gleich der Zählung des Bootloaders: die FAT-Partitionen sind
+# die ersten drei)
+partitionsnummer() {
+	local geraet
+	if [[ -n "$wurzel" ]]; then
+		cat "$partlabel/$1.nummer" 2>/dev/null
+		return
+	fi
+	geraet=$(readlink -f "$partlabel/$1" 2>/dev/null) || return 1
+	[[ -b "$geraet" ]] || return 1
+	cat "/sys/class/block/${geraet##*/}/partition" 2>/dev/null
+}
+
+# Versionen der installierten Systeme (Bezeichnungen zenos_<version>), aufsteigend
+installiert() {
+	local geraet
+	for geraet in "$partlabel"/zenos_*; do
+		geraet=${geraet##*/zenos_}
+		geraet=${geraet%.nummer}
+		[[ "$geraet" =~ ^[0-9]+(\.[0-9]+)*$ ]] && printf '%s\n' "$geraet"
+	done | sort -V
+}
+
+neuer_als() { [[ "$1" != "$2" && "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n 1)" == "$1" ]]; }
+
+fehlgeschlagen() { [[ -f "$stand/fehlgeschlagen" ]] && grep -qxF -- "$1" "$stand/fehlgeschlagen"; }
+
+auswahl_einhaengen() { # ro|rw
+	install -d -m 0700 "$auswahl_ort"
+	if [[ -n "$wurzel" ]]; then
+		cp -a "$partlabel/zenos-start.inhalt/." "$auswahl_ort/"
+		return
+	fi
+	mount -t vfat -o "$1,nosuid,nodev,noexec,umask=0077" "$partlabel/zenos-start" "$auswahl_ort"
+}
+
+auswahl_aushaengen() {
+	if [[ -n "$wurzel" ]]; then
+		cp -a "$auswahl_ort/." "$partlabel/zenos-start.inhalt/"
+		rm -rf "$auswahl_ort"
+		return
+	fi
+	umount "$auswahl_ort" 2>/dev/null || true
+}
+
+# autoboot.txt, wie es sein muss, wenn Startpartition $1 die feste ist (die andere startet mit tryboot zur Probe)
+autoboot_soll() {
+	local andere=$((5 - $1))
+	printf '[all]\ntryboot_a_b=1\nboot_partition=%s\n[tryboot]\nboot_partition=%s\n' "$1" "$andere"
+}
+
+# Probestart für Stand $1 vorbereiten: Der nächste Neustart startet seine Startpartition einmal zur Probe.
+probe_vorbereiten() {
+	local neu=$1 nummer jetzt_nummer
+	if pi; then
+		nummer=$(partitionsnummer "zenos-start_$neu") || {
+			melden "Startpartition von $neu nicht gefunden"
+			return 1
+		}
+		jetzt_nummer=$(dt_wert partition)
+		[[ "$nummer" == 2 || "$nummer" == 3 ]] || {
+			melden "Startpartition von $neu ist Partition $nummer, erwartet 2 oder 3"
+			return 1
+		}
+		[[ "$nummer" != "$jetzt_nummer" ]] || {
+			melden "$neu liegt auf der Startpartition, die gerade läuft ($nummer)"
+			return 1
+		}
+		# autoboot.txt muss für tryboot auf genau diese Partition zeigen
+		auswahl_einhaengen ro || {
+			melden "Partition 1 (autoboot.txt) lässt sich nicht lesen"
+			return 1
+		}
+		local ist
+		ist=$(cat "$auswahl_ort/autoboot.txt" 2>/dev/null)
+		auswahl_aushaengen
+		[[ "$ist" == "$(autoboot_soll "$jetzt_nummer")" ]] || {
+			melden "autoboot.txt passt nicht zum laufenden Start (Partition $jetzt_nummer): nicht verändert"
+			return 1
+		}
+		printf '0 tryboot' >"$reboot_param"
+	fi
+	printf '%s bereit\n' "$neu" >"$stand/probe"
+	sync
+	: >"$laufzeit/neustart"
+	chmod 0644 "$laufzeit/neustart"
+	if pi; then
+		hinweis "Neuer Stand $neu ist installiert. Er startet beim nächsten Neustart einmal zur Probe (zen neustart oder Neustart im Menü). Läuft er, wird er fest; sonst startet wieder $(version)."
+	else
+		hinweis "Neuer Stand $neu ist installiert (ohne Raspberry-Pi-Bootloader: kein Probestart)."
+	fi
+}
+
+installieren() {
+	install -d -m 0755 "$wurzel/run/zenos" "$laufzeit"
+	install -d -m 0700 "$wurzel/var/lib/zenos" "$stand"
+	: >"$protokoll"
+	chmod 0644 "$protokoll"
+	rm -f "$laufzeit/hinweis"
+	: >"$laufzeit/laeuft"
+	chmod 0644 "$laufzeit/laeuft"
+	trap 'rm -f "$laufzeit/laeuft"' EXIT
+
+	local jetzt neu fehler rc=0 neuester
+	jetzt=$(version)
+	if [[ -e "$laufzeit/neustart" ]]; then
+		hinweis "Ein neuer Stand ist schon installiert und wartet auf den Neustart."
+		return 0
+	fi
+
+	# Schon installiert, aber noch nicht gestartet (z. B. ausgeschaltet statt neu gestartet)?
+	neuester=$(installiert | tail -n 1)
+	if [[ -n "$neuester" ]] && neuer_als "$neuester" "$jetzt" && ! fehlgeschlagen "$neuester"; then
+		melden "Stand $neuester ist schon installiert."
+		probe_vorbereiten "$neuester"
+		return
+	fi
+
+	melden "zenOS $jetzt: suche nach einem neuen Stand …"
+	fehler=$(mktemp)
+	neu=$(systemd-sysupdate check-new 2>"$fehler") || rc=$?
+	if ((rc != 0)); then
+		if [[ -s "$fehler" ]]; then
+			melden "Suche fehlgeschlagen: $(tail -n 3 "$fehler" | tr '\n' ' ')"
+			rm -f "$fehler"
+			hinweis "Keine Verbindung zum Update-Server oder ungültige Antwort. Später nochmals versuchen."
+			return 1
+		fi
+		rm -f "$fehler"
+		hinweis "zenOS $jetzt ist aktuell."
+		return 0
+	fi
+	rm -f "$fehler"
+	neu=$(printf '%s' "$neu" | tail -n 1 | tr -d '[:space:]')
+	[[ "$neu" =~ ^[0-9]+(\.[0-9]+)*$ ]] || {
+		hinweis "Unerwartete Version vom Update-Server: «$neu». Nichts installiert."
+		return 1
+	}
+	if fehlgeschlagen "$neu"; then
+		hinweis "Stand $neu ist beim letzten Probestart nicht gestartet. zenOS $jetzt bleibt, bis ein neuerer Stand da ist."
+		return 0
+	fi
+
+	melden "Neuer Stand $neu: wird geladen, die Signatur und alle Prüfsummen werden geprüft …"
+	# Während des Schreibens kein Ausschalten und kein Neustart über logind (Block-Inhibitor)
+	if ! systemd-inhibit --what=shutdown:sleep:handle-power-key --mode=block --who=zenOS \
+		"--why=Update wird geschrieben" systemd-sysupdate --reboot=no update "$neu" >>"$protokoll" 2>&1; then
+		hinweis "Update auf $neu fehlgeschlagen (Signatur, Prüfsumme oder Verbindung). Nichts wurde verändert, was startet; zenOS $jetzt bleibt."
+		return 1
+	fi
+	udevadm settle --timeout=15 || true
+	installiert | grep -qxF -- "$neu" || {
+		hinweis "Update auf $neu nicht vollständig geschrieben. zenOS $jetzt bleibt."
+		return 1
+	}
+	probe_vorbereiten "$neu"
+}
+
+# Bei jedem Start: Probestart bestätigen (festschreiben) oder Fehlschlag festhalten
+pruefen() {
+	install -d -m 0755 "$wurzel/run/zenos" "$laufzeit"
+	[[ -e "$protokoll" ]] || { : >"$protokoll" && chmod 0644 "$protokoll"; }
+	[[ -f "$stand/probe" ]] || return 0
+	local v zustand jetzt tryboot partition nummer
+	read -r v zustand <"$stand/probe" || true
+	jetzt=$(version)
+	tryboot=$(dt_wert tryboot)
+	partition=$(dt_wert partition)
+
+	if [[ "$tryboot" == 1 ]]; then
+		nummer=$(partitionsnummer "zenos-start_$v") || nummer=""
+		if [[ "$jetzt" != "$v" || -z "$nummer" || "$partition" != "$nummer" ]]; then
+			melden "Probestart, aber nicht der erwartete Stand (läuft $jetzt von Partition $partition, erwartet $v von $nummer)"
+			printf '%s probiert\n' "$v" >"$stand/probe"
+			sync
+			return 1
+		fi
+		# Zuerst festhalten, dass er probiert wurde: Hängt er gleich danach, weiss der alte Stand beim nächsten Start Bescheid.
+		printf '%s probiert\n' "$v" >"$stand/probe"
+		sync
+		# Gesund heisst: der Login läuft (greetd mit der Oberfläche als _greetd), höchstens 3 Minuten warten
+		local i
+		for ((i = 0; i < 90; i++)); do
+			login_laeuft && break
+			sleep 2
+		done
+		if ! login_laeuft; then
+			melden "Probestart von $v: der Login startet nicht, nicht festgeschrieben"
+			return 1
+		fi
+		auswahl_einhaengen rw || {
+			melden "Partition 1 (autoboot.txt) lässt sich nicht beschreiben, nicht festgeschrieben"
+			return 1
+		}
+		local datei=$auswahl_ort/autoboot.txt soll ist
+		soll=$(autoboot_soll "$partition")
+		ist=$(cat "$datei")
+		if [[ "$ist" != "$soll" ]]; then
+			if [[ "$ist" != "$(autoboot_soll $((5 - partition)))" ]]; then
+				auswahl_aushaengen
+				melden "autoboot.txt hat einen unerwarteten Inhalt, nicht verändert"
+				return 1
+			fi
+			# Gleiche Länge, an Ort und Stelle, ohne Kürzen: Ein Stromausfall lässt den alten oder den neuen Inhalt.
+			autoboot_soll "$partition" | dd of="$datei" bs=4096 conv=notrunc,fsync status=none
+			sync
+		fi
+		ist=$(cat "$datei")
+		auswahl_aushaengen
+		if [[ "$ist" != "$soll" ]]; then
+			melden "autoboot.txt nach dem Schreiben falsch, bitte melden"
+			return 1
+		fi
+		rm -f "$stand/probe"
+		sync
+		hinweis "zenOS $v läuft und ist jetzt fest."
+		return 0
+	fi
+
+	# Normaler Start (ohne tryboot)
+	case "$zustand" in
+	bereit)
+		# Ausgeschaltet statt neu gestartet, oder der Probestart kam nicht bis zu den Daten: noch ein Versuch
+		printf '%s bereit-2\n' "$v" >"$stand/probe"
+		sync
+		if pi; then printf '0 tryboot' >"$reboot_param"; fi
+		: >"$laufzeit/neustart"
+		chmod 0644 "$laufzeit/neustart"
+		hinweis "Neuer Stand $v wartet auf einen Neustart zur Probe."
+		;;
+	*)
+		printf '%s\n' "$v" >>"$stand/fehlgeschlagen"
+		rm -f "$stand/probe"
+		sync
+		hinweis "Der Probestart von zenOS $v hat nicht geklappt; es läuft wieder $jetzt. Dieser Stand wird nicht nochmals angeboten."
+		;;
+	esac
+}
+
+login_laeuft() {
+	[[ -z "$wurzel" ]] || return "${ZENOS_UPDATE_TEST_LOGIN:-0}"
+	systemctl -q is-active greetd.service && pgrep -u _greetd -x quickshell >/dev/null
+}
+
+# Als Programm aufgerufen (nicht vom Einheitentest eingelesen)
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	case "${1:-}" in
+	installieren) installieren ;;
+	pruefen) pruefen ;;
+	*)
+		echo "Aufruf: update installieren|pruefen" >&2
+		exit 64
+		;;
+	esac
+fi

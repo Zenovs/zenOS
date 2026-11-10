@@ -1,0 +1,79 @@
+#!/bin/bash
+# zen – zenOS 1.0 im Terminal.
+#
+#   zen update     neuen Stand laden, Signatur und Prüfsummen prüfen und in die freie Hälfte schreiben. Er startet
+#                  beim nächsten Neustart einmal zur Probe; läuft er, wird er fest, sonst startet wieder der alte.
+#   zen neustart   neu starten (mit dem Probestart, wenn ein Update bereitliegt)
+#   zen status     laufende Version und Stand der Updates
+#   zen hilfe      diese Hilfe
+#
+# Kein Admin nötig: «zen update» startet nur den Dienst zenos-update.service (polkit erlaubt das der Person, die am
+# Gerät angemeldet ist). Installiert wird nur, was mit Zenos Schlüssel signiert ist.
+set -uo pipefail
+
+laufzeit=/run/zenos/update
+
+version() { (. /usr/lib/os-release && printf '%s' "${IMAGE_VERSION:-unbekannt}"); }
+
+hilfe() { sed -n '4,10p' "$0" | sed 's/^# \{0,1\}//'; }
+
+update() {
+	if [[ -e "$laufzeit/neustart" ]]; then
+		cat "$laufzeit/hinweis" 2>/dev/null || echo "Ein neuer Stand ist installiert und wartet auf den Neustart."
+		echo "Neu starten: zen neustart"
+		return 0
+	fi
+	if ! systemctl start --no-block zenos-update.service; then
+		echo "zen update: der Update-Dienst liess sich nicht starten" >&2
+		return 1
+	fi
+	# Fortschritt aus dem Protokoll des Dienstes, bis er fertig ist
+	local gelesen=0 zeilen zustand
+	sleep 1
+	while :; do
+		zustand=$(systemctl show -P ActiveState zenos-update.service)
+		if [[ -r "$laufzeit/protokoll" ]]; then
+			zeilen=$(wc -l <"$laufzeit/protokoll")
+			if ((zeilen > gelesen)); then
+				sed -n "$((gelesen + 1)),${zeilen}p" "$laufzeit/protokoll" | grep -v '^\[' || true
+				gelesen=$zeilen
+			elif ((zeilen < gelesen)); then
+				gelesen=0
+			fi
+		fi
+		[[ "$zustand" == activating || "$zustand" == active || "$zustand" == reloading ]] || break
+		sleep 1
+	done
+	if [[ "$(systemctl show -P Result zenos-update.service)" != success ]]; then
+		echo
+		cat "$laufzeit/hinweis" 2>/dev/null || echo "zen update: fehlgeschlagen"
+		return 1
+	fi
+	if [[ -e "$laufzeit/neustart" ]]; then
+		echo
+		echo "Neu starten: zen neustart"
+	fi
+}
+
+status() {
+	echo "zenOS $(version)"
+	if [[ -e "$laufzeit/laeuft" ]]; then
+		echo "Ein Update läuft gerade."
+	elif [[ -e "$laufzeit/neustart" ]]; then
+		echo "Ein neuer Stand wartet auf den Neustart (zen neustart)."
+	fi
+	[[ -r "$laufzeit/hinweis" ]] && cat "$laufzeit/hinweis"
+	return 0
+}
+
+case "${1:-hilfe}" in
+update) update ;;
+neustart) exec systemctl reboot ;;
+status) status ;;
+hilfe | -h | --hilfe | --help) hilfe ;;
+*)
+	echo "zen: unbekannter Befehl «$1»" >&2
+	hilfe >&2
+	exit 64
+	;;
+esac

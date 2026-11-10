@@ -15,5 +15,6 @@ enable apparmor.service
 enable zenos-tastatur.service
 enable zenos-daten-schuetzen.service
 enable zenos-konto.service
+enable zenos-update-pruefen.service
 
 disable *

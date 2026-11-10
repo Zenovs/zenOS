@@ -1,0 +1,18 @@
+# zenOS 1.0: das System (erofs) des nächsten Stands in die freie Hälfte. Partitions-UUID im Dateinamen (@u, erste
+# Hälfte des Wurzel-Hashs). Nur im Test-Image für QEMU: Testserver, ohne Signatur (Verify=no).
+[Transfer]
+ProtectVersion=%A
+Verify=no
+
+[Source]
+Type=url-file
+Path=http://10.0.2.2:8080/
+MatchPattern=zenos_@v_@u.root.raw.xz
+
+[Target]
+Type=partition
+Path=auto
+MatchPattern=zenos_@v
+MatchPartitionType=root
+PartitionFlags=0
+ReadOnly=1

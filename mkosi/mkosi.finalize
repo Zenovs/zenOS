@@ -90,6 +90,33 @@ fehlend=$(cd "$R" && find usr/bin/quickshell usr/lib/*/qt6/qml/Quickshell -type 
 [[ -z "$fehlend" ]] || fehler "Quickshell braucht Bibliotheken, die im Image fehlen: $fehlend"
 echo "zenOS-Prüfung: Quickshell und seine Bibliotheken vollständig"
 
+# --- 3c. Updates: nur signiert ---------------------------------------------------------------------------------
+# Leitplanke: Ein Gerät installiert nur, was zenOS signiert hat. Auf dem Argon prüft systemd-sysupdate SHA256SUMS mit
+# Zenos öffentlichem Schlüssel (mkosi/schluessel/zenos-updates.asc). Ohne Schlüssel bricht der Bau ab; nur mit
+# ZENOS_SCHLUESSEL_FEHLT_OK=1 (Entwicklungsbau, nie auf ein Gerät) entsteht ein Image, das keine Updates annimmt.
+# «Verify=no» gibt es nur im Test-Image für QEMU.
+if [[ ",${PROFILES:-}," == *",argon,"* ]]; then
+	for transfer in "$R"/usr/lib/sysupdate.d/*.transfer; do
+		grep -qx 'Verify=yes' "$transfer" || fehler "$(basename "$transfer") prüft die Signatur nicht (Verify=yes fehlt)"
+		! grep -q '^Verify=no' "$transfer" || fehler "$(basename "$transfer") hat Verify=no"
+	done
+	schluessel="$SRCDIR/mkosi/schluessel/zenos-updates.asc"
+	if [[ -f "$schluessel" ]]; then
+		gpgheim=$(mktemp -d)
+		gpg --batch --quiet --homedir "$gpgheim" --dearmor <"$schluessel" >"$R/etc/systemd/import-pubring.gpg"
+		chmod 0644 "$R/etc/systemd/import-pubring.gpg"
+		anzahl=$(gpg --batch --homedir "$gpgheim" --show-keys --with-colons "$R/etc/systemd/import-pubring.gpg" | grep -c '^pub:')
+		rm -rf "$gpgheim"
+		((anzahl == 1)) || fehler "mkosi/schluessel/zenos-updates.asc enthält $anzahl Schlüssel, erwartet genau einen"
+		echo "zenOS-Prüfung: Updates nur mit Zenos Schlüssel ($(gpg --batch --show-keys --with-colons "$schluessel" 2>/dev/null | awk -F: '/^fpr:/ { print $10; exit }'))"
+	elif [[ "${ZENOS_SCHLUESSEL_FEHLT_OK:-}" == 1 ]]; then
+		echo "zenOS-Prüfung: WARNUNG: kein Schlüssel für Updates. Dieses Image nimmt keine Updates an und gehört auf kein Gerät." >&2
+	else
+		fehler "mkosi/schluessel/zenos-updates.asc fehlt: Ohne Zenos öffentlichen Schlüssel kann das Gerät keine Updates prüfen"
+	fi
+fi
+[[ ! -e "$R/usr/lib/systemd/import-pubring.gpg" ]] || fehler "fremder Schlüsselbund für Updates im Image (/usr/lib/systemd/import-pubring.gpg)"
+
 # --- 4. Bootpartition (nur Profil argon) ------------------------------------------------------------------------
 # Gerätebäume und Overlays des Kernels von Raspberry Pi und config.txt für mkosi.postoutput bereitlegen.
 if [[ ",${PROFILES:-}," == *",argon,"* ]]; then

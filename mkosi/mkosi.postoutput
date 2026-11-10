@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # mkosi.postoutput: läuft, nachdem mkosi das Image geschrieben hat. Nur im Profil «argon» gibt es etwas zu tun.
 #
-# Der Bootloader des CM5 und des Pi 5 kennt kein UEFI. Er liest Kernel, initrd, Gerätebaum, config.txt und cmdline.txt
-# von der FAT-Partition am Anfang des Images. Dieses Skript schreibt cmdline.txt mit dem Verity-Wurzel-Hash und kopiert
-# alles mit mtools in die Partition, ohne das Image einzuhängen. Kernel und initrd hat mkosi als eigene Dateien
-# abgelegt (SplitArtifacts), Gerätebäume und config.txt liegen von mkosi.finalize in $OUTPUTDIR/zenos-start.
+# Der Bootloader des CM5 und des Pi 5 kennt kein UEFI. Er liest zuerst autoboot.txt auf Partition 1 (zenos-start) und
+# startet danach Startpartition A (2) oder, einmal zur Probe nach einem Update, B (3). Dieses Skript schreibt
+# autoboot.txt nach Partition 1 und Kernel, initrd, Gerätebäume, config.txt und cmdline.txt (mit dem Verity-Wurzel-Hash)
+# nach Partition 2, mit mtools, ohne das Image einzuhängen. Kernel und initrd hat mkosi als eigene Dateien abgelegt
+# (SplitArtifacts), Gerätebäume und config.txt liegen von mkosi.finalize in $OUTPUTDIR/zenos-start.
 set -euo pipefail
 [[ ",${PROFILES:-}," == *",argon,"* ]] || exit 0
 
@@ -23,10 +24,16 @@ img=${images[0]}
 
 tabelle=$(sfdisk --json "$img")
 sektor=$(jq -r '.partitiontable.sectorsize // 512' <<<"$tabelle")
-beginn=$(jq -r '.partitiontable.partitions[] | select(.type == "C12A7328-F81F-11D2-BA4B-00A0C93EC93B") | .start' <<<"$tabelle")
-[[ "$beginn" =~ ^[0-9]+$ ]] || fehler "Bootpartition nicht gefunden"
-
 version=${IMAGE_VERSION:?IMAGE_VERSION fehlt}
+beginn() { jq -r --arg n "$1" '.partitiontable.partitions[] | select(.name == $n) | .start' <<<"$tabelle"; }
+auswahl=$(beginn zenos-start)
+start_a=$(beginn "zenos-start_$version")
+[[ "$auswahl" =~ ^[0-9]+$ ]] || fehler "Partition 1 (zenos-start) nicht gefunden"
+[[ "$start_a" =~ ^[0-9]+$ ]] || fehler "Startpartition A (zenos-start_$version) nicht gefunden"
+# Die drei FAT-Partitionen müssen die ersten drei sein: Der Bootloader zählt FAT-Partitionen, autoboot.txt nennt 2 und 3.
+esp=C12A7328-F81F-11D2-BA4B-00A0C93EC93B
+erste=$(jq -r '[.partitiontable.partitions[0:3][] | .type] | join(",")' <<<"$tabelle")
+[[ "$erste" == "$esp,$esp,$esp" ]] || fehler "die ersten drei Partitionen sind nicht die drei Startpartitionen ($erste)"
 root_uuid=$(jq -r --arg n "zenos_$version" '.partitiontable.partitions[] | select(.name == $n) | .uuid' <<<"$tabelle")
 verity_uuid=$(jq -r --arg n "zenos_${version}_verity" '.partitiontable.partitions[] | select(.name == $n) | .uuid' <<<"$tabelle")
 [[ -n "$root_uuid" && -n "$verity_uuid" ]] || fehler "System- oder Verity-Partition nicht gefunden"
@@ -48,8 +55,14 @@ cp "${kernel[0]}" "$start/kernel_2712.img"
 cp "${initrd[0]}" "$start/initramfs_2712"
 
 export MTOOLS_SKIP_CHECK=1
-ziel="$img@@$((beginn * sektor))"
-mcopy -o -s -i "$ziel" "$start"/* ::/
+mcopy -o -s -i "$img@@$((start_a * sektor))" "$start"/* ::/
 rm -rf "$start"
 
-echo "zenOS-Bootpartition: Kernel, initrd, Gerätebäume, config.txt und cmdline.txt geschrieben (Wurzel-Hash ${roothash:0:12}…)"
+# autoboot.txt: A (2) startet, mit tryboot einmal B (3). Wird ein Update fest, tauscht /usr/lib/zenos/update die beiden
+# Ziffern an Ort und Stelle (gleiche Länge, ein Sektor). tryboot_a_b=1: in beiden Fällen gilt config.txt der Partition.
+auswahl_datei="$OUTPUTDIR/zenos-auswahl"
+printf '[all]\ntryboot_a_b=1\nboot_partition=2\n[tryboot]\nboot_partition=3\n' > "$auswahl_datei"
+mcopy -o -i "$img@@$((auswahl * sektor))" "$auswahl_datei" ::/autoboot.txt
+rm -f "$auswahl_datei"
+
+echo "zenOS-Bootpartition: autoboot.txt auf Partition 1, Kernel, initrd, Gerätebäume, config.txt und cmdline.txt auf Startpartition A (Wurzel-Hash ${roothash:0:12}…)"
