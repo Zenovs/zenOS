@@ -26,11 +26,13 @@ if [[ "${1:-}" == --oberflaeche ]]; then
 	exit "$rc"
 fi
 
-# Caches und Zustände von Quickshell gehören in den Laufzeitordner von _greetd (flüchtig), nicht auf die Platte.
-[[ -n "${XDG_RUNTIME_DIR:-}" && -d "$XDG_RUNTIME_DIR" && -w "$XDG_RUNTIME_DIR" ]] || {
-	meldung "XDG_RUNTIME_DIR fehlt"
-	exit 1
-}
+# Caches und Zustände von Quickshell gehören in den Laufzeitordner von _greetd (flüchtig), nicht auf die Platte. Fehlt
+# er (keine Sitzung bei logind), ein eigener im flüchtigen /tmp, damit der Login trotzdem erscheint.
+if [[ -z "${XDG_RUNTIME_DIR:-}" || ! -d "$XDG_RUNTIME_DIR" || ! -w "$XDG_RUNTIME_DIR" ]]; then
+	meldung "XDG_RUNTIME_DIR fehlt, nehme einen eigenen Ordner"
+	XDG_RUNTIME_DIR=$(mktemp -d /tmp/zenos-greeter.XXXXXX)
+	export XDG_RUNTIME_DIR
+fi
 basis=$XDG_RUNTIME_DIR/zenos-greeter
 for ordner in cache state data config; do
 	mkdir -p -m 0700 "$basis/$ordner"
@@ -38,7 +40,28 @@ done
 export XDG_CACHE_HOME=$basis/cache XDG_STATE_HOME=$basis/state XDG_DATA_HOME=$basis/data XDG_CONFIG_HOME=$basis/config
 export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=labwc:wlroots QT_QPA_PLATFORM=wayland
 export XCURSOR_THEME=Adwaita XCURSOR_SIZE=24
+# labwc verlangt ein Xwayland; zenOS hat keins (siehe /usr/lib/zenos/kein-xwayland)
+export WLR_XWAYLAND=/usr/lib/zenos/kein-xwayland
 unset QT_QPA_PLATFORMTHEME DISPLAY
 
+# Notausgang: Ist der grafische Login zweimal hintereinander schnell gescheitert (etwa ein Problem mit der Grafik),
+# gibt es den Text-Login von greetd mit fish. So bleibt das Gerät bedienbar: WLAN mit nmtui, zen update für eine
+# Korrektur. Angemeldet wird auch dort nur mit dem Passwort des Kontos.
+# Gezählt wird im Home von _greetd (/var/lib/greetd, auf den verschlüsselten Daten); jeder erfolgreiche Login setzt zurück.
+fehler=${HOME:-/var/lib/greetd}/zenos-fehlstarts
+if [[ "$(cat "$fehler" 2>/dev/null)" -ge 2 ]]; then
+	rm -f "$fehler"
+	meldung "grafischer Login zweimal gescheitert, Text-Login als Notausgang"
+	exec /usr/sbin/agreety --cmd fish
+fi
+
 # Ausgaben von labwc und Quickshell ins Journal (journalctl -t zenos-greeter).
-exec systemd-cat --identifier=zenos-greeter -- labwc -C /usr/share/zenos/greeter/labwc -S "/usr/lib/zenos/greeter --oberflaeche"
+start=$SECONDS
+rc=0
+systemd-cat --identifier=zenos-greeter -- labwc -C /usr/share/zenos/greeter/labwc -S "/usr/lib/zenos/greeter --oberflaeche" || rc=$?
+if ((rc != 0 && SECONDS - start < 20)); then
+	echo $(($(cat "$fehler" 2>/dev/null || echo 0) + 1)) >"$fehler"
+else
+	rm -f "$fehler"
+fi
+exit "$rc"

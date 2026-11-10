@@ -1,0 +1,6 @@
+#!/bin/sh
+# zenOS hat keinen X-Server. labwc (aus Debian, mit Xwayland gebaut) verlangt beim Start ein Programm für Xwayland
+# und beendet sich ohne; /usr/lib/zenos/greeter und /usr/lib/zenos/sitzung nennen ihm dieses über WLR_XWAYLAND.
+# Startet es wirklich einmal (ein X11-Programm verbindet sich), lehnt es ab.
+echo "zenOS: kein X11 (Xwayland gibt es nicht)" >&2
+exit 1

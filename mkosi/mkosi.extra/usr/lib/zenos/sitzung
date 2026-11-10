@@ -11,6 +11,8 @@ set -uo pipefail
 export XDG_SESSION_TYPE=wayland XDG_SESSION_DESKTOP=zenos XDG_CURRENT_DESKTOP=labwc:wlroots
 export QT_QPA_PLATFORM=wayland QT_WAYLAND_DISABLE_WINDOWDECORATION=1
 export XCURSOR_THEME=Adwaita XCURSOR_SIZE=24
+# labwc verlangt ein Xwayland; zenOS hat keins (siehe /usr/lib/zenos/kein-xwayland)
+export WLR_XWAYLAND=/usr/lib/zenos/kein-xwayland
 if [[ -z "${XDG_RUNTIME_DIR:-}" ]]; then
 	XDG_RUNTIME_DIR=/run/user/$(id -u)
 	export XDG_RUNTIME_DIR
