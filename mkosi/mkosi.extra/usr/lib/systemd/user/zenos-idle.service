@@ -1,0 +1,15 @@
+# zenOS: automatische Sperre nach 5 Minuten ohne Eingabe, vor dem Standby und auf Anforderung von logind
+# (Ein/Aus-Taste, «loginctl lock-session»). Leitplanke: nicht abschaltbar, Restart=always, systemd gibt nie auf.
+[Unit]
+Description=zenOS automatische Sperre (swayidle)
+PartOf=zenos-sitzung.target
+After=graphical-session.target
+ConditionEnvironment=WAYLAND_DISPLAY
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/swayidle -w timeout 300 /usr/lib/zenos/sperren before-sleep /usr/lib/zenos/sperren lock /usr/lib/zenos/sperren
+Restart=always
+RestartSec=1
+TimeoutStopSec=5

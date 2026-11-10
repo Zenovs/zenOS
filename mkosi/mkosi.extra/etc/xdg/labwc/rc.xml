@@ -1,18 +1,185 @@
-<?xml version="1.0"?>
+<?xml version="1.0" encoding="UTF-8"?>
 <!--
-  labwc in zenOS 1.0, Vorschau 1: Tastenkürzel, bis die Oberfläche von zenOS (Quickshell) dazukommt.
-  Die Belegung der Tastatur kommt aus environment (vom ersten Start).
+  zenOS 1.0: labwc für die Sitzung. /usr/lib/zenos/sitzung startet labwc mit -C $XDG_RUNTIME_DIR/zenos/labwc; dort
+  verweisen rc.xml, menu.xml, autostart und environment hierher (schreibgeschützt), themerc-override schreibt
+  /usr/lib/zenos/thema (Farben hell oder dunkel aus den Design-Tokens). Eine eigene Konfiguration unter ~/.config/labwc
+  gilt nicht: Sie könnte beim Start der Sitzung Befehle ausführen.
+  Werte aus shell/theme/tokens.json: Abstand 8 (fenster.rasterAbstand), Radius 12 (radius.fenster), Titel Geist Mono
+  12 px = 9 pt, Menü Geist 13 px = 10 pt, Fensterwechsler 16 px = 12 pt. Befehle startet labwc ohne Shell.
 -->
 <labwc_config>
+
   <core>
     <decoration>server</decoration>
+    <gap>8</gap>
   </core>
+
+  <placement>
+    <policy>cascade</policy>
+  </placement>
+
+  <focus>
+    <followMouse>no</followMouse>
+    <raiseOnFocus>no</raiseOnFocus>
+  </focus>
+
+  <!-- Grössere Griffzonen zum Ziehen der Fenstergrösse, wie in zenOS 0.1 -->
+  <resize>
+    <minimumArea>16</minimumArea>
+    <cornerRange>40</cornerRange>
+  </resize>
+
+  <!-- Natürliches Scrollen: Der Inhalt folgt den Fingern bzw. dem Rad, für Touchpad und Maus -->
+  <libinput>
+    <device category="default">
+      <naturalScroll>yes</naturalScroll>
+      <tap>yes</tap>
+    </device>
+  </libinput>
+
+  <theme>
+    <cornerRadius>12</cornerRadius>
+    <dropShadows>no</dropShadows>
+    <titlebar>
+      <layout>:close</layout>
+      <showTitle>yes</showTitle>
+    </titlebar>
+    <font place="ActiveWindow">
+      <name>Geist Mono</name>
+      <size>9</size>
+    </font>
+    <font place="InactiveWindow">
+      <name>Geist Mono</name>
+      <size>9</size>
+    </font>
+    <font place="MenuHeader">
+      <name>Geist</name>
+      <size>10</size>
+    </font>
+    <font place="MenuItem">
+      <name>Geist</name>
+      <size>10</size>
+    </font>
+    <font place="OnScreenDisplay">
+      <name>Geist</name>
+      <size>12</size>
+    </font>
+  </theme>
+
+  <!-- Fensterwechsler (Alt+Tab): Liste mit App-Symbol, App-Name und Fenstertitel -->
+  <windowSwitcher preview="yes" outlines="yes" allWorkspaces="no">
+    <osd show="yes" style="classic" output="focused" />
+    <fields>
+      <field content="icon" width="9%" />
+      <field content="desktop_entry_name" width="33%" />
+      <field content="custom" format="%t" width="58%" />
+    </fields>
+  </windowSwitcher>
+
+  <!-- Einrasten: Fenster an den Rand ziehen (oben = maximieren) oder beim Ziehen Super halten (4er-Raster) -->
+  <snapping>
+    <range inner="10" outer="10" />
+    <cornerRange>50</cornerRange>
+    <overlay enabled="yes">
+      <delay inner="500" outer="500" />
+    </overlay>
+    <topMaximize>yes</topMaximize>
+    <notifyClient>never</notifyClient>
+  </snapping>
+
+  <regions>
+    <region name="r1" x="0%" y="0%" width="50%" height="50%" />
+    <region name="r2" x="50%" y="0%" width="50%" height="50%" />
+    <region name="r3" x="0%" y="50%" width="50%" height="50%" />
+    <region name="r4" x="50%" y="50%" width="50%" height="50%" />
+  </regions>
+
+  <!-- Tastenkürzel wie in zenOS 0.1. Ohne allowWhenLocked wirkt keines während der Sperre (ausser den markierten). -->
   <keyboard>
-    <default />
-    <keybind key="W-Return"><action name="Execute" command="kitty" /></keybind>
-    <keybind key="W-b"><action name="Execute" command="chromium" /></keybind>
-    <keybind key="W-l"><action name="Execute" command="swaylock -f" /></keybind>
-    <keybind key="W-q"><action name="Close" /></keybind>
-    <keybind key="W-Up"><action name="ToggleMaximize" /></keybind>
+    <keybind key="W-space">
+      <action name="Execute" command="/usr/lib/zenos/ipc befehlsfeld umschalten" />
+    </keybind>
+    <keybind key="W-l">
+      <action name="Execute" command="/usr/lib/zenos/sperren" />
+    </keybind>
+    <keybind key="W-S-l">
+      <action name="Execute" command="/usr/lib/zenos/bildschirm aus" />
+    </keybind>
+    <keybind key="W-Tab">
+      <action name="Execute" command="/usr/lib/zenos/ipc uebersicht umschalten" />
+    </keybind>
+    <keybind key="W-h">
+      <action name="Execute" command="/usr/lib/zenos/ipc schreibtisch umschalten" />
+    </keybind>
+    <keybind key="W-1">
+      <action name="SnapToRegion" region="r1" />
+    </keybind>
+    <keybind key="W-2">
+      <action name="SnapToRegion" region="r2" />
+    </keybind>
+    <keybind key="W-3">
+      <action name="SnapToRegion" region="r3" />
+    </keybind>
+    <keybind key="W-4">
+      <action name="SnapToRegion" region="r4" />
+    </keybind>
+    <keybind key="W-Left">
+      <action name="SnapToEdge" direction="left" />
+    </keybind>
+    <keybind key="W-Right">
+      <action name="SnapToEdge" direction="right" />
+    </keybind>
+    <keybind key="W-Return">
+      <action name="ToggleMaximize" />
+    </keybind>
+    <keybind key="W-S-Left">
+      <action name="MoveToOutput" direction="left" wrap="yes" />
+    </keybind>
+    <keybind key="W-S-Right">
+      <action name="MoveToOutput" direction="right" wrap="yes" />
+    </keybind>
+    <keybind key="W-q">
+      <action name="Close" />
+    </keybind>
+    <keybind key="A-Tab">
+      <action name="NextWindow" />
+    </keybind>
+    <keybind key="A-S-Tab">
+      <action name="PreviousWindow" />
+    </keybind>
+    <keybind key="C-A-t">
+      <action name="Execute" command="/usr/lib/zenos/oeffnen --programm kitty -- kitty" />
+    </keybind>
+    <keybind key="W-b">
+      <action name="Execute" command="/usr/lib/zenos/oeffnen --programm chromium -- chromium" />
+    </keybind>
+
+    <!-- Lautstärke (PipeWire über wpctl), auch bei gesperrtem Bildschirm -->
+    <keybind key="XF86AudioRaiseVolume" allowWhenLocked="yes">
+      <action name="Execute" command="wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+" />
+    </keybind>
+    <keybind key="XF86AudioLowerVolume" allowWhenLocked="yes">
+      <action name="Execute" command="wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-" />
+    </keybind>
+    <keybind key="XF86AudioMute" allowWhenLocked="yes">
+      <action name="Execute" command="wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle" />
+    </keybind>
+    <keybind key="XF86AudioMicMute" allowWhenLocked="yes">
+      <action name="Execute" command="wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle" />
+    </keybind>
+    <!-- Die Ein/Aus-Taste bleibt ohne Belegung: logind sperrt bei einem kurzen Druck (HandlePowerKey=lock),
+         gedrückt halten schaltet aus. -->
   </keyboard>
+
+  <!-- Maus: die Vorgaben von labwc (Titelzeile ziehen, Ränder, Super+Ziehen, Doppelklick maximiert), dazu der
+       Rechtsklick auf den Schreibtisch mit dem Menü von zenOS (menu.xml) -->
+  <mouse>
+    <default />
+    <context name="Root">
+      <mousebind button="Right" action="Press">
+        <action name="ShowMenu" menu="root-menu" />
+      </mousebind>
+    </context>
+  </mouse>
+
 </labwc_config>

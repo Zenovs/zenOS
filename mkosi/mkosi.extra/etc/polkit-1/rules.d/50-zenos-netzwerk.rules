@@ -1,0 +1,17 @@
+// zenOS 1.0: WLAN einrichten ohne Admin. Wer an diesem Gerät angemeldet ist (lokale, aktive Sitzung), darf mit
+// NetworkManager Netze suchen, verbinden, trennen und gespeicherte Netze anlegen, ändern und löschen. In zenOS gibt
+// es keinen Admin (kein sudo); ohne diese Regel verlangte NetworkManager für ein neues Netz ein Admin-Passwort.
+// Nicht erlaubt bleiben alle übrigen Aktionen von NetworkManager (etwa Hotspot oder Systemeinstellungen).
+polkit.addRule(function (action, subject) {
+    var erlaubt = [
+        "org.freedesktop.NetworkManager.network-control",
+        "org.freedesktop.NetworkManager.wifi.scan",
+        "org.freedesktop.NetworkManager.enable-disable-wifi",
+        "org.freedesktop.NetworkManager.enable-disable-network",
+        "org.freedesktop.NetworkManager.settings.modify.own",
+        "org.freedesktop.NetworkManager.settings.modify.system"
+    ];
+    if (erlaubt.indexOf(action.id) >= 0 && subject.local && subject.active) {
+        return polkit.Result.YES;
+    }
+});

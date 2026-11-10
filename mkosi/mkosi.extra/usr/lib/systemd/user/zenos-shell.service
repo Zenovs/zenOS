@@ -1,0 +1,23 @@
+# zenOS-Oberfläche: Quickshell mit /usr/share/zenos/shell/shell.qml (Leiste, Apps, Sperre, WLAN).
+# Startet mit zenos-sitzung.target und neu, falls es abstürzt: ext-session-lock hält den Bildschirm so lange gesperrt,
+# und nach dem Neustart sperrt die Oberfläche wieder (Marker $XDG_RUNTIME_DIR/zenos/gesperrt).
+[Unit]
+Description=zenOS-Oberfläche (Quickshell)
+PartOf=zenos-sitzung.target graphical-session.target
+After=graphical-session.target
+Requisite=graphical-session.target
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+[Service]
+Type=simple
+Slice=session.slice
+ExecStart=/usr/bin/quickshell --no-color -p /usr/share/zenos/shell/shell.qml
+Environment=QT_QPA_PLATFORM=wayland QS_DISABLE_FILE_WATCHER=1
+# Qt meldet bei jeder Fläche mit Texteingabe «Try to enable surface … with focusing …»; harmlos.
+Environment=QT_LOGGING_RULES=qt.qpa.wayland.textinput.warning=false
+Restart=always
+RestartSec=1
+# 255: Wayland-Verbindung weg (labwc beendet die Clients beim Abmelden)
+SuccessExitStatus=255
+TimeoutStopSec=5

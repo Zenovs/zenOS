@@ -1,0 +1,27 @@
+#!/bin/bash
+# Sperrt die Sitzung. Aufgerufen von swayidle (nach 5 Minuten ohne Eingabe, vor dem Standby, auf Anforderung von
+# logind, etwa über die Ein/Aus-Taste) und von Super+L.
+#
+# Leitplanke: Die Sperre fällt nie aus.
+#   1. Marker $XDG_RUNTIME_DIR/zenos/gesperrt setzen. Startet die Oberfläche neu, sperrt sie damit sofort.
+#   2. Die Oberfläche bitten zu sperren (ext-session-lock, PAM) und bis 3 s warten, bis sie «gesperrt» meldet.
+#   3. Antwortet sie nicht: Notfall-Sperre mit swaylock (ebenfalls ext-session-lock und PAM).
+set -uo pipefail
+
+laufzeit=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+install -d -m 0700 "$laufzeit/zenos"
+[[ -e "$laufzeit/zenos/gesperrt" ]] || : >"$laufzeit/zenos/gesperrt"
+
+gesperrt() { [[ "$(/usr/lib/zenos/ipc sperre status 2>/dev/null)" == *gesperrt* ]]; }
+
+if pgrep -u "$(id -u)" -x swaylock >/dev/null; then
+	exit 0
+fi
+if /usr/lib/zenos/ipc sperre sperren >/dev/null 2>&1; then
+	for _ in 1 2 3 4 5 6; do
+		gesperrt && exit 0
+		sleep 0.5
+	done
+fi
+echo "sperren: Die Oberfläche antwortet nicht, Notfall-Sperre mit swaylock" >&2
+exec swaylock -f -c 000000

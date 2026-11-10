@@ -1,0 +1,7 @@
+# zenOS-Sitzung. Startet mit labwc (/etc/xdg/labwc/autostart) und endet mit ihm.
+[Unit]
+Description=zenOS-Sitzung
+BindsTo=graphical-session.target
+Wants=graphical-session-pre.target
+After=graphical-session-pre.target
+Wants=zenos-shell.service zenos-idle.service

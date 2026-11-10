@@ -1,3 +1,7 @@
-# Beim Start der Sitzung (labwc): automatische Sperre nach 5 Minuten ohne Eingabe und vor dem Standby.
-# Leitplanke: Die automatische Sperre lässt sich nicht abschalten. swaylock sperrt über ext-session-lock und PAM.
-swayidle -w timeout 300 'swaylock -f' before-sleep 'swaylock -f' >/dev/null 2>&1 &
+# zenOS: Start der Sitzung (labwc führt diese Datei mit sh aus). Gibt die Umgebung an den systemd-Benutzerdienst
+# weiter (die Oberfläche und die Sperre brauchen WAYLAND_DISPLAY) und startet zenos-sitzung.target: die Oberfläche
+# (zenos-shell.service) und die automatische Sperre (zenos-idle.service, Leitplanke, nicht abschaltbar).
+systemctl --user import-environment WAYLAND_DISPLAY LABWC_PID XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP \
+	XDG_SESSION_TYPE XDG_SESSION_ID QT_QPA_PLATFORM QT_WAYLAND_DISABLE_WINDOWDECORATION XCURSOR_THEME XCURSOR_SIZE \
+	XKB_DEFAULT_LAYOUT XKB_DEFAULT_VARIANT
+systemctl --user start --no-block zenos-sitzung.target

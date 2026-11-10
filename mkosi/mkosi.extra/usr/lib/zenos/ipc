@@ -1,0 +1,32 @@
+#!/bin/bash
+# Aufruf in die laufende Oberfläche von zenOS (Quickshell-IPC).
+#
+#   ipc <ziel> <funktion> [argument …]      z. B. ipc befehlsfeld umschalten · ipc sperre status
+#
+# Exit 0: ausgeführt (ein Rückgabewert steht auf stdout) · 1: abgelehnt (Ziel, Funktion oder Argumente falsch,
+# Oberfläche noch nicht bereit) · 2: keine Oberfläche läuft · 64: falscher Aufruf.
+# Quickshell 0.3.1 beendet «ipc call» auch bei Fehlern mit Exit 0 und schreibt die Meldung auf stdout; ausgewertet
+# wird deshalb die Ausgabe. Die Argumente gehen als Liste an Quickshell, nie durch eine Shell.
+set -uo pipefail
+
+if (($# < 2)) || [[ ! "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*$ || ! "$2" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+	echo "Aufruf: ipc <ziel> <funktion> [argument …] (Ziel und Funktion nur aus Buchstaben, Ziffern und _)" >&2
+	exit 64
+fi
+if [[ -z "${XDG_RUNTIME_DIR:-}" ]]; then
+	XDG_RUNTIME_DIR=/run/user/$(id -u)
+	export XDG_RUNTIME_DIR
+fi
+
+rc=0
+aus=$(LC_ALL=C.UTF-8 timeout 5 quickshell ipc --no-color -p /usr/share/zenos/shell/shell.qml --any-display \
+	call -- "$@" 2>&1) || rc=$?
+if ((rc == 255)) || [[ "$aus" == *"No running instances"* ]]; then
+	echo "ipc: keine laufende Oberfläche" >&2
+	exit 2
+fi
+if ((rc != 0)) || grep -qE '(Target|Function|Property) not found\.|arguments provided|Unable to parse argument|Not ready to accept|Socket Error|Received invalid IPC response' <<<"$aus"; then
+	printf '%s\n' "$aus" >&2
+	exit 1
+fi
+[[ -z "$aus" ]] || printf '%s\n' "$aus"

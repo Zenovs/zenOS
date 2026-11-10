@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Menü auf Rechtsklick in den leeren Hintergrund (Vorschau 1, bis die Leiste von zenOS dazukommt). -->
+<!-- zenOS 1.0: Menü auf Rechtsklick in den leeren Hintergrund. Der Rückweg, falls die Oberfläche einmal nicht läuft. -->
 <openbox_menu>
   <menu id="root-menu" label="zenOS">
-    <item label="Terminal"><action name="Execute" command="kitty" /></item>
-    <item label="Browser"><action name="Execute" command="chromium" /></item>
-    <item label="WLAN"><action name="Execute" command="kitty nmtui" /></item>
+    <item label="Terminal"><action name="Execute" command="/usr/lib/zenos/oeffnen --programm kitty -- kitty" /></item>
+    <item label="Browser"><action name="Execute" command="/usr/lib/zenos/oeffnen --programm chromium -- chromium" /></item>
+    <item label="WLAN im Terminal"><action name="Execute" command="/usr/lib/zenos/oeffnen --programm nmtui -- kitty nmtui" /></item>
     <separator />
-    <item label="Sperren"><action name="Execute" command="swaylock -f" /></item>
-    <item label="Abmelden"><action name="Exit" /></item>
+    <item label="Sperren"><action name="Execute" command="/usr/lib/zenos/sperren" /></item>
+    <item label="Abmelden"><action name="Execute" command="/usr/lib/zenos/abmelden" /></item>
     <item label="Neu starten"><action name="Execute" command="systemctl reboot" /></item>
     <item label="Ausschalten"><action name="Execute" command="systemctl poweroff" /></item>
   </menu>

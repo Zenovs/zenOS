@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+# bildschirm – alle Bildschirme aus- und einschalten (wlr-output-power-management über wlopm). zenOS 1.0,
+# übernommen aus zenOS 0.1 (scripts/bin/zenos-bildschirm).
+#
+#   bildschirm aus      sperrt zuerst (/usr/lib/zenos/sperren) und schaltet erst dann aus, wenn die Sperre bestätigt
+#                       ist. Schlägt die Sperre fehl, bleibt der Bildschirm an.
+#   bildschirm an       schaltet alle Bildschirme ein (die Sperre bleibt, wie sie ist)
+#   bildschirm status   «an», «aus», «teils» (nur einige aus) oder «keiner» (kein Bildschirm aktiv: Deckel
+#                             zu, kein Monitor oder alle Ausgänge abgeschaltet; wlopm meldet dann keinen Ausgang)
+#
+# Leitplanke (Code): Dunkel heisst gesperrt. Es gibt keinen Weg, den Bildschirm ohne Sperre auszuschalten.
+# Aufgerufen von der Oberfläche (Sperre, Energie) und von Super+Shift+L, immer mit Argumentlisten. wlopm schaltet nur die Ausgabe ab: Der Ausgang bleibt im Layout, Fenster und Sperrflächen
+# bleiben (anders als wlr-randr --off). Vor dem Abschalten fragt «aus» die Sperre der Oberfläche
+# («ipc sperre bildschirm aus»): Sie verwirft dann die Taste, die den Bildschirm weckt, und weckt ihn bei
+# jeder Eingabe. Antwortet sie nicht «aus» (sie sieht sich nicht gesperrt), bleibt der Bildschirm an. Nur ohne
+# erreichbare Oberfläche (Notfall-Sperre) geht er ohne diese Quittung aus, mit Eintrag im Journal; geweckt wird
+# dann über swayidle (resume) oder die Ein/Aus-Taste. «an» ist erledigt, sobald alle Bildschirme an sind (auch
+# wenn ein zweiter Aufruf gleichzeitig einschaltet).
+# Exit 0 erledigt · 1 fehlgeschlagen (Grund auf stderr und im Journal, logger -t zenos-bildschirm) ·
+# 2 falscher Aufruf · 3 keine grafische Sitzung
+
+set -uo pipefail
+
+selbst=$(readlink -f -- "${BASH_SOURCE[0]}")
+sperren=/usr/lib/zenos/sperren
+ipc=/usr/lib/zenos/ipc
+
+meldung() { printf 'bildschirm: %s\n' "$*" >&2; }
+journal() {
+  meldung "$*"
+  logger -t zenos-bildschirm -- "$*" 2>/dev/null || true
+}
+
+# Sitzungsumgebung: aus der Umgebung, sonst aus der systemd-Benutzerinstanz (per SSH) oder der erste
+# Wayland-Socket im Laufzeitordner
+anzeige_setzen() {
+  local name pfad
+  local -a kandidaten=()
+  export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$EUID}
+  # Der übliche Fall (swayidle, Oberfläche): WAYLAND_DISPLAY stimmt, ohne Umweg über systemd
+  if [[ -n "${WAYLAND_DISPLAY:-}" ]] && _anzeige_pruefen "$WAYLAND_DISPLAY"; then return 0; fi
+  name=$(systemctl --user show-environment 2>/dev/null | sed -n 's/^WAYLAND_DISPLAY=//p' | head -n 1) || name=""
+  [[ -z "$name" ]] || kandidaten+=("$name")
+  for pfad in "$XDG_RUNTIME_DIR"/wayland-[0-9]*; do
+    [[ "$pfad" == *.lock ]] || kandidaten+=("${pfad##*/}")
+  done
+  for name in "${kandidaten[@]}"; do
+    if _anzeige_pruefen "$name"; then return 0; fi
+  done
+  return 1
+}
+
+_anzeige_pruefen() { # NAME: 0 und WAYLAND_DISPLAY gesetzt, wenn der Socket da ist
+  local pfad=$1
+  [[ "$pfad" == /* ]] || pfad=$XDG_RUNTIME_DIR/$1
+  [[ -S "$pfad" ]] || return 1
+  export WAYLAND_DISPLAY=$1
+}
+
+# Meldung an die Oberfläche (Sperre), höchstens 2 s. Setzt antwort (die letzte Zeile, davor kann Quickshell
+# Hinweise ausgeben) und gibt den Exit von ipc zurück: 0 erreichbar, sonst nicht (2 keine Oberfläche, 1 Ziel
+# fehlt oder nicht bereit, 124 keine Antwort in 2 s, 127 ipc fehlt).
+oberflaeche_melden() { # aus|an
+  local ausgabe rc=0
+  antwort=""
+  [[ -x "$ipc" ]] || return 127
+  ausgabe=$(timeout 2 "$ipc" sperre bildschirm "$1" 2>/dev/null) || rc=$?
+  antwort=${ausgabe##*$'\n'}
+  return "$rc"
+}
+
+# wlopm --json --on|--off '*': 0 nur ohne gemeldete Fehler (wlopm endet auch bei Fehlern mit 0). Sonst steht der
+# Grund in schaltfehler (der Aufrufer entscheidet, ob er ins Journal gehört).
+schalten() { # --on|--off
+  local ausgabe
+  schaltfehler=""
+  if ! ausgabe=$(timeout 5 wlopm --json "$1" '*' 2>&1); then
+    schaltfehler="wlopm $1 fehlgeschlagen: ${ausgabe:-ohne Ausgabe}"
+    return 1
+  fi
+  if ! python3 -c '
+import json, sys
+try:
+    daten = json.loads(sys.argv[1])
+except ValueError:
+    sys.exit(1)
+sys.exit(0 if isinstance(daten, dict) and daten.get("errors") == [] else 1)
+' "$ausgabe"; then
+    schaltfehler="wlopm $1 meldet: ${ausgabe//$'\n'/ }"
+    return 1
+  fi
+}
+
+# «an», «aus», «teils» oder «keiner» aus «wlopm --json». Ein abgeschalteter oder weggefallener Ausgang (Deckel zu,
+# Monitor abgesteckt, kanshi-Profil mit disable) fehlt in der Liste ganz: Eine leere Liste ist «keiner», kein Fehler.
+status() {
+  local ausgabe
+  ausgabe=$(timeout 5 wlopm --json 2>/dev/null) || return 1
+  python3 -c '
+import json, sys
+try:
+    daten = json.loads(sys.argv[1])
+except ValueError:
+    sys.exit(1)
+if not isinstance(daten, list):
+    sys.exit(1)
+if not daten:
+    print("keiner")
+    sys.exit(0)
+modi = {e.get("power-mode") for e in daten if isinstance(e, dict)}
+if not modi or not modi <= {"on", "off"}:
+    sys.exit(1)
+print("aus" if modi == {"off"} else "an" if modi == {"on"} else "teils")
+' "$ausgabe"
+}
+
+befehl_aus() {
+  local rc=0
+  # Erst sperren. sperren kehrt erst zurück, wenn die Sperre steht (Oberfläche oder Notfall-Sperre mit swaylock).
+  "$sperren" >/dev/null 2>&1 || rc=$?
+  if (( rc != 0 )); then
+    journal "Sperren fehlgeschlagen (sperren, Exit $rc): der Bildschirm bleibt an"
+    return 1
+  fi
+  if ! command -v wlopm >/dev/null 2>&1; then
+    journal "wlopm fehlt (Paket wlopm): gesperrt, der Bildschirm bleibt an"
+    return 1
+  fi
+  # Letzte Prüfung vor dem Abschalten: Die Sperre der Oberfläche muss «aus» quittieren. Antwortet sie anders, ist
+  # sie nicht gesperrt (z. B. eben entsperrt): Dann bleibt der Bildschirm an.
+  rc=0
+  oberflaeche_melden aus || rc=$?
+  if (( rc == 0 )) && [[ "$antwort" != aus ]]; then
+    journal "Die Sperre meldet «${antwort:-keine Antwort}» statt «aus» (nicht gesperrt?): der Bildschirm bleibt an"
+    return 1
+  fi
+  if (( rc != 0 )); then
+    journal "Oberfläche nicht erreichbar (ipc, Exit $rc): schalte ohne Quittung der Sperre ab (Notfall-Sperre?)"
+  fi
+  if ! schalten --off; then
+    journal "$schaltfehler"
+    oberflaeche_melden an || true
+    return 1
+  fi
+}
+
+befehl_an() {
+  if ! command -v wlopm >/dev/null 2>&1; then
+    journal "wlopm fehlt (Paket wlopm)"
+    return 1
+  fi
+  # Schon an (z. B. nach dem Entsperren): nicht schalten, nur der Sperre melden
+  if [[ "$(status 2>/dev/null)" != an ]] && ! schalten --on; then
+    # Ein zweiter Aufruf kann gleichzeitig eingeschaltet haben (swayidle resume und die Sperre): dann erledigt
+    if [[ "$(status 2>/dev/null)" != an ]]; then
+      journal "$schaltfehler"
+      return 1
+    fi
+  fi
+  oberflaeche_melden an || true
+}
+
+befehl_status() {
+  command -v wlopm >/dev/null 2>&1 || { meldung "wlopm fehlt (Paket wlopm)"; return 1; }
+  status || { meldung "wlopm antwortet nicht (keine Sitzung oder kein Bildschirm)"; return 1; }
+}
+
+if (( $# != 1 )); then
+  meldung "Aufruf: bildschirm aus|an|status"
+  exit 2
+fi
+case "$1" in
+  aus | an | status) ;;
+  -h | --hilfe | --help) sed -n '2,19p' "$selbst" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  *) meldung "unbekannter Befehl «$1» (erlaubt: aus, an, status)"; exit 2 ;;
+esac
+if (( EUID == 0 )); then
+  meldung "läuft als normaler Benutzer in der Sitzung, nicht als root"
+  exit 2
+fi
+if ! anzeige_setzen; then
+  meldung "keine grafische Sitzung gefunden"
+  exit 3
+fi
+"befehl_$1"

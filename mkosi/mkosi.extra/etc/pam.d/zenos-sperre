@@ -1,0 +1,5 @@
+# PAM-Dienst des Sperrbildschirms von zenOS (/usr/share/zenos/shell/sperre/Sperre.qml, Quickshell PamContext).
+# Anmeldung wie beim Login: common-auth enthält pam_systemd_home für die Konten von systemd-homed. zenOS fasst das
+# Passwort nie selbst an (Leitplanke); Quickshell reicht es nur an PAM weiter und ruft nur «auth» auf.
+auth     include  common-auth
+account  include  common-account

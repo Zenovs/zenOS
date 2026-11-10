@@ -1,0 +1,22 @@
+#!/bin/bash
+# Beendet die Sitzung sauber: zuerst Oberfläche und automatische Sperre (zenos-sitzung.target), dann labwc. Danach
+# erscheint wieder der Login.
+#
+#   abmelden            (die Oberfläche ruft es über Aktionen.abmelden auf)
+#   abmelden --direkt   ohne eigene Einheit (intern)
+#
+# Aus der Oberfläche gestartet, gehörte es zu zenos-shell.service und endete beim Stoppen mit; es startet sich deshalb
+# als eigene, kurzlebige Einheit der systemd-Benutzerinstanz.
+set -uo pipefail
+
+if [[ "${1:-}" != --direkt ]]; then
+	exec systemd-run --user --quiet --collect --unit="zenos-abmelden-${EPOCHSECONDS}" \
+		--setenv=LABWC_PID="${LABWC_PID:-}" /usr/lib/zenos/abmelden --direkt
+fi
+
+systemctl --user stop zenos-sitzung.target graphical-session.target
+if [[ "${LABWC_PID:-}" =~ ^[1-9][0-9]*$ ]]; then
+	labwc --exit
+else
+	pkill -TERM -x -u "$(id -u)" labwc
+fi

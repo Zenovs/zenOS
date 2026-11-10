@@ -1,0 +1,91 @@
+#!/bin/bash
+# Startet ein Programm oder öffnet einen Pfad, beides in einer eigenen Einheit der systemd-Benutzerinstanz, und meldet
+# über den Exit-Code, ob das geklappt hat. Die Oberfläche ruft es über Aktionen auf (Apps starten, Dateien öffnen).
+#
+#   oeffnen --programm NAME -- BEFEHL [ARGUMENT …]
+#   oeffnen [--] PFAD|URL
+#
+# Die App läuft in app-zenos-<name>-<zeit>.scope (app.slice) mit eigener Sitzung (setsid): Sie läuft weiter, wenn die
+# Oberfläche neu startet. Ihre Ein- und Ausgaben gehen ins Leere. Argumente gehen als Liste weiter, nie durch eine Shell.
+#
+# zenOS 1.0 hat keinen Dateimanager und keine Betrachter: Ordner öffnen sich in kitty, Adressen und Dateien, die ein
+# Browser zeigen kann (PDF, Bilder, Text, HTML), in Chromium. Für alles andere gibt es keine App.
+#
+# Exit 0 gestartet · 1 fehlgeschlagen · 2 nicht gefunden · 3 keine App für die Datei oder Adresse · 64 falscher Aufruf ·
+# 127 Programm nicht gefunden
+set -uo pipefail
+
+meldung() { printf 'oeffnen: %s\n' "$*" >&2; }
+
+einheit() {
+	local name=${1//[^A-Za-z0-9_-]/_}
+	name=${name:0:64}
+	printf 'app-zenos-%s-%s' "${name:-app}" "${EPOCHREALTIME//[.,]/}"
+}
+
+# in_einheit NAME BEFEHL [ARGUMENT …]: mit eigener Einheit, sonst ohne. setsid --fork kehrt gleich zurück.
+in_einheit() {
+	local name=$1
+	shift
+	if [[ -n "${XDG_RUNTIME_DIR:-}" && -S "$XDG_RUNTIME_DIR/systemd/private" ]]; then
+		systemd-run --user --scope --quiet --collect --slice=app.slice --unit="$(einheit "$name")" \
+			-- setsid --fork -- "$@" </dev/null >/dev/null 2>&1 && return 0
+		meldung "keine eigene Einheit möglich (systemd-run), starte ohne"
+	fi
+	setsid --fork -- "$@" </dev/null >/dev/null 2>&1
+}
+
+if [[ "${1:-}" == --programm ]]; then
+	(($# >= 4)) && [[ "$3" == -- ]] || {
+		meldung "Aufruf: oeffnen --programm NAME -- BEFEHL [ARGUMENT …]"
+		exit 64
+	}
+	name=$2
+	shift 3
+	# Bei «env NAME=WERT … PROGRAMM» zählt das Programm hinter den Zuweisungen.
+	programm=$1
+	if [[ "$programm" == env || "$programm" == /usr/bin/env ]]; then
+		for arg in "${@:2}"; do
+			[[ "$arg" == *=* ]] && continue
+			programm=$arg
+			break
+		done
+	fi
+	command -v -- "$programm" >/dev/null || {
+		meldung "Programm nicht gefunden: $programm"
+		exit 127
+	}
+	in_einheit "$name" "$@" || exit 1
+	exit 0
+fi
+
+[[ "${1:-}" == -- ]] && shift
+(($# == 1)) && [[ -n "$1" ]] || {
+	meldung "Aufruf: oeffnen [--] PFAD|URL"
+	exit 64
+}
+ziel=$1
+
+case "$ziel" in
+https://* | http://*)
+	in_einheit chromium chromium -- "$ziel" || exit 1
+	exit 0
+	;;
+*:*)
+	[[ "$ziel" == /* ]] || exit 3
+	;;
+esac
+
+[[ -e "$ziel" ]] || exit 2
+if [[ -d "$ziel" ]]; then
+	in_einheit kitty kitty --directory "$ziel" || exit 1
+	exit 0
+fi
+case "${ziel,,}" in
+*.pdf | *.png | *.jpg | *.jpeg | *.gif | *.webp | *.svg | *.txt | *.html | *.htm)
+	in_einheit chromium chromium -- "$ziel" || exit 1
+	;;
+*)
+	exit 3
+	;;
+esac

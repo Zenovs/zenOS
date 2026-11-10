@@ -1,0 +1,39 @@
+#!/bin/bash
+# Sitzung von zenOS: greetd startet dieses Skript nach der Anmeldung (Login: greeter/Ablauf.qml).
+#
+# Setzt die Umgebung, räumt Reste einer abgebrochenen Sitzung weg und startet labwc. Seine Konfiguration liest labwc
+# aus dem Laufzeitordner der Sitzung: rc.xml, menu.xml, autostart und environment verweisen auf das System
+# (/etc/xdg/labwc, schreibgeschützt), themerc-override schreibt /usr/lib/zenos/thema (hell oder dunkel). labwc startet
+# über autostart zenos-sitzung.target mit der Oberfläche (zenos-shell.service) und der automatischen Sperre
+# (zenos-idle.service). Nichts davon darf die Anmeldung aufhalten: Fehler landen im Journal, labwc startet trotzdem.
+set -uo pipefail
+
+export XDG_SESSION_TYPE=wayland XDG_SESSION_DESKTOP=zenos XDG_CURRENT_DESKTOP=labwc:wlroots
+export QT_QPA_PLATFORM=wayland QT_WAYLAND_DISABLE_WINDOWDECORATION=1
+export XCURSOR_THEME=Adwaita XCURSOR_SIZE=24
+if [[ -z "${XDG_RUNTIME_DIR:-}" ]]; then
+	XDG_RUNTIME_DIR=/run/user/$(id -u)
+	export XDG_RUNTIME_DIR
+fi
+
+# Läuft noch eine Sitzung von vorher (labwc abgestürzt), werden ihre Dienste beendet.
+if systemctl --user --quiet is-active zenos-sitzung.target 2>/dev/null; then
+	systemctl --user stop zenos-sitzung.target graphical-session.target 2>/dev/null || true
+fi
+systemctl --user reset-failed zenos-shell.service zenos-idle.service 2>/dev/null || true
+
+# Wer sich gerade angemeldet hat, ist nicht gesperrt.
+rm -f -- "$XDG_RUNTIME_DIR/zenos/gesperrt"
+
+# Konfiguration von labwc im Laufzeitordner (flüchtig, nur für diesen Benutzer). -C: keine eigene Konfiguration
+# unter ~/.config/labwc (sie könnte Befehle beim Start der Sitzung ausführen).
+labwc_ordner=$XDG_RUNTIME_DIR/zenos/labwc
+install -d -m 0700 "$XDG_RUNTIME_DIR/zenos" "$labwc_ordner"
+for datei in rc.xml menu.xml autostart environment; do
+	ln -sfn "/etc/xdg/labwc/$datei" "$labwc_ordner/$datei"
+done
+# Erscheinungsbild aus den Einstellungen (Standard hell) auf labwc, kitty und GTK, bevor das erste Fenster erscheint
+/usr/lib/zenos/thema anwenden || echo "sitzung: Erscheinungsbild nicht übertragen" >&2
+
+# Ausgaben von labwc und den Apps ins Journal (journalctl -t labwc).
+exec systemd-cat --identifier=labwc -- labwc -C "$labwc_ordner"

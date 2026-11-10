@@ -1,0 +1,44 @@
+#!/bin/bash
+# Login von zenOS: greetd startet dieses Skript als Benutzer _greetd (/etc/greetd/config.toml).
+#
+#   greeter                 labwc mit /usr/share/zenos/greeter/labwc, darin die Oberfläche
+#   greeter --oberflaeche   (von labwc gestartet) Quickshell mit /usr/share/zenos/shell/greeter.qml
+#
+# labwc läuft mit -S: Endet Quickshell nach der Anmeldung, endet auch labwc, und greetd startet die Sitzung, die der
+# Login übergeben hat (/usr/lib/zenos/sitzung). Lädt greeter.qml nicht, übernimmt der Notfall-Login ohne qs.*-Module
+# (greeter/notfall/notfall.qml), damit der Bildschirm nie leer bleibt. Kein Autologin.
+set -euo pipefail
+
+shell=/usr/share/zenos/shell
+
+meldung() { printf 'zenos-greeter: %s\n' "$*" >&2; }
+
+if [[ "${1:-}" == --oberflaeche ]]; then
+	# Kein Live-Neuladen: Das System ändert sich im Betrieb ohnehin nicht.
+	export QS_DISABLE_FILE_WATCHER=1
+	start=$SECONDS
+	rc=0
+	quickshell --no-color -p "$shell/greeter.qml" || rc=$?
+	if ((rc != 0 && SECONDS - start < 30)); then
+		meldung "greeter.qml lädt nicht (Exit $rc), starte den Notfall-Login"
+		exec quickshell --no-color -p "$shell/greeter/notfall/notfall.qml"
+	fi
+	exit "$rc"
+fi
+
+# Caches und Zustände von Quickshell gehören in den Laufzeitordner von _greetd (flüchtig), nicht auf die Platte.
+[[ -n "${XDG_RUNTIME_DIR:-}" && -d "$XDG_RUNTIME_DIR" && -w "$XDG_RUNTIME_DIR" ]] || {
+	meldung "XDG_RUNTIME_DIR fehlt"
+	exit 1
+}
+basis=$XDG_RUNTIME_DIR/zenos-greeter
+for ordner in cache state data config; do
+	mkdir -p -m 0700 "$basis/$ordner"
+done
+export XDG_CACHE_HOME=$basis/cache XDG_STATE_HOME=$basis/state XDG_DATA_HOME=$basis/data XDG_CONFIG_HOME=$basis/config
+export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=labwc:wlroots QT_QPA_PLATFORM=wayland
+export XCURSOR_THEME=Adwaita XCURSOR_SIZE=24
+unset QT_QPA_PLATFORMTHEME DISPLAY
+
+# Ausgaben von labwc und Quickshell ins Journal (journalctl -t zenos-greeter).
+exec systemd-cat --identifier=zenos-greeter -- labwc -C /usr/share/zenos/greeter/labwc -S "/usr/lib/zenos/greeter --oberflaeche"

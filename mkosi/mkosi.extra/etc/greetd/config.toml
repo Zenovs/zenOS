@@ -1,8 +1,8 @@
-# Login von zenOS 1.0. Vorschau 1 nimmt den Text-Login von greetd; der Login im Look von zenOS kommt mit Quickshell.
+# Login von zenOS 1.0: labwc mit der Oberfläche greeter.qml (Quickshell), gestartet von /usr/lib/zenos/greeter.
+# Kein Autologin: es gibt keinen Abschnitt [initial_session].
 [terminal]
 vt = 1
 
 [default_session]
-# Debian legt agreety nach /usr/sbin, das nicht im Suchpfad des Benutzers _greetd liegt.
-command = "/usr/sbin/agreety --cmd labwc"
+command = "/usr/lib/zenos/greeter"
 user = "_greetd"

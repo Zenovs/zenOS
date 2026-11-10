@@ -1,0 +1,1 @@
+/usr/share/zenos/fish/zenos.fish
