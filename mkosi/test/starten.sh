@@ -12,7 +12,10 @@ image="$mkosi/ausgabe/qemu/zenos_$(cat "$mkosi/mkosi.version").raw"
 [[ -f "$image" ]] || { echo "Kein Image unter $image. Zuerst: mkosi/bauen.sh qemu" >&2; exit 1; }
 
 docker --context "$kontext" build -q -t zenos-bau:1 "$mkosi/umgebung" >/dev/null
+mkdir -p "$mkosi/ausgabe/test"
 exec docker --context "$kontext" run --rm -i \
 	-v "$mkosi:/zenos/mkosi:ro" \
+	-v "$mkosi/ausgabe/test:/ausgabe-test" \
+	-e ZENOS_TEST_BILDER=/ausgabe-test \
 	zenos-bau:1 \
 	python3 /zenos/mkosi/test/erster-start.py "/zenos/mkosi/ausgabe/qemu/$(basename "$image")"
