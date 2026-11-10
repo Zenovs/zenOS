@@ -30,6 +30,8 @@ auswahl_ort=$laufzeit/auswahl
 reboot_param=$wurzel/run/systemd/reboot-param
 partlabel=$wurzel/dev/disk/by-partlabel
 os_release=$wurzel/usr/lib/os-release
+# Debian legt systemd-sysupdate ausserhalb des Suchpfads ab
+sysupdate=/usr/lib/systemd/systemd-sysupdate
 
 melden() {
 	printf '%s\n' "$*" >>"$protokoll"
@@ -172,7 +174,7 @@ installieren() {
 
 	melden "zenOS $jetzt: suche nach einem neuen Stand …"
 	fehler=$(mktemp)
-	neu=$(systemd-sysupdate check-new 2>"$fehler") || rc=$?
+	neu=$("$sysupdate" check-new 2>"$fehler") || rc=$?
 	if ((rc != 0)); then
 		if [[ -s "$fehler" ]]; then
 			melden "Suche fehlgeschlagen: $(tail -n 3 "$fehler" | tr '\n' ' ')"
@@ -198,7 +200,7 @@ installieren() {
 	melden "Neuer Stand $neu: wird geladen, die Signatur und alle Prüfsummen werden geprüft …"
 	# Während des Schreibens kein Ausschalten und kein Neustart über logind (Block-Inhibitor)
 	if ! systemd-inhibit --what=shutdown:sleep:handle-power-key --mode=block --who=zenOS \
-		"--why=Update wird geschrieben" systemd-sysupdate --reboot=no update "$neu" >>"$protokoll" 2>&1; then
+		"--why=Update wird geschrieben" "$sysupdate" --reboot=no update "$neu" >>"$protokoll" 2>&1; then
 		hinweis "Update auf $neu fehlgeschlagen (Signatur, Prüfsumme oder Verbindung). Nichts wurde verändert, was startet; zenOS $jetzt bleibt."
 		return 1
 	fi

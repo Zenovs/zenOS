@@ -245,7 +245,8 @@ def pruefe_oberflaeche(vm: pexpect.spawn) -> None:
     befehl(vm, "systemctl --user stop test-kitty.service")
 
     # Befehlsfeld mit den Apps
-    befehl(vm, "/usr/lib/zenos/ipc befehlsfeld apps")
+    apps = befehl(vm, "/usr/lib/zenos/ipc befehlsfeld apps 2>&1").strip()
+    pruefe(apps == "", f"das Befehlsfeld öffnet die Apps ({apps or 'ok'})")
     time.sleep(30)
     foto(vm, "03-apps")
     befehl(vm, "/usr/lib/zenos/ipc befehlsfeld schliessen")
@@ -274,7 +275,9 @@ def pruefe_oberflaeche(vm: pexpect.spawn) -> None:
     time.sleep(20)
     foto(vm, "07-entsperrt")
 
-    protokoll = befehl(vm, f"quickshell log -p {QS} 2>&1 | grep -E 'ERROR|WARN|error|Error' | tail -n 40")
+    # Was die Oberfläche (zenos-shell.service) ins Journal schreibt; das Prüfkonto liest es (systemd-journal)
+    protokoll = befehl(vm, "journalctl -b --no-pager -o cat _SYSTEMD_USER_UNIT=zenos-shell.service "
+                           "| grep -viE 'inotify_add_watch|EGL|dri2' | grep -iE 'error|warn|fail|not' | tail -n 40")
     print("  Meldungen der Oberfläche (Auszug):\n" + "\n".join("    " + z for z in protokoll.splitlines()), flush=True)
 
 

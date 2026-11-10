@@ -211,8 +211,9 @@ Item {
             zeilenhoehe: 1.6
         }
 
-        // Moduszeile mit Akzentpunkt
+        // Moduszeile mit Akzentpunkt. zenOS 1.0 hat noch keine Modi: verborgen.
         Row {
+            visible: false
             spacing: 8
 
             Rectangle {
@@ -282,15 +283,7 @@ Item {
             was: "Befehlsfeld"
         }
 
-        Kuerzel {
-            tasten: ["Super", "M"]
-            was: "Modus"
-        }
-
-        Kuerzel {
-            tasten: ["Super", "Z"]
-            was: "Zustand"
-        }
+        // Modus (Super+M) und Zustand (Super+Z) kommen erst mit einem späteren Stand von zenOS 1.0
     }
 
     // Solange der Schreibtisch frei ist (Super+H): der Weg zurück, rechts neben den übrigen Kürzeln. Er blendet nur
