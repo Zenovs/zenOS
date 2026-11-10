@@ -1,59 +1,82 @@
 # zenOS 1.0: Bau des Images
 
 Hier entsteht zenOS 1.0 als unveränderliches Image aus Debian 13 «trixie» (Konzept: `docs/neubau.md`). Stand:
-**Vorschau 1** – startet, ist sicher gebaut, hat aber noch keine Updates. Nicht für Banking und Krypto, bis Vorschau 2
-signierte Updates bringt.
+**Vorschau für die SSD des Argon ONE UP**, mit der Oberfläche von zenOS und Updates über `zen update`. Signierter Start
+und eigener Kernel kommen mit 1.0.
 
 ## Was hier liegt
 
 | Pfad | Inhalt |
 |---|---|
 | `mkosi.conf` | gemeinsame Einstellungen, Paketliste mit Gründen, Härtung der Kernel-Befehlszeile |
-| `mkosi.sandbox/` | Paketquellen: ein fester Stand von snapshot.debian.org (auch die Sicherheitsupdates) |
-| `mkosi.profiles/argon/` | Argon ONE UP (CM5) und Pi 5: Kernel und Firmware von Raspberry Pi, Bootpartition |
-| `mkosi.profiles/qemu/` | virtuelle Maschine für die Tests: Kernel von Debian, Start über UEFI mit UKI |
-| `repart/gemeinsam/` | Partitionen: System (erofs, dm-verity), Prüfsummen, leere B-Hälfte für Updates |
-| `mkosi.extra/` | Dateien im System: Firewall, Zeit über NTS, Netz, Härtung, Chromium-Richtlinien, erster Start |
-| `mkosi.postinst` | löscht Dateien von Paketen, die nur als Abhängigkeit kommen (Xwayland, man-db, initramfs-tools …) |
-| `mkosi.finalize` | /var vorbereiten, setuid prüfen, Verbotenes prüfen; bricht den Bau bei einem Fund ab |
-| `mkosi.postoutput` | schreibt Kernel, initrd, Gerätebäume, `config.txt` und `cmdline.txt` auf die Bootpartition (argon) |
+| `mkosi.sandbox/` | Paketquellen: ein fester Stand von snapshot.debian.org (Backports nur für den Bau von Quickshell) |
+| `mkosi.profiles/argon/` | Argon ONE UP (CM5) und Pi 5: Kernel und Firmware von Raspberry Pi, Startpartitionen, Updates |
+| `mkosi.profiles/qemu/` | virtuelle Maschine für die Tests: Kernel von Debian, Start über UEFI mit UKI, Updates vom Testserver |
+| `repart/gemeinsam/` | System A (erofs, dm-verity) und seine Prüfsummen |
+| `mkosi.build.d/` | Quickshell 0.3.1 aus dem Quellcode; Oberfläche (`shell/`) und Schriften ins Image |
+| `mkosi.extra/` | Dateien im System: Login, Sitzung, Sperre, `zen`, Updates, Firewall, Zeit, Netz, Härtung, Chromium |
+| `mkosi.postinst` | löscht Dateien von Paketen, die nur als Abhängigkeit kommen; nichts aus den Backports |
+| `mkosi.finalize` | /var vorbereiten; setuid, Verbotenes, Quickshell und Signaturprüfung prüfen; Schlüssel ins Image |
+| `mkosi.postoutput` | schreibt autoboot.txt (Partition 1) und Kernel, initrd, Gerätebäume, `config.txt`, `cmdline.txt` (Startpartition A) |
+| `schluessel/` | Zenos öffentlicher Schlüssel für Updates (`zenos-updates.asc`); ohne ihn baut das Image für den Argon nicht |
 | `start/config.txt` | Start auf dem CM5 und dem Pi 5 |
-| `umgebung/` | Bauumgebung: Debian-Container mit mkosi und QEMU |
-| `test/` | Angriffs- und Starttests in QEMU |
+| `umgebung/` | Bauumgebung: Debian-Container mit mkosi und QEMU; `bauen-innen.sh` holt und prüft die Quelle von Quickshell |
+| `veroeffentlichen.sh` | macht aus einem gebauten Image die Dateien für ein Update und `SHA256SUMS` zum Signieren |
+| `test/` | Angriffs- und Starttests in QEMU mit Oberfläche und Update, Einheitentest des Updates |
+
+## Aufteilung der SSD
+
+| Nr. | Bezeichnung | Inhalt |
+|---|---|---|
+| 1 | `zenos-start` | 64 MB FAT: `autoboot.txt` (welche Startpartition startet) und die Tastaturbelegung |
+| 2 | `zenos-start_<version>` | 256 MB FAT: Startpartition A (Kernel, initrd, Gerätebäume, `config.txt`, `cmdline.txt`) |
+| 3 | `_empty` | 256 MB FAT: Startpartition B, frei für das nächste Update |
+| 4 | `zenos_<version>_verity` | 128 MB: Prüfsummen (dm-verity) von System A |
+| 5 | `zenos_<version>` | System A (erofs), beim ersten Start auf 6 GB vergrössert |
+| 6, 7 | `_empty` | System und Prüfsummen B, beim ersten Start angelegt |
+| 8 | `zenos-daten` | `/var` und `/home`, LUKS2, beim ersten Start angelegt, der ganze Rest der SSD |
+
+Der Bootloader liest `autoboot.txt`: Startpartition 2 startet; nach einem Update startet 3 einmal zur Probe
+(`tryboot`). Läuft der neue Stand, tauscht `/usr/lib/zenos/update` die beiden Ziffern; sonst startet beim nächsten
+Einschalten wieder der alte Stand.
 
 ## Bauen
 
-Auf dem Mac, mit Docker über Colima. Die Bauumgebung läuft in einer eigenen Colima-VM «zenos», damit andere Projekte
-nicht gestört werden (einmalig: `colima start zenos --cpu 6 --memory 6 --disk 80 --vm-type vz`, danach den Kontext
-mit `docker context use colima` zurückstellen).
+Auf dem Mac, mit Docker über Colima, in einer eigenen Colima-VM «zenos» (einmalig:
+`colima start zenos --cpu 6 --memory 6 --disk 80 --vm-type vz`, danach `docker context use colima`).
 
 ```
 mkosi/bauen.sh argon     # Image für das Argon ONE UP → mkosi/ausgabe/argon/zenos_<version>.raw
 mkosi/bauen.sh qemu      # Image für die Tests        → mkosi/ausgabe/qemu/zenos_<version>.raw
-mkosi/test/starten.sh    # erster und zweiter Start in QEMU mit Prüfungen
+mkosi/test/starten.sh    # erster und zweiter Start in QEMU mit Oberfläche und Prüfungen
+mkosi/test/update-einheiten.sh
 ```
 
-## Auf einen USB-Stick schreiben (Zeno, auf dem Mac)
+Update-Test: einen zweiten Stand bauen und vorbereiten, dann den Test damit starten:
 
-Der Stick braucht mindestens 16 GB (System 1,7 GB, beim ersten Start kommen die B-Hälfte mit 6 GB und die
-Datenpartition dazu), besser 32 GB und USB 3. **Alles auf dem Stick wird gelöscht.** Die Nummer des Sticks
-(`/dev/diskN`) muss genau stimmen: Mit einer falschen Nummer überschreibt `dd` eine andere Platte.
+```
+ZENOS_AUSGABE=qemu-neu mkosi/bauen.sh qemu --image-version=0.9.2
+ZENOS_AUSGABE=qemu-neu ZENOS_VERSION=0.9.2 mkosi/veroeffentlichen.sh qemu
+ZENOS_TEST_NEU=0.9.2 mkosi/test/starten.sh
+```
+
+Ohne `schluessel/zenos-updates.asc` bricht `bauen.sh argon` ab. Nur für einen Entwicklungsbau, der nie auf ein Gerät
+kommt: `mkosi/bauen.sh argon --environment=ZENOS_SCHLUESSEL_FEHLT_OK=1` (dieses Image nimmt keine Updates an).
+
+## Auf die SSD schreiben (Zeno, auf dem Mac)
+
+Die SSD des Argon hängt in einem USB-Gehäuse am Mac. **Alles auf ihr wird gelöscht.** Die Nummer (`/dev/diskN`) muss
+genau stimmen: Mit einer falschen Nummer überschreibt `dd` eine andere Platte. Einen Befehl nach dem anderen:
 
 ```
 diskutil list external physical
 diskutil unmountDisk /dev/diskN
-sudo dd if=mkosi/ausgabe/argon/zenos_1.0.0~vorschau1.raw of=/dev/rdiskN bs=4m status=progress
+sudo dd if=mkosi/ausgabe/argon/zenos_<version>.raw of=/dev/rdiskN bs=4m status=progress
 diskutil eject /dev/diskN
 ```
 
-## Am Argon ONE UP starten
-
-Der Bootloader des CM5 versucht die Datenträger in der Reihenfolge `BOOT_ORDER` aus dem EEPROM. Damit der Stick
-vor der SSD mit zenOS 0.1 kommt: `BOOT_ORDER=0xf641` (von rechts gelesen: SD-Karte, USB, NVMe, von vorn).
-`PCIE_PROBE=1` bleibt stehen. Ohne Stick startet weiter 0.1 von der SSD. Geändert wird das unter 0.1 mit
-`sudo rpi-eeprom-config --edit`; das macht Zeno selbst.
-
-Dann den Stick an einen USB-3-Anschluss stecken und einschalten.
+Danach die SSD in den Argon einbauen. Die Boot-Reihenfolge im EEPROM bleibt, wie sie ist: Der Argon startet schon heute
+von der SSD.
 
 ## Erster Start
 
@@ -62,11 +85,22 @@ Dann den Stick an einen USB-3-Anschluss stecken und einschalten.
 3. Den Wiederherstellungsschlüssel auf Papier schreiben und getrennt vom Laptop aufbewahren.
 4. Das Passwort eingeben, um die Daten zu öffnen.
 5. Ein Konto anlegen (Name und Passwort).
-6. Anmelden. Vorschau 1 zeigt den Text-Login von greetd und startet danach labwc.
+6. Am Login von zenOS anmelden. WLAN über das System-Menü oben rechts.
 
-## Was Vorschau 1 noch nicht kann
+## Updates
 
-- **Keine Updates.** Ein neuer Stand heisst: neu auf den Stick schreiben. Darum nicht für Banking und Krypto.
-- **Kein signierter Start.** Wer root hat, könnte die Bootpartition ändern. Das schliesst 1.0 (OTP).
-- **Oberfläche:** noch nicht die von zenOS (Quickshell), sondern labwc pur mit Terminal (kitty) und Chromium.
-- Ton, Bluetooth, Akku-Anzeige und Deckel des Argon sind noch nicht eingerichtet und nicht getestet.
+Im Terminal (Ctrl+Alt+T): `zen update`. Es lädt den neuesten Stand von GitHub, prüft die Signatur (Zenos Schlüssel)
+und alle Prüfsummen und schreibt ihn in die freie Hälfte. Danach `zen neustart`: Der neue Stand startet einmal zur
+Probe. Läuft er bis zum Login, wird er fest. Hängt er, die Ein/Aus-Taste lange drücken und wieder einschalten: Dann
+startet der alte Stand, und `zen status` sagt, was war. Ein gescheiterter Stand wird nicht nochmals angeboten.
+
+Veröffentlichen (Claude, nach Zenos Ja): `mkosi/bauen.sh argon`, `mkosi/veroeffentlichen.sh`, Zeno signiert
+`SHA256SUMS` (`docs/signieren.md`), dann ein Release auf GitHub mit den Dateien, `SHA256SUMS` und `SHA256SUMS.gpg`.
+
+## Was noch fehlt
+
+- **Kein signierter Start.** Wer root hat, könnte die Startpartitionen ändern. Das schliesst 1.0 (OTP).
+- Bluetooth, Akku-Anzeige und Deckel des Argon sind noch nicht eingerichtet; Einstellungen, Modi und Raster aus 0.1
+  kommen später mit Updates.
+- Die machine-id ist bei jedem Start neu (schreibgeschütztes `/etc`); systemd-homed meldet dazu Fehler im Journal, die
+  Anmeldung geht.

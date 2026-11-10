@@ -4,45 +4,54 @@ Claude Code führt diese Liste während des Bauauftrags nach. Eine neue Sitzung 
 
 Status: `offen` · `in Arbeit` · `fertig` · `offener Punkt`
 
-## zenOS 1.0, Vorschau 1 (Branch `neubau`)
+## zenOS 1.0, Vorschau auf der SSD des Argon (Branch `neubau`)
 
-Bauauftrag vom 08.11.2026 (`BAUAUFTRAG.md`), Konzept in `docs/neubau.md`.
+Bauauftrag vom 08.11.2026, erweitert am 10.11.2026 (`BAUAUFTRAG.md`): Die SSD des Argon bekommt zenOS 1.0 direkt,
+mit Oberfläche und Updates über `zen update`. Die SSD kommt danach nicht mehr heraus. Konzept: `docs/neubau.md`.
 
 | Schritt | Status | Notiz |
 |---|---|---|
-| Konzept, Manifest, CLAUDE.md, Bauauftrag | fertig | Grundsatz 1 und Leitplanken neu, CLAUDE.md für 1.0 |
-| Bauumgebung | fertig | eigene Colima-VM «zenos» (6 Kerne, 6 GB), Docker-Kontext `colima-zenos`; Debian-Container mit mkosi 25.3 und QEMU 10 (`mkosi/umgebung/`). Der Kontext der anderen Projekte bleibt `colima`. |
-| Grundsystem | fertig, in QEMU im Test | Debian trixie arm64 vom Stand 20261108T000000Z, `/` als erofs mit dm-verity, `/var` und `/home` auf LUKS2 (beim ersten Start), B-Hälfte beim ersten Start. `mkosi.finalize` prüft setuid, root und Verbotenes. |
-| Start auf dem CM5 | gebaut, nicht auf Hardware getestet | Kernel 6.18.60 und WLAN-Firmware von Raspberry Pi, Bootpartition (GPT, Typ ESP) mit Kernel, initrd, 8 Gerätebäumen, Overlays, `config.txt`, `cmdline.txt` mit Wurzel-Hash. USB-Speicher, NVMe, dwc2 sind im Kernel fest eingebaut; dm-verity, erofs, vc4 im initrd. |
-| Härtung | fertig | sysctl, Befehlszeile, nftables, chrony mit NTS, resolved, NetworkManager, feste Dienstliste |
-| Browser | fertig, ungetestet | Chromium 156 mit Richtlinien, udev-Regeln für Trezor und Ledger. JIT als Vorgabe: offen (welche Einstellung lässt sich pro Seite ändern?) |
-| Oberfläche | offen | Vorschau 1a: greetd (Text), labwc mit Kürzeln und Menü, swaylock und swayidle. Quickshell 0.3.1 (Commit `1a4716c…`, wie 0.1) als mkosi-Build-Skript: Vorschau 1b |
-| Angriffstests | grün in QEMU (08.11.2026) | `mkosi/test/starten.sh`: erster Start (Tastatur, Passwort, Wiederherstellungsschlüssel, Konto), 17 Prüfungen am laufenden System, zweiter Start (keine Einrichtung, Passwort, Konto, System unverändert) |
-| Anleitung für den Stick | fertig | `mkosi/README.md`; Boot-Reihenfolge im EEPROM (USB vor NVMe) macht Zeno selbst |
-| Abnahme auf dem Argon ONE UP | offen | Image `mkosi/ausgabe/argon/zenos_1.0.0~vorschau1.raw`, SHA-256 `7bc27d71f10d1530051a832782b7d5e3f6fdb5b48daea22d9628e3e06f54cc6c` |
+| Konzept, Manifest, CLAUDE.md, Bauauftrag | fertig | Bauauftrag am 10.11.2026 auf SSD und Updates erweitert |
+| Bauumgebung | fertig | Colima-VM «zenos» (6 Kerne, 6 GB), Kontext `colima-zenos`; `bauen.sh` → `umgebung/bauen-innen.sh` (holt und prüft die Quelle von Quickshell) → mkosi. Arbeits- und Bauordner von mkosi im Volume `zenos-bau-pakete` (Overlay geht nicht auf dem Docker-Overlay). |
+| Grundsystem | fertig, Test grün | Debian trixie arm64, Stand 20261108T000000Z; `/` erofs mit dm-verity, `/var` und `/home` auf LUKS2 |
+| Quickshell 0.3.1 | fertig | Commit `1a4716c…`, gebaut in `mkosi.build.d/10-quickshell.sh.chroot`; wayland-protocols 1.47 nur fürs Bau-Overlay aus trixie-backports (fürs Image gesperrt, `mkosi.postinst` prüft). `mkosi.finalize` prüft alle Bibliotheken. |
+| Oberfläche | gebaut, im Test | Oberfläche von 0.1 für 1.0 angepasst (`shell/`, ohne Kanal, Basis, Firewall, Lüfter, Installer, Einstellungen, Einrichtung, Freigabe, Anzeige); Login `greeter.qml` über `/usr/lib/zenos/greeter`, Sitzung `/usr/lib/zenos/sitzung`, Benutzerdienste `zenos-shell` und `zenos-idle` (swayidle, 5 min), Notfall-Sperre swaylock. Hilfsprogramme unter `/usr/lib/zenos`, `zen` unter `/usr/bin`. |
+| Start auf dem CM5, A/B | gebaut, im Test | Schema von Raspberry Pi: Partition 1 `zenos-start` (64 MB, autoboot.txt, Tastatur), 2 `zenos-start_<v>` (Start A), 3 `_empty` (Start B), dann Prüfsummen A (128 MB) und System A (wächst beim ersten Start auf 6 GB), B-Hälfte und Daten beim ersten Start |
+| Updates | gebaut, im Test | `zen update` → `zenos-update.service` → `/usr/lib/zenos/update`: systemd-sysupdate (GitHub, `releases/latest/download`, nur mit Zenos Signatur), Probestart über `/run/systemd/reboot-param` «0 tryboot», fest über autoboot.txt (Ziffern 2/3 an Ort und Stelle). `mkosi/veroeffentlichen.sh` macht die Dateien, `docs/signieren.md` erklärt das Signieren. |
+| Schlüssel für Updates | wartet auf Zeno | `mkosi/schluessel/zenos-updates.asc` (öffentlich); ohne ihn baut das Image für den Argon nicht |
+| Härtung, Browser | fertig | wie zuvor; Chromium 156 mit Richtlinien |
+| Angriffstests | im Umbau | `mkosi/test/starten.sh`: dazu Oberfläche (Login, Sperre, Bildschirmfotos) und Update-Test (`ZENOS_TEST_NEU=<version>`) |
+| Abnahme auf dem Argon ONE UP | offen | Zeno schreibt das Image auf die SSD (Befehle in `mkosi/README.md`) |
 
-**Hier geht es weiter** (Pause seit 08.11.2026; Image gebaut, Prüfsumme nachgeprüft, Tests grün):
+**Hier geht es weiter:** Tests der Oberfläche und des Updates in QEMU grün bekommen; Image für den Argon bauen, sobald
+Zenos Schlüssel da ist; dann die Befehle zum Schreiben der SSD, einer nach dem anderen.
 
-1. Zeno führt am Argon unter 0.1 `rpi-eeprom-config` aus (liest nur) und schickt die Ausgabe.
-2. Zeno setzt `BOOT_ORDER=0xf641` mit `sudo rpi-eeprom-config --edit`; `PCIE_PROBE=1` bleibt. Ohne Stick startet
-   weiter 0.1 von der SSD.
-3. Zeno schreibt das Image am Mac auf einen Stick (`mkosi/README.md`), ein Befehl nach dem anderen.
-4. Erster Start am Argon: Einrichtung, Anmeldung, labwc, WLAN über `nmtui`, Chromium, Neustart. Befunde hier
-   eintragen.
-5. Danach Vorschau 1b (Quickshell 0.3.1 im Bau, Oberfläche von zenOS), die dauerhafte machine-id und die Vorgabe
-   für JIT; dann Vorschau 2 (Updates A/B, signierter Start).
+Offene Fragen an Zeno: Signierrechner (z. B. der EliteDesk) und Hardware-Schlüssel (YubiKey/Nitrokey) oder Schlüssel
+auf einem eigenen Stick? Gibt es einen Test-Pi 5 für den signierten Start? Welche Hardware-Wallet (Trezor oder Ledger)?
 
-Offene Fragen an Zeno: Gibt es einen Test-Pi 5 für den signierten Start (das OTP lässt sich nicht zurücksetzen)?
-Welche Hardware-Wallet wird am Argon getestet, Trezor oder Ledger? Wird SSH auf dem Argon unter 0.1 bis dahin
-abgeschaltet (Zenos Entscheid)?
-
-Die Bau-VM «zenos» ist angehalten. Weiter mit `colima start zenos`, danach `docker context use colima` (Colima
-stellt den Kontext beim Start um). Der Paket-Cache im Volume `zenos-bau-pakete` bleibt erhalten.
+Gefunden auf der SSD von 0.1 (nur gelesen): Ubuntu nutzte auf diesem Argon schon `autoboot.txt` mit `tryboot_a_b=1`
+und ein initramfs von 70 MB vom NVMe. Der Bootloader des CM5 kann also tryboot, autoboot.txt und grosse Dateien.
 
 **Offener Punkt:** Die machine-id ist bei jedem Start neu (schreibgeschütztes `/etc`). systemd-homed meldet beim
 zweiten Start «Failed to allocate new home object» und «Fixation failed: Required key not available»; die
 Anmeldung geht trotzdem. Vor Vorschau 2 muss die machine-id dauerhaft werden (Vorschlag: Daten im initrd
 entsperren und `/etc/machine-id` auf `/var` zeigen lassen).
+
+**Befunde vom 10.11.2026 (Oberfläche und Updates), behoben:**
+
+- labwc aus Debian ist mit Xwayland gebaut und beendet sich, wenn es kein Xwayland findet. Davon war auch Vorschau 1a
+  betroffen (der Test prüfte die grafische Sitzung damals nicht). zenOS bleibt ohne X-Server: `WLR_XWAYLAND` zeigt auf
+  `/usr/lib/zenos/kein-xwayland`, das jede X11-Anfrage ablehnt.
+- greetd gab nach fünf schnellen Fehlstarts auf (schwarzer Bildschirm). Jetzt nie (`greetd.service.d/zenos.conf`), und
+  nach zwei schnell gescheiterten grafischen Logins kommt der Text-Login von greetd mit fish als Notausgang (WLAN mit
+  nmtui, `zen update`).
+- mkosi: Das Overlay für die Bau-Pakete lässt sich nicht auf das Overlay-Dateisystem von Docker legen (EINVAL), und
+  Quellen lassen sich nicht ineinander in das nur lesbar eingehängte Repo hängen. Arbeitsordner im Volume, Quellen
+  nebeneinander unter `$SRCDIR`.
+- Quickshell 0.3.1 braucht ext-background-effect (wayland-protocols ab 1.45, Debian 13 hat 1.44): nur fürs Bau-Overlay
+  aus trixie-backports. Quickshell braucht libQt6Widgets (Prüfung in `mkosi.finalize` hat es gefunden).
+- Versionen ohne «~»: GitHub benennt Dateien mit Sonderzeichen um, systemd-sysupdate fände sie dann nicht. Vorschau =
+  0.9.x.
 
 **Befunde aus den QEMU-Tests (08.11.2026), alle behoben:**
 
