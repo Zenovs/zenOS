@@ -86,10 +86,11 @@ else
 	text="Die Pakete sind $(tage_text "$tage") alt (Stand $datum). Sicherheitsupdates für Chromium und Debian kommen nur mit einem neuen Stand: signieren, dann im Terminal zen update."
 fi
 
-# Die Mitteilung von gestern ersetzen, solange die Oberfläche sie noch führt (Nummer gilt nur in dieser Sitzung)
+# Die Mitteilung von gestern ersetzen, solange die Oberfläche sie noch führt (Nummer gilt nur in dieser Sitzung).
+# «--» vor den Argumenten: Sonst hielte busctl die Dauer -1 (Vorgabe der Oberfläche) für eine Option.
 alt=$(cat "$laufzeit/erinnerung-id" 2>/dev/null) || alt=0
 [[ "$alt" =~ ^[0-9]+$ ]] || alt=0
-if ! antwort=$(busctl --user call org.freedesktop.Notifications /org/freedesktop/Notifications \
+if ! antwort=$(busctl --user -- call org.freedesktop.Notifications /org/freedesktop/Notifications \
 	org.freedesktop.Notifications Notify 'susssasa{sv}i' zenOS "$alt" "" "$titel" "$text" 0 0 -1); then
 	meldung "Mitteilung liess sich nicht zustellen (läuft die Oberfläche?)"
 	exit 1

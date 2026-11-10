@@ -25,8 +25,9 @@ pruefe() { # BEDINGUNG-EXIT TEXT
 	fi
 }
 
-# Testordner mit Paketstand und Attrappen: busctl schreibt seine Argumente mit (eine Zeile je Argument, «--» danach) und
-# antwortet «u 7» (Exit BUSCTL_EXIT), timedatectl antwortet UHR (yes|no)
+# Testordner mit Paketstand und Attrappen: busctl schreibt seine Argumente mit (eine Zeile je Argument, «ENDE» danach)
+# und antwortet «u 7» (Exit BUSCTL_EXIT); wie das echte busctl (getopt) lehnt es vor «--» jedes Argument ab, das mit
+# «-» beginnt und keine bekannte Option ist (etwa die Dauer -1). timedatectl antwortet UHR (yes|no).
 umgebung() { # PAKETSTAND UHR [BUSCTL_EXIT]
 	local w
 	w=$(mktemp -d)
@@ -34,7 +35,14 @@ umgebung() { # PAKETSTAND UHR [BUSCTL_EXIT]
 	printf '%s\n' "$1" >"$w/usr/lib/zenos/paketstand"
 	cat >"$w/bin/busctl" <<EOF
 #!/bin/bash
-printf '%s\n' "\$@" -- >>"$w/busctl.log"
+for a in "\$@"; do
+	[[ "\$a" == -- ]] && break
+	if [[ "\$a" == -* && "\$a" != --user ]]; then
+		echo "busctl: invalid option -- '\${a#-}'" >&2
+		exit 1
+	fi
+done
+printf '%s\n' "\$@" ENDE >>"$w/busctl.log"
 echo 'u 7'
 exit ${3:-0}
 EOF
@@ -54,7 +62,7 @@ lauf() { # W JETZT(leer: Uhr der Attrappe) [ARGUMENT …]
 
 # Anzahl Aufrufe von busctl (ohne Protokoll: keiner)
 aufrufe() {
-	if [[ -f "$1/busctl.log" ]]; then grep -cx -- '--' "$1/busctl.log"; else echo 0; fi
+	if [[ -f "$1/busctl.log" ]]; then grep -cx 'ENDE' "$1/busctl.log"; else echo 0; fi
 }
 
 stand=2026-11-08T00:00:00Z
@@ -73,12 +81,13 @@ pruefe $? "14 Tage alt: eine Mitteilung"
 grep -qx 'Zeit für ein Update' "$w/busctl.log" && grep -q '14 Tage alt (Stand 08.11.2026)' "$w/busctl.log" &&
 	grep -q 'zen update' "$w/busctl.log"
 pruefe $? "Text nennt Alter, Stand und zen update"
-# Argumente: --user call DIENST PFAD SCHNITTSTELLE Notify SIGNATUR app ersetzt symbol titel text aktionen hinweise dauer
+# Argumente: --user -- call DIENST PFAD SCHNITTSTELLE Notify SIGNATUR app ersetzt symbol titel text aktionen hinweise
+# dauer, dann ENDE von der Attrappe
 mapfile -t argumente <"$w/busctl.log"
-[[ "${argumente[0]}" == --user && "${argumente[2]}" == org.freedesktop.Notifications &&
-	"${argumente[5]}" == Notify && "${argumente[6]}" == 'susssasa{sv}i' && "${argumente[7]}" == zenOS &&
-	"${argumente[8]}" == 0 && "${argumente[12]}" == 0 && "${argumente[13]}" == 0 && "${argumente[14]}" == -1 &&
-	"${argumente[15]}" == -- ]]
+[[ "${argumente[0]}" == --user && "${argumente[1]}" == -- && "${argumente[2]}" == call &&
+	"${argumente[3]}" == org.freedesktop.Notifications && "${argumente[6]}" == Notify &&
+	"${argumente[7]}" == 'susssasa{sv}i' && "${argumente[8]}" == zenOS && "${argumente[9]}" == 0 &&
+	"${argumente[13]}" == 0 && "${argumente[14]}" == 0 && "${argumente[15]}" == -1 && "${argumente[16]}" == ENDE ]]
 pruefe $? "Notify an org.freedesktop.Notifications mit der richtigen Signatur (erste ohne Ersatz)"
 grep -q 'erinnert: Pakete 14 Tage alt' "$w/fehler"
 pruefe $? "Meldung im Journal"
@@ -93,7 +102,7 @@ lauf "$w" $((s + 15 * tag + 3600)) 2>/dev/null
 [[ "$(aufrufe "$w")" == 2 ]]
 pruefe $? "am nächsten Tag wieder"
 mapfile -t argumente <"$w/busctl.log"
-[[ "${argumente[16 + 8]}" == 7 ]]
+[[ "${argumente[17 + 9]}" == 7 ]]
 pruefe $? "die neue ersetzt die alte Mitteilung (Nummer 7)"
 grep -q '15 Tage alt' "$w/busctl.log"
 pruefe $? "Alter zählt weiter (15 Tage)"

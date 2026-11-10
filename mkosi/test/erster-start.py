@@ -291,6 +291,19 @@ def pruefe_oberflaeche(vm: pexpect.spawn) -> None:
                           "echo rc=$?")
     pruefe("erinnert: Pakete 20 Tage alt" in erinnert and "rc=0" in erinnert,
            "die Erinnerung kommt als Mitteilung bei der Oberfläche an" + ("" if "rc=0" in erinnert else f" ({erinnert.strip()})"))
+    # Gesammelt käme sie zur vollen Stunde; für das Bild jetzt zustellen (die Sammelkarte steht 10 s), dann die Zentrale
+    befehl(vm, "/usr/lib/zenos/ipc mitteilungen zustellen")
+    time.sleep(4)
+    foto(vm, "07b-erinnerung")
+    zustand = befehl(vm, "/usr/lib/zenos/ipc mitteilungen status")
+    wartend = re.search(r'"wartend":(\d+)', zustand)
+    zugestellt = re.search(r'"zugestellt":(\d+)', zustand)
+    pruefe(wartend is not None and zugestellt is not None and wartend.group(1) == "0" and int(zugestellt.group(1)) >= 1,
+           f"die Erinnerung ist zugestellt ({zustand.strip()[:120]})")
+    befehl(vm, "/usr/lib/zenos/ipc mitteilungen oeffnen")
+    time.sleep(15)
+    foto(vm, "07c-zentrale")
+    befehl(vm, "/usr/lib/zenos/ipc mitteilungen schliessen")
 
     # Was die Oberfläche (zenos-shell.service) ins Journal schreibt; das Prüfkonto liest es (systemd-journal)
     protokoll = befehl(vm, "journalctl -b --no-pager -o cat _SYSTEMD_USER_UNIT=zenos-shell.service "
