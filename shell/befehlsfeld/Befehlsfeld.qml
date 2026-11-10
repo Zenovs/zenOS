@@ -1,7 +1,6 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
-import QtQuick.Effects
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
@@ -954,16 +953,8 @@ Scope {
                 yScale: root._massstab
             }
 
-            // Schatten ohne Weichzeichnen der Umgebung; braucht die GPU (fehlt im Software-Backend)
-            RectangularShadow {
-                visible: GraphicsInfo.api !== GraphicsInfo.Software
-                anchors.fill: panel
-                transform: aufgleitMassstab
-                offset: Qt.vector2d(0, 30)
-                blur: 80
-                radius: panel.radius
-                color: Theme.schatten
-            }
+            // Kein Schatten in zenOS 1.0: RectangularShadow gibt es erst ab Qt 6.9, Debian 13 hat Qt 6.8. Das Feld hebt
+            // sich über seine Fläche und den feinen Rand ab.
 
             Rectangle {
                 id: panel

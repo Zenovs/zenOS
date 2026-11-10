@@ -54,27 +54,46 @@ dt_wert() {
 
 pi() { [[ -d "$bootloader" ]]; }
 
+# Partitionen der Systemplatte als «<gerät> <bezeichnung>», direkt von der Platte gelesen (lsblk). Die Verweise unter
+# /dev/disk/by-partlabel legt udev erst einen Moment nach dem Umbenennen an; nach einem Update wären sie noch alt.
+# Die Platte ist die von Partition 1 (zenos-start), deren Bezeichnung sich nie ändert.
+platte() {
+	local start
+	start=$(readlink -f "$partlabel/zenos-start" 2>/dev/null) || return 1
+	lsblk -dno PKNAME "$start" 2>/dev/null | grep .
+}
+
+partitionen() {
+	local p
+	p=$(platte) || return 1
+	lsblk -nr -o NAME,PARTLABEL "/dev/$p" 2>/dev/null | awk 'NF == 2'
+}
+
 # Nummer der Partition mit dieser Bezeichnung (auf GPT gleich der Zählung des Bootloaders: die FAT-Partitionen sind
 # die ersten drei)
 partitionsnummer() {
-	local geraet
+	local name
 	if [[ -n "$wurzel" ]]; then
 		cat "$partlabel/$1.nummer" 2>/dev/null
 		return
 	fi
-	geraet=$(readlink -f "$partlabel/$1" 2>/dev/null) || return 1
-	[[ -b "$geraet" ]] || return 1
-	cat "/sys/class/block/${geraet##*/}/partition" 2>/dev/null
+	name=$(partitionen | awk -v b="$1" '$2 == b { print $1; exit }')
+	[[ -n "$name" ]] || return 1
+	cat "/sys/class/block/$name/partition" 2>/dev/null
 }
 
 # Versionen der installierten Systeme (Bezeichnungen zenos_<version>), aufsteigend
 installiert() {
 	local geraet
-	for geraet in "$partlabel"/zenos_*; do
-		geraet=${geraet##*/zenos_}
-		geraet=${geraet%.nummer}
-		[[ "$geraet" =~ ^[0-9]+(\.[0-9]+)*$ ]] && printf '%s\n' "$geraet"
-	done | sort -V
+	if [[ -n "$wurzel" ]]; then
+		for geraet in "$partlabel"/zenos_*; do
+			geraet=${geraet##*/zenos_}
+			geraet=${geraet%.nummer}
+			[[ "$geraet" =~ ^[0-9]+(\.[0-9]+)*$ ]] && printf '%s\n' "$geraet"
+		done | sort -V
+		return
+	fi
+	partitionen | awk '{ print $2 }' | sed -n 's/^zenos_\([0-9][0-9.]*\)$/\1/p' | sort -V
 }
 
 neuer_als() { [[ "$1" != "$2" && "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n 1)" == "$1" ]]; }
@@ -204,7 +223,13 @@ installieren() {
 		hinweis "Update auf $neu fehlgeschlagen (Signatur, Prüfsumme oder Verbindung). Nichts wurde verändert, was startet; zenOS $jetzt bleibt."
 		return 1
 	fi
-	udevadm settle --timeout=15 || true
+	# udev die neuen Bezeichnungen einlesen lassen, dann bis 15 s auf sie warten
+	local p i
+	if p=$(platte); then udevadm trigger --action=change --settle "/dev/$p" 2>/dev/null || true; fi
+	for ((i = 0; i < 15; i++)); do
+		installiert | grep -qxF -- "$neu" && break
+		sleep 1
+	done
 	installiert | grep -qxF -- "$neu" || {
 		hinweis "Update auf $neu nicht vollständig geschrieben. zenOS $jetzt bleibt."
 		return 1
