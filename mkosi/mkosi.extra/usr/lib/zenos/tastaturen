@@ -1,9 +1,9 @@
 # Tastaturbelegungen, die der erste Start anbietet (alphabetisch). Spalten mit Tabulator getrennt:
-# Kennung	Name	Belegung der Konsole (console-data)	XKB-Layout	XKB-Variante
-de	Deutschland	de-latin1	de	-
-fr	Frankreich	fr-latin9	fr	-
-gb	Grossbritannien	uk	gb	-
-at	Österreich	de-latin1	at	-
-ch-de	Schweiz (Deutsch)	sg-latin1	ch	-
-ch-fr	Schweiz (Französisch)	fr_CH-latin1	ch	fr
-us	USA	us	us	-
+# Kennung	Name	Belegung der Konsole (console-data)	XKB-Layout	XKB-Variante	Zeitzone (folgt der Wahl)
+de	Deutschland	de-latin1	de	-	Europe/Berlin
+fr	Frankreich	fr-latin9	fr	-	Europe/Paris
+gb	Grossbritannien	uk	gb	-	Europe/London
+at	Österreich	de-latin1	at	-	Europe/Vienna
+ch-de	Schweiz (Deutsch)	sg-latin1	ch	-	Europe/Zurich
+ch-fr	Schweiz (Französisch)	fr_CH-latin1	ch	fr	Europe/Zurich
+us	USA	us	us	-	Etc/UTC

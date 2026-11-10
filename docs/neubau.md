@@ -199,9 +199,10 @@ Nicht abgedeckt: Lücken in Prozessor und Firmware, Seitenkanäle, wer das Gerä
 | **Vorschau 2** (rund zwei Wochen danach) | signierte Updates über sysupdate mit `tryboot`, vorläufiger Schlüssel, Signieren im Live-System, Mitteilung nach 14 Tagen, mehr Funktionen aus 0.1 (Befehlsfeld, Mitteilungen, Akku, Bluetooth) | **ja** |
 | **1.0** (Wochen danach) | eigener Kernel mit Lockdown, signierter Start mit OTP (zuerst auf dem Test-Pi), Hardware-Schlüssel, zweiter Bau, alle Angriffstests, Durchsicht von aussen | ja, mit vollem Schutz |
 
-Vorschlag: Vorschau 1 zuerst vom USB-Stick testen. Die SSD behält zenOS 0.1 mit seinen automatischen
-Sicherheitsupdates, bis Vorschau 2 da ist. Kommt Vorschau 1 direkt auf die SSD, wird sie dabei vollständig gelöscht;
-vorher alles sichern.
+Entscheid Zeno (10.11.2026): Die SSD bekommt zenOS 1.0 direkt, ohne Umweg über den Stick, und 0.1 wird dabei
+gelöscht. Weil die SSD danach nicht mehr ausgebaut wird, kommen die Updates aus Vorschau 2 schon mit: `zen update`
+mit Zenos Signatur, A/B mit Probestart nach dem Schema von Raspberry Pi (autoboot.txt, Startpartitionen 2 und 3).
+Technisch heissen die Stände bis 1.0 «0.9.x». Die übrigen Funktionen aus 0.1 kommen danach über Updates.
 
 **Angriffstests** laufen ab Vorschau 1 in QEMU bei jedem Bau. Jede Leitplanke hat einen Test, der versucht, sie zu
 brechen: ein Byte in `/usr` ändern, eine Datei unter `/etc` oder eine Erweiterung unter `/var` ablegen, Notfall-Shell

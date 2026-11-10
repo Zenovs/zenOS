@@ -31,10 +31,13 @@ for paket in "${pakete[@]}"; do
 	echo "zenOS: Dateien von $paket entfernt"
 done
 
-# Aus den Backports darf nichts ins Image (sie dienen nur dem Bau von Quickshell, preferences.d/zenos-backports).
-if grep -q '^Version: .*~bpo' "$R/var/lib/dpkg/status"; then
-	echo "zenOS-Prüfung: Paket aus den Backports im Image:" >&2
-	awk '/^Package:/ { p = $2 } /^Version: .*~bpo/ { print "  " p " " $2 }' "$R/var/lib/dpkg/status" >&2
+# Aus den Backports von Debian darf nichts ins Image (sie dienen nur dem Bau von Quickshell,
+# preferences.d/zenos-backports). Debian-Backports enden auf «~bpoNN+N». Raspberry Pi baut manche Pakete aus einem
+# Backport neu und hängt «+rptN» an (etwa firmware-brcm80211); die kommen aus deren Archiv und sind erlaubt.
+backport='^Version: .*~bpo[0-9]+\+[0-9]+$'
+if grep -Eq "$backport" "$R/var/lib/dpkg/status"; then
+	echo "zenOS-Prüfung: Paket aus den Backports von Debian im Image:" >&2
+	awk -v m="$backport" '/^Package:/ { p = $2 } $0 ~ m { print "  " p " " $2 }' "$R/var/lib/dpkg/status" >&2
 	exit 1
 fi
 

@@ -5,7 +5,8 @@
 # wird nie als Skript gelesen. Ohne gültige Kennung gilt «us».
 #
 # Für die grafische Sitzung schreibt das Skript die XKB-Angaben nach /run/zenos/labwc-environment; darauf zeigt
-# /etc/xdg/labwc/environment.
+# /etc/xdg/labwc/environment. Die Zeitzone folgt der Wahl (letzte Spalte der Tabelle): /run/zenos/localtime, darauf
+# zeigt /etc/localtime (schreibgeschützt). Bis dahin, ganz früh beim Start, gilt UTC.
 set -eu
 
 tabelle=/usr/lib/zenos/tastaturen
@@ -28,11 +29,18 @@ konsole=$(printf '%s\n' "$zeile" | cut -f3)
 layout=$(printf '%s\n' "$zeile" | cut -f4)
 variante=$(printf '%s\n' "$zeile" | cut -f5)
 [ "$variante" = "-" ] && variante=""
+zone=$(printf '%s\n' "$zeile" | cut -f6)
 
 # Auf einer seriellen Konsole (Tests in QEMU) gibt es keine Belegung zu laden; das ist kein Fehler.
 loadkeys -q "$konsole" 2>/dev/null || loadkeys -q us 2>/dev/null || true
 
 umask 022
+install -d -m 0755 /run/zenos
+case "$zone" in
+*[!A-Za-z_/]* | "" | /* | *..*) zone=Etc/UTC ;;
+esac
+[ -f "/usr/share/zoneinfo/$zone" ] || zone=Etc/UTC
+ln -sfn "/usr/share/zoneinfo/$zone" /run/zenos/localtime
 {
 	printf 'XKB_DEFAULT_LAYOUT=%s\n' "$layout"
 	if [ -n "$variante" ]; then
