@@ -19,10 +19,12 @@ Claude erzeugt, sieht und benutzt den Schlüssel nie. Ins Repo kommt nur der **�
 
 ## Einmal: Schlüssel erzeugen
 
-1. Debian Live (amd64, «standard») von debian.org laden, die Prüfsumme mit der auf debian.org vergleichen und auf
-   einen Stick schreiben.
-2. Den Signierrechner vom Live-Stick starten. Kein Netz anschliessen.
-3. Den Schlüssel-Stick einstecken. Auf ihm einen Ordner `zenos-schluessel` anlegen.
+1. Debian Live (amd64, «xfce») von debian.org laden, die Prüfsumme mit der auf debian.org vergleichen und auf einen
+   Stick schreiben. Die Variante mit Oberfläche hängt eingesteckte Sticks mit ihrem Namen unter `/media/user/` ein;
+   «standard» hat keine Oberfläche und hängt nichts von selbst ein.
+2. Den Signierrechner vom Live-Stick starten. Kein Netz anschliessen (kein Kabel, WLAN aus).
+3. Den Schlüssel-Stick einstecken (erscheint er nicht von selbst, im Dateimanager einmal anklicken). Auf ihm einen
+   Ordner `zenos-schluessel` anlegen.
 4. Schlüssel erzeugen (Ed25519, nur zum Signieren, mit Passphrase):
    `gpg --homedir /media/user/<stick>/zenos-schluessel --quick-gen-key "zenOS Updates" ed25519 sign 0`
 5. Den Fingerabdruck auf Papier schreiben: `gpg --homedir … --fingerprint`
