@@ -22,7 +22,7 @@ und eigener Kernel kommen mit 1.0.
 | `start/config.txt` | Start auf dem CM5 und dem Pi 5 |
 | `umgebung/` | Bauumgebung: Debian-Container mit mkosi und QEMU; `bauen-innen.sh` holt und prüft die Quelle von Quickshell |
 | `veroeffentlichen.sh` | macht aus einem gebauten Image die Dateien für ein Update und `SHA256SUMS` zum Signieren |
-| `test/` | Angriffs- und Starttests in QEMU mit Oberfläche und Update, Einheitentests des Updates und der Erinnerung |
+| `test/` | Angriffs- und Starttests in QEMU mit Oberfläche und Update, Einheitentests des Updates und der Erinnerung, Prüfung der Startpartitionen des Argon-Images |
 
 ## Aufteilung der SSD
 
@@ -51,6 +51,7 @@ mkosi/bauen.sh qemu      # Image für die Tests        → mkosi/ausgabe/qemu/ze
 mkosi/test/starten.sh    # erster und zweiter Start in QEMU mit Oberfläche und Prüfungen
 mkosi/test/update-einheiten.sh
 mkosi/test/erinnerung-einheiten.sh
+mkosi/test/startpartitionen.sh   # Startpartitionen des Argon-Images, vor dem Schreiben auf die SSD
 ```
 
 Update-Test: einen zweiten Stand bauen und vorbereiten, dann den Test damit starten:
@@ -65,6 +66,9 @@ Ohne `schluessel/zenos-updates.asc` bricht `bauen.sh argon` ab. Nur für einen E
 kommt: `mkosi/bauen.sh argon --environment=ZENOS_SCHLUESSEL_FEHLT_OK=1` (dieses Image nimmt keine Updates an).
 
 ## Auf die SSD schreiben (Zeno, auf dem Mac)
+
+Vorher prüft Claude das fertige Image: `mkosi/test/startpartitionen.sh` muss «Alle Prüfungen bestanden» melden, und der
+Bau muss «Updates nur mit Zenos Schlüssel (<Fingerabdruck>)» gemeldet haben, mit dem Fingerabdruck von Zenos Papier.
 
 Die SSD des Argon hängt in einem USB-Gehäuse am Mac. **Alles auf ihr wird gelöscht.** Die Nummer (`/dev/diskN`) muss
 genau stimmen: Mit einer falschen Nummer überschreibt `dd` eine andere Platte. Einen Befehl nach dem anderen:
