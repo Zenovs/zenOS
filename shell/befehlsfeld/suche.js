@@ -1,15 +1,18 @@
+.pragma library
+// Gewöhnliche JavaScript-Bibliothek statt ES-Modul: Qt 6.8 (Debian 13) lädt ES-Module nur aus lokalen Dateien,
+// Quickshell reicht die Oberfläche aber über seine qs:-Adressen.
 // Suche im Befehlsfeld ohne QML: Bewertung von Treffern, Argumente für die Dateisuche und die
 // lokale Nutzungsstatistik. Getestet mit node (test/einheiten/suche.test.mjs).
 
 // Kleinbuchstaben, ohne Akzente, ß → ss («Über» → «uber»)
-export function normalisieren(text) {
+function normalisieren(text) {
     if (typeof text !== "string")
         return "";
     return text.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/ß/g, "ss").trim();
 }
 
 // Suchwörter einer Eingabe (normalisiert, ohne leere)
-export function woerter(anfrage) {
+function woerter(anfrage) {
     return normalisieren(anfrage).split(/\s+/).filter(w => w.length > 0);
 }
 
@@ -19,7 +22,7 @@ function wortgrenze(text, index) {
 
 // Bewertung eines Suchworts in einem (normalisierten) Text:
 // 100 Präfix, 80 Wortanfang, 60 enthalten (erst ab 3 Zeichen, sonst zu viel Rauschen), 0 kein Treffer
-export function wortBewerten(text, wort) {
+function wortBewerten(text, wort) {
     if (!text || !wort)
         return 0;
     if (text.startsWith(wort))
@@ -37,7 +40,7 @@ export function wortBewerten(text, wort) {
 
 // Bewertet einen Eintrag mit mehreren Feldern [{text, gewicht}] (Texte normalisiert).
 // Jedes Suchwort muss in einem Feld vorkommen; sonst 0. Ganze Eingabe als Präfix des ersten Felds: +10.
-export function bewerten(felder, anfrage) {
+function bewerten(felder, anfrage) {
     const liste = woerter(anfrage);
     if (liste.length === 0 || !Array.isArray(felder) || felder.length === 0)
         return 0;
@@ -61,7 +64,7 @@ export function bewerten(felder, anfrage) {
 }
 
 // Name des Programms aus einem Exec-Befehl («/usr/bin/firefox %u» → «firefox»)
-export function programmName(befehl) {
+function programmName(befehl) {
     const erstes = Array.isArray(befehl) ? befehl[0] : (typeof befehl === "string" ? befehl.trim().split(/\s+/)[0] : "");
     if (!erstes)
         return "";
@@ -70,7 +73,7 @@ export function programmName(befehl) {
 }
 
 // Sortiert Treffer [{punkte, name, …}] absteigend nach Punkten, dann kürzerer Name, dann alphabetisch
-export function sortieren(treffer) {
+function sortieren(treffer) {
     return treffer.slice().sort((a, b) => {
         if (b.punkte !== a.punkte)
             return b.punkte - a.punkte;
@@ -85,7 +88,7 @@ export function sortieren(treffer) {
 // App-Übersicht: Apps [{id, name, …}] alphabetisch nach Namen, ohne Rücksicht auf Gross-/Kleinschreibung und
 // Akzente («Ärger» steht bei «A», auch wenn die Locale der Sitzung C ist). Gleiche Schlüssel nach dem Namen,
 // zuletzt nach der ID (sort ist in Qt nicht stabil). Einträge ohne ID fallen weg; das Original bleibt unverändert.
-export function appsAlphabetisch(apps) {
+function appsAlphabetisch(apps) {
     if (!Array.isArray(apps))
         return [];
     const vergleichen = (a, b) => a < b ? -1 : (a > b ? 1 : 0);
@@ -102,17 +105,17 @@ export function appsAlphabetisch(apps) {
 // --- Dateisuche -----------------------------------------------------------------
 
 // Ordner, die die Dateisuche nie betritt (neben allen versteckten)
-export const DATEISUCHE_AUSGESCHLOSSEN = ["node_modules", "__pycache__", "snap"];
+var DATEISUCHE_AUSGESCHLOSSEN = ["node_modules", "__pycache__", "snap"];
 
 // Glob-Zeichen maskieren, damit die Eingabe für find nur Text ist
-export function globMaskieren(text) {
+function globMaskieren(text) {
     return text.replace(/[\\*?[\]]/g, "\\$&");
 }
 
 // Argumentliste für find (nie über eine Shell). null, wenn die Eingabe zu kurz ist.
 // Sucht im Home-Ordner nach Namen, die alle Wörter enthalten; versteckte und ausgeschlossene Ordner aus.
 // Ausgabe je Treffer: «<Typ>\t<Pfad>\0» (Typ d = Ordner, f = Datei).
-export function findArgumente(home, anfrage, tiefe) {
+function findArgumente(home, anfrage, tiefe) {
     const text = typeof anfrage === "string" ? anfrage.trim() : "";
     if (!home || !home.startsWith("/") || text.length < 2)
         return null;
@@ -131,7 +134,7 @@ export function findArgumente(home, anfrage, tiefe) {
 }
 
 // Eine Zeile der find-Ausgabe → {ordner, pfad, name, tiefe} oder null
-export function findZeile(zeile, home) {
+function findZeile(zeile, home) {
     if (typeof zeile !== "string")
         return null;
     const tab = zeile.indexOf("\t");
@@ -148,19 +151,19 @@ export function findZeile(zeile, home) {
 
 // Passt ein Dateiname noch zur Eingabe? (wie find -iname: jedes Wort ist enthalten, ohne Gross/klein)
 // Damit bleiben Treffer der vorigen Eingabe sichtbar, bis die neue Suche fertig ist.
-export function dateiPasst(name, anfrage) {
+function dateiPasst(name, anfrage) {
     const klein = typeof name === "string" ? name.toLowerCase() : "";
     const teile = (typeof anfrage === "string" ? anfrage : "").toLowerCase().split(/[\s/]+/).filter(w => w.length > 0);
     return teile.length > 0 && teile.every(w => klein.includes(w));
 }
 
 // Steuerzeichen (z. B. Zeilenumbrüche in Dateinamen) für die einzeilige Anzeige ersetzen
-export function einzeilig(text) {
+function einzeilig(text) {
     return typeof text === "string" ? text.replace(/[\u0000-\u001f\u007f]/g, "?") : "";
 }
 
 // Pfad für die Anzeige: Home als «~», der Name selbst steht schon im Titel
-export function pfadAnzeige(pfad, home) {
+function pfadAnzeige(pfad, home) {
     const ordner = pfad.slice(0, pfad.lastIndexOf("/"));
     if (ordner === home)
         return "~";
@@ -168,7 +171,7 @@ export function pfadAnzeige(pfad, home) {
 }
 
 // Dateitreffer ordnen: Bewertung des Namens, dann geringere Tiefe, dann kürzerer Name
-export function dateienSortieren(treffer, anfrage) {
+function dateienSortieren(treffer, anfrage) {
     return treffer.map(t => ({ t, p: bewerten([{ text: normalisieren(t.name), gewicht: 1 }], anfrage) }))
         .sort((a, b) => b.p - a.p || a.t.tiefe - b.t.tiefe || a.t.name.length - b.t.name.length || a.t.name.localeCompare(b.t.name, "de") || (a.t.pfad < b.t.pfad ? -1 : a.t.pfad > b.t.pfad ? 1 : 0))
         .map(x => x.t);
@@ -182,12 +185,12 @@ const MAX_APPS = 200;
 const MAX_ZULETZT = 20;
 const MAX_ZAEHLER = 1000;
 
-export function nutzungLeer() {
+function nutzungLeer() {
     return { version: 1, anzahl: {}, zuletzt: [] };
 }
 
 // Geprüfte Kopie der gelesenen Daten (fremde oder kaputte Werte fallen weg)
-export function nutzungPruefen(daten) {
+function nutzungPruefen(daten) {
     const ergebnis = nutzungLeer();
     if (daten === null || typeof daten !== "object")
         return ergebnis;
@@ -204,12 +207,12 @@ export function nutzungPruefen(daten) {
     return ergebnis;
 }
 
-export function gueltigeAppId(id) {
+function gueltigeAppId(id) {
     return typeof id === "string" && id.length > 0 && id.length <= 255 && !/[\/\u0000-\u001f]/.test(id);
 }
 
 // Start einer App zählen; gibt neue Daten zurück
-export function nutzungMerken(daten, id) {
+function nutzungMerken(daten, id) {
     const neu = nutzungPruefen(daten);
     if (!gueltigeAppId(id))
         return neu;
@@ -234,19 +237,19 @@ export function nutzungMerken(daten, id) {
 }
 
 // Gewicht einer App für Vorschläge: Zähler plus Bonus für die zuletzt genutzten
-export function nutzungGewicht(daten, id) {
+function nutzungGewicht(daten, id) {
     const n = daten?.anzahl?.[id] ?? 0;
     const rang = Array.isArray(daten?.zuletzt) ? daten.zuletzt.indexOf(id) : -1;
     return n + (rang >= 0 ? Math.max(0, 10 - 2 * rang) : 0);
 }
 
 // App-IDs für Vorschläge bei leerem Feld, beste zuerst
-export function nutzungRangliste(daten) {
+function nutzungRangliste(daten) {
     const d = nutzungPruefen(daten);
     return Object.keys(d.anzahl).sort((a, b) => nutzungGewicht(d, b) - nutzungGewicht(d, a) || a.localeCompare(b));
 }
 
 // Kleiner Vorteil für oft genutzte Apps bei der Suche (höchstens 10 Punkte)
-export function nutzungBonus(daten, id) {
+function nutzungBonus(daten, id) {
     return Math.min(10, nutzungGewicht(daten, id) / 2);
 }

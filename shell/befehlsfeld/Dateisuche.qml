@@ -2,7 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import Quickshell.Io
-import "suche.mjs" as Suche
+import "suche.js" as Suche
 
 // Dateisuche im Home-Ordner: ab 2 Zeichen, entprellt, find mit Argumentliste (nie über eine Shell).
 // Versteckte Ordner bleiben aussen vor, höchstens 20 Treffer; eine laufende Suche wird abgebrochen,

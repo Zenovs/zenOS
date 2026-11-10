@@ -6,8 +6,8 @@ import Quickshell.Io
 import Quickshell.Wayland
 // eigenes Modul, damit qmllint die Singletons dieses Ordners kennt
 import qs.dienste
-import "../appleiste/fenster.mjs" as Fenster
-import "../uebersicht/schreibtisch.mjs" as Logik
+import "../appleiste/fenster.js" as Fenster
+import "../uebersicht/schreibtisch.js" as Logik
 
 // Schreibtisch zeigen (Super+H, Befehlsfeld, IPC): umschalten() minimiert alle sichtbaren App-Fenster auf allen
 // Bildschirmen, auch Vollbild-Fenster, und merkt sie sich. Ein zweites umschalten() holt genau diese zurück, solange

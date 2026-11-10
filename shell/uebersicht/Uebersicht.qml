@@ -7,8 +7,8 @@ import Quickshell.Wayland
 import qs.theme
 import qs.dienste
 import qs.komponenten
-import "../appleiste/fenster.mjs" as Fenster
-import "liste.mjs" as Liste
+import "../appleiste/fenster.js" as Fenster
+import "liste.js" as Liste
 
 // Fensterübersicht (Super+Tab, Befehlsfeld «Fensterübersicht», IPC): alle offenen App-Fenster als Karten ohne
 // Vorschaubilder (labwc 0.9.3 gibt einzelne Fenster nicht heraus), mit App-Symbol, App-Name und Titel. Bleibt offen,

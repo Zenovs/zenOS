@@ -1,6 +1,6 @@
 import QtQuick
 import Quickshell.Io
-import "suche.mjs" as Suche
+import "suche.js" as Suche
 
 // Lokale Nutzungsstatistik des Befehlsfelds für Vorschläge: nur App-IDs und Zähler, dazu die
 // Reihenfolge der zuletzt genutzten. Keine Zeiten, keine Fenstertitel. Verlässt den Rechner nie.

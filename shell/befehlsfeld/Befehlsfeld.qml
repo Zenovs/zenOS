@@ -8,8 +8,8 @@ import Quickshell.Wayland
 import qs.theme
 import qs.dienste
 import qs.komponenten
-import "rechner.mjs" as Rechner
-import "suche.mjs" as Suche
+import "rechner.js" as Rechner
+import "suche.js" as Suche
 
 // Befehlsfeld (Super+Leertaste) nach Entwurf 2: Apps, Web-Apps, Aktionen, Modus und Zustand,
 // Rechnen, Dateien und Werkzeuge. Eingaben gehen nie an eine Shell; Prozesse starten mit
@@ -48,11 +48,6 @@ Scope {
     // Werkzeuge (Tab). zenOS 1.0 hat noch keine: Pipette und Bildschirmfoto brauchen Programme, die nicht im Image
     // sind. Ohne Werkzeuge bleiben die Zeile verborgen und der Werkzeug-Modus aus.
     readonly property var werkzeuge: []
-
-    onWerkzeugModusChanged: {
-        if (werkzeugModus && werkzeuge.length === 0)
-            werkzeugModus = false;
-    }
 
     readonly property var aktionen: [
         {
@@ -591,7 +586,14 @@ Scope {
         Qt.callLater(_sichtbarMachen);
     }
 
-    onWerkzeugModusChanged: bestaetigen = ""
+    onWerkzeugModusChanged: {
+        // Ohne Werkzeuge (zenOS 1.0) gibt es keinen Werkzeug-Modus
+        if (werkzeugModus && werkzeuge.length === 0) {
+            werkzeugModus = false;
+            return;
+        }
+        bestaetigen = "";
+    }
 
     onOffenChanged: {
         if (!offen)

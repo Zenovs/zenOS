@@ -1,3 +1,6 @@
+.pragma library
+// Gewöhnliche JavaScript-Bibliothek statt ES-Modul: Qt 6.8 (Debian 13) lädt ES-Module nur aus lokalen Dateien,
+// Quickshell reicht die Oberfläche aber über seine qs:-Adressen.
 // Rechner für das Befehlsfeld: ein eigener, kleiner Parser (kein eval, kein Function()).
 // Wird von Befehlsfeld.qml importiert und mit node getestet (test/einheiten/rechner.test.mjs).
 //
@@ -44,7 +47,7 @@ function istApostroph(c) {
 }
 
 // Text → Liste von Tokens {art: "zahl", wert, trenner} | {art: "op", wert}; null bei ungültiger Eingabe
-export function zerlegen(text) {
+function zerlegen(text) {
     const tokens = [];
     let i = 0;
     while (i < text.length) {
@@ -243,7 +246,7 @@ class Parser {
 // Rechnet einen Ausdruck aus. Ergebnis {wert, anzeige} oder null, wenn der Text keine Rechnung ist,
 // ungültig ist oder kein endliches Ergebnis hat (z. B. Division durch 0).
 // anzeige nutzt den Dezimaltrenner der Eingabe (ohne Trenner in der Eingabe: Komma).
-export function berechnen(text) {
+function berechnen(text) {
     if (typeof text !== "string")
         return null;
     const eingabe = text.trim().replace(/=\s*$/, "").trim();
@@ -269,7 +272,7 @@ export function berechnen(text) {
 }
 
 // Auf 12 signifikante Stellen runden (0.1 + 0.2 = 0.3); null bei nicht endlichen Werten
-export function runden(wert) {
+function runden(wert) {
     if (typeof wert !== "number" || !Number.isFinite(wert))
         return null;
     const gerundet = Number(wert.toPrecision(12));
@@ -277,7 +280,7 @@ export function runden(wert) {
 }
 
 // Zahl als Text mit dem gewünschten Dezimaltrenner, ohne Tausendertrenner (zum Kopieren)
-export function formatieren(wert, trenner) {
+function formatieren(wert, trenner) {
     const betrag = Math.abs(wert);
     const text = betrag !== 0 && (betrag >= 1e21 || betrag < 1e-6) ? wert.toExponential().replace("e+", "e") : String(wert);
     return trenner === "," ? text.replace(".", ",") : text;

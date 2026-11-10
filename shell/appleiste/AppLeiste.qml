@@ -6,7 +6,7 @@ import Quickshell.Io
 import Quickshell.Wayland
 import qs.theme
 import qs.dienste
-import "fenster.mjs" as Fenster
+import "fenster.js" as Fenster
 
 // App-Leiste am rechten Rand: ein Symbol pro offener App, ein Klick holt sie nach vorne. Auch über Vollbild-Fenstern
 // (Ebene Overlay; labwc legt Vollbild nur über die Ebene Top). Sonst ist nichts zu sehen: Auf jedem Bildschirm, rechts

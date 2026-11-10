@@ -1,10 +1,13 @@
+.pragma library
+// Gewöhnliche JavaScript-Bibliothek statt ES-Modul: Qt 6.8 (Debian 13) lädt ES-Module nur aus lokalen Dateien,
+// Quickshell reicht die Oberfläche aber über seine qs:-Adressen.
 // Fenster und Apps der App-Leiste ohne QML: nach App gruppieren, feste Reihenfolge, Ziel eines Klicks,
 // Namen ohne Starter. Getestet mit node (test/einheiten/appleiste.test.mjs).
 // Fenster sind Toplevel-Objekte aus Quickshell (oder in den Tests {appId}); verglichen wird nur ihre Identität.
 
 // Listen aus QML (z. B. ToplevelManager.toplevels.values) sind keine echten Arrays, nur «array-ähnlich»
 // (Array.isArray ist dort false): als Array nehmen, alles andere als leere Liste.
-export function alsListe(wert) {
+function alsListe(wert) {
     if (Array.isArray(wert))
         return wert;
     if (wert && typeof wert === "object" && typeof wert.length === "number")
@@ -13,13 +16,13 @@ export function alsListe(wert) {
 }
 
 // Fenster der zenOS-Oberfläche selbst (Quickshell, z. B. die Einstellungen): nie in der App-Leiste
-export function istOberflaeche(appId) {
+function istOberflaeche(appId) {
     return /^org\.quickshell(\.|$)/i.test(String(appId ?? "").trim());
 }
 
 // Schlüssel einer App: appId klein, ohne «.desktop». Leer, wenn das Fenster keine appId hat (dann teilen sich
 // alle solchen Fenster eine Gruppe).
-export function appSchluessel(appId) {
+function appSchluessel(appId) {
     return String(appId ?? "").trim().toLowerCase().replace(/\.desktop$/, "");
 }
 
@@ -29,7 +32,7 @@ export function appSchluessel(appId) {
 // Ergebnis { reihenfolge, gruppen: [{ schluessel, appId, fenster: [...] }] }: Apps behalten ihren Platz, neue kommen
 // hinten dazu, Apps ohne Fenster fallen heraus (öffnet man sie wieder, stehen sie hinten). Fenster der Oberfläche
 // fehlen. Die Fenster einer Gruppe stehen in der Reihenfolge ihres Erscheinens.
-export function gruppieren(fenster, reihenfolge) {
+function gruppieren(fenster, reihenfolge) {
     const liste = alsListe(fenster);
     const nachSchluessel = new Map();
     for (const f of liste) {
@@ -67,7 +70,7 @@ export function gruppieren(fenster, reihenfolge) {
 
 // Verlauf der aktiven Fenster (zuletzt aktiv zuerst): das aktive nach vorn, geschlossene fallen heraus.
 // offen: alle offenen Fenster. Fenster der Oberfläche zählen nicht (sie würden die Apps nur verdrängen).
-export function verlaufNachfuehren(verlauf, aktiv, offen) {
+function verlaufNachfuehren(verlauf, aktiv, offen) {
     const offene = alsListe(offen);
     const neu = [];
     if (aktiv && offene.indexOf(aktiv) >= 0 && !istOberflaeche(aktiv.appId))
@@ -82,7 +85,7 @@ export function verlaufNachfuehren(verlauf, aktiv, offen) {
 // Fenster, das ein Klick auf eine App nach vorne holt. fensterDerApp in der Reihenfolge ihres Erscheinens.
 // Ist ein Fenster der App aktiv und hat sie mehrere: das nächste (nach dem letzten wieder das erste). Sonst das
 // zuletzt aktive Fenster der App (verlauf: zuletzt aktiv zuerst), sonst das zuletzt erschienene. null ohne Fenster.
-export function ziel(fensterDerApp, aktiv, verlauf) {
+function ziel(fensterDerApp, aktiv, verlauf) {
     const liste = alsListe(fensterDerApp).filter(f => f);
     if (liste.length === 0)
         return null;
@@ -97,14 +100,14 @@ export function ziel(fensterDerApp, aktiv, verlauf) {
 }
 
 // Host einer Web-App aus Chrome («chrome-mail.example.com__-Default» → «mail.example.com»), sonst ""
-export function webAppHost(appId) {
+function webAppHost(appId) {
     const m = /^chrome-([a-z0-9-]+(?:\.[a-z0-9-]+)+|localhost)_/i.exec(String(appId ?? "").trim());
     return m ? m[1].toLowerCase() : "";
 }
 
 // Anzeigename, wenn es keinen Starter gibt: bei Web-Apps der Host, bei umgekehrten Domains der letzte Teil
 // («org.example.Notizen» → «Notizen»), sonst die appId. Ohne appId «Fenster».
-export function nameOhneStarter(appId) {
+function nameOhneStarter(appId) {
     const id = String(appId ?? "").trim().replace(/\.desktop$/i, "");
     if (id === "")
         return "Fenster";
@@ -118,7 +121,7 @@ export function nameOhneStarter(appId) {
 }
 
 // Anfangsbuchstabe für Apps ohne Symbol (gross, auch bei Zeichen ausserhalb der BMP)
-export function buchstabe(name) {
+function buchstabe(name) {
     const zeichen = Array.from(String(name ?? "").trim());
     return zeichen.length > 0 ? zeichen[0].toUpperCase() : "";
 }
@@ -127,7 +130,7 @@ export function buchstabe(name) {
 // die Auslösezone: Bei zwei Bildschirmen nebeneinander läuft der Zeiger über den inneren Rand einfach hinüber, die
 // 1-px-Zone wäre dort kaum zu treffen und stünde beim Wechsel im Weg. Bildschirme wie ShellScreen aus Quickshell
 // (name, x, y, width, height in logischen Pixeln); 1 px Spiel für Rundungen bei Skalierung. Ohne Bildschirm: false.
-export function randAussen(bildschirm, alle) {
+function randAussen(bildschirm, alle) {
     if (!bildschirm)
         return false;
     const rechts = bildschirm.x + bildschirm.width;
