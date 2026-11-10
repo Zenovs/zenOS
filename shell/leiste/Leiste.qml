@@ -22,8 +22,6 @@ Scope {
     property real menueX: 0
     // System-Menü mit aufgeklappter WLAN-Liste öffnen (zenos-ipc leiste menue wlan)
     property bool menueWlanOffen: false
-    // System-Menü mit aufgeklappter Wahl des Lüfters öffnen (zenos-ipc leiste menue luefter)
-    property bool menueLuefterOffen: false
     // System-Menü mit aufgeklappter Liste der Bluetooth-Geräte öffnen (zenos-ipc leiste menue bluetooth)
     property bool menueBluetoothOffen: false
 
@@ -75,8 +73,7 @@ Scope {
         if (name === "system") {
             System.aktualisieren();
             Geraet.aktualisieren();
-            Kanal.aktualisieren();
-            Basis.aktualisieren();
+            Update.aktualisieren();
             _nmPruefen();
             _btPruefen();
         }
@@ -85,7 +82,6 @@ Scope {
     function menueSchliessen(): void {
         menue = "";
         menueWlanOffen = false;
-        menueLuefterOffen = false;
         menueBluetoothOffen = false;
     }
 
@@ -253,9 +249,9 @@ Scope {
                         wlanNmLaeuft: root.nmLaeuft
                         wlanOffen: root.menueWlanOffen
                         bluetoothQuelle: root.bluetooth
-                        bluetoothGeraet: root.btGeraet
+                        // zenOS 1.0 bringt BlueZ noch nicht mit: der Abschnitt erscheint erst, wenn bluetooth.service läuft
+                        bluetoothGeraet: root.btGeraet && root.btLaeuft
                         bluetoothOffen: root.menueBluetoothOffen
-                        luefterOffen: root.menueLuefterOffen
                         onSchliessen: root.menueSchliessen()
                     }
                 }
@@ -310,24 +306,23 @@ Scope {
         }
     }
 
-    // zenos-ipc leiste menue system|raster|wlan|bluetooth|luefter · zenos-ipc leiste schliessen · zenos-ipc leiste status
-    // (für Tests und eigene Tastenkürzel; öffnet auf dem ersten Bildschirm; «wlan», «bluetooth» bzw. «luefter» ist das
-    // System-Menü mit aufgeklappter WLAN-Liste, Liste der Bluetooth-Geräte bzw. Wahl des Lüfters)
+    // ipc leiste menue system|raster|wlan|bluetooth · ipc leiste schliessen · ipc leiste status (/usr/lib/zenos/ipc;
+    // für Tests und eigene Tastenkürzel; öffnet auf dem ersten Bildschirm; «wlan» bzw. «bluetooth» ist das System-Menü
+    // mit aufgeklappter WLAN-Liste bzw. Liste der Bluetooth-Geräte)
     IpcHandler {
         target: "leiste"
 
         function menue(name: string): void {
-            if (["system", "raster", "wlan", "bluetooth", "luefter"].indexOf(name) < 0)
+            if (["system", "raster", "wlan", "bluetooth"].indexOf(name) < 0)
                 return;
             const instanz = leisten.instances.length > 0 ? leisten.instances[0] : null;
             if (!instanz)
                 return;
-            if (name === "wlan" || name === "bluetooth" || name === "luefter") {
+            if (name === "wlan" || name === "bluetooth") {
                 // neu aufbauen, damit die Liste bzw. Wahl aufgeklappt beginnt
                 root.menueSchliessen();
                 root.menueWlanOffen = name === "wlan";
                 root.menueBluetoothOffen = name === "bluetooth";
-                root.menueLuefterOffen = name === "luefter";
                 name = "system";
             }
             instanz.menueOeffnen(name);

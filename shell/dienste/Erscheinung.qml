@@ -8,7 +8,7 @@ import Quickshell.Io
 import qs.dienste
 
 // Wirksames Erscheinungsbild und Akzent. Überträgt beides (entprellt) mit
-// zenos-thema auf GTK, Qt, kitty, labwc und VS Code.
+// /usr/lib/zenos/thema auf GTK, kitty und labwc.
 Singleton {
     id: root
 
@@ -109,7 +109,7 @@ Singleton {
             return;
         _lastApplied = _target;
         themeProcess.exec({
-            command: [Pfade.bin + "/zenos-thema", "anwenden", "--modus", dunkel ? "dunkel" : "hell", "--akzent", akzentName]
+            command: [Pfade.bin + "/thema", "anwenden", "--modus", dunkel ? "dunkel" : "hell", "--akzent", akzentName]
         });
     }
 
@@ -133,12 +133,12 @@ Singleton {
     Process {
         id: themeProcess
 
-        // zenos-thema schreibt nur bei Fehlern auf stderr
+        // thema schreibt nur bei Fehlern auf stderr
         stderr: StdioCollector {
             onStreamFinished: {
                 const message = text.trim();
                 if (message.length > 0) {
-                    console.warn("Erscheinung: zenos-thema meldet:", message);
+                    console.warn("Erscheinung: thema meldet:", message);
                     // beim nächsten Wechsel erneut versuchen
                     root._lastApplied = "";
                 }

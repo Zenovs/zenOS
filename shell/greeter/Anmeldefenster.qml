@@ -166,8 +166,8 @@ PanelWindow {
             }
         }
 
-        // Update läuft (zenos-kanal übernimmt gerade den Code, oder zenos-basis aktualisiert die Ubuntu-Basis): dieselbe
-        // ruhige Pille, auf jedem Bildschirm
+        // Update läuft (zenos-update.service installiert gerade einen neuen Stand): dieselbe ruhige Pille, auf jedem
+        // Bildschirm
         Rectangle {
             anchors.horizontalCenter: parent.horizontalCenter
             visible: root.updateLaeuft

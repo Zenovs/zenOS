@@ -5,9 +5,9 @@
 // hier, weil der Notfall-Login nur Dateien aus seinem eigenen Ordner laden kann. Tests:
 // test/einheiten/greeter.test.mjs
 
-// Das Passwort muss vor der Anmeldung geändert werden (z. B. ubuntu/ubuntu eines Images ohne Einstellungen
-// im Raspberry Pi Imager). greetd 0.10 ruft kein pam_chauthtok auf, im Login geht das also nicht.
-const PASSWORD_CHANGE = "Das Passwort muss zuerst geändert werden: Mit Ctrl+Alt+F2 zur Textkonsole, dort anmelden, ein neues Passwort setzen und mit «exit» abmelden. Zurück mit Ctrl+Alt+F7.";
+// Das Passwort muss vor der Anmeldung geändert werden. greetd 0.10 ruft kein pam_chauthtok auf, im Login geht das
+// also nicht. In zenOS 1.0 legt systemd-homed die Konten ohne Ablauf an; eine Textkonsole gibt es nicht.
+const PASSWORD_CHANGE = "Das Passwort dieses Kontos ist abgelaufen und muss neu gesetzt werden. Das geht im Login nicht.";
 
 // description: Beschreibung aus dem auth_error von greetd; typedName: der Benutzername wurde eingetippt
 function failureText(description, typedName) {

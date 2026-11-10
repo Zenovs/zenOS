@@ -159,7 +159,7 @@ ShellRoot {
         function onReadyToLaunch(): void {
             root.meldung = "Sitzung startet …";
             root.meldungFehler = false;
-            Greetd.launch([root.code + "/scripts/bin/zenos-sitzung"], ["XDG_SESSION_TYPE=wayland", "XDG_SESSION_DESKTOP=zenos", "XDG_CURRENT_DESKTOP=labwc:wlroots"]);
+            Greetd.launch(["/usr/lib/zenos/sitzung"], ["XDG_SESSION_TYPE=wayland", "XDG_SESSION_DESKTOP=zenos", "XDG_CURRENT_DESKTOP=labwc:wlroots"]);
         }
     }
 
@@ -226,7 +226,7 @@ ShellRoot {
 
             Text {
                 width: parent.width
-                text: "Der Login konnte nicht vollständig geladen werden. Anmelden geht trotzdem; danach zeigt «zen doctor» den Grund."
+                text: "Der Login konnte nicht vollständig geladen werden. Anmelden geht trotzdem."
                 color: root.gedaempft
                 font.family: root.schrift
                 font.pixelSize: 13

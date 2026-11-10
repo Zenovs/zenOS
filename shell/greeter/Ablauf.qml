@@ -123,7 +123,7 @@ Scope {
         function onReadyToLaunch(): void {
             root._zuruecksetzen();
             root._melden("Sitzung startet …", false);
-            Greetd.launch([Pfade.code + "/scripts/bin/zenos-sitzung"], ["XDG_SESSION_TYPE=wayland", "XDG_SESSION_DESKTOP=zenos", "XDG_CURRENT_DESKTOP=labwc:wlroots"]);
+            Greetd.launch([Pfade.bin + "/sitzung"], ["XDG_SESSION_TYPE=wayland", "XDG_SESSION_DESKTOP=zenos", "XDG_CURRENT_DESKTOP=labwc:wlroots"]);
         }
     }
 }

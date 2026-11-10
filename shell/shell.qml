@@ -8,9 +8,8 @@
 import QtQuick
 import Quickshell
 import qs.dienste
-// Die Oberflächen-Ordner werden importiert, damit Quickshell sie kennt (eigene Module,
-// Live-Reload). Geladen werden die Dateien einzeln über LazyLoader mit source: Ein Fehler
-// in einer Datei reisst so die anderen nicht mit.
+// Die Oberflächen-Ordner werden importiert, damit Quickshell sie kennt (eigene Module). Geladen werden die Dateien
+// einzeln über LazyLoader mit source: Ein Fehler in einer Datei reisst so die anderen nicht mit.
 // qmllint disable unused-imports
 import qs.theme as ThemeModul
 import qs.komponenten as KomponentenModul
@@ -19,17 +18,14 @@ import qs.leiste as LeisteModul
 import qs.heute as HeuteModul
 import qs.befehlsfeld as BefehlsfeldModul
 import qs.mitteilungen as MitteilungenModul
-import qs.freigabe as FreigabeModul
 import qs.modi as ModiModul
-import qs.einstellungen as EinstellungenModul
-import qs.einrichtung as EinrichtungModul
 import qs.polkit as PolkitModul
 import qs.appleiste as AppleisteModul
 import qs.uebersicht as UebersichtModul
-import qs.installer as InstallerModul
 // qmllint enable unused-imports
 
-// Einstieg der zenOS-Sitzung.
+// Einstieg der Sitzung von zenOS 1.0 (zenos-shell.service: quickshell -p /usr/share/zenos/shell/shell.qml).
+// Einstellungen, Einrichtung, zen Installer, Modus-Wahl und Bildschirmfreigabe von zenOS 0.1 sind (noch) nicht dabei.
 ShellRoot {
     id: root
 
@@ -71,33 +67,7 @@ ShellRoot {
         loading: true
     }
 
-    LazyLoader {
-        source: "freigabe/Freigabe.qml"
-        loading: true
-    }
-
-    LazyLoader {
-        source: "modi/Umschalter.qml"
-        loading: true
-    }
-
-    LazyLoader {
-        source: "einstellungen/Einstellungen.qml"
-        loading: true
-    }
-
-    LazyLoader {
-        source: "einrichtung/Einrichtung.qml"
-        loading: true
-    }
-
-    // zen Installer: .deb per Doppelklick installieren (IPC «installer», Fenster erst beim Öffnen)
-    LazyLoader {
-        source: "installer/Installer.qml"
-        loading: true
-    }
-
-    // polkit-Agent der Sitzung (Passwortdialog, z. B. für «Firewall ausschalten»)
+    // polkit-Agent der Sitzung: Passwortdialog, wenn ein Dienst nach dem Passwort fragt (z. B. NetworkManager)
     LazyLoader {
         source: "polkit/Polkit.qml"
         loading: true
@@ -113,12 +83,10 @@ ShellRoot {
         loading: true
     }
 
-    // Dienste, die unabhängig von einer Oberfläche von Anfang an laufen müssen
-    // (Übertragung des Erscheinungsbilds, Mitteilungsdienst, Auslöser, IPC, Höchstdauer der Sperre trotz Video,
-    // Mitteilungen des Update-Kanals und der Basis-Updates samt Hinweis «Neustart nötig», Schreibtisch zeigen samt
-    // Verlauf der aktiven Fenster, Wischen mit drei Fingern).
+    // Dienste, die unabhängig von einer Oberfläche von Anfang an laufen müssen (Erscheinungsbild, Mitteilungsdienst,
+    // Höchstdauer der Sperre trotz Video, Stand der Updates, Schreibtisch zeigen samt Verlauf der aktiven Fenster).
     Component.onCompleted: {
-        const dienste = [() => Erscheinung.dunkel, () => Mitteilungen.anzahlWartend, () => Modi.aktivId, () => Zustaende.aktivId, () => Freigabe.aktiv, () => Raster.aktivId, () => Energie.sperreTrotzHemmerMinuten, () => Kanal.zustand, () => Basis.zustand, () => Schreibtisch.frei, () => Gesten.verbunden];
+        const dienste = [() => Erscheinung.dunkel, () => Mitteilungen.anzahlWartend, () => Zustaende.aktivId, () => Energie.sperreTrotzHemmerMinuten, () => Update.laeuft, () => Schreibtisch.frei];
         for (const starten of dienste) {
             try {
                 starten();

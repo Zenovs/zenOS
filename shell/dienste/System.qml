@@ -6,15 +6,14 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Services.Pipewire
 
-// Systemzustand für die Leiste: Temperatur, Netz, Ton, 1Password (Akku und Lüfter: Geraet).
+// Systemzustand für die Leiste: Temperatur, Netz, Ton (Akku und Lüfter: Geraet).
 // Sparsam für den Pi: ein Timer (5 s) liest ein paar kleine Dateien aus /sys und /proc,
-// der Ton kommt direkt von PipeWire. Prozesse startet der Dienst nur für die 1Password-Prüfung
-// (selten und nur, wenn 1Password installiert ist) und einmal beim Start für die Suche nach dem
-// Temperaturfühler der CPU.
+// der Ton kommt direkt von PipeWire. Einen Prozess startet der Dienst nur einmal beim Start für die Suche nach dem
+// Temperaturfühler der CPU (/usr/lib/zenos/temperatur).
 Singleton {
     id: root
 
-    // °C der CPU (Datei von scripts/bin/zenos-temperatur, auf dem Pi thermal_zone0), -1 wenn unbekannt
+    // °C der CPU (Datei von /usr/lib/zenos/temperatur, auf dem Pi thermal_zone0), -1 wenn unbekannt
     readonly property int temperatur: _temperature
 
     // Netz: Standardverbindung über ein Gerät, das oben ist (nur Anzeige, zenOS verwaltet kein Netz)
@@ -34,9 +33,6 @@ Singleton {
     readonly property real lautstaerke: tonVerfuegbar ? Math.max(0, _sink.audio.volume) : 0
     readonly property bool stumm: tonVerfuegbar ? _sink.audio.muted : false
 
-    // 1Password (/opt/1Password, siehe zen apps)
-    readonly property bool einsPasswortInstalliert: _opDesktopEntry || _opBinary
-    readonly property bool einsPasswortLaeuft: einsPasswortInstalliert && _opRunning
 
     // Lautstärke setzen (0.0–1.0); hebt Stumm auf, sobald etwas zu hören sein soll
     function lautstaerkeSetzen(wert: real): void {
@@ -79,7 +75,7 @@ Singleton {
     Process {
         id: thermalSearch
 
-        command: [Pfade.code + "/scripts/bin/zenos-temperatur"]
+        command: [Pfade.bin + "/temperatur"]
         stdout: StdioCollector {
             onStreamFinished: {
                 const pfad = text.trim();
@@ -257,39 +253,6 @@ Singleton {
         objects: [root._sink]
     }
 
-    // --- 1Password ---
-
-    // Starter von 1Password (DesktopEntries beobachtet die Ordner): after-install.sh legt seit 8.12
-    // com.onepassword.OnePassword.desktop an, ältere Versionen 1password.desktop
-    readonly property list<string> _opDesktopIds: ["com.onepassword.onepassword", "1password"]
-    readonly property bool _opDesktopEntry: {
-        const apps = DesktopEntries.applications.values;
-        for (let i = 0; i < apps.length; i++) {
-            const id = String(apps[i]?.id ?? "").toLowerCase();
-            if (_opDesktopIds.includes(id))
-                return true;
-        }
-        return false;
-    }
-    property bool _opBinary: false
-    property bool _opRunning: false
-
-    Process {
-        id: opInstalledCheck
-
-        command: ["test", "-x", "/opt/1Password/1password"]
-    }
-
-    Process {
-        id: opRunningCheck
-
-        // nur Prozesse des eigenen Benutzers
-        command: {
-            const user = Quickshell.env("USER");
-            return user ? ["pgrep", "-x", "-u", user, "1password"] : ["pgrep", "-x", "1password"];
-        }
-    }
-
     // --- Takt ---
 
     property int _tick: 0
@@ -304,11 +267,6 @@ Singleton {
             (operstateFiles.objectAt(i) as FileView)?.reload();
         if (full)
             devFile.reload();
-        // 1Password: installiert alle 5 Minuten, läuft alle 30 s (nur wenn installiert)
-        if ((full || _tick % 60 === 0) && !opInstalledCheck.running)
-            opInstalledCheck.running = true;
-        if ((full || _tick % 6 === 0) && einsPasswortInstalliert && !opRunningCheck.running)
-            opRunningCheck.running = true;
     }
 
     Timer {
@@ -321,12 +279,5 @@ Singleton {
         }
     }
 
-    Component.onCompleted: {
-        // exited(code, status) hier verbunden: qmllint kennt QProcess::ExitStatus nicht
-        opInstalledCheck.exited.connect(code => root._opBinary = code === 0);
-        opRunningCheck.exited.connect(code => root._opRunning = code === 0);
-        opInstalledCheck.running = true;
-        opRunningCheck.running = true;
-        thermalSearch.running = true;
-    }
+    Component.onCompleted: thermalSearch.running = true
 }

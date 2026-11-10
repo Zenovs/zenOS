@@ -16,17 +16,16 @@ import "../dienste/energie.js" as EnergieLogik
 //   Shell, wenn der Marker $XDG_RUNTIME_DIR/zenos/gesperrt existiert (Absturz, Neustart, Neuladen).
 // - Der Marker wird vor dem Sperren gesetzt und erst nach dem Entsperren gelöscht. Stirbt die Shell
 //   dazwischen, hält labwc die Sperre, und die neu gestartete Shell sperrt über den Marker wieder.
-// - Das Passwort wird nur an PAM weitergereicht (Dienst zenos-sperre unter <code>/system/pam) und das
+// - Das Passwort wird nur an PAM weitergereicht (Dienst zenos-sperre unter /etc/pam.d) und das
 //   Feld sofort geleert.
 // - Offene Overlays (Befehlsfeld, Zentrale, Modus-/Zustandswahl, Menüs der Leiste) schliessen beim Sperren,
 //   sonst hätte nach dem Entsperren nichts die Tastatur (siehe _overlaysSchliessen). Die Einrichtung bleibt
 //   offen und gibt die Tastatur während der Sperre ab (Oberflaeche.gesperrt, gesetzt nur hier).
 // - Während der Sperre ruht das automatische Neuladen der Oberfläche: Quickshell v0.3.1 stürzt ab, wenn es
 //   bei gesetzter Sperre neu lädt (neue Sperrflächen vor dem Abbau der alten). Wurde die Oberfläche in der
-//   Zwischenzeit geändert (z. B. zen update), lädt sie nach dem Entsperren neu und hält den Zeitpunkt in
-//   $XDG_RUNTIME_DIR/zenos/oberflaeche-geladen fest (install.sh startet sie dann nicht nochmals neu). Läuft beim
-//   Entsperren gerade eine Übernahme aus dem Kanal (Kanal.uebernahmeLaeuft), bleibt das Nachladen aus, und die Sperre
-//   lädt nicht neu: Nach der Übernahme richtet Kanal die Benutzerteile ein und startet die Oberfläche neu, wenn nötig.
+//   Zwischenzeit geändert, lädt sie nach dem Entsperren neu und hält den Zeitpunkt in
+//   $XDG_RUNTIME_DIR/zenos/oberflaeche-geladen fest. In zenOS 1.0 kommt das nicht vor: Die Oberfläche liegt im
+//   schreibgeschützten System und ändert sich nur mit einem Update, nach dem das Gerät neu startet.
 // - Leitplanke (Code): Der Sperrbildschirm zeigt nie Inhalte, nur die Anzahl der Mitteilungen – keine
 //   Vorschau, keine App-Namen.
 // - Bildschirm aus (Leitplanke: dunkel heisst gesperrt): bildschirmAusNachSperre Min. (1–10) nach der Sperre ohne
@@ -50,7 +49,7 @@ Scope {
     id: root
 
     readonly property string markerPfad: Pfade.laufzeit + "/gesperrt"
-    readonly property string pamOrdner: Pfade.code + "/system/pam"
+    readonly property string pamOrdner: "/etc/pam.d"
 
     // Eingabe aller Bildschirme (getippt wird dort, wo der Tastaturfokus liegt)
     property string eingabe: ""
@@ -154,7 +153,6 @@ Scope {
         } finally {
             root._sperrtGerade = false;
         }
-        Quickshell.execDetached([Pfade.bin + "/zenos-1password-sperren"]);
     }
 
     // Overlays mit exklusivem Tastaturfokus (Befehlsfeld, Zentrale, Modus- und Zustandswahl, Menüs der
@@ -528,7 +526,7 @@ Scope {
 
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
-                        text: System.einsPasswortInstalliert ? "zenOS gesperrt · 1Password gesperrt" : "zenOS gesperrt"
+                        text: "zenOS gesperrt"
                         color: Theme.gedaempft
                         font.family: Theme.schriftMono
                         font.pixelSize: Theme.groesseKlein
@@ -643,11 +641,9 @@ Scope {
                 markerDatei.setText(new Date().toISOString() + "\n");
                 return;
             }
-            // Während einer Übernahme aus dem Kanal nicht: sonst lüde sie einen halben Stand
-            Quickshell.watchFiles = !Kanal.uebernahmeLaeuft;
-            if (root._neuLaden && Kanal.uebernahmeLaeuft) {
-                console.info("Sperre: Oberfläche geändert, aber die Übernahme läuft noch; neu geladen wird danach");
-            } else if (root._neuLaden) {
+            // In zenOS 1.0 liegt die Oberfläche im schreibgeschützten System und ändert sich nur mit einem Update
+            // (danach startet das Gerät neu). Der Vergleich bleibt als Absicherung.
+            if (root._neuLaden) {
                 console.info("Sperre: Oberfläche während der Sperre geändert, lade neu");
                 zustand.geladenAb = root._suchBeginn;
                 Quickshell.reload(false);
@@ -765,7 +761,7 @@ Scope {
     Process {
         id: startStatus
 
-        command: [Pfade.bin + "/zenos-bildschirm", "status"]
+        command: [Pfade.bin + "/bildschirm", "status"]
         workingDirectory: Pfade.home
         stdout: StdioCollector {
             onStreamFinished: {

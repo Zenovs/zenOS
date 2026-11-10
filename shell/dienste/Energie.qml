@@ -13,10 +13,10 @@ import "energie.js" as EnergieLogik
 // Idle-Hemmer die automatische Sperre aufhalten darf, und das Ausschalten nach langer Sperre. Die Logik steht in
 // energie.js und ist dort getestet.
 //
-// - aus(): Sofort-Aktion (System-Menü, Befehlsfeld, IPC «energie aus»; Super+Shift+L ruft «zen energie aus»
-//   direkt auf). Über «zen energie aus»: zen lock, dann zenos-bildschirm aus. Geweckt wird über die Sperre
+// - aus(): Sofort-Aktion (System-Menü, Befehlsfeld, IPC «energie aus»; Super+Shift+L ruft «bildschirm aus»
+//   direkt auf). Über «bildschirm aus» (/usr/lib/zenos): sperren, dann Bildschirm aus. Geweckt wird über die Sperre
 //   (sperre/Sperre.qml), bei jeder Eingabe und ohne Rücksicht auf Idle-Hemmer (ein Video hält das nicht auf).
-// - bildschirm("aus" | "an"): zenos-bildschirm mit Argumentliste. «aus» sperrt dort immer zuerst (dunkel heisst
+// - bildschirm("aus" | "an"): /usr/lib/zenos/bildschirm mit Argumentliste. «aus» sperrt dort immer zuerst (dunkel heisst
 //   gesperrt). Es läuft immer nur ein Aufruf, der letzte Wunsch gilt. Gelingt er, kommt bildschirmGeschaltet.
 //   Die Sperre nutzt das für «Bildschirm aus nach der Sperre» und zum Wecken.
 // - Leitplanke (Code, nicht abschaltbar): Ein Idle-Hemmer (z. B. ein Video im Browser) hält die automatische
@@ -88,7 +88,7 @@ Singleton {
     // Gesperrt, und das Ausschalten gilt: Dann zählt die Zeit bis zur Vorwarnung
     readonly property bool ausschaltenZaehlt: Oberflaeche.gesperrt && ausschaltenAktiv
 
-    // zenos-bildschirm hat den Bildschirm aus- bzw. eingeschaltet ("aus" | "an")
+    // bildschirm hat den Bildschirm aus- bzw. eingeschaltet ("aus" | "an")
     signal bildschirmGeschaltet(string was)
     // Die Vorwarnung ist sichtbar bzw. vorbei (grund: eingabe, entsperrt, netzteil, blockiert, probe …)
     signal vorwarnungGestartet
@@ -113,10 +113,9 @@ Singleton {
 
     // --- intern ---
 
-    readonly property string _zen: Pfade.code + "/scripts/zen"
     readonly property string _helfer: Pfade.bin + "/zenos-energie"
     readonly property string _markerPfad: Pfade.laufzeit + "/vorwarnung"
-    // Nächster Aufruf von zenos-bildschirm ("aus", "an" oder "": keiner)
+    // Nächster Aufruf von bildschirm ("aus", "an" oder "": keiner)
     property string _wunsch: ""
     property var _vorwarnung: EnergieLogik.vorwarnung()
     // Die laufende Vorwarnung ist eine Probe (IPC): Sie schaltet nie aus und legt keinen Marker an
@@ -135,7 +134,7 @@ Singleton {
         bildschirmProzess.running = true;
     }
 
-    // Leitplanke: trotz Idle-Hemmer spätestens jetzt sperren. Über zen lock (mit Notfall-Sperre, falls die
+    // Leitplanke: trotz Idle-Hemmer spätestens jetzt sperren. Über /usr/lib/zenos/sperren (mit Notfall-Sperre, falls die
     // Oberfläche nicht sperren kann), mit Argumentliste.
     function _sperrenTrotzHemmer(): void {
         console.info("Energie:", root.sperreTrotzHemmerMinuten, "Min. ohne Eingabe, sperre trotz Idle-Hemmer (Leitplanke)");
@@ -144,7 +143,7 @@ Singleton {
 
     function _sperren(): void {
         Quickshell.execDetached({
-            command: [root._zen, "lock"],
+            command: [Pfade.bin + "/sperren"],
             workingDirectory: Pfade.home
         });
     }
@@ -154,7 +153,7 @@ Singleton {
         if (aktion === "zuklappen") {
             console.info("Energie: Deckel zu, sperre und schalte den Bildschirm aus");
             deckelWecken.stop();
-            // zen energie aus sperrt immer zuerst (dunkel heisst gesperrt), eine Eingabe weckt wieder
+            // bildschirm aus sperrt immer zuerst (dunkel heisst gesperrt), eine Eingabe weckt wieder
             root.aus();
         } else if (aktion === "sperren") {
             console.info("Energie: Deckel zu und wieder offen (verpasst), sperre");
@@ -356,7 +355,7 @@ Singleton {
 
         property bool gestartet: false
 
-        command: [root._zen, "energie", "aus"]
+        command: [Pfade.bin + "/bildschirm", "aus"]
         workingDirectory: Pfade.home
         stderr: StdioCollector {
             id: ausFehler
@@ -365,11 +364,11 @@ Singleton {
         onStarted: gestartet = true
         onExited: (code, status) => {
             if (code !== 0 || status !== 0)
-                console.warn("Energie: zen energie aus endete mit", code, ausFehler.text.trim());
+                console.warn("Energie: bildschirm aus endete mit", code, ausFehler.text.trim());
         }
         onRunningChanged: {
             if (!running && !gestartet)
-                console.warn("Energie: zen liess sich nicht starten:", root._zen);
+                console.warn("Energie: bildschirm liess sich nicht starten:", Pfade.bin + "/bildschirm");
         }
     }
 
@@ -379,7 +378,7 @@ Singleton {
         property string was: ""
         property bool gestartet: false
 
-        command: [Pfade.bin + "/zenos-bildschirm", bildschirmProzess.was]
+        command: [Pfade.bin + "/bildschirm", bildschirmProzess.was]
         workingDirectory: Pfade.home
         stderr: StdioCollector {
             id: bildschirmFehler
@@ -390,13 +389,13 @@ Singleton {
             if (code === 0 && status === 0)
                 root.bildschirmGeschaltet(bildschirmProzess.was);
             else
-                console.warn("Energie: zenos-bildschirm", bildschirmProzess.was, "endete mit", code, bildschirmFehler.text.trim());
+                console.warn("Energie: bildschirm", bildschirmProzess.was, "endete mit", code, bildschirmFehler.text.trim());
         }
         onRunningChanged: {
             if (running)
                 return;
             if (!gestartet)
-                console.warn("Energie: zenos-bildschirm liess sich nicht starten");
+                console.warn("Energie: bildschirm liess sich nicht starten");
             Qt.callLater(root._naechster);
         }
     }

@@ -13,7 +13,7 @@ import "suche.mjs" as Suche
 
 // Befehlsfeld (Super+Leertaste) nach Entwurf 2: Apps, Web-Apps, Aktionen, Modus und Zustand,
 // Rechnen, Dateien und Werkzeuge. Eingaben gehen nie an eine Shell; Prozesse starten mit
-// Argumentlisten (Aktionen, Dateisuche, wl-copy).
+// Argumentlisten (Aktionen, Dateisuche).
 // Ansicht «apps» (Klick auf das Zeichen der Leiste, Oberflaeche.befehlsfeldApps): bei leerem Feld alle
 // installierten Apps als Raster (AppRaster), getippt wird gesucht wie sonst.
 Scope {
@@ -45,29 +45,16 @@ Scope {
     readonly property string abschnittModus: "Modus und Zustand"
     readonly property string abschnittDateien: "Dateien"
 
-    // Werkzeuge aus «Danach» (Messen, Clip, Text aus Bild, QR, Zwischenablage) kommen später dazu
-    readonly property var werkzeuge: [
-        {
-            id: "pipette",
-            titel: "Pipette",
-            symbol: "pipette",
-            woerter: "pipette farbe farbwert farbpipette color picker hex"
-        },
-        {
-            id: "bildschirmfoto",
-            titel: "Screenshot",
-            symbol: "bildschirmfoto",
-            woerter: "screenshot bildschirmfoto foto bildschirm bereich aufnehmen"
-        }
-    ]
+    // Werkzeuge (Tab). zenOS 1.0 hat noch keine: Pipette und Bildschirmfoto brauchen Programme, die nicht im Image
+    // sind. Ohne Werkzeuge bleiben die Zeile verborgen und der Werkzeug-Modus aus.
+    readonly property var werkzeuge: []
+
+    onWerkzeugModusChanged: {
+        if (werkzeugModus && werkzeuge.length === 0)
+            werkzeugModus = false;
+    }
 
     readonly property var aktionen: [
-        {
-            id: "einstellungen",
-            titel: "Einstellungen",
-            symbol: "zahnrad",
-            woerter: "einstellungen settings optionen konfiguration"
-        },
         {
             id: "erscheinung",
             titel: Theme.dunkel ? "Hell" : "Dunkel",
@@ -89,13 +76,6 @@ Scope {
             woerter: "schreibtisch zeigen desktop alle fenster minimieren ausblenden zuruck"
         },
         {
-            // ~/Ablage im Dateimanager, wie der Knopf in der Leiste
-            id: "ablage",
-            titel: "Ablage",
-            symbol: "ordner",
-            woerter: "ablage dateien ordner dokumente downloads explorer finder dateimanager thunar"
-        },
-        {
             id: "sperren",
             titel: "Sperren",
             symbol: "schloss",
@@ -107,12 +87,6 @@ Scope {
             titel: "Bildschirm aus",
             symbol: "monitor",
             woerter: "bildschirm aus dunkel monitor display schwarz"
-        },
-        {
-            id: "energie",
-            titel: "Energie",
-            symbol: "akku-halb",
-            woerter: "energie strom akku bereitschaft standby schlafen"
         },
         {
             id: "abmelden",
@@ -137,16 +111,6 @@ Scope {
             symbol: "ausschalten",
             woerter: "ausschalten herunterfahren shutdown poweroff",
             gefahr: true
-        },
-        {
-            id: "apps",
-            titel: "Apps verwalten",
-            // wenn die Suche nach dem Installieren fragt (Wort «installieren» oder eine fehlende App)
-            titelInstallieren: "Apps installieren",
-            symbol: "plus",
-            woerter: "apps programme verwalten installieren",
-            // Apps aus «zen apps»: zählen nur, solange keine installierte App zur Suche passt
-            appNamen: "chrome vscode code 1password coremail"
         }
     ]
 
@@ -214,7 +178,8 @@ Scope {
 
     function ausfuehren(index: int): void {
         if (werkzeugModus) {
-            werkzeugStarten(werkzeuge[werkzeugAuswahl].id);
+            if (werkzeugAuswahl < werkzeuge.length)
+                werkzeugStarten(werkzeuge[werkzeugAuswahl].id);
             return;
         }
         const e = eintraege[index];
@@ -252,7 +217,7 @@ Scope {
         case "rechnen":
             // «--»: ein negatives Ergebnis ist keine Option für wl-copy
             // Eigene Einheit: wl-copy hält die Zwischenablage auch über einen Neustart der Oberfläche
-            Aktionen.programmStarten(["wl-copy", "--", e.wert], "wl-copy");
+            Quickshell.clipboardText = e.wert;
             schliessen();
             Oberflaeche.hinweis(e.wert + " kopiert");
             break;
@@ -263,11 +228,10 @@ Scope {
         }
     }
 
-    // Kachel im Raster starten (wie eine App aus der Liste); ohne Apps führt Enter zu «Apps installieren»
+    // Kachel im Raster starten (wie eine App aus der Liste)
     function rasterAusfuehren(index: int): void {
         if (appsAlphabetisch.length === 0) {
             schliessen();
-            _aktionAusfuehren("apps");
             return;
         }
         const app = appsAlphabetisch[index];
@@ -292,9 +256,6 @@ Scope {
 
     function _aktionAusfuehren(id: string): void {
         switch (id) {
-        case "einstellungen":
-            Aktionen.einstellungen("");
-            break;
         case "erscheinung":
             Erscheinung.umschalten();
             break;
@@ -304,17 +265,11 @@ Scope {
         case "schreibtisch":
             Schreibtisch.umschalten();
             break;
-        case "ablage":
-            Aktionen.ablageOeffnen();
-            break;
         case "sperren":
             Aktionen.sperren();
             break;
         case "bildschirm-aus":
             Aktionen.bildschirmAus();
-            break;
-        case "energie":
-            Aktionen.einstellungen("energie");
             break;
         case "abmelden":
             Aktionen.abmelden();
@@ -324,9 +279,6 @@ Scope {
             break;
         case "ausschalten":
             Aktionen.ausschalten();
-            break;
-        case "apps":
-            Aktionen.einstellungen("apps");
             break;
         }
     }
@@ -843,14 +795,8 @@ Scope {
         id: nachDemSchliessen
 
         interval: 100
-        onTriggered: {
-            const id = root._werkzeugDanach;
-            root._werkzeugDanach = "";
-            if (id === "bildschirmfoto")
-                Aktionen.bildschirmfoto([]);
-            else if (id === "pipette")
-                Aktionen.pipette();
-        }
+        // zenOS 1.0 hat noch keine Werkzeuge (siehe werkzeuge); kommt eins dazu, startet es hier
+        onTriggered: root._werkzeugDanach = ""
     }
 
     Connections {
@@ -1248,8 +1194,8 @@ Scope {
                         id: werkzeugBlock
 
                         anchors.top: listenAnsicht.bottom
-                        // Im Raster gibt es nur Apps
-                        visible: !root.rasterAktiv
+                        // Im Raster gibt es nur Apps; ohne Werkzeuge keine Zeile
+                        visible: !root.rasterAktiv && root.werkzeuge.length > 0
                         width: parent.width
                         height: visible ? 12 + werkzeugTitel.implicitHeight + 6 + 34 + 16 : 0
 

@@ -201,13 +201,13 @@ Item {
         const parts = [];
         parts.push(System.netzArt === "wlan" ? "WLAN verbunden, Signal " + _wlanStufe + " von 3" : System.netzArt === "kabel" ? "Kabel verbunden" : System.wlanVerbunden ? "WLAN ohne Internet" : "nicht verbunden");
         parts.push(!System.tonVerfuegbar ? "kein Tonausgang" : System.stumm ? "Ton stumm" : "Lautstärke " + Math.round(System.lautstaerke * 100) + " %");
-        if (System.einsPasswortInstalliert)
-            parts.push(System.einsPasswortLaeuft ? "1Password läuft" : "1Password nicht gestartet");
         if (System.temperatur >= 0)
             parts.push(System.temperatur + " Grad");
         if (Geraet.akkuVorhanden)
             parts.push(!Geraet.akkuBekannt ? "Akku unbekannt" : "Akku " + Geraet.akkuProzent + " Prozent" + (Geraet.akkuLaedt ? ", lädt" : ""));
-        if (Basis.neustartHinweis)
+        if (Update.laeuft)
+            parts.push("Update läuft");
+        else if (Update.neustartNoetig)
             parts.push("Neustart nötig");
         return "System: " + parts.join(", ");
     }
@@ -301,10 +301,11 @@ Item {
             }
         }
 
+        // zenOS 1.0 hat noch keine Modi, kein Raster und keinen Dateimanager: Chip und Knöpfe bleiben verborgen
         Chip {
             id: modusChip
 
-            visible: root.stufe !== "aus"
+            visible: false
             text: modeMetrics.elidedText
             variante: root._modeName !== "" ? "gefuellt" : "still"
             mitPunkt: root._modeName !== ""
@@ -330,7 +331,7 @@ Item {
         Chip {
             id: rasterChip
 
-            visible: root.stufe === "normal"
+            visible: false
             variante: "still"
             symbol: "raster4"
             text: root._rasterShort
@@ -343,7 +344,7 @@ Item {
         LeistenKnopf {
             id: ablageKnopf
 
-            visible: root.stufe === "normal"
+            visible: false
             width: 32
             beschreibung: "Ablage öffnen"
             onClicked: Aktionen.ablageOeffnen()
@@ -497,14 +498,6 @@ Item {
                 farbe: System.tonVerfuegbar ? Theme.text : Theme.gedaempft
             }
 
-            Symbol {
-                anchors.verticalCenter: parent.verticalCenter
-                visible: System.einsPasswortInstalliert
-                name: "schloss"
-                groesse: 14
-                farbe: System.einsPasswortLaeuft ? Theme.text : Theme.gedaempft
-            }
-
             Text {
                 anchors.verticalCenter: parent.verticalCenter
                 visible: System.temperatur >= 0
@@ -514,11 +507,11 @@ Item {
                 font.pixelSize: Theme.groesseKlein
             }
 
-            // Neustart nötig (/run/reboot-required nach Updates): still und gedämpft, ohne Farbe und ohne Mitteilung.
-            // Nur bei voller Leiste, nie bei Bildschirmfreigabe (Leitplanke in dienste/basis.js)
+            // Neuer Stand installiert, startet beim nächsten Neustart (Update.neustartNoetig): still und gedämpft, ohne
+            // Farbe und ohne Mitteilung
             Symbol {
                 anchors.verticalCenter: parent.verticalCenter
-                visible: Basis.neustartHinweis
+                visible: Update.neustartNoetig
                 name: "neustart"
                 groesse: 14
                 farbe: Theme.gedaempft

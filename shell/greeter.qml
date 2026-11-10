@@ -8,17 +8,14 @@ import Quickshell.Io
 import qs.dienste
 import qs.greeter
 
-// Einstieg des Login-Greeters (greetd, Benutzer _greetd, gestartet von scripts/bin/zenos-greeter).
+// Einstieg des Login-Greeters (greetd, Benutzer _greetd, gestartet von /usr/lib/zenos/greeter).
 // Immer dunkel, überträgt nichts nach aussen. Kein Autologin.
 ShellRoot {
     id: root
 
-    // Ein Update aus dem Kanal übernimmt gerade den Code (zenos-kanal: /run/zenos-kanal/uebernahme) oder ein Basis-Update
-    // läuft (zenos-basis: /run/zenos-basis/uebernahme), beide für alle lesbar. Die Automatik installiert am
-    // Login-Bildschirm erst, wenn er seit 5 Min. wartet; wer sich dann anmeldet, sieht es.
-    readonly property bool updateLaeuft: _kanalLaeuft || _basisLaeuft
-    property bool _kanalLaeuft: false
-    property bool _basisLaeuft: false
+    // Ein Update wird gerade installiert (zenos-update.service legt /run/zenos/update/laeuft an, für alle lesbar).
+    // Wer sich dann anmeldet, sieht es; das Update läuft weiter.
+    property bool updateLaeuft: false
 
     Konten {
         id: kontoliste
@@ -40,8 +37,8 @@ ShellRoot {
         leerlauf: leerlauf
     }
 
-    // Ein kurzer Druck auf die Ein/Aus-Taste weckt nur (Hemmer «handle-power-key», solange dieser Login läuft)
-    EinAusTaste {}
+    // Ein kurzer Druck auf die Ein/Aus-Taste schaltet nicht aus: logind sperrt damit nur (HandlePowerKey=lock in
+    // /etc/systemd/logind.conf.d/zenos.conf), am Login also nichts. Gedrückt halten schaltet aus.
 
     Variants {
         model: Quickshell.screens
@@ -61,34 +58,21 @@ ShellRoot {
     }
 
     FileView {
-        id: uebernahme
+        id: updateMarker
 
-        path: "/run/zenos-kanal/uebernahme"
+        path: "/run/zenos/update/laeuft"
         blockLoading: true
         printErrors: false
-        onLoaded: root._kanalLaeuft = true
-        onLoadFailed: root._kanalLaeuft = false
+        onLoaded: root.updateLaeuft = true
+        onLoadFailed: root.updateLaeuft = false
     }
 
-    FileView {
-        id: basisUebernahme
-
-        path: "/run/zenos-basis/uebernahme"
-        blockLoading: true
-        printErrors: false
-        onLoaded: root._basisLaeuft = true
-        onLoadFailed: root._basisLaeuft = false
-    }
-
-    // Die Ordner bestehen nur während der Installation: kein watchChanges, nur ein ruhiger Takt
+    // Der Marker besteht nur während der Installation: kein watchChanges, nur ein ruhiger Takt
     Timer {
         interval: 3000
         running: true
         repeat: true
-        onTriggered: {
-            uebernahme.reload();
-            basisUebernahme.reload();
-        }
+        onTriggered: updateMarker.reload()
     }
 
     Component.onCompleted: {

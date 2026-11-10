@@ -16,7 +16,7 @@ Singleton {
         Oberflaeche.sperren();
     }
 
-    // Sofort sperren und den Bildschirm ausschalten (Energie, über zen energie aus). Eine Eingabe weckt ihn.
+    // Sofort sperren und den Bildschirm ausschalten (Energie, über /usr/lib/zenos/bildschirm aus). Eine Eingabe weckt ihn.
     function bildschirmAus(): void {
         Energie.aus();
     }
@@ -44,12 +44,12 @@ Singleton {
         _launchApp(befehl, "", name);
     }
 
-    // pfad: absoluter Pfad oder URL. Über zenos-oeffnen (gio open); findet sich keine App oder
-    // scheitert das Öffnen, erscheint ein Hinweis statt nichts.
+    // pfad: absoluter Pfad oder URL. Über /usr/lib/zenos/oeffnen; findet sich keine App oder scheitert das Öffnen,
+    // erscheint ein Hinweis statt nichts.
     function dateiOeffnen(pfad: string): void {
         if (!pfad)
             return;
-        // Ein Prozess pro Aufruf: zenos-oeffnen endet gleich nach dem Start der App, ein zweites
+        // Ein Prozess pro Aufruf: oeffnen endet gleich nach dem Start der App, ein zweites
         // Öffnen kurz danach geht so nicht verloren
         oeffnenVorlage.createObject(root, {
             ziel: pfad
@@ -65,7 +65,7 @@ Singleton {
     }
 
     function _oeffnenGescheitert(ziel: string, code: int, meldung: string): void {
-        console.warn("Aktionen: zenos-oeffnen endete mit", code, meldung.trim());
+        console.warn("Aktionen: oeffnen endete mit", code, meldung.trim());
         let text = "Öffnen hat nicht geklappt";
         if (code === 2)
             text = ziel === Pfade.ablage ? "Ablage nicht gefunden" : "Datei oder Ordner nicht gefunden";
@@ -86,7 +86,7 @@ Singleton {
             property bool gestartet: false
 
             // «--»: ein Pfad, der mit «-» beginnt, ist keine Option
-            command: [Pfade.bin + "/zenos-oeffnen", "--", oeffnen.ziel]
+            command: [Pfade.bin + "/oeffnen", "--", oeffnen.ziel]
             workingDirectory: Pfade.home
             running: true
             stderr: StdioCollector {
@@ -103,29 +103,20 @@ Singleton {
                 if (oeffnen.running)
                     return;
                 if (!oeffnen.gestartet)
-                    root._oeffnenGescheitert(oeffnen.ziel, -1, "zenos-oeffnen liess sich nicht starten");
+                    root._oeffnenGescheitert(oeffnen.ziel, -1, "oeffnen liess sich nicht starten");
                 oeffnen.destroy();
             }
         }
     }
 
-    // Auch die Werkzeuge in eigener Einheit: wl-copy hält danach die Zwischenablage und endet sonst mit
-    // einem Neustart der Oberfläche
-    function bildschirmfoto(argumente: var): void {
-        _launchApp([Pfade.bin + "/zenos-bildschirmfoto"].concat(Array.isArray(argumente) ? argumente : []), "", "bildschirmfoto");
-    }
 
-    function pipette(): void {
-        _launchApp([Pfade.bin + "/zenos-pipette"], "", "pipette");
-    }
-
-    // Über zenos-abmelden: stoppt erst die Sitzungsdienste, dann labwc (sonst enden sie als «failed»).
+    // Über /usr/lib/zenos/abmelden: stoppt erst die Sitzungsdienste, dann labwc (sonst enden sie als «failed»).
     // Nur wenn es sich nicht starten lässt, wird labwc direkt beendet.
     function abmelden(): void {
         if (abmeldenProzess.running)
             return;
         abmeldenProzess.gestartet = false;
-        abmeldenProzess.command = [Pfade.bin + "/zenos-abmelden"];
+        abmeldenProzess.command = [Pfade.bin + "/abmelden"];
         abmeldenProzess.running = true;
     }
 
@@ -172,7 +163,7 @@ Singleton {
         onExited: (code, status) => {
             if (code === 0 || status !== 0)
                 return;
-            console.warn("Aktionen: zenos-abmelden endete mit", code, abmeldenFehler.text.trim());
+            console.warn("Aktionen: abmelden endete mit", code, abmeldenFehler.text.trim());
             Oberflaeche.hinweis("Abmelden hat nicht geklappt", "warnung");
         }
     }
@@ -186,14 +177,14 @@ Singleton {
     }
 
     // Apps in eigener Einheit starten (app-zenos-<name>-<zeit>.scope in app.slice), über
-    // zenos-oeffnen --programm: Was die Oberfläche direkt startet, liegt in der cgroup von
-    // zenos-shell.service und endet mit jedem Neustart des Dienstes (Absturz, install.sh).
-    // zenos-oeffnen kehrt gleich nach dem Start zurück und leitet die Ausgaben der App ins Leere. Der
+    // /usr/lib/zenos/oeffnen --programm: Was die Oberfläche direkt startet, liegt in der cgroup von
+    // zenos-shell.service und endet mit jedem Neustart des Dienstes (Absturz).
+    // oeffnen kehrt gleich nach dem Start zurück und leitet die Ausgaben der App ins Leere. Der
     // Process hält die App also nicht (Quickshell beendet laufende Process-Objekte beim Neuladen), und sie
     // hängt an keiner Pipe, die niemand mehr liest. Ohne erreichbare Benutzerinstanz oder wenn systemd-run
-    // scheitert, startet zenos-oeffnen sie ohne Einheit; lässt es sich selbst nicht starten, startet sie hier
+    // scheitert, startet oeffnen sie ohne Einheit; lässt es sich selbst nicht starten, startet sie hier
     // direkt.
-    // name: Desktop-ID oder Programmname (zenos-oeffnen ersetzt, was im Einheitennamen nicht erlaubt ist)
+    // name: Desktop-ID oder Programmname (oeffnen ersetzt, was im Einheitennamen nicht erlaubt ist)
     function _launchApp(command: var, dir: var, name: var): void {
         if (!Array.isArray(command) || command.length === 0) {
             console.warn("Aktionen: nichts zu starten");
@@ -207,7 +198,7 @@ Singleton {
     }
 
     function _startGescheitert(code: int, meldung: string): void {
-        console.warn("Aktionen: zenos-oeffnen --programm endete mit", code, meldung.trim());
+        console.warn("Aktionen: oeffnen --programm endete mit", code, meldung.trim());
         Oberflaeche.hinweis(code === 127 ? "Programm nicht gefunden" : "Starten hat nicht geklappt", "warnung");
     }
 
@@ -222,7 +213,7 @@ Singleton {
             property string verzeichnis
             property bool gestartet: false
 
-            command: [Pfade.bin + "/zenos-oeffnen", "--programm", starter.name, "--"].concat(starter.befehl)
+            command: [Pfade.bin + "/oeffnen", "--programm", starter.name, "--"].concat(starter.befehl)
             workingDirectory: starter.verzeichnis
             running: true
             stderr: StdioCollector {
@@ -238,7 +229,7 @@ Singleton {
                 if (starter.running)
                     return;
                 if (!starter.gestartet) {
-                    console.warn("Aktionen: zenos-oeffnen liess sich nicht starten, starte ohne eigene Einheit");
+                    console.warn("Aktionen: oeffnen liess sich nicht starten, starte ohne eigene Einheit");
                     root._launch(starter.befehl, starter.verzeichnis);
                 }
                 starter.destroy();

@@ -6,13 +6,11 @@ import qs.dienste
 import qs.komponenten
 
 // System-Menü unter dem System-Knopf der Leiste: Netz mit WLAN (WlanAbschnitt: Netz wählen, verbinden,
-// vergessen, WLAN ein/aus über NetworkManager), Bluetooth (BluetoothAbschnitt: ein/aus, Geräte koppeln, verbinden,
-// trennen, vergessen über BlueZ; fehlt ohne Bluetooth im Gerät), Lautstärke mit Regler und Stumm, 1Password, dann das Gerät
-// (Akku und CPU-Temperatur als Anzeige; Lüfter mit aufklappbarer Wahl «Auto · 1 · 2 · 3 · 4», LuefterAbschnitt),
-// dann Sperren, Bildschirm aus, Einstellungen, Abmelden, Neustart und Ausschalten. Läuft gerade ein Update aus dem
-// Kanal oder der Basis (install.sh bzw. apt mit Block-Inhibitor), steht bei Neustart und Ausschalten «Update läuft»:
-// Beides wartet dann, bis es fertig ist (meist wenige Minuten), statt dpkg mittendrin abzubrechen. Sonst steht bei
-// Neustart «nötig», wenn Updates einen Neustart brauchen.
+// vergessen, WLAN ein/aus über NetworkManager), Bluetooth (BluetoothAbschnitt, nur wenn BlueZ läuft), Lautstärke mit
+// Regler und Stumm, dann das Gerät (Akku und CPU-Temperatur als Anzeige), dann Sperren, Bildschirm aus, Abmelden,
+// Neustart und Ausschalten. Läuft gerade ein Update (zen update, Update.laeuft), steht bei Neustart und Ausschalten
+// «Update läuft»: Beides wartet, bis es fertig ist, statt das Schreiben der neuen Hälfte abzubrechen. Ist ein neuer
+// Stand installiert (Update.neustartNoetig), steht bei Neustart «nötig».
 Menuekarte {
     id: root
 
@@ -26,8 +24,6 @@ Menuekarte {
     property bool bluetoothGeraet: false
     // Liste der Bluetooth-Geräte gleich aufgeklappt (zenos-ipc leiste menue bluetooth)
     property bool bluetoothOffen: false
-    // Wahl des Lüfters gleich aufgeklappt (zenos-ipc leiste menue luefter)
-    property bool luefterOffen: false
 
     breite: 300
 
@@ -153,19 +149,10 @@ Menuekarte {
         }
     }
 
-    // --- 1Password ---
-
-    Statuszeile {
-        symbol: "schloss"
-        gedaempft: !System.einsPasswortLaeuft
-        titel: "1Password"
-        wert: System.einsPasswortLaeuft ? "läuft" : System.einsPasswortInstalliert ? "nicht gestartet" : "nicht installiert"
-    }
-
-    // --- Gerät: Akku, Lüfter, CPU-Temperatur (Werte von zenos-argon bzw. aus /sys; nur der Lüfter ist einstellbar) ---
+    // --- Gerät: Akku und CPU-Temperatur (Werte von /run/zenos/geraet.json bzw. aus /sys) ---
 
     Abschnitt {
-        visible: akkuZeile.visible || luefterZeile.visible || temperaturZeile.visible
+        visible: akkuZeile.visible || temperaturZeile.visible
     }
 
     Statuszeile {
@@ -177,12 +164,6 @@ Menuekarte {
         warnend: Geraet.akkuNiedrig
         titel: "Akku"
         wert: Geraet.akkuWert
-    }
-
-    LuefterAbschnitt {
-        id: luefterZeile
-
-        offen: root.luefterOffen
     }
 
     Statuszeile {
@@ -217,30 +198,6 @@ Menuekarte {
         }
     }
 
-    MenueEintrag {
-        width: parent.width
-        symbol: "zahnrad"
-        text: "Einstellungen"
-        onAusgeloest: {
-            root.schliessen();
-            Aktionen.einstellungen("");
-        }
-    }
-
-    // Nur solange die Firewall aus ist, ruhig und ohne Farbe: führt zum Schalter in den Einstellungen
-    MenueEintrag {
-        visible: Firewall.bekannt && !Firewall.aktiv
-        width: parent.width
-        symbol: "schloss-offen"
-        text: "Firewall"
-        wert: "aus"
-        Accessible.name: "Firewall ist aus – Einstellungen öffnen"
-        onAusgeloest: {
-            root.schliessen();
-            Aktionen.einstellungen("system");
-        }
-    }
-
     Abschnitt {}
 
     // Beenden erst nach Rückfrage (zweiter Klick)
@@ -256,22 +213,20 @@ Menuekarte {
         }
     }
 
-    // Während eines Updates aus dem Kanal oder der Ubuntu-Basis hält zenos-kanal bzw. zenos-basis einen Block-Inhibitor:
-    // systemctl lehnte ab. Darum hier ehrlich sagen, dass es wartet, statt still nichts zu tun. Sonst steht hier «nötig»,
-    // wenn Updates einen Neustart brauchen (/run/reboot-required; nur wie der Hinweis im System-Knopf: volle Leiste, keine
-    // Freigabe)
+    // Während eines Updates hält zenos-update.service einen Block-Inhibitor: systemctl lehnte ab. Darum hier ehrlich
+    // sagen, dass es wartet, statt still nichts zu tun. Sonst steht hier «nötig», wenn ein neuer Stand installiert ist.
     MenueEintrag {
         width: parent.width
         symbol: "neustart"
         text: "Neustart"
-        wert: Kanal.updateLaeuft ? "Update läuft" : Basis.neustartHinweis ? "nötig" : ""
+        wert: Update.laeuft ? "Update läuft" : Update.neustartNoetig ? "nötig" : ""
         // Während des Updates ohne Rückfrage: Der Klick sagt nur, warum es wartet
-        bestaetigen: !Kanal.updateLaeuft
+        bestaetigen: !Update.laeuft
         frage: "Wirklich neu starten?"
         onAusgeloest: {
             root.schliessen();
-            if (Kanal.updateLaeuft)
-                Oberflaeche.hinweis("Update läuft: Neustart geht erst danach (meist wenige Minuten)", "warnung");
+            if (Update.laeuft)
+                Oberflaeche.hinweis("Update läuft: Neustart geht erst danach", "warnung");
             else
                 Aktionen.neustarten();
         }
@@ -281,14 +236,14 @@ Menuekarte {
         width: parent.width
         symbol: "ausschalten"
         text: "Ausschalten"
-        wert: Kanal.updateLaeuft ? "Update läuft" : ""
+        wert: Update.laeuft ? "Update läuft" : ""
         // Während des Updates ohne Rückfrage: Der Klick sagt nur, warum es wartet
-        bestaetigen: !Kanal.updateLaeuft
+        bestaetigen: !Update.laeuft
         frage: "Wirklich ausschalten?"
         onAusgeloest: {
             root.schliessen();
-            if (Kanal.updateLaeuft)
-                Oberflaeche.hinweis("Update läuft: Ausschalten geht erst danach (meist wenige Minuten)", "warnung");
+            if (Update.laeuft)
+                Oberflaeche.hinweis("Update läuft: Ausschalten geht erst danach", "warnung");
             else
                 Aktionen.ausschalten();
         }

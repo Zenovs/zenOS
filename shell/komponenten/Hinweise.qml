@@ -9,7 +9,7 @@ import qs.dienste
 import "symbole.js" as Symbole
 
 // Kurze Hinweise (Toast) unten in der Mitte, z. B. «Farbe kopiert».
-// Auslöser: Oberflaeche.hinweis(text[, symbol]) oder zenos-ipc hinweis zeigen|warnen "<text>".
+// Auslöser: Oberflaeche.hinweis(text[, symbol]) oder /usr/lib/zenos/ipc hinweis zeigen|warnen "<text>".
 // Das Fenster ist klickdurchlässig und nimmt nie den Tastaturfokus.
 Scope {
     id: root
@@ -46,7 +46,7 @@ Scope {
             root.zeigen(text, "");
         }
 
-        // Fehlermeldungen, z. B. aus zenos-bildschirmfoto: Symbol «warnung»
+        // Fehlermeldungen: Symbol «warnung»
         function warnen(text: string): void {
             root.zeigen(text, "warnung");
         }
