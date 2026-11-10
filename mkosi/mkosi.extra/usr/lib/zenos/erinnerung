@@ -77,13 +77,14 @@ heute=$(date -d "@$j" +%F)
 mkdir -p "$zustand" "$laufzeit"
 [[ "$(cat "$zustand/erinnerung" 2>/dev/null)" != "$heute" ]] || exit 0
 
+# Kurz: Die Karte zeigt drei Zeilen, der Befehl muss darauf stehen (die Zentrale zeigt alles)
 datum=$(date -u -d "@$s" +%d.%m.%Y)
 if [[ -e "$neustart" ]]; then
 	titel="Neuer Stand wartet auf den Neustart"
-	text="Ein Update ist installiert, es läuft noch der Stand mit Paketen vom $datum ($(tage_text "$tage") alt). Neu starten: zen neustart"
+	text="Die laufenden Pakete sind $(tage_text "$tage") alt (Stand $datum). Neu starten: zen neustart"
 else
 	titel="Zeit für ein Update"
-	text="Die Pakete sind $(tage_text "$tage") alt (Stand $datum). Sicherheitsupdates für Chromium und Debian kommen nur mit einem neuen Stand: signieren, dann im Terminal zen update."
+	text="Die Pakete sind $(tage_text "$tage") alt (Stand $datum). Neuen Stand bauen und signieren, dann im Terminal: zen update"
 fi
 
 # Die Mitteilung von gestern ersetzen, solange die Oberfläche sie noch führt (Nummer gilt nur in dieser Sitzung).

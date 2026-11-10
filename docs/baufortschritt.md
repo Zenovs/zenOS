@@ -26,7 +26,8 @@ mit Oberfläche und Updates über `zen update`. Die SSD kommt danach nicht mehr 
 **Hier geht es weiter:** Image für den Argon bauen, sobald Zenos Schlüssel da ist (`mkosi/schluessel/zenos-updates.asc`,
 Fingerabdruck mit Zenos Papier vergleichen); dann die Befehle zum Schreiben der SSD, einer nach dem anderen. Auf dem
 Argon zu prüfen: der Probestart mit tryboot beim ersten echten Update, und ob beim Öffnen des Befehlsfelds Spuren der
-Gleit-Animation in der Leiste stehen bleiben (in QEMU ja, vermutlich nur wegen der Software-Darstellung ohne GPU).
+Gleit-Animation in der Leiste stehen bleiben (in QEMU einmal, in den Läufen danach nicht mehr; vermutlich die
+Software-Darstellung ohne GPU).
 
 Bekannte, harmlose Meldungen der Oberfläche im Journal: `zenos-konfig` und `zenos-energie` aus 0.1 fehlen (Modi,
 Zustände, Raster und Energie kommen später); labwc kann ext-idle-notify nur in Version 1.
