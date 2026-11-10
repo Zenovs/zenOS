@@ -158,7 +158,9 @@ def pruefe_system(vm: pexpect.spawn) -> None:
     version_a = befehl(vm, ". /usr/lib/os-release; echo $IMAGE_VERSION").strip()
     pruefe(groessen.get(f"zenos_{version_a}") == str(6 * 1024**3),
            f"System A ist beim ersten Start auf 6 GB gewachsen ({groessen.get('zenos_' + version_a)})")
-    pruefe(list(groessen).count("_empty") == 2, f"B-Hälfte (System und Prüfsummen) ist angelegt ({sorted(groessen)})")
+    leer = [z for z in teile.splitlines() if z.split()[:1] == ["_empty"]]
+    pruefe(len(leer) == 2 and all(z.split()[1] == str(6 * 1024**3) or z.split()[1] == str(128 * 1024**2) for z in leer),
+           f"B-Hälfte (System 6 GB und Prüfsummen 128 MB) ist angelegt ({leer})")
 
     lauscht = [z for z in befehl(vm, "ss -Hltnu").splitlines() if z.strip()]
     # Erlaubt ist nur Lokales: der Resolver von systemd (127.0.0.53/54, auch als «%lo» angegeben) und ::1.
@@ -204,15 +206,23 @@ def pruefe_oberflaeche(vm: pexpect.spawn) -> None:
     pruefe("login-laeuft" in login, "der Login von zenOS läuft (Quickshell als _greetd)")
     if "login-laeuft" not in login:
         protokolle(vm, "Login")
-    time.sleep(60)  # Software-Rendering in QEMU ohne Beschleunigung: Zeit bis zum ersten Bild
+    time.sleep(25)  # Software-Rendering in QEMU ohne Beschleunigung: Zeit bis zum ersten Bild
     foto(vm, "01-login")
 
-    # Anmelden wie ein Mensch: Das einzige Konto ist vorgewählt, das Passwortfeld hat den Fokus
-    tippen(vm, KONTO_PASSWORT)
+    # Anmelden wie ein Mensch: Das einzige Konto ist vorgewählt, das Passwortfeld hat den Fokus. Getippt wird vor Ablauf
+    # der Minute, nach der der Login den Bildschirm ausschaltet (dann weckte die erste Taste nur).
+    tippen(vm, KONTO_PASSWORT, enter=False)
+    time.sleep(10)
+    foto(vm, "01b-passwort-getippt")
+    taste(vm, "ret")
+    time.sleep(30)
+    foto(vm, "01c-nach-enter")
     shell = warten_bis(vm, "systemctl --user is-active zenos-shell.service", "active", 600)
     pruefe(shell.endswith("active") and "inactive" not in shell, f"nach dem Login läuft die Oberfläche ({shell})")
     if not shell.endswith("active") or "inactive" in shell:
         protokolle(vm, "Sitzung")
+        foto(vm, "01d-ohne-sitzung")
+        return
     leiste = warten_bis(vm, "/usr/lib/zenos/ipc leiste status 2>&1", "zu", 600)
     pruefe(leiste == "zu", f"die Leiste antwortet ({leiste})")
     idle = befehl(vm, "systemctl --user is-active zenos-idle.service").strip()
