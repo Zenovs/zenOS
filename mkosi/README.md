@@ -16,13 +16,13 @@ und eigener Kernel kommen mit 1.0.
 | `mkosi.build.d/` | Quickshell 0.3.1 aus dem Quellcode; Oberfläche (`shell/`) und Schriften ins Image |
 | `mkosi.extra/` | Dateien im System: Login, Sitzung, Sperre, `zen`, Updates, Firewall, Zeit, Netz, Härtung, Chromium |
 | `mkosi.postinst` | löscht Dateien von Paketen, die nur als Abhängigkeit kommen; nichts aus den Backports |
-| `mkosi.finalize` | /var vorbereiten; setuid, Verbotenes, Quickshell und Signaturprüfung prüfen; Schlüssel ins Image |
+| `mkosi.finalize` | /var vorbereiten; setuid, Verbotenes, Quickshell und Signaturprüfung prüfen; Schlüssel und Paketstand ins Image |
 | `mkosi.postoutput` | schreibt autoboot.txt (Partition 1) und Kernel, initrd, Gerätebäume, `config.txt`, `cmdline.txt` (Startpartition A) |
 | `schluessel/` | Zenos öffentlicher Schlüssel für Updates (`zenos-updates.asc`); ohne ihn baut das Image für den Argon nicht |
 | `start/config.txt` | Start auf dem CM5 und dem Pi 5 |
 | `umgebung/` | Bauumgebung: Debian-Container mit mkosi und QEMU; `bauen-innen.sh` holt und prüft die Quelle von Quickshell |
 | `veroeffentlichen.sh` | macht aus einem gebauten Image die Dateien für ein Update und `SHA256SUMS` zum Signieren |
-| `test/` | Angriffs- und Starttests in QEMU mit Oberfläche und Update, Einheitentest des Updates |
+| `test/` | Angriffs- und Starttests in QEMU mit Oberfläche und Update, Einheitentests des Updates und der Erinnerung |
 
 ## Aufteilung der SSD
 
@@ -50,6 +50,7 @@ mkosi/bauen.sh argon     # Image für das Argon ONE UP → mkosi/ausgabe/argon/z
 mkosi/bauen.sh qemu      # Image für die Tests        → mkosi/ausgabe/qemu/zenos_<version>.raw
 mkosi/test/starten.sh    # erster und zweiter Start in QEMU mit Oberfläche und Prüfungen
 mkosi/test/update-einheiten.sh
+mkosi/test/erinnerung-einheiten.sh
 ```
 
 Update-Test: einen zweiten Stand bauen und vorbereiten, dann den Test damit starten:
@@ -87,6 +88,12 @@ von der SSD.
 5. Ein Konto anlegen (Name und Passwort).
 6. Am Login von zenOS anmelden. WLAN über das System-Menü oben rechts.
 
+## Notausgang
+
+Scheitert der grafische Login zweimal schnell hintereinander (etwa ein Problem mit der Grafik), kommt stattdessen der
+Text-Login von greetd. Dort mit Name und Passwort des Kontos anmelden; es startet fish. WLAN mit `nmtui`, dann
+`zen update` für eine Korrektur. Nach dem Abmelden (`exit`) versucht es der grafische Login wieder.
+
 ## Updates
 
 Im Terminal (Ctrl+Alt+T): `zen update`. Es lädt den neuesten Stand von GitHub, prüft die Signatur (Zenos Schlüssel)
@@ -94,8 +101,15 @@ und alle Prüfsummen und schreibt ihn in die freie Hälfte. Danach `zen neustart
 Probe. Läuft er bis zum Login, wird er fest. Hängt er, die Ein/Aus-Taste lange drücken und wieder einschalten: Dann
 startet der alte Stand, und `zen status` sagt, was war. Ein gescheiterter Stand wird nicht nochmals angeboten.
 
+Erinnerung: Sind die Pakete des laufenden Stands 14 Tage alt (gezählt ab dem festen Stand von snapshot.debian.org),
+kommt einmal am Tag eine Mitteilung. Gezählt wird nur mit einer Uhr, die chrony über NTS gestellt hat; ins Netz geht
+dafür nichts. `zen status` zeigt das Alter der Pakete.
+
 Veröffentlichen (Claude, nach Zenos Ja): `mkosi/bauen.sh argon`, `mkosi/veroeffentlichen.sh`, Zeno signiert
 `SHA256SUMS` (`docs/signieren.md`), dann ein Release auf GitHub mit den Dateien, `SHA256SUMS` und `SHA256SUMS.gpg`.
+Das Release heisst `zenos-<version>` (Tag ebenso, zum Beispiel `zenos-0.9.2`) und ist keine Vorabversion, sonst zeigt
+`releases/latest` nicht darauf. Nie ein Tag `v…`: Darauf reagieren `zen update` von 0.1 (signierte Tags `v1.2.3`) und
+der Image-Workflow von 0.1.
 
 ## Was noch fehlt
 

@@ -15,16 +15,21 @@ mit Oberfläche und Updates über `zen update`. Die SSD kommt danach nicht mehr 
 | Bauumgebung | fertig | Colima-VM «zenos» (6 Kerne, 6 GB), Kontext `colima-zenos`; `bauen.sh` → `umgebung/bauen-innen.sh` (holt und prüft die Quelle von Quickshell) → mkosi. Arbeits- und Bauordner von mkosi im Volume `zenos-bau-pakete` (Overlay geht nicht auf dem Docker-Overlay). |
 | Grundsystem | fertig, Test grün | Debian trixie arm64, Stand 20261108T000000Z; `/` erofs mit dm-verity, `/var` und `/home` auf LUKS2 |
 | Quickshell 0.3.1 | fertig | Commit `1a4716c…`, gebaut in `mkosi.build.d/10-quickshell.sh.chroot`; wayland-protocols 1.47 nur fürs Bau-Overlay aus trixie-backports (fürs Image gesperrt, `mkosi.postinst` prüft). `mkosi.finalize` prüft alle Bibliotheken. |
-| Oberfläche | gebaut, im Test | Oberfläche von 0.1 für 1.0 angepasst (`shell/`, ohne Kanal, Basis, Firewall, Lüfter, Installer, Einstellungen, Einrichtung, Freigabe, Anzeige); Login `greeter.qml` über `/usr/lib/zenos/greeter`, Sitzung `/usr/lib/zenos/sitzung`, Benutzerdienste `zenos-shell` und `zenos-idle` (swayidle, 5 min), Notfall-Sperre swaylock. Hilfsprogramme unter `/usr/lib/zenos`, `zen` unter `/usr/bin`. |
-| Start auf dem CM5, A/B | gebaut, im Test | Schema von Raspberry Pi: Partition 1 `zenos-start` (64 MB, autoboot.txt, Tastatur), 2 `zenos-start_<v>` (Start A), 3 `_empty` (Start B), dann Prüfsummen A (128 MB) und System A (wächst beim ersten Start auf 6 GB), B-Hälfte und Daten beim ersten Start |
-| Updates | gebaut, im Test | `zen update` → `zenos-update.service` → `/usr/lib/zenos/update`: systemd-sysupdate (GitHub, `releases/latest/download`, nur mit Zenos Signatur), Probestart über `/run/systemd/reboot-param` «0 tryboot», fest über autoboot.txt (Ziffern 2/3 an Ort und Stelle). `mkosi/veroeffentlichen.sh` macht die Dateien, `docs/signieren.md` erklärt das Signieren. |
+| Oberfläche | fertig, Test grün | Login, Sitzung, Leiste, Befehlsfeld mit Apps, Chromium, kitty, hell und dunkel, System-Menü, Sperre in QEMU geprüft (Bildschirmfotos). Oberfläche von 0.1 für 1.0 angepasst (`shell/`, ohne Kanal, Basis, Firewall, Lüfter, Installer, Einstellungen, Einrichtung, Freigabe, Anzeige); Login `greeter.qml` über `/usr/lib/zenos/greeter`, Sitzung `/usr/lib/zenos/sitzung`, Benutzerdienste `zenos-shell` und `zenos-idle` (swayidle, 5 min), Notfall-Sperre swaylock. Hilfsprogramme unter `/usr/lib/zenos`, `zen` unter `/usr/bin`. |
+| Start auf dem CM5, A/B | gebaut, Aufteilung geprüft | Probestart mit tryboot erst auf dem Argon (QEMU hat keinen Bootloader von Raspberry Pi). Schema von Raspberry Pi: Partition 1 `zenos-start` (64 MB, autoboot.txt, Tastatur), 2 `zenos-start_<v>` (Start A), 3 `_empty` (Start B), dann Prüfsummen A (128 MB) und System A (wächst beim ersten Start auf 6 GB), B-Hälfte und Daten beim ersten Start |
+| Updates | fertig, Test grün (ohne Probestart) | `zen update` → `zenos-update.service` → `/usr/lib/zenos/update`: systemd-sysupdate (GitHub, `releases/latest/download`, nur mit Zenos Signatur), Probestart über `/run/systemd/reboot-param` «0 tryboot», fest über autoboot.txt (Ziffern 2/3 an Ort und Stelle). In QEMU: Update ohne Admin aus der Sitzung in die B-Hälfte, Ablehnung von der seriellen Konsole, Zustand über den Neustart. Erinnerung nach 14 Tagen (`/usr/lib/zenos/erinnerung`, Benutzer-Zeitgeber, Einheitentest). `mkosi/veroeffentlichen.sh` macht die Dateien, `docs/signieren.md` erklärt das Signieren; Releases heissen `zenos-<version>`. |
 | Schlüssel für Updates | wartet auf Zeno | `mkosi/schluessel/zenos-updates.asc` (öffentlich); ohne ihn baut das Image für den Argon nicht |
 | Härtung, Browser | fertig | wie zuvor; Chromium 156 mit Richtlinien |
-| Angriffstests | im Umbau | `mkosi/test/starten.sh`: dazu Oberfläche (Login, Sperre, Bildschirmfotos) und Update-Test (`ZENOS_TEST_NEU=<version>`) |
+| Angriffstests | fertig | `mkosi/test/starten.sh`: System und Härtung, Oberfläche (Login wie ein Mensch, Apps, Befehlsfeld, Sperre, Bildschirmfotos unter `mkosi/ausgabe/test/`), Erinnerung, Update-Test (`ZENOS_TEST_NEU=<version>`), zweiter Start. Einheitentests: `update-einheiten.sh`, `erinnerung-einheiten.sh` |
 | Abnahme auf dem Argon ONE UP | offen | Zeno schreibt das Image auf die SSD (Befehle in `mkosi/README.md`) |
 
-**Hier geht es weiter:** Tests der Oberfläche und des Updates in QEMU grün bekommen; Image für den Argon bauen, sobald
-Zenos Schlüssel da ist; dann die Befehle zum Schreiben der SSD, einer nach dem anderen.
+**Hier geht es weiter:** Image für den Argon bauen, sobald Zenos Schlüssel da ist (`mkosi/schluessel/zenos-updates.asc`,
+Fingerabdruck mit Zenos Papier vergleichen); dann die Befehle zum Schreiben der SSD, einer nach dem anderen. Auf dem
+Argon zu prüfen: der Probestart mit tryboot beim ersten echten Update, und ob beim Öffnen des Befehlsfelds Spuren der
+Gleit-Animation in der Leiste stehen bleiben (in QEMU ja, vermutlich nur wegen der Software-Darstellung ohne GPU).
+
+Bekannte, harmlose Meldungen der Oberfläche im Journal: `zenos-konfig` und `zenos-energie` aus 0.1 fehlen (Modi,
+Zustände, Raster und Energie kommen später); labwc kann ext-idle-notify nur in Version 1.
 
 Offene Fragen an Zeno: Signierrechner (z. B. der EliteDesk) und Hardware-Schlüssel (YubiKey/Nitrokey) oder Schlüssel
 auf einem eigenen Stick? Gibt es einen Test-Pi 5 für den signierten Start? Welche Hardware-Wallet (Trezor oder Ledger)?
@@ -52,6 +57,22 @@ entsperren und `/etc/machine-id` auf `/var` zeigen lassen).
   aus trixie-backports. Quickshell braucht libQt6Widgets (Prüfung in `mkosi.finalize` hat es gefunden).
 - Versionen ohne «~»: GitHub benennt Dateien mit Sonderzeichen um, systemd-sysupdate fände sie dann nicht. Vorschau =
   0.9.x.
+- Login: Die Kontoliste kommt einen Moment nach dem Start (getent). Bis dahin stand der Fokus im Namensfeld, das mit der
+  Liste verschwand; das getippte Passwort landete im unsichtbaren Feld. Jetzt fokussiert der Login neu, sobald die Liste
+  da ist (Bildschirmfotos vor und nach Enter im Test).
+- systemd-sysupdate liegt in Debian unter `/usr/lib/systemd/` (Paket systemd-container), nicht im Suchpfad: voller Pfad.
+- Quickshell unter Qt 6.8 lädt keine ES-Module (`.mjs`) über `qs:`-Pfade, das Befehlsfeld blieb leer. Die Hilfsdateien
+  der Oberfläche sind jetzt JavaScript-Bibliotheken (`.js` mit `.pragma library`).
+- `RectangularShadow` gibt es erst ab Qt 6.9 (Debian 13 hat 6.8): Das Befehlsfeld hat keinen Schatten mehr, und
+  QtQuick.Effects ist aus dem Image.
+- Nach dem Schreiben eines Updates stimmen die Verweise unter `/dev/disk/by-partlabel` einen Moment lang nicht; die
+  Kontrolle danach meldete fälschlich «nicht vollständig geschrieben». Das Update liest die Bezeichnungen jetzt mit
+  lsblk direkt von der Platte, nachdem udev sie neu eingelesen hat.
+- Releases von 1.0 heissen `zenos-<version>`, nie `v…`: Auf signierte Tags `v1.2.3` reagiert `zen update` von 0.1, auf
+  Tags `v*` der Image-Workflow von 0.1.
+- Geprüft: `zen update` geht ohne Admin nur aus einer Sitzung am Gerät (polkit: lokal und aktiv); von der seriellen
+  Konsole lehnt polkit ab. Seit dem 11.11. sofort (`systemctl --no-ask-password`), statt nach einem Root-Passwort zu
+  fragen, das es nicht gibt.
 
 **Befunde aus den QEMU-Tests (08.11.2026), alle behoben:**
 

@@ -45,8 +45,8 @@ er muss mit dem auf dem Papier übereinstimmen.
    `gpg --homedir /media/user/<stick>/zenos-schluessel --detach-sign --output /media/user/<transfer>/SHA256SUMS.gpg /media/user/<transfer>/SHA256SUMS`
 5. Herunterfahren, Sticks abziehen. Der Transfer-Stick geht zurück an den Mac.
 
-Claude prüft die Signatur mit dem öffentlichen Schlüssel und lädt den Stand nach Zenos Ja auf GitHub hoch. Auf dem
-Argon holt `zen update` ihn ab.
+Claude prüft die Signatur mit dem öffentlichen Schlüssel und lädt den Stand nach Zenos Ja auf GitHub hoch, als Release
+`zenos-<version>` (nie mit einem Tag `v…`, die gehören zu 0.1). Auf dem Argon holt `zen update` ihn ab.
 
 ## Wenn der Schlüssel verloren geht
 
