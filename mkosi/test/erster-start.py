@@ -30,6 +30,8 @@ VARIABLEN = "/usr/share/AAVMF/AAVMF_VARS.fd"
 WIEDERHERSTELLUNG = re.compile(r"[cbdefghijklnrtuv]{8}(?:-[cbdefghijklnrtuv]{8}){7}")
 ANFANG, ENDE = "ZENOS-PRUEFUNG-ANFANG", "ZENOS-PRUEFUNG-ENDE"
 BILDER = Path(os.environ.get("ZENOS_TEST_BILDER", "/tmp/zenos-test-bilder"))
+# Ordner mit einem zweiten Stand (SHA256SUMS und Dateien von mkosi/veroeffentlichen.sh qemu): dann auch der Update-Test
+UPDATE = Path(os.environ.get("ZENOS_TEST_UPDATE", "/nicht-vorhanden"))
 QS = "/usr/share/zenos/shell/shell.qml"
 
 befunde: list[str] = []
@@ -151,6 +153,13 @@ def pruefe_system(vm: pexpect.spawn) -> None:
     for pfad in ("/etc/zenos-test", "/usr/zenos-test"):
         pruefe("Read-only file system" in befehl(vm, f"touch {pfad} 2>&1"), f"{pfad} lässt sich nicht anlegen")
 
+    teile = befehl(vm, "lsblk -bnr -o PARTLABEL,SIZE /dev/vda")
+    groessen = dict(z.split()[:2] for z in teile.splitlines() if len(z.split()) >= 2)
+    version_a = befehl(vm, ". /usr/lib/os-release; echo $IMAGE_VERSION").strip()
+    pruefe(groessen.get(f"zenos_{version_a}") == str(6 * 1024**3),
+           f"System A ist beim ersten Start auf 6 GB gewachsen ({groessen.get('zenos_' + version_a)})")
+    pruefe(list(groessen).count("_empty") == 2, f"B-Hälfte (System und Prüfsummen) ist angelegt ({sorted(groessen)})")
+
     lauscht = [z for z in befehl(vm, "ss -Hltnu").splitlines() if z.strip()]
     # Erlaubt ist nur Lokales: der Resolver von systemd (127.0.0.53/54, auch als «%lo» angegeben) und ::1.
     fremd = [z for z in lauscht if not re.search(r"\s(127\.0\.0\.5[34]|\[::1\]|127\.0\.0\.1)(%lo)?:\d+\s", z)]
@@ -178,11 +187,23 @@ def pruefe_system(vm: pexpect.spawn) -> None:
     print(f"  laufende Dienste: {' '.join(sorted(laufend))}", flush=True)
 
 
+def protokolle(vm: pexpect.spawn, warum: str) -> None:
+    """Bei einem Fehler: was Login, Sitzung und Oberfläche ins Journal geschrieben haben."""
+    print(f"\n  Protokolle ({warum}):", flush=True)
+    for zeilen in ("journalctl -b --no-pager -o cat -u greetd.service | tail -n 30",
+                   "journalctl -b --no-pager -o short-monotonic -t zenos-greeter -t labwc | tail -n 60",
+                   "systemctl --user --no-pager status zenos-shell.service zenos-idle.service 2>&1 | tail -n 30",
+                   "journalctl -b --no-pager -o short-monotonic --user -u zenos-shell.service | tail -n 60"):
+        print("\n".join("    " + z for z in befehl(vm, zeilen).splitlines()), flush=True)
+
+
 def pruefe_oberflaeche(vm: pexpect.spawn) -> None:
     print("\n--- Oberfläche", flush=True)
     # Der Login (Quickshell unter labwc, Benutzer _greetd) läuft auf dem virtuellen Bildschirm
-    login = warten_bis(vm, "pgrep -u _greetd -x quickshell >/dev/null && echo login-laeuft", "login-laeuft", 600)
+    login = warten_bis(vm, "pgrep -u _greetd -x quickshell >/dev/null && echo login-laeuft", "login-laeuft", 900)
     pruefe("login-laeuft" in login, "der Login von zenOS läuft (Quickshell als _greetd)")
+    if "login-laeuft" not in login:
+        protokolle(vm, "Login")
     time.sleep(60)  # Software-Rendering in QEMU ohne Beschleunigung: Zeit bis zum ersten Bild
     foto(vm, "01-login")
 
@@ -190,12 +211,28 @@ def pruefe_oberflaeche(vm: pexpect.spawn) -> None:
     tippen(vm, KONTO_PASSWORT)
     shell = warten_bis(vm, "systemctl --user is-active zenos-shell.service", "active", 600)
     pruefe(shell.endswith("active") and "inactive" not in shell, f"nach dem Login läuft die Oberfläche ({shell})")
+    if not shell.endswith("active") or "inactive" in shell:
+        protokolle(vm, "Sitzung")
     leiste = warten_bis(vm, "/usr/lib/zenos/ipc leiste status 2>&1", "zu", 600)
     pruefe(leiste == "zu", f"die Leiste antwortet ({leiste})")
     idle = befehl(vm, "systemctl --user is-active zenos-idle.service").strip()
     pruefe(idle == "active", f"die automatische Sperre läuft ({idle})")
     time.sleep(45)
     foto(vm, "02-sitzung-hell")
+
+    # Apps in der Sitzung: Chromium (nur Wayland, ohne X) und kitty, gestartet wie aus dem Befehlsfeld
+    befehl(vm, "systemd-run --user --quiet --collect --unit=test-chromium chromium --no-first-run about:blank")
+    browser = warten_bis(vm, "pgrep -u $(id -u) -x chromium >/dev/null && echo browser-laeuft", "browser-laeuft", 300)
+    pruefe("browser-laeuft" in browser, "Chromium startet in der Sitzung (Wayland)")
+    time.sleep(90)
+    foto(vm, "02b-chromium")
+    befehl(vm, "systemctl --user stop test-chromium.service")
+    befehl(vm, "systemd-run --user --quiet --collect --unit=test-kitty kitty")
+    terminal = warten_bis(vm, "pgrep -u $(id -u) -x kitty >/dev/null && echo kitty-laeuft", "kitty-laeuft", 300)
+    pruefe("kitty-laeuft" in terminal, "kitty startet in der Sitzung")
+    time.sleep(45)
+    foto(vm, "02c-kitty")
+    befehl(vm, "systemctl --user stop test-kitty.service")
 
     # Befehlsfeld mit den Apps
     befehl(vm, "/usr/lib/zenos/ipc befehlsfeld apps")
@@ -231,6 +268,38 @@ def pruefe_oberflaeche(vm: pexpect.spawn) -> None:
     print("  Meldungen der Oberfläche (Auszug):\n" + "\n".join("    " + z for z in protokoll.splitlines()), flush=True)
 
 
+def pruefe_update(vm: pexpect.spawn) -> str:
+    """zen update gegen den Testserver: lädt den zweiten Stand und schreibt ihn in die B-Hälfte."""
+    if str(UPDATE) == "/nicht-vorhanden":
+        print("\n--- Update (übersprungen: kein zweiter Stand)", flush=True)
+        return ""
+    ende = time.monotonic() + 3600
+    while not (UPDATE / "SHA256SUMS").is_file() and time.monotonic() < ende:
+        time.sleep(20)
+    if not (UPDATE / "SHA256SUMS").is_file():
+        pruefe(False, f"zweiter Stand unter {UPDATE} bereit")
+        return ""
+    print("\n--- Update", flush=True)
+    neu = next(n.split("_")[1] for n in os.listdir(UPDATE) if n.endswith(".root.raw.xz"))
+    server = subprocess.Popen([sys.executable, "-m", "http.server", "8080", "--bind", "127.0.0.1",
+                               "--directory", str(UPDATE)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        ausgabe = befehl(vm, "zen update 2>&1")
+        print("\n".join("    " + z for z in ausgabe.splitlines()[-12:]), flush=True)
+        pruefe(f"Neuer Stand {neu} ist installiert" in ausgabe, f"zen update installiert {neu} ohne Admin")
+        teile = befehl(vm, "lsblk -nr -o PARTLABEL /dev/vda").split()
+        pruefe(f"zenos_{neu}" in teile and f"zenos_{neu}_verity" in teile,
+               f"{neu} liegt in der B-Hälfte (System und Prüfsummen)")
+        pruefe("wartet auf den Neustart" in befehl(vm, "zen status"), "zen status meldet den wartenden Neustart")
+        time.sleep(40)
+        foto(vm, "08-update-neustart")
+        nochmal = befehl(vm, "zen update 2>&1")
+        pruefe("wartet auf den Neustart" in nochmal, "ein zweites zen update lädt nicht nochmals")
+    finally:
+        server.terminate()
+    return neu
+
+
 def main() -> int:
     image = Path(sys.argv[1])
     arbeit = Path(tempfile.mkdtemp(prefix="zenos-test-"))
@@ -260,10 +329,15 @@ def main() -> int:
         vm.send("\r")
         vm.expect(r"(?i)user name")
     vm.sendline(KONTO)
-    # homectl fragt nach Zusatzgruppen (keine: kein Admin, keine Sonderrechte), dann zweimal nach dem Passwort.
+    # homectl fragt nach Zusatzgruppen, dann zweimal nach dem Passwort. Nur das Prüfkonto dieser Wegwerf-Maschine
+    # bekommt systemd-journal, damit der Test bei einem Fehler die Protokolle zeigen kann; kein Admin, kein wheel.
+    gruppe_gesetzt = False
     while True:
         frage = vm.expect([r"(?i)auxiliary group", r"(?i)shell", r"(?i)password", r"login: "])
-        if frage in (0, 1):
+        if frage == 0 and not gruppe_gesetzt:
+            vm.sendline("systemd-journal")
+            gruppe_gesetzt = True
+        elif frage in (0, 1):
             vm.sendline("")
         elif frage == 2:
             vm.sendline(KONTO_PASSWORT)
@@ -276,6 +350,7 @@ def main() -> int:
     pruefe_system(vm)
 
     pruefe_oberflaeche(vm)
+    neu = pruefe_update(vm)
 
     # Die serielle Konsole ist keine Sitzung am Gerät. Neu starten ginge von dort nur als Admin, und den gibt es
     # nicht (root ist gesperrt). Am Gerät selbst darf die angemeldete Person neu starten.
@@ -291,6 +366,10 @@ def main() -> int:
     anmelden(vm)
     pruefe("Read-only file system" in befehl(vm, "touch /etc/zenos-test 2>&1"), "System nach dem Neustart unverändert")
     pruefe(KONTO in befehl(vm, "id -un"), "das Konto ist nach dem Neustart noch da")
+    if neu:
+        # QEMU startet über systemd-boot weiter den alten Stand (kein Bootloader von Raspberry Pi, kein Probestart):
+        # Das Update gilt als ausgeschaltet statt neu gestartet und wartet auf einen weiteren Neustart.
+        pruefe("wartet auf einen Neustart" in befehl(vm, "zen status"), "nach dem Neustart ohne Probe wartet das Update weiter")
     monitor(vm, "quit")
     vm.expect(pexpect.EOF)
 
