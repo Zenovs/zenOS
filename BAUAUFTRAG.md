@@ -1,7 +1,7 @@
 # Bauaufträge für zenOS 1.0
 
-Zwei Aufträge sind offen. Bauauftrag 2 ist der aktive; Bauauftrag 1 wartet nur noch auf Zenos Schlüssel und die
-Abnahme am Argon. Der Rahmen von Bauauftrag 1 (Mac, Colima, Freigaben, Rückfragen) gilt für beide.
+Drei Aufträge sind offen. Aktiv sind Bauauftrag 2 und danach 3; Bauauftrag 1 wartet nur noch auf Zenos Schlüssel und
+die Abnahme am Argon. Der Rahmen von Bauauftrag 1 (Mac, Colima, Freigaben, Rückfragen) gilt für alle.
 
 ## Bauauftrag 2: Notfall-Passwort (aktiv)
 
@@ -92,6 +92,44 @@ des Arbeitsspeichers und jeder weitere Weg zu root.
 - `docs/neubau.md` (Bedrohungsmodell: neue Zeile «Jemand zwingt dich», Abschnitt Notfall-Passwort mit den Grenzen von
   oben), `mkosi/README.md` (erster Start, `zen notfall`) und `docs/baufortschritt.md` sind nachgeführt.
 - Zeno bekommt einen kurzen Bericht: was getestet ist und was erst am Argon geprüft werden kann.
+
+---
+
+## Bauauftrag 3: Ausschalten nach langer Sperre (aktiv, nach Bauauftrag 2)
+
+Erteilt von Zeno am 11.11.2026 im Chat mit Claude («Ausschalten nach langer Sperre nimm das auch noch rein»).
+
+### Ziel
+
+Solange zenOS läuft, liegt der Schlüssel der Daten im Arbeitsspeicher, auch hinter der Sperre und am Login. Erst ein
+ausgeschaltetes Gerät ist wirklich zu. Deshalb schaltet zenOS aus, wenn es 30 Minuten lang ohne entsperrte Sitzung
+war: gesperrt (auch über den Deckel) oder am Login nach dem Entsperren der Daten. Das ist eine Leitplanke, nicht
+abschaltbar. Verloren geht dabei nichts, was bleiben soll: Downloads und Browserdaten sind ohnehin flüchtig.
+
+### Aufbau
+
+- Ein Dienst des Systems (nicht der Sitzung, damit ein Absturz der Oberfläche ihn nicht stoppt) zählt die Zeit ohne
+  entsperrte Sitzung, über logind (Sitzungen, `LockedHint`). Die Sperre setzt dafür `LockedHint` beim Sperren und
+  löscht ihn beim Entsperren; die Notfall-Sperre mit swaylock ebenso. Ist logind unklar (keine Antwort), gilt das als
+  gesperrt.
+- Nach 30 Minuten: ausschalten (`poweroff`), ohne dass ein Programm es mit einem Inhibitor verhindern kann. Eine
+  Minute vorher zeigt die Sperre einen ruhigen Hinweis «Schaltet in 1 Minute aus» (kein Inhalt, Leitplanke der Sperre
+  bleibt). Entsperren setzt die Zeit zurück.
+- Gilt genauso im Notfall-Zustand aus Bauauftrag 2.
+- Fest 30 Minuten im Image für den Argon. Nur das QEMU-Profil darf eine kürzere Zeit haben (für den Test), nie das
+  Argon-Image; `mkosi.finalize` prüft das.
+
+### Tests (QEMU)
+
+- Mit kurzer Zeit im QEMU-Profil: gesperrt → Hinweis → ausgeschaltet. Entsperren vor Ablauf setzt zurück.
+- Am Login nach dem Entsperren der Daten ohne Anmeldung → ausgeschaltet.
+- Eine Sitzung, die einen Inhibitor hält, verhindert das Ausschalten nicht.
+- Die bisherigen Tests bleiben grün.
+
+### Fertig heisst
+
+Image baut, Tests grün, gitleaks und shellcheck sauber; `docs/neubau.md` (Leitplanke und Grund), `mkosi/README.md` und
+`docs/baufortschritt.md` nachgeführt; kurzer Bericht an Zeno.
 
 ---
 
