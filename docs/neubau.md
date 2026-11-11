@@ -142,6 +142,13 @@ Nicht abgedeckt: Lücken in Prozessor und Firmware, Seitenkanäle, wer das Gerä
 - **Richtlinien:** HTTPS-only, Drittanbieter-Cookies blockiert, eigener Passwortspeicher und Autofill aus (1Password
   übernimmt), keine Anmeldung bei Google, keine Synchronisation, keine Entwicklerwerkzeuge, kein Hintergrundbetrieb,
   Metriken aus.
+- **Nichts bleibt liegen** (Wunsch Zeno vom 11.11.2026): Chromium speichert keinen Verlauf; Cookies gelten nur für
+  die Sitzung, und beim Beenden löscht Chromium Cookies, Website-Daten, Cache, Formulardaten, Anmeldedaten und den
+  Download-Verlauf. Die letzte Sitzung wird nicht wiederhergestellt. Downloads liegen nur im Arbeitsspeicher
+  (`~/Downloads` zeigt nach `$XDG_RUNTIME_DIR/zenos/downloads`) und sind nach dem Abmelden oder Ausschalten weg; den
+  Cache räumt zusätzlich jede Anmeldung weg, falls Chromium abstürzte. Es bleiben Lesezeichen (sie sind der sichere Weg
+  zu Bank und Anbietern), Einstellungen pro Website (etwa der V8-Optimierer) und die Daten der freigegebenen
+  Erweiterungen. Wer sich anmelden will, meldet sich nach jedem Start von Chromium neu an.
 - **Erweiterungen nur mit freigegebener ID:** 1Password und die gewählte Wallet (zum Beispiel MetaMask oder Rabby).
   Eine weitere kommt auf Wunsch mit dem nächsten Image.
 - **JavaScript ohne JIT als Vorgabe** (empfohlene Richtlinie, nicht erzwungen). Der JIT-Compiler ist der häufigste Weg

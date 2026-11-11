@@ -227,6 +227,10 @@ def pruefe_oberflaeche(vm: pexpect.spawn) -> None:
     pruefe(leiste == "zu", f"die Leiste antwortet ({leiste})")
     idle = befehl(vm, "systemctl --user is-active zenos-idle.service").strip()
     pruefe(idle == "active", f"die automatische Sperre läuft ({idle})")
+    downloads = befehl(vm, 'readlink "$HOME/Downloads"; echo "$XDG_RUNTIME_DIR/zenos/downloads"; '
+                           'findmnt -no FSTYPE -T "$XDG_RUNTIME_DIR"').split()
+    pruefe(len(downloads) == 3 and downloads[0] == downloads[1] and downloads[2] == "tmpfs",
+           f"Downloads liegen nur im Arbeitsspeicher ({' '.join(downloads)})")
     time.sleep(45)
     foto(vm, "02-sitzung-hell")
 

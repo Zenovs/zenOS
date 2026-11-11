@@ -27,6 +27,21 @@ systemctl --user reset-failed zenos-shell.service zenos-idle.service 2>/dev/null
 # Wer sich gerade angemeldet hat, ist nicht gesperrt.
 rm -f -- "$XDG_RUNTIME_DIR/zenos/gesperrt"
 
+# Browser ohne Spuren auf der SSD. Downloads liegen nur im Arbeitsspeicher ($XDG_RUNTIME_DIR, weg beim Abmelden und
+# Ausschalten); ~/Downloads zeigt dorthin, und Chromium speichert per Richtlinie dort hinein. Was dort sonst liegt,
+# ist ein Rest und wird gelöscht. Verlauf, Cookies, Cache und Formulardaten löscht Chromium beim Beenden selbst
+# (/etc/chromium/policies/managed/zenos.json); den Cache räumt zusätzlich jede Anmeldung weg, falls Chromium abstürzte.
+# Lesezeichen und die Daten der freigegebenen Erweiterungen bleiben.
+downloads=$XDG_RUNTIME_DIR/zenos/downloads
+install -d -m 0700 "$XDG_RUNTIME_DIR/zenos" "$downloads"
+if [[ "${HOME:-}" == /* ]]; then
+	if [[ "$(readlink -- "$HOME/Downloads" 2>/dev/null)" != "$downloads" ]]; then
+		rm -rf --one-file-system -- "$HOME/Downloads"
+		ln -sfn -- "$downloads" "$HOME/Downloads" || echo "sitzung: ~/Downloads zeigt nicht in den Arbeitsspeicher" >&2
+	fi
+	rm -rf --one-file-system -- "$HOME/.cache/chromium"
+fi
+
 # Konfiguration von labwc im Laufzeitordner (flüchtig, nur für diesen Benutzer). -C: keine eigene Konfiguration
 # unter ~/.config/labwc (sie könnte Befehle beim Start der Sitzung ausführen).
 labwc_ordner=$XDG_RUNTIME_DIR/zenos/labwc
