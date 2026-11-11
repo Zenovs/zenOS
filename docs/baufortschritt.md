@@ -25,9 +25,10 @@ mit Oberfläche und Updates über `zen update`. Die SSD kommt danach nicht mehr 
 | Browser ohne Spuren | gebaut, Test geschrieben | Chromium-Richtlinien: kein Verlauf, Cookies nur für die Sitzung, beim Beenden Cookies, Website-Daten, Cache, Formulardaten, Anmeldedaten und Download-Verlauf löschen, keine Wiederherstellung der Sitzung. Downloads nur im Arbeitsspeicher (`~/Downloads` → `$XDG_RUNTIME_DIR/zenos/downloads`, `sitzung`). Lesezeichen, Einstellungen pro Website und Erweiterungsdaten bleiben. QEMU-Test prüft den tmpfs; Bau und Test auf dem Mac stehen aus. |
 | Notfall-Passwort | offen | Bauauftrag 2 vom 11.11.2026 (`BAUAUFTRAG.md`): eigene Partition `zenos-notfall`, eigene Passwortabfrage, Löschen der Schlüssel, Attrappe im Arbeitsspeicher mit angemeldetem leerem Konto, `zen notfall`. |
 | Ausschalten nach langer Sperre | offen | Bauauftrag 3 vom 11.11.2026: nach 30 Minuten ohne entsperrte Sitzung (Sperre, Deckel, Login) ausschalten, Leitplanke; Hinweis eine Minute vorher. |
+| Hardware-Schlüssel (FIDO2) | offen | Bauauftrag 4 vom 11.11.2026: Start, Anmelden und Entsperren nur mit Passwort plus Schlüssel; zwei Schlüssel, Notweg über den Wiederherstellungsschlüssel, `zen schluessel`; zusammen mit dem Notfall-Passwort planen. |
 | Abnahme auf dem Argon ONE UP | offen | Zeno schreibt das Image auf die SSD (Befehle in `mkosi/README.md`) |
 
-**Hier geht es weiter:** Bauauftrag 2 (Notfall-Passwort) und danach 3 (Ausschalten nach langer Sperre) umsetzen und in QEMU testen, dazu den Deckel und den Browser
+**Hier geht es weiter:** Bauauftrag 2 (Notfall-Passwort), 3 (Ausschalten nach langer Sperre) und 4 (Hardware-Schlüssel, mit 2 zusammen geplant) umsetzen und in QEMU testen, dazu den Deckel und den Browser
 ohne Spuren mitbauen und testen. Parallel, wie bisher: Image für den Argon bauen, sobald Zenos Schlüssel da ist (`mkosi/schluessel/zenos-updates.asc`,
 Fingerabdruck mit Zenos Papier vergleichen); dann die Befehle zum Schreiben der SSD, einer nach dem anderen. Auf dem
 Argon zu prüfen: der Probestart mit tryboot beim ersten echten Update, und ob beim Öffnen des Befehlsfelds Spuren der

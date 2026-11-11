@@ -1,7 +1,8 @@
 # Bauaufträge für zenOS 1.0
 
-Drei Aufträge sind offen. Aktiv sind Bauauftrag 2 und danach 3; Bauauftrag 1 wartet nur noch auf Zenos Schlüssel und
-die Abnahme am Argon. Der Rahmen von Bauauftrag 1 (Mac, Colima, Freigaben, Rückfragen) gilt für alle.
+Vier Aufträge sind offen. Aktiv sind Bauauftrag 2, 3 und 4, in dieser Reihenfolge; 2 und 4 hängen beide an der
+Passwortabfrage beim Start und werden zusammen geplant. Bauauftrag 1 wartet nur noch auf Zenos Schlüssel und die
+Abnahme am Argon. Der Rahmen von Bauauftrag 1 (Mac, Colima, Freigaben, Rückfragen) gilt für alle.
 
 ## Bauauftrag 2: Notfall-Passwort (aktiv)
 
@@ -130,6 +131,71 @@ abschaltbar. Verloren geht dabei nichts, was bleiben soll: Downloads und Browser
 
 Image baut, Tests grün, gitleaks und shellcheck sauber; `docs/neubau.md` (Leitplanke und Grund), `mkosi/README.md` und
 `docs/baufortschritt.md` nachgeführt; kurzer Bericht an Zeno.
+
+---
+
+## Bauauftrag 4: Hardware-Schlüssel (FIDO2) beim Start, beim Anmelden und beim Entsperren (aktiv)
+
+Erteilt von Zeno am 11.11.2026 im Chat mit Claude («ja nimm das auch rein»; vorher gefragt, ob man «schon beim
+anmelden den key physisch braucht»). Zeno bestellt zwei Schlüssel der Security-Key-Reihe von Yubico (FIDO2, USB-C,
+NFC); beide werden eingetragen, einer liegt als Ersatz an einem sicheren Ort.
+
+### Ziel
+
+Ohne einen der beiden Schlüssel kommt niemand an die Daten und ins Konto, auch nicht mit dem Passwort und auch nicht
+mit einer Kopie der SSD. Das ersetzt den Sicherheitschip, den der CM5 nicht hat. Der Schlüssel gehört an den
+Schlüsselbund, nicht in den Laptop; die Doku sagt das deutlich.
+
+### Aufbau
+
+1. **Start (Daten):** Öffnen nur mit Passwort UND Schlüssel (Berührung). LUKS-Schlüsselplätze gelten einzeln (oder),
+   deshalb leitet sich die Passphrase je Schlüssel aus beidem ab, zum Beispiel aus dem Passwort und dem hmac-secret
+   des Schlüssels (`fido2-assert`, libfido2). Ein Platz pro Schlüssel, dazu der Wiederherstellungsschlüssel als
+   einziger Weg ohne Schlüssel. Kein Platz mit dem Passwort allein. Das Ableitungsverfahren steht offen in der Doku,
+   damit es nachprüfbar ist.
+2. **Zusammen mit Bauauftrag 2:** Eine Eingabe für das Passwort, wie gehabt; dazu «Schlüssel einstecken und berühren».
+   Reihenfolge bleibt: zuerst die echten Daten (Passwort plus Schlüssel), dann das Notfall-Passwort. Das
+   Notfall-Passwort wirkt auch ohne eingesteckten Schlüssel. Die Attrappe fragt beim Entsperren ebenfalls nach dem
+   Schlüssel und nimmt das Notfall-Passwort mit der Berührung eines beliebigen FIDO2-Schlüssels an, damit sie gleich
+   aussieht.
+3. **Anmelden und Entsperren:** Kontopasswort UND Schlüssel, über PAM (Login von greetd und `zenos-sperre`), zum
+   Beispiel mit pam_u2f oder den FIDO2-Fähigkeiten von systemd-homed. Die Liste der erlaubten Schlüssel liegt so, dass
+   das Konto selbst sie nicht ändern kann (nicht unter `~`).
+4. **Einrichten beim ersten Start:** nach dem Passwort der Daten beide Schlüssel nacheinander eintragen (für Daten und
+   Konto); mit nur einem geht es weiter, mit einem deutlichen Hinweis, den zweiten nachzutragen.
+5. **Später: `zen schluessel status|hinzufuegen|entfernen`** über denselben Socket-Dienst wie `zen notfall` (nicht
+   noch einen Weg zu root). Verlangt das Passwort der Daten und die Berührung eines schon eingetragenen Schlüssels. Der
+   letzte Schlüssel lässt sich nicht entfernen.
+6. **Notweg:** Wurden die Daten mit dem Wiederherstellungsschlüssel geöffnet, bietet der Start an, neue Schlüssel für
+   Daten und Konto einzutragen. Sonst gibt es keinen Weg am Schlüssel vorbei.
+7. **Passkeys im Browser:** Chromium spricht den Schlüssel über USB an (udev, `uaccess`); im Image prüfen, dass das
+   ohne weitere Rechte geht.
+
+### Freigegeben
+
+Wie in Bauauftrag 1 und 2, dazu die Pakete für FIDO2 (libfido2 und Werkzeuge, pam_u2f falls nötig), mit Grund in der
+Paketliste.
+
+### Nur nach Rückfrage bei Zeno
+
+Wie in Bauauftrag 1 und 2, dazu: jeder Weg, der ohne Schlüssel an Daten oder Konto führt (ausser dem
+Wiederherstellungsschlüssel), und eine PIN auf dem Schlüssel als Pflicht für den Start.
+
+### Tests
+
+- In QEMU mit einem emulierten FIDO2-Schlüssel, falls die Bauumgebung einen hat (zum Beispiel canokey), sonst so viel
+  wie ohne geht; was nur mit echter Hardware geht, steht im Bericht für die Abnahme am Argon.
+- Start: Passwort ohne Schlüssel scheitert, Passwort mit Schlüssel öffnet, Wiederherstellungsschlüssel öffnet und
+  bietet das Neueintragen an, Notfall-Passwort wirkt mit und ohne Schlüssel.
+- Anmelden und Sperre: ohne Schlüssel abgelehnt, mit Schlüssel angenommen.
+- `zen schluessel`: hinzufügen, entfernen, letzter Schlüssel bleibt; ohne Passwort der Daten abgelehnt.
+- Die bisherigen Tests bleiben grün.
+
+### Fertig heisst
+
+Image baut, Tests grün, gitleaks und shellcheck sauber; `docs/neubau.md` (Bedrohungsmodell: Dieb mit Kopie der SSD,
+Ableitung der Passphrase, Regel «Schlüssel an den Schlüsselbund»), `mkosi/README.md` (erster Start, `zen schluessel`,
+Notweg) und `docs/baufortschritt.md` nachgeführt; kurzer Bericht an Zeno mit der Liste für die Abnahme am Argon.
 
 ---
 
