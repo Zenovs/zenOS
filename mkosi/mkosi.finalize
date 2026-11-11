@@ -142,4 +142,21 @@ if [[ ",${PROFILES:-}," == *",argon,"* ]]; then
 	cp -r "$overlays/." "$start/overlays/"
 	cp "$SRCDIR/mkosi/start/config.txt" "$start/config.txt"
 	echo "zenOS-Prüfung: ${#baeume[@]} Gerätebäume und Overlays aus $overlays bereitgelegt"
+
+	# Eigenes Overlay für den Deckel des Argon ONE UP (SW_LID an GPIO27, siehe mkosi/start/zenos-deckel.dts).
+	# Vor dem Ablegen auf den Gerätebaum des CM5 Lite anwenden: Passt es nicht (etwa weil Raspberry Pi die Bezeichnung
+	# rp1_gpio ändert), bricht der Bau hier ab statt erst auf dem Laptop, wo der Deckel dann still nicht sperren würde.
+	deckel="$start/overlays/zenos-deckel.dtbo"
+	dtc -q -@ -I dts -O dtb -o "$deckel" "$SRCDIR/mkosi/start/zenos-deckel.dts" ||
+		fehler "Overlay des Deckels lässt sich nicht übersetzen (mkosi/start/zenos-deckel.dts)"
+	cm5="$start/bcm2712-rpi-cm5l-cm5io.dtb"
+	[[ -f "$cm5" ]] || fehler "Gerätebaum des CM5 Lite fehlt ($(basename "$cm5"))"
+	probe=$(mktemp)
+	fdtoverlay -i "$cm5" -o "$probe" "$deckel" || fehler "Overlay des Deckels passt nicht auf $(basename "$cm5")"
+	[[ "$(fdtget "$probe" /zenos_deckel/deckel linux,code)" == 0 &&
+		"$(fdtget "$probe" /zenos_deckel/deckel linux,input-type)" == 5 ]] ||
+		fehler "Overlay des Deckels: kein Schalter SW_LID im Gerätebaum"
+	rm -f "$probe"
+	grep -qx 'dtoverlay=zenos-deckel' "$start/config.txt" || fehler "config.txt lädt das Overlay des Deckels nicht"
+	echo "zenOS-Prüfung: Overlay des Deckels passt auf den CM5 (SW_LID an GPIO27)"
 fi

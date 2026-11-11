@@ -275,6 +275,23 @@ def pruefe_oberflaeche(vm: pexpect.spawn) -> None:
     time.sleep(20)
     foto(vm, "07-entsperrt")
 
+    # Deckel: QEMU hat keinen. Geprüft werden die Einstellung von logind und der Weg, den das Zuklappen auf dem Argon
+    # nimmt: logind schickt «Lock» an die grafische Sitzung, swayidle ruft /usr/lib/zenos/sperren (wie die Ein/Aus-Taste).
+    # Das Overlay selbst prüft mkosi/test/startpartitionen.sh am Image für den Argon.
+    deckel = befehl(vm, "for e in HandleLidSwitch HandleLidSwitchExternalPower HandleLidSwitchDocked; do "
+                        "busctl get-property org.freedesktop.login1 /org/freedesktop/login1 "
+                        "org.freedesktop.login1.Manager $e; done").split()
+    pruefe(deckel == ["s", '"lock"'] * 3, f"Zuklappen sperrt immer, auch am Netzteil und mit Bildschirm ({' '.join(deckel)})")
+    befehl(vm, 'for s in $(loginctl show-user "$(id -u)" -p Sessions --value); do '
+               '[ "$(loginctl show-session "$s" -p Type --value)" = wayland ] && loginctl lock-session "$s"; done')
+    gesperrt = warten_bis(vm, "/usr/lib/zenos/ipc sperre status", "gesperrt", 120)
+    pruefe(gesperrt == "gesperrt", f"logind sperrt die Sitzung (Weg des Deckels) ({gesperrt})")
+    taste(vm, "shift")
+    time.sleep(5)
+    tippen(vm, KONTO_PASSWORT)
+    offen = warten_bis(vm, "/usr/lib/zenos/ipc sperre status", "offen", 120)
+    pruefe(offen == "offen", f"nach dem Deckel wieder entsperrt ({offen})")
+
     # Erinnerung an Updates: Der Zeitgeber läuft, das Konto darf fragen, ob die Uhr über NTS gestellt ist, zen status
     # nennt den Paketstand, und eine Erinnerung mit vorgestellter Uhr (Pakete 20 Tage alt) nimmt der Mitteilungsserver
     # der Oberfläche an

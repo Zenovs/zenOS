@@ -16,10 +16,11 @@ und eigener Kernel kommen mit 1.0.
 | `mkosi.build.d/` | Quickshell 0.3.1 aus dem Quellcode; Oberfläche (`shell/`) und Schriften ins Image |
 | `mkosi.extra/` | Dateien im System: Login, Sitzung, Sperre, `zen`, Updates, Firewall, Zeit, Netz, Härtung, Chromium |
 | `mkosi.postinst` | löscht Dateien von Paketen, die nur als Abhängigkeit kommen; nichts aus den Backports |
-| `mkosi.finalize` | /var vorbereiten; setuid, Verbotenes, Quickshell und Signaturprüfung prüfen; Schlüssel und Paketstand ins Image |
+| `mkosi.finalize` | /var vorbereiten; setuid, Verbotenes, Quickshell und Signaturprüfung prüfen; Schlüssel und Paketstand ins Image; Overlay des Deckels übersetzen und am Gerätebaum des CM5 prüfen |
 | `mkosi.postoutput` | schreibt autoboot.txt (Partition 1) und Kernel, initrd, Gerätebäume, `config.txt`, `cmdline.txt` (Startpartition A) |
 | `schluessel/` | Zenos öffentlicher Schlüssel für Updates (`zenos-updates.asc`); ohne ihn baut das Image für den Argon nicht |
 | `start/config.txt` | Start auf dem CM5 und dem Pi 5 |
+| `start/zenos-deckel.dts` | Overlay für den Deckel des Argon ONE UP: GPIO27 als Schalter SW_LID, Zuklappen sperrt (logind) |
 | `umgebung/` | Bauumgebung: Debian-Container mit mkosi und QEMU; `bauen-innen.sh` holt und prüft die Quelle von Quickshell |
 | `veroeffentlichen.sh` | macht aus einem gebauten Image die Dateien für ein Update und `SHA256SUMS` zum Signieren |
 | `test/` | Angriffs- und Starttests in QEMU mit Oberfläche und Update, Einheitentests des Updates und der Erinnerung, Prüfung der Startpartitionen des Argon-Images |
@@ -118,7 +119,10 @@ der Image-Workflow von 0.1.
 ## Was noch fehlt
 
 - **Kein signierter Start.** Wer root hat, könnte die Startpartitionen ändern. Das schliesst 1.0 (OTP).
-- Bluetooth, Akku-Anzeige und Deckel des Argon sind noch nicht eingerichtet; Einstellungen, Modi und Raster aus 0.1
-  kommen später mit Updates.
+- Bluetooth und Akku-Anzeige des Argon sind noch nicht eingerichtet; Einstellungen, Modi und Raster aus 0.1 kommen
+  später mit Updates.
+- **Deckel:** Zuklappen sperrt (Overlay `zenos-deckel`, logind `HandleLidSwitch=lock`, immer, auch am Netzteil und mit
+  einem zweiten Bildschirm). Der Bildschirm unter dem Deckel geht wie bei jeder Sperre erst nach der eingestellten Zeit
+  ohne Eingabe aus. Auf dem Argon noch nicht geprüft: Zuklappen muss sofort sperren, Aufklappen zeigt die Sperre.
 - Die machine-id ist bei jedem Start neu (schreibgeschütztes `/etc`); systemd-homed meldet dazu Fehler im Journal, die
   Anmeldung geht.

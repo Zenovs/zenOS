@@ -80,6 +80,22 @@ grep -qx 'enable_uart=0' <<<"$config" && grep -qx 'kernel=kernel_2712.img' <<<"$
 	grep -qx 'dtoverlay=dwc2,dr_mode=host' <<<"$config"
 pruefe $? "config.txt: Kernel 2712, keine serielle Konsole, USB für Tastatur und Touchpad"
 
+# Deckel: Das eigene Overlay liegt bei den Overlays, config.txt lädt es nur auf dem CM5, und auf den Gerätebaum des
+# CM5 Lite angewendet ergibt es einen Schalter SW_LID an GPIO27 des RP1 mit Pull-up.
+[[ "$(awk '/^\[/ { abschnitt = $0 } $0 == "dtoverlay=zenos-deckel" { print abschnitt }' <<<"$config")" == "[cm5]" ]]
+pruefe $? "config.txt: Overlay des Deckels nur im Abschnitt [cm5]"
+probe=$(mktemp -d)
+mcopy -n -i "$(p 2)" ::bcm2712-rpi-cm5l-cm5io.dtb ::overlays/zenos-deckel.dtbo "$probe/" 2>/dev/null &&
+	fdtoverlay -i "$probe/bcm2712-rpi-cm5l-cm5io.dtb" -o "$probe/mit-deckel.dtb" "$probe/zenos-deckel.dtbo" 2>/dev/null &&
+	[[ "$(fdtget "$probe/mit-deckel.dtb" /zenos_deckel compatible)" == gpio-keys &&
+		"$(fdtget "$probe/mit-deckel.dtb" /zenos_deckel/deckel linux,input-type)" == 5 &&
+		"$(fdtget "$probe/mit-deckel.dtb" /zenos_deckel/deckel linux,code)" == 0 ]] &&
+	gpio=$(fdtget "$probe/mit-deckel.dtb" /__symbols__ rp1_gpio) &&
+	[[ "$(fdtget -t s "$probe/mit-deckel.dtb" "$gpio/zenos_deckel_pins" pins)" == gpio27 ]] &&
+	fdtget "$probe/mit-deckel.dtb" "$gpio/zenos_deckel_pins" bias-pull-up >/dev/null 2>&1
+pruefe $? "Overlay des Deckels passt auf den CM5 Lite: Schalter SW_LID an GPIO27 mit Pull-up"
+rm -rf "$probe"
+
 cmdline=$(mtype -i "$(p 2)" ::cmdline.txt 2>/dev/null)
 hash=$(grep -o 'roothash=[0-9a-f]\{64\}' <<<"$cmdline" | cut -d= -f2)
 daten=$(grep -o 'systemd.verity_root_data=PARTUUID=[0-9a-f-]*' <<<"$cmdline" | cut -d= -f3)

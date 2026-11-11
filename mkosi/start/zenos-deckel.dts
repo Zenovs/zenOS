@@ -1,0 +1,46 @@
+// zenOS: Deckel des Argon ONE UP als Schalter für logind (SW_LID).
+//
+// Der Deckel hängt an GPIO27 des RP1 (wie in zenOS 0.1 und Argons eigenem Skript, LINE_LIDMONITOR = 27): Eingang mit
+// Pull-up, Pegel 0 heisst zu, 1 offen. Der Kernel-Treiber gpio-keys meldet ihn als Schalter SW_LID; systemd-logind
+// erkennt ihn daran und sperrt beim Zuklappen (HandleLidSwitch=lock in /etc/systemd/logind.conf.d/zenos.conf).
+// Kein eigener Dienst, kein Zugriff auf GPIO aus dem Benutzerraum: Der Kernel liest nur diese eine Leitung.
+//
+// Nur auf dem CM5 geladen (config.txt, Abschnitt [cm5]). Auf dem Pi 5 ist GPIO27 ein freier Pin der Stiftleiste.
+// mkosi.finalize übersetzt diese Datei mit dtc nach overlays/zenos-deckel.dtbo.
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "brcm,bcm2712";
+
+	fragment@0 {
+		target = <&rp1_gpio>;
+		__overlay__ {
+			zenos_deckel_pins: zenos_deckel_pins {
+				pins = "gpio27";
+				function = "gpio";
+				bias-pull-up;
+			};
+		};
+	};
+
+	fragment@1 {
+		target-path = "/";
+		__overlay__ {
+			zenos_deckel {
+				compatible = "gpio-keys";
+				pinctrl-names = "default";
+				pinctrl-0 = <&zenos_deckel_pins>;
+				status = "okay";
+
+				deckel {
+					label = "Deckel";
+					linux,input-type = <5>;		// EV_SW: ein Schalter, keine Taste
+					linux,code = <0>;		// SW_LID
+					gpios = <&rp1_gpio 27 1>;	// GPIO_ACTIVE_LOW: Pegel 0 (zu) meldet SW_LID = 1
+					debounce-interval = <100>;	// ms, wie in 0.1
+				};
+			};
+		};
+	};
+};

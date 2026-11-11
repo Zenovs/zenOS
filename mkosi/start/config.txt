@@ -17,3 +17,5 @@ enable_uart=0
 [cm5]
 # USB-2-Anschluss im Host-Modus: Am Argon ONE UP hängen Tastatur und Touchpad daran.
 dtoverlay=dwc2,dr_mode=host
+# Deckel des Argon ONE UP an GPIO27 als Schalter SW_LID: Zuklappen sperrt (logind, HandleLidSwitch=lock).
+dtoverlay=zenos-deckel
