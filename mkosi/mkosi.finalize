@@ -146,6 +146,11 @@ echo "zenOS-Prüfung: Paketstand $(cat "$R/usr/lib/zenos/paketstand")"
 # Leitplanke: fest 30 Minuten im Image für den Argon. Nur das Test-Image für QEMU darf eine kürzere Zeit haben
 # (/usr/lib/zenos/ausschalten-test-nach), und der Dienst muss eingeschaltet sein.
 grep -qx 'grenze=1800' "$R/usr/lib/zenos/ausschalten-waechter" || fehler "ausschalten-waechter: nicht fest 30 Minuten"
+# Das Konto des Wächters (/usr/lib/sysusers.d/zenos.conf) entsteht hier im Bau: /etc ist im fertigen Image
+# schreibgeschützt, systemd-sysusers könnte es beim Start nicht mehr anlegen, und der Dienst liefe nie.
+mkosi-chroot systemd-sysusers /usr/lib/sysusers.d/zenos.conf ||
+	fehler "Systemkonten aus /usr/lib/sysusers.d/zenos.conf liessen sich nicht anlegen"
+grep -q '^zenos-ausschalten:' "$R/etc/passwd" || fehler "Konto zenos-ausschalten fehlt in /etc/passwd"
 grep -qx 'enable zenos-ausschalten.service' "$R/usr/lib/systemd/system-preset/10-zenos.preset" ||
 	fehler "zenos-ausschalten.service ist nicht eingeschaltet (10-zenos.preset)"
 [[ -f "$R/etc/polkit-1/rules.d/50-zenos-ausschalten.rules" ]] || fehler "polkit-Regel für zenos-ausschalten fehlt"
