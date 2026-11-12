@@ -4,9 +4,10 @@
 # zenOS aus, wenn es 30 Minuten lang keine entsperrte Sitzung gab: gesperrt (auch über den Deckel) oder am Login nach
 # dem Entsperren der Daten. Kein Programm kann das mit einem Inhibitor verhindern.
 #
-# Läuft als eigener Systemdienst (zenos-ausschalten.service, ohne root, DynamicUser), nicht in der Sitzung: Ein Absturz
-# der Oberfläche hält ihn nicht auf. Entsperrt heisst: eine aktive Sitzung eines Kontos an seat0, nicht entfernt, deren
-# LockedHint aus ist (die Sperre setzt ihn beim Sperren und löscht ihn beim Entsperren, die Notfall-Sperre ebenso).
+# Läuft als eigener Systemdienst (zenos-ausschalten.service, ohne root, Konto zenos-ausschalten), nicht in der
+# Sitzung: Ein Absturz der Oberfläche hält ihn nicht auf. Entsperrt heisst: eine aktive Sitzung eines Kontos an seat0,
+# nicht entfernt, deren LockedHint aus ist (die Sperre setzt ihn beim Sperren und löscht ihn beim Entsperren, die
+# Notfall-Sperre ebenso).
 # Antwortet logind nicht, gilt das als gesperrt.
 #
 # Gezählt wird mit der Laufzeit seit dem Start (/proc/uptime), nicht mit der Uhr: Ein Sprung der Uhr verlängert nichts.

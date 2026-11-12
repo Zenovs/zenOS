@@ -17,7 +17,7 @@ Ziel ist kein Code von zenOS mit root (`docs/neubau.md`, 4.3). Diese Ausnahmen g
 
 Dazu laufen in der PAM-Kette des Logins (als root in greetd) zwei kleine Prüfungen: `ist-attrappe` (gibt es die
 Attrappe nach dem Notfall-Passwort?) und `schluessel-beruehren` (nur dann: Berührung eines beliebigen FIDO2-Schlüssels).
-Der Wächter für das Ausschalten nach langer Sperre (`ausschalten-waechter`) läuft ohne root (DynamicUser); polkit
+Der Wächter für das Ausschalten nach langer Sperre (`ausschalten-waechter`) läuft ohne root (Systemkonto `zenos-ausschalten`); polkit
 erlaubt ihm nur das Ausschalten.
 
 Was darunter in diesem Dokument steht, beschreibt meist 0.1 (Ubuntu).

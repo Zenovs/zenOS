@@ -1,6 +1,8 @@
 # zenOS: nach 30 Minuten ohne entsperrte Sitzung ausschalten (BAUAUFTRAG.md, Bauauftrag 3). Leitplanke, nicht
-# abschaltbar: Nur so ist der Schlüssel der Daten wieder aus dem Arbeitsspeicher. Ein Systemdienst ohne root; polkit
-# erlaubt genau diesem Konto das Ausschalten, auch gegen Inhibitoren (50-zenos-ausschalten.rules).
+# abschaltbar: Nur so ist der Schlüssel der Daten wieder aus dem Arbeitsspeicher. Ein Systemdienst ohne root, unter dem
+# festen Konto zenos-ausschalten (sysusers.d/zenos.conf); polkit erlaubt genau diesem Konto das Ausschalten, auch gegen
+# Inhibitoren (50-zenos-ausschalten.rules). Kein DynamicUser: Dessen Laufzeitverzeichnis läge unter /run/private, und
+# die Sperre könnte den Zeitpunkt für den Hinweis nicht lesen.
 [Unit]
 Description=zenOS: nach langer Sperre ausschalten
 Documentation=https://github.com/Zenovs/zenOS/blob/neubau/BAUAUFTRAG.md
@@ -10,14 +12,16 @@ After=zenos-entsperren.service var.mount
 
 [Service]
 ExecStart=/usr/lib/zenos/ausschalten-waechter
-DynamicUser=yes
 User=zenos-ausschalten
+Group=zenos-ausschalten
 RuntimeDirectory=zenos-ausschalten
 RuntimeDirectoryMode=0755
 RuntimeDirectoryPreserve=restart
 Restart=always
 RestartSec=5
 NoNewPrivileges=yes
+RemoveIPC=yes
+UMask=0022
 CapabilityBoundingSet=
 ProtectSystem=strict
 ProtectHome=yes
