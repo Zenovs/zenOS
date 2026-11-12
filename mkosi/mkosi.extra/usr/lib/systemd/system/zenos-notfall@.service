@@ -1,6 +1,7 @@
-# zenOS: eine Anfrage von zen notfall (/usr/lib/zenos/notfall-dienst). %i ist «Nummer-PID-UID» des Aufrufers.
+# zenOS: eine Anfrage von zen notfall oder zen schluessel (/usr/lib/zenos/notfall-dienst). %i ist «Nummer-PID-UID»
+# des Aufrufers.
 [Unit]
-Description=zenOS: Anfrage an zen notfall
+Description=zenOS: Anfrage an zen notfall oder zen schluessel
 Documentation=https://github.com/Zenovs/zenOS/blob/neubau/BAUAUFTRAG.md
 CollectMode=inactive-or-failed
 
@@ -16,7 +17,7 @@ RuntimeMaxSec=5min
 NoNewPrivileges=yes
 CapabilityBoundingSet=CAP_SYS_ADMIN CAP_IPC_LOCK CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_MKNOD
 ProtectSystem=strict
-ReadWritePaths=-/run/cryptsetup /run/zenos
+ReadWritePaths=-/run/cryptsetup /run/zenos -/var/lib/zenos/schluessel
 ProtectHome=yes
 PrivateTmp=yes
 PrivateNetwork=yes

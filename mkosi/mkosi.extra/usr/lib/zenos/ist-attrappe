@@ -1,0 +1,3 @@
+#!/bin/sh
+# Exit 0 nur nach dem Notfall-Passwort (Attrappe im Arbeitsspeicher, /run/zenos/attrappe). Für /etc/pam.d/zenos-schluessel.
+[ -e /run/zenos/attrappe ]

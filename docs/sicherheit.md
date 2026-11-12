@@ -8,12 +8,17 @@ Ziel ist kein Code von zenOS mit root (`docs/neubau.md`, 4.3). Diese Ausnahmen g
 
 | Was | Wann | Warum root |
 |---|---|---|
-| `daten-anlegen`, `daten-schuetzen`, `notfall-name` | erster Start | Datenpartition und Notfall-Partition anlegen, Passwort, Wiederherstellungsschlüssel und Notfall-Passwort eintragen |
+| `daten-anlegen`, `daten-schuetzen`, `notfall-name`, `schluessel-konto` | erster Start (`schluessel-konto` auch nach dem Notweg) | Datenpartition und Notfall-Partition anlegen, Passwort, Hardware-Schlüssel, Wiederherstellungsschlüssel und Notfall-Passwort eintragen; die Schlüssel für die Anmeldung in die Liste unter `/var/lib/zenos/schluessel` schreiben |
 | `tastatur-laden` | jeder Start, vor der Passwortfrage | Tastaturbelegung von der Startpartition (nur lesend eingehängt) |
-| `entsperren` | jeder Start | öffnet die Daten; im Notfall löscht es ihre Schlüssel und legt die Attrappe an (Bauauftrag 2) |
+| `entsperren` | jeder Start | öffnet die Daten mit Passwort und Hardware-Schlüssel; nach dem Wiederherstellungsschlüssel der Notweg (Bauauftrag 4); im Notfall löscht es ihre Schlüssel und legt die Attrappe an (Bauauftrag 2) |
 | `attrappe` | nur nach dem Notfall-Passwort | Konto der Attrappe bei systemd-homed anlegen und einmal anmelden |
-| `notfall-dienst` | nur auf Anfrage von `zen notfall` | Notfall-Container ändern; nimmt nur eine aktive Sitzung am Gerät an (PID und UID von systemd), prüft die Anfrage mit einem strengen Muster ohne JSON-Parser, verlangt das Passwort der Daten, läuft gehärtet (nur die nötigen Rechte, kein Netz, System nur lesbar) und schreibt nichts ins Journal |
+| `notfall-dienst` | nur auf Anfrage von `zen notfall` oder `zen schluessel` | Notfall-Container ändern; nimmt nur eine aktive Sitzung am Gerät an (PID und UID von systemd), prüft die Anfrage mit einem strengen Muster ohne JSON-Parser, verlangt das Passwort der Daten, läuft gehärtet (nur die nötigen Rechte, kein Netz, System nur lesbar) und schreibt nichts ins Journal |
 | `update` | nur auf `zen update` (polkit: Sitzung am Gerät) und beim Start nach einem Update | neuen Stand in die freie Hälfte schreiben, Probestart bestätigen |
+
+Dazu laufen in der PAM-Kette des Logins (als root in greetd) zwei kleine Prüfungen: `ist-attrappe` (gibt es die
+Attrappe nach dem Notfall-Passwort?) und `schluessel-beruehren` (nur dann: Berührung eines beliebigen FIDO2-Schlüssels).
+Der Wächter für das Ausschalten nach langer Sperre (`ausschalten-waechter`) läuft ohne root (DynamicUser); polkit
+erlaubt ihm nur das Ausschalten.
 
 Was darunter in diesem Dokument steht, beschreibt meist 0.1 (Ubuntu).
 

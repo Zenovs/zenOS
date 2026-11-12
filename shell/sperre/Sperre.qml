@@ -210,13 +210,15 @@ Scope {
     }
 
     function _pamStarten(): void {
+        // Ausweichen auf den Login (greetd): Er verlangt wie zenos-sperre den Hardware-Schlüssel (Bauauftrag 4), es gibt
+        // also keinen Weg daran vorbei.
         pam.configDirectory = root._ausweichen ? "/etc/pam.d" : root.pamOrdner;
-        pam.config = root._ausweichen ? "login" : "zenos-sperre";
+        pam.config = root._ausweichen ? "greetd" : "zenos-sperre";
         if (pam.start())
             return;
         if (!root._ausweichen) {
             // Ohne eigenen PAM-Dienst nicht aussperren: auf den Login-Dienst des Systems ausweichen
-            console.warn("Sperre: PAM-Dienst zenos-sperre fehlt, weiche auf /etc/pam.d/login aus");
+            console.warn("Sperre: PAM-Dienst zenos-sperre fehlt, weiche auf /etc/pam.d/greetd aus");
             root._ausweichen = true;
             _pamStarten();
             return;
@@ -599,8 +601,13 @@ Scope {
                 return;
             }
             // Hinweise von PAM (z. B. gesperrtes Konto nach zu vielen Versuchen) zeigen
-            if (messageIsError && message.trim().length > 0)
+            if (messageIsError && message.trim().length > 0) {
                 root._meldungZeigen(message.trim());
+            } else if (message.trim().length > 0) {
+                // Hinweis ohne Fehler, etwa «Schlüssel berühren» (pam_u2f, Bauauftrag 4): gedämpft
+                root.meldung = message.trim();
+                root.fehlerAnzeigen = false;
+            }
         }
 
         onError: error => console.warn("Sperre: PAM:", PamError.toString(error))
@@ -614,7 +621,7 @@ Scope {
             }
             // PAM-Dienst fehlerhaft, bevor das Passwort weitergereicht war: einmal ausweichen
             if (result === PamResult.Error && unbeantwortet && !root._ausweichen) {
-                console.warn("Sperre: PAM-Dienst zenos-sperre fehlerhaft, weiche auf /etc/pam.d/login aus");
+                console.warn("Sperre: PAM-Dienst zenos-sperre fehlerhaft, weiche auf /etc/pam.d/greetd aus");
                 root._ausweichen = true;
                 root._pamStarten();
                 return;

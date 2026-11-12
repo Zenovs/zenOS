@@ -3,9 +3,12 @@
 # (BAUAUFTRAG.md, Bauauftrag 2): /etc/fstab hängt /var erst ein, wenn dieser Dienst /dev/mapper/daten geöffnet hat.
 #
 # Pro Eingabe:
-#   1. Sieht sie aus wie ein Wiederherstellungsschlüssel, wird sie in dessen Form gebracht (klein, Bindestriche).
-#   2. Zuerst die Daten öffnen. Klappt das, fertig (Passwort oder Wiederherstellungsschlüssel).
-#   3. Sonst, nur wenn es ein Notfall-Passwort gibt: Ist es das? Dann der Notfall (unten).
+#   1. Sieht sie aus wie ein Wiederherstellungsschlüssel: damit öffnen (in dessen Form gebracht: klein, Bindestriche),
+#      danach der Notweg (neue Schlüssel und ein neues Passwort, Bauauftrag 4).
+#   2. Sonst die Daten öffnen: mit Passwort und Hardware-Schlüssel (Berührung, schluessel-gemeinsam). Steckt kein
+#      Schlüssel, kann die Eingabe die Daten gar nicht öffnen; dann wird gleich das Notfall-Passwort geprüft, und sonst
+#      wartet die Abfrage auf einen Schlüssel. Ohne Schlüsselplätze (nur das Test-Image für QEMU) mit dem Passwort.
+#   3. Sonst, nur wenn es ein Notfall-Passwort gibt: Ist es das? Dann der Notfall (unten). Es wirkt auch ohne Schlüssel.
 #   4. Sonst «Das Passwort stimmt nicht. Bitte noch einmal.», ohne Grenze.
 # Das echte Passwort öffnet also immer zuerst; ein Tippfehler löst nie den Notfall aus.
 #
@@ -21,6 +24,84 @@ set -uo pipefail
 
 # shellcheck source=notfall-gemeinsam
 . /usr/lib/zenos/notfall-gemeinsam
+# shellcheck source=schluessel-gemeinsam
+. /usr/lib/zenos/schluessel-gemeinsam
+
+fragen() { # TEXT [ID]: eine Frage über den Passwort-Agenten von systemd (verdeckt)
+	systemd-ask-password --no-tty --timeout=0 --echo=masked --emoji=no --id="zenos:${2:-daten}" "$1"
+}
+
+# Mit dem Wiederherstellungsschlüssel öffnen, gezielt seinen Platz (die anderen kosten je einen Durchlauf von Argon2)
+wiederherstellung_oeffnen() { # SCHLUESSEL
+	local platz
+	platz=$(wiederherstellung_platz)
+	if [[ -n "$platz" ]]; then
+		printf '%s' "$1" | cryptsetup open --key-slot "$platz" --key-file=- "$ZENOS_DATEN" daten >/dev/null 2>&1
+	else
+		daten_oeffnen "$1"
+	fi
+}
+
+# Notweg (Bauauftrag 4): Mit dem Wiederherstellungsschlüssel geöffnet, etwa weil ein Schlüssel verloren ist. Auf Wunsch
+# ein neues Passwort und neue Schlüssel eintragen; danach werden die alten Schlüsselplätze gelöscht, und
+# zenos-schluessel-konto.service trägt die neuen Schlüssel auch für die Anmeldung ein. Sonst gibt es keinen Weg am
+# Schlüssel vorbei.
+notweg() { # WIEDERHERSTELLUNGSSCHLUESSEL
+	local antwort neu zweites alte platz geraet erstes_credential="" eingetragen=0 nummer
+	test_ohne_schluessel && return 0
+	echo "  Mit dem Wiederherstellungsschlüssel geöffnet."
+	antwort=$(systemd-ask-password --no-tty --timeout=0 --echo=yes --emoji=no --id=zenos:notweg \
+		"Neues Passwort und neue Schlüssel eintragen? (ja, Enter = nein):") || antwort=""
+	[[ "$antwort" == ja ]] || return 0
+	# Nie gleich wie das Notfall-Passwort: Ohne eingesteckten Schlüssel prüft der Start das Notfall-Passwort zuerst.
+	while :; do
+		neu=$(fragen "Neues Passwort für deine Daten:" notweg) || neu=""
+		zweites=$(fragen "Noch einmal:" notweg) || zweites=""
+		if [[ -z "$neu" || "$neu" != "$zweites" ]]; then
+			echo "  Leer oder nicht gleich. Noch einmal."
+		elif passwort_ist_notfall "$neu"; then
+			echo "  Das ist dein Notfall-Passwort. Nimm ein anderes."
+		else
+			break
+		fi
+	done
+	unset zweites
+	alte=$(schluessel_plaetze | awk '{ print $2 }')
+	for nummer in 1 2; do
+		if ((nummer == 2)); then
+			antwort=$(systemd-ask-password --no-tty --timeout=0 --echo=yes --emoji=no --id=zenos:notweg \
+				"Schlüssel 1 abziehen, Schlüssel 2 einstecken, dann ja (Enter = ohne Schlüssel 2):") || antwort=""
+			[[ "$antwort" == ja ]] || break
+		fi
+		echo "  Schlüssel $nummer einstecken und zweimal berühren, wenn er blinkt."
+		geraet=$(schluessel_warten 120) || {
+			echo "  Kein Schlüssel gefunden."
+			continue
+		}
+		if [[ -n "$erstes_credential" ]] && schluessel_kennt_sicher "$geraet" "$erstes_credential"; then
+			echo "  Das ist derselbe Schlüssel wie Schlüssel 1."
+			continue
+		fi
+		if schluessel_eintragen "$geraet" "$neu" <(printf '%s' "$1"); then
+			eingetragen=$((eingetragen + 1))
+			erstes_credential=$schluessel_neues_credential
+			echo "  Schlüssel $nummer ist eingetragen."
+		else
+			echo "  Schlüssel $nummer liess sich nicht eintragen."
+		fi
+	done
+	unset neu
+	if ((eingetragen > 0)); then
+		for platz in $alte; do
+			schluessel_platz_entfernen "$platz" || true
+		done
+		install -d -m 0755 /run/zenos
+		: >/run/zenos/schluessel-konto
+		echo "  Neue Schlüssel eingetragen, die alten gelöscht. Gleich auch für die Anmeldung."
+	else
+		echo "  Nichts geändert."
+	fi
+}
 
 # Datenträger im Arbeitsspeicher für die Attrappe, halb so gross wie der Arbeitsspeicher: zram (komprimiert); geht das
 # nicht, eine Datei in einem eigenen tmpfs über ein Loop-Gerät. Ausgabe: das Gerät.
@@ -63,12 +144,12 @@ attrappe_anlegen() { # NAME PASSWORT
 notfall() { # PASSWORT
 	local name
 	name=$(notfall_name_lesen "$1") || name=benutzer
-	cryptsetup luksErase --batch-mode "$ZENOS_DATEN" >/dev/null 2>&1 || true
+	cryptsetup luksErase --batch-mode "$ZENOS_DATEN" </dev/null >/dev/null 2>&1 || true
 	notfall_nullen >/dev/null 2>&1 || true
 	sync
 	# Prüfen, ob die Schlüssel weg sind. Wenn nicht: nochmals versuchen, dann trotzdem weiter.
 	if [[ "$(daten_schluesselplaetze)" != 0 ]]; then
-		cryptsetup luksErase --batch-mode "$ZENOS_DATEN" >/dev/null 2>&1 || true
+		cryptsetup luksErase --batch-mode "$ZENOS_DATEN" </dev/null >/dev/null 2>&1 || true
 		sync
 	fi
 	until attrappe_anlegen "$name" "$1"; do
@@ -89,18 +170,45 @@ echo
 while :; do
 	# Über den Passwort-Agenten von systemd (wie bisher bei systemd-cryptsetup): Er zeigt die Frage auf der Konsole,
 	# und solange sie offen ist, schreibt systemd keine Statuszeilen dazwischen.
-	if ! eingabe=$(systemd-ask-password --no-tty --timeout=0 --echo=masked --emoji=no --id=zenos:daten \
-		"Passwort für deine Daten:"); then
+	if ! eingabe=$(fragen "Passwort für deine Daten:"); then
 		sleep 1
 		continue
 	fi
 	[[ -n "$eingabe" ]] || continue
 	echo "  Einen Moment …"
-	if schluessel=$(als_wiederherstellungsschluessel "$eingabe"); then
-		eingabe=$schluessel
+	if wieder=$(als_wiederherstellungsschluessel "$eingabe") && wiederherstellung_oeffnen "$wieder"; then
+		unset eingabe
+		notweg "$wieder"
+		unset wieder
+		echo
+		exit 0
 	fi
-	unset schluessel
-	if daten_oeffnen "$eingabe"; then
+	unset wieder
+	if daten_hat_schluessel; then
+		if [[ -z "$(schluessel_geraete)" ]]; then
+			# Ohne Schlüssel kann die Eingabe die Daten nicht öffnen; das Notfall-Passwort wirkt trotzdem
+			if passwort_ist_notfall "$eingabe"; then
+				notfall "$eingabe"
+				unset eingabe
+				echo
+				exit 0
+			fi
+			echo "  Schlüssel einstecken."
+			if ! schluessel_warten 60 >/dev/null; then
+				unset eingabe
+				echo "  Kein Schlüssel. Bitte noch einmal."
+				echo
+				continue
+			fi
+		fi
+		echo "  Schlüssel berühren."
+		if schluessel_oeffnen "$eingabe" daten; then
+			unset eingabe schluessel_passphrase
+			echo
+			exit 0
+		fi
+		unset schluessel_passphrase
+	elif daten_oeffnen "$eingabe"; then
 		unset eingabe
 		echo
 		exit 0

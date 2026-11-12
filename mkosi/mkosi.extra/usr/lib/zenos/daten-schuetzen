@@ -1,17 +1,25 @@
 #!/bin/bash
 # Erster Start, auf der Konsole (zenos-daten-schuetzen.service): Tastaturbelegung wählen, Passwort für die
-# verschlüsselten Daten setzen, Wiederherstellungsschlüssel zeigen, Notfall-Passwort (freiwillig), Einmal-Schlüssel
-# löschen.
+# verschlüsselten Daten setzen, die Hardware-Schlüssel eintragen, Wiederherstellungsschlüssel zeigen, Notfall-Passwort
+# (freiwillig), Einmal-Schlüssel löschen.
 #
 # Läuft nur, solange der Einmal-Schlüssel aus daten-anlegen in /run liegt, also nur beim allerersten Start.
-# Das Passwort tippt Zeno direkt in systemd-cryptenroll; dieses Skript sieht es nie. Das Notfall-Passwort fragt das
-# Skript selbst ab (BAUAUFTRAG.md, Bauauftrag 2): Es legt damit den Notfall-Container an und lässt ihn geöffnet, bis
-# das Konto angelegt ist; dann schreibt zenos-notfall-name.service den Kontonamen hinein und schliesst ihn. So muss das
-# Notfall-Passwort nirgends liegen bleiben.
+#
+# Hardware-Schlüssel (BAUAUFTRAG.md, Bauauftrag 4): Pro Schlüssel ein Platz, dessen Passphrase aus dem Passwort und dem
+# Schlüssel entsteht (schluessel-gemeinsam). Einen Platz mit dem Passwort allein gibt es nicht. Schlüssel 1 ist Pflicht,
+# Schlüssel 2 kann später kommen (zen schluessel hinzufuegen). Für die Anmeldung trägt zenos-schluessel-konto.service
+# dieselben Schlüssel nach dem Anlegen des Kontos ein. Nur im Test-Image für QEMU (ohne Schlüssel) entsteht stattdessen
+# ein Platz mit dem Passwort allein.
+#
+# Passwörter nur im Arbeitsspeicher, an cryptsetup über Pipes (notfall-gemeinsam). Das Notfall-Passwort (Bauauftrag 2)
+# legt den Notfall-Container an und lässt ihn geöffnet, bis das Konto angelegt ist; dann schreibt
+# zenos-notfall-name.service den Kontonamen hinein und schliesst ihn.
 set -euo pipefail
 
 # shellcheck source=notfall-gemeinsam
 . /usr/lib/zenos/notfall-gemeinsam
+# shellcheck source=schluessel-gemeinsam
+. /usr/lib/zenos/schluessel-gemeinsam
 
 schluessel=/run/zenos/daten-einmalschluessel
 partition=/dev/disk/by-partlabel/zenos-daten
@@ -19,6 +27,10 @@ partition=/dev/disk/by-partlabel/zenos-daten
 [[ -s "$schluessel" ]] || exit 0
 udevadm settle --timeout=10 || true
 [[ -e "$partition" ]] || { echo "Die Datenpartition fehlt; systemd-repart hat sie nicht angelegt." >&2; exit 1; }
+
+frage() { # TEXT
+	systemd-ask-password --timeout=0 --echo=masked --emoji=no "$1"
+}
 
 clear || true
 cat <<'TEXT'
@@ -35,18 +47,70 @@ TEXT
 cat <<'TEXT'
 
   Jetzt das Passwort für deine Daten. Du tippst es bei jedem Start.
-  Nimm ein langes: zum Beispiel sechs zufällige Wörter. Ohne TPM schützt nur seine Länge.
+  Nimm ein langes: zum Beispiel sechs zufällige Wörter.
 
 TEXT
-until systemd-cryptenroll --unlock-key-file="$schluessel" --password "$partition"; do
-	echo "  Das hat nicht geklappt. Noch einmal."
+while :; do
+	passwort=$(frage "  Neues Passwort für deine Daten:") || passwort=""
+	zweites=$(frage "  Noch einmal:") || zweites=""
+	if [[ -n "$passwort" && "$passwort" == "$zweites" ]]; then
+		unset zweites
+		break
+	fi
+	unset passwort zweites
+	echo "  Leer oder nicht gleich. Noch einmal."
 done
+
+# Schlüssel 1 (Pflicht) und Schlüssel 2 (Enter = später)
+schluessel_einrichten() {
+	local geraet
+	cat <<'TEXT'
+
+  Jetzt deine Hardware-Schlüssel. Ohne einen davon öffnen sich deine Daten nicht, auch nicht mit dem
+  Passwort. Trag beide ein; einer bleibt als Ersatz an einem sicheren Ort, nicht beim Laptop.
+
+TEXT
+	echo "  Schlüssel 1 einstecken. Berühre ihn, wenn er blinkt (zweimal)."
+	until geraet=$(schluessel_warten 3600); do :; done
+	until schluessel_eintragen "$geraet" "$passwort" "$schluessel"; do
+		echo "  Das hat nicht geklappt. Schlüssel 1 nochmals berühren, wenn er blinkt."
+		until geraet=$(schluessel_warten 3600); do :; done
+	done
+	echo "  Schlüssel 1 ist eingetragen."
+	echo
+	echo "  Jetzt Schlüssel 1 abziehen und Schlüssel 2 einstecken. Berühre ihn, wenn er blinkt (zweimal)."
+	echo "  Ohne Schlüssel 2 weiter: Enter."
+	while :; do
+		if read -r -t 0.5 _; then
+			echo "  Nur ein Schlüssel ist eingetragen. Trag den zweiten so bald wie möglich nach:"
+			echo "  zen schluessel hinzufuegen"
+			return 0
+		fi
+		for geraet in $(schluessel_geraete); do
+			schluessel_schon_eingetragen "$geraet" && continue
+			if schluessel_eintragen "$geraet" "$passwort" "$schluessel"; then
+				echo "  Schlüssel 2 ist eingetragen."
+				return 0
+			fi
+			echo "  Das hat nicht geklappt. Schlüssel 2 nochmals berühren, wenn er blinkt, oder Enter."
+		done
+	done
+}
+
+if test_ohne_schluessel && [[ -z "$(schluessel_geraete)" ]]; then
+	echo "  Test-Image ohne Hardware-Schlüssel: ein Platz mit dem Passwort allein (gibt es nur in QEMU)."
+	cryptsetup luksAddKey --batch-mode --key-file="$schluessel" "$partition" <(printf '%s' "$passwort") >/dev/null
+else
+	schluessel_einrichten
+	install -d -m 0755 /run/zenos
+	: >/run/zenos/schluessel-konto
+fi
 
 cat <<'TEXT'
 
   Gleich erscheint dein Wiederherstellungsschlüssel. Schreib ihn auf Papier und bewahr ihn
-  getrennt vom Laptop auf. Mit ihm kommst du an deine Daten, falls du das Passwort vergisst.
-  Fotografier ihn nicht und speichere ihn nirgends.
+  getrennt vom Laptop auf. Mit ihm kommst du an deine Daten, falls du das Passwort vergisst
+  oder beide Schlüssel verlierst. Fotografier ihn nicht und speichere ihn nirgends.
 
 TEXT
 read -r -p "  Bereit? Enter drücken. " _
@@ -54,8 +118,8 @@ systemd-cryptenroll --unlock-key-file="$schluessel" --recovery-key "$partition"
 echo
 read -r -p "  Aufgeschrieben? Enter drücken. " _
 
-# Notfall-Passwort, freiwillig. Abgelehnt, wenn es die Daten öffnet (gleich wie das Passwort oder der
-# Wiederherstellungsschlüssel): Das echte Passwort muss immer zuerst öffnen.
+# Notfall-Passwort, freiwillig. Abgelehnt, wenn es die Daten öffnet: gleich wie das Passwort (mit dem Schlüssel)
+# oder der Wiederherstellungsschlüssel. Das echte Passwort muss immer zuerst öffnen.
 notfall_fragen() {
 	local erstes zweites
 	cat <<'TEXT'
@@ -65,20 +129,19 @@ notfall_fragen() {
 
 TEXT
 	while :; do
-		erstes=$(systemd-ask-password --timeout=0 --echo=masked --emoji=no "  Notfall-Passwort (Enter = keins):") ||
-			erstes=""
+		erstes=$(frage "  Notfall-Passwort (Enter = keins):") || erstes=""
 		if [[ -z "$erstes" ]]; then
 			echo "  Kein Notfall-Passwort. Später setzen: zen notfall setzen"
 			return 0
 		fi
-		zweites=$(systemd-ask-password --timeout=0 --echo=masked --emoji=no "  Noch einmal:") || zweites=""
+		zweites=$(frage "  Noch einmal:") || zweites=""
 		if [[ "$erstes" != "$zweites" ]]; then
 			unset erstes zweites
 			echo "  Die beiden sind nicht gleich. Noch einmal."
 			continue
 		fi
 		unset zweites
-		if passwort_oeffnet_daten "$erstes"; then
+		if [[ "$erstes" == "$passwort" ]] || passwort_oeffnet_daten "$erstes"; then
 			unset erstes
 			echo "  Das öffnet deine Daten (wie dein Passwort oder der Wiederherstellungsschlüssel). Nimm ein anderes."
 			continue
@@ -97,9 +160,10 @@ if [[ -e "$ZENOS_NOTFALL" ]]; then
 else
 	echo "  Die Notfall-Partition fehlt; ein Notfall-Passwort geht erst nach einem neuen Image."
 fi
+unset passwort
 
-# Der Einmal-Schlüssel steckt in Platz 0 (systemd-repart hat ihn dort angelegt). Erst löschen, wenn Passwort und
-# Wiederherstellungsschlüssel eingetragen sind.
+# Der Einmal-Schlüssel steckt in Platz 0 (systemd-repart hat ihn dort angelegt). Erst löschen, wenn die Schlüssel und
+# der Wiederherstellungsschlüssel eingetragen sind.
 systemd-cryptenroll --unlock-key-file="$schluessel" --wipe-slot=0 "$partition"
 shred -u "$schluessel" 2>/dev/null || rm -f "$schluessel"
 

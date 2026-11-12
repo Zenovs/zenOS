@@ -121,28 +121,37 @@ hex_zu_text() { # HEX
 	printf '%b' "$maskiert"
 }
 
-# Setzt «methode» (Status, Setzen, Aendern, Entfernen) und, je nach Methode, «daten» und «neu» (Klartext) für den
-# Aufrufer. Exit 1, wenn irgendetwas nicht genau passt.
-# shellcheck disable=SC2034 # daten und neu liest notfall-dienst
+# Setzt «schnittstelle» (Notfall, Schluessel), «methode» und, je nach Methode, «daten», «neu» (Klartext) und «nummer»
+# für den Aufrufer. Exit 1, wenn irgendetwas nicht genau passt.
+#   io.zenos.Notfall.Status {}, .Setzen und .Aendern {daten, neu}, .Entfernen {daten}
+#   io.zenos.Schluessel.Status {}, .Hinzufuegen {daten}, .Entfernen {daten, nummer}
+# shellcheck disable=SC2034 # die Variablen liest notfall-dienst
 anfrage_lesen() { # ANFRAGE
-	local muster='^\{"method":"io\.zenos\.Notfall\.(Status|Setzen|Aendern|Entfernen)","parameters":\{(.*)\}\}$'
+	local muster='^\{"method":"io\.zenos\.(Notfall|Schluessel)\.([A-Za-z]+)","parameters":\{(.*)\}\}$'
 	local parameter erstes zweites
-	methode="" daten="" neu=""
+	schnittstelle="" methode="" daten="" neu="" nummer=""
 	((${#1} <= 2048)) || return 1
 	[[ "$1" =~ $muster ]] || return 1
-	methode=${BASH_REMATCH[1]}
-	parameter=${BASH_REMATCH[2]}
-	case "$methode" in
-	Status) [[ -z "$parameter" ]] ;;
-	Setzen | Aendern)
+	schnittstelle=${BASH_REMATCH[1]}
+	methode=${BASH_REMATCH[2]}
+	parameter=${BASH_REMATCH[3]}
+	case "$schnittstelle.$methode" in
+	Notfall.Status | Schluessel.Status) [[ -z "$parameter" ]] ;;
+	Notfall.Setzen | Notfall.Aendern)
 		[[ "$parameter" =~ ^\"daten\":\"([0-9a-f]+)\",\"neu\":\"([0-9a-f]+)\"$ ]] || return 1
 		erstes=${BASH_REMATCH[1]} zweites=${BASH_REMATCH[2]}
 		daten=$(hex_zu_text "$erstes") && neu=$(hex_zu_text "$zweites")
 		;;
-	Entfernen)
+	Notfall.Entfernen | Schluessel.Hinzufuegen)
 		[[ "$parameter" =~ ^\"daten\":\"([0-9a-f]+)\"$ ]] || return 1
 		erstes=${BASH_REMATCH[1]}
 		daten=$(hex_zu_text "$erstes")
 		;;
+	Schluessel.Entfernen)
+		[[ "$parameter" =~ ^\"daten\":\"([0-9a-f]+)\",\"nummer\":\"([1-9])\"$ ]] || return 1
+		erstes=${BASH_REMATCH[1]} nummer=${BASH_REMATCH[2]}
+		daten=$(hex_zu_text "$erstes")
+		;;
+	*) return 1 ;;
 	esac
 }

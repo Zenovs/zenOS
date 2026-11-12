@@ -1,0 +1,12 @@
+#!/bin/bash
+# Nur nach dem Notfall-Passwort (/etc/pam.d/zenos-schluessel): Die Liste der eingetragenen Schlüssel gibt es dann nicht,
+# also genügt die Berührung eines FIDO2-Schlüssels (BAUAUFTRAG.md, Bauauftrag 4). Ein neues Credential verlangt immer
+# eine Berührung; es wird nirgends gespeichert. Im Test-Image für QEMU (ohne Schlüssel) gilt das als erfüllt.
+set -uo pipefail
+
+# shellcheck source=schluessel-gemeinsam
+. /usr/lib/zenos/schluessel-gemeinsam
+
+test_ohne_schluessel && exit 0
+geraet=$(schluessel_warten 60) || exit 1
+schluessel_credential "$geraet" >/dev/null

@@ -1,0 +1,7 @@
+# Test-Image für QEMU (nie auf einem Gerät): wie /etc/pam.d/zenos-schluessel des Images für den Argon, aber pam_u2f mit
+# «nouserok», weil QEMU keinen Schlüssel hat und darum keiner eingetragen ist. So laufen Login und Sperre im Test durch
+# dieselbe Kette. mkosi.finalize lässt «nouserok» im Image für den Argon nicht zu.
+auth	[success=2 default=ignore]	pam_exec.so quiet /usr/lib/zenos/ist-attrappe
+auth	required	pam_u2f.so authfile=/var/lib/zenos/schluessel/u2f origin=pam://zenos appid=pam://zenos cue nouserok [cue_prompt=Schlüssel berühren]
+auth	[default=1]	pam_permit.so
+auth	required	pam_exec.so quiet /usr/lib/zenos/schluessel-beruehren

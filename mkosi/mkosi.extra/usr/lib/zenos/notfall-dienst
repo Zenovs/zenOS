@@ -1,19 +1,23 @@
 #!/bin/bash
-# zen notfall, die Seite von root (zenos-notfall@.service, eine Instanz pro Anfrage an /run/zenos/notfall.socket).
-# BAUAUFTRAG.md, Bauauftrag 2, Punkt 6: ohne Admin und ohne pkexec, ein Dienst hinter einem Socket, der sonst nichts
-# kann.
+# zen notfall und zen schluessel, die Seite von root (zenos-notfall@.service, eine Instanz pro Anfrage an
+# /run/zenos/notfall.socket). BAUAUFTRAG.md, Bauauftrag 2, Punkt 6, und Bauauftrag 4, Punkt 5: ohne Admin und ohne
+# pkexec, ein Dienst hinter einem Socket, der sonst nichts kann, und kein zweiter Weg zu root.
 #
 # Liest genau eine varlink-Anfrage (JSON mit einem Nullbyte am Ende, von varlinkctl) und antwortet mit einer:
-#   io.zenos.Notfall.Status                       → {"gesetzt": true|false}
-#   io.zenos.Notfall.Setzen     {daten, neu}      neues Notfall-Passwort, nur wenn noch keins gesetzt ist
-#   io.zenos.Notfall.Aendern    {daten, neu}      ersetzt das Notfall-Passwort
-#   io.zenos.Notfall.Entfernen  {daten}           nullt die Notfall-Partition
-# Fehler: io.zenos.Notfall.<Grund> (Abgelehnt, Ungueltig, DatenPasswortFalsch, OeffnetDaten, SchonGesetzt,
-# NichtGesetzt, Fehlgeschlagen).
+#   io.zenos.Notfall.Status                         → {"gesetzt": true|false}
+#   io.zenos.Notfall.Setzen       {daten, neu}      neues Notfall-Passwort, nur wenn noch keins gesetzt ist
+#   io.zenos.Notfall.Aendern      {daten, neu}      ersetzt das Notfall-Passwort
+#   io.zenos.Notfall.Entfernen    {daten}           nullt die Notfall-Partition
+#   io.zenos.Schluessel.Status                      → {"daten": n, "anmeldung": n, "steckt": [Nummern]}
+#   io.zenos.Schluessel.Hinzufuegen {daten}         neuen Schlüssel für Daten und Anmeldung eintragen
+#   io.zenos.Schluessel.Entfernen {daten, nummer}   Schlüssel Nummer n entfernen (nie den letzten)
+# Fehler: io.zenos.<Schnittstelle>.<Grund> (Abgelehnt, Ungueltig, DatenPasswortFalsch, OeffnetDaten, SchonGesetzt,
+# NichtGesetzt, KeinNeuerSchluessel, GleicherSchluessel, LetzterSchluessel, Fehlgeschlagen).
 #
-# Die Passwörter kommen hex-kodiert (zen notfall kodiert sie). So prüft ein strenges Muster die ganze Anfrage, ohne
-# JSON-Parser mit root-Rechten; alles andere ist «Ungueltig». Sie bleiben im Arbeitsspeicher und gehen über Pipes an
-# cryptsetup (notfall-gemeinsam), nie in eine Befehlszeile, Datei oder ins Journal.
+# Die Passwörter kommen hex-kodiert (zen kodiert sie). So prüft ein strenges Muster die ganze Anfrage, ohne JSON-Parser
+# mit root-Rechten; alles andere ist «Ungueltig». Sie bleiben im Arbeitsspeicher und gehen über Pipes an cryptsetup,
+# nie in eine Befehlszeile, Datei oder ins Journal. Jede Änderung verlangt das Passwort der Daten und die Berührung
+# eines eingetragenen Schlüssels (schluessel-gemeinsam; ohne Schlüsselplätze nur im Test-Image für QEMU).
 #
 # Angenommen wird nur, wer an diesem Gerät sitzt: systemd gibt im Namen der Instanz Nummer, PID und UID des Aufrufers
 # mit (SO_PEERCRED). Dessen Sitzung muss aktiv sein, an seat0 und nicht entfernt, wie polkit es bei «zen update»
@@ -23,10 +27,17 @@ set -uo pipefail
 
 # shellcheck source=notfall-gemeinsam
 . /usr/lib/zenos/notfall-gemeinsam
+# shellcheck source=schluessel-gemeinsam
+. /usr/lib/zenos/schluessel-gemeinsam
+
+liste=/var/lib/zenos/schluessel/u2f
+zuordnung=/var/lib/zenos/schluessel/zuordnung
+schnittstelle=Notfall
 
 antworten() { printf '%s\0' "$1"; }
 ablehnen() {
-	antworten "{\"error\":\"io.zenos.Notfall.$1\",\"parameters\":{}}"
+	unset daten neu schluessel_passphrase
+	antworten "{\"error\":\"io.zenos.$schnittstelle.$1\",\"parameters\":{}}"
 	exit 0
 }
 
@@ -53,6 +64,19 @@ am_geraet() { # PID UID
 		grep -qx 'Seat=seat0' <<<"$zeilen" && grep -qx 'Class=user' <<<"$zeilen"
 }
 
+# Einträge der Anmeldung (pam_u2f) für das Konto zählen
+anmeldung_zaehlen() { # KONTO
+	awk -F: -v k="$1" '$1 == k { print NF - 1; f = 1 } END { if (!f) print 0 }' "$liste" 2>/dev/null || echo 0
+}
+
+# Eintrag der Anmeldung mit diesem Credential (keyHandle) aus der Zeile des Kontos entfernen
+anmeldung_entfernen() { # KONTO KEYHANDLE
+	[[ -r "$liste" ]] || return 0
+	awk -F: -v k="$1" -v h="$2" 'BEGIN { OFS = ":" }
+		$1 == k { z = $1; for (i = 2; i <= NF; i++) { split($i, t, ","); if (t[1] != h) z = z ":" $i }; print z; next }
+		{ print }' "$liste" >"$liste.neu" && chmod 0644 "$liste.neu" && mv -f "$liste.neu" "$liste"
+}
+
 # --- Wer fragt? ----------------------------------------------------------------------------------------------------
 [[ "${1:-}" =~ ^[0-9]+-([0-9]+)-([0-9]+)$ ]] || ablehnen Abgelehnt
 pid=${BASH_REMATCH[1]}
@@ -66,7 +90,8 @@ name_gueltig "$konto" || ablehnen Abgelehnt
 # --- Was wird gefragt? ---------------------------------------------------------------------------------------------
 IFS= read -r -d '' -t 120 anfrage || ablehnen Ungueltig
 if ! anfrage_lesen "$anfrage"; then
-	unset anfrage daten neu
+	unset anfrage
+	schnittstelle=${schnittstelle:-Notfall}
 	ablehnen Ungueltig
 fi
 unset anfrage
@@ -76,27 +101,36 @@ exec 9>/run/zenos/notfall.lock
 flock -w 60 9 || ablehnen Fehlgeschlagen
 
 if [[ "$methode" == Status ]]; then
-	if notfall_gesetzt; then antworten '{"parameters":{"gesetzt":true}}'; else antworten '{"parameters":{"gesetzt":false}}'; fi
+	if [[ "$schnittstelle" == Notfall ]]; then
+		if notfall_gesetzt; then antworten '{"parameters":{"gesetzt":true}}'; else antworten '{"parameters":{"gesetzt":false}}'; fi
+	else
+		# Nummern der Schlüssel, die gerade stecken (stille Abfrage, ohne Berührung), damit man weiss, welcher welcher ist
+		anzahl=0 steckt=""
+		while read -r token _; do
+			anzahl=$((anzahl + 1))
+			credential=$(schluessel_feld "$token" zenos-credential) || continue
+			for geraet in $(schluessel_geraete); do
+				if schluessel_kennt_sicher "$geraet" "$credential"; then
+					steckt+="${steckt:+,}$anzahl"
+					break
+				fi
+			done
+		done < <(schluessel_plaetze)
+		antworten "{\"parameters\":{\"daten\":$anzahl,\"anmeldung\":$(anmeldung_zaehlen "$konto"),\"steckt\":[$steckt]}}"
+	fi
 	exit 0
 fi
 
-# Jede Änderung verlangt das Passwort der Daten
-if ! passwort_oeffnet_daten "$daten"; then
-	unset daten neu
-	ablehnen DatenPasswortFalsch
-fi
-unset daten
+# Jede Änderung verlangt das Passwort der Daten (mit Schlüsseln: und die Berührung eines eingetragenen)
+daten_passwort_pruefen "$daten" || ablehnen DatenPasswortFalsch
 
-case "$methode" in
-Setzen | Aendern)
+case "$schnittstelle.$methode" in
+Notfall.Setzen | Notfall.Aendern)
 	if [[ "$methode" == Setzen ]] && notfall_gesetzt; then ablehnen SchonGesetzt; fi
 	if [[ "$methode" == Aendern ]] && ! notfall_gesetzt; then ablehnen NichtGesetzt; fi
-	if passwort_oeffnet_daten "$neu"; then
-		unset neu
-		ablehnen OeffnetDaten
-	fi
+	if [[ "$neu" == "$daten" ]] || passwort_oeffnet_daten "$neu"; then ablehnen OeffnetDaten; fi
+	unset daten schluessel_passphrase
 	if ! notfall_anlegen "$neu" zenos-notfall-neu; then
-		unset neu
 		cryptsetup close zenos-notfall-neu >/dev/null 2>&1 || true
 		notfall_nullen >/dev/null 2>&1 || true
 		ablehnen Fehlgeschlagen
@@ -108,9 +142,75 @@ Setzen | Aendern)
 	fi
 	antworten '{"parameters":{"gesetzt":true}}'
 	;;
-Entfernen)
+Notfall.Entfernen)
+	unset daten schluessel_passphrase
 	notfall_gesetzt || ablehnen NichtGesetzt
 	notfall_nullen >/dev/null 2>&1 || ablehnen Fehlgeschlagen
 	antworten '{"parameters":{"gesetzt":false}}'
+	;;
+Schluessel.Hinzufuegen)
+	# Der eingetragene Schlüssel ist eben berührt worden. Jetzt einen neuen abwarten: einer, den die Daten nicht kennen.
+	daten_hat_schluessel || ablehnen Fehlgeschlagen
+	neuer=""
+	ende=$((SECONDS + 120))
+	while [[ -z "$neuer" ]] && ((SECONDS < ende)); do
+		for geraet in $(schluessel_geraete); do
+			schluessel_schon_eingetragen "$geraet" || {
+				neuer=$geraet
+				break
+			}
+		done
+		[[ -n "$neuer" ]] || sleep 0.5
+	done
+	[[ -n "$neuer" ]] || ablehnen KeinNeuerSchluessel
+	schluessel_eintragen "$neuer" "$daten" <(printf '%s' "$schluessel_passphrase") || ablehnen Fehlgeschlagen
+	unset daten schluessel_passphrase
+	# Für die Anmeldung: pamu2fcfg nimmt den ersten Schlüssel, also warten, bis nur noch der neue steckt
+	credential=$schluessel_neues_credential
+	ende=$((SECONDS + 120))
+	while ((SECONDS < ende)); do
+		geraete=$(schluessel_geraete)
+		if [[ -n "$geraete" && "$(wc -l <<<"$geraete")" == 1 ]] && schluessel_kennt_sicher "$geraete" "$credential"; then
+			break
+		fi
+		sleep 0.5
+	done
+	teil=$(pamu2fcfg -n -o pam://zenos -i pam://zenos </dev/null 2>/dev/null) || teil=""
+	[[ "$teil" == :* ]] || ablehnen Fehlgeschlagen
+	install -d -m 0755 "$(dirname "$liste")"
+	if grep -q "^$konto:" "$liste" 2>/dev/null; then
+		awk -v k="$konto" -v t="$teil" '$0 ~ "^" k ":" { $0 = $0 t } { print }' "$liste" >"$liste.neu"
+	else
+		{ cat "$liste" 2>/dev/null; printf '%s%s\n' "$konto" "$teil"; } >"$liste.neu"
+	fi
+	chmod 0644 "$liste.neu" && mv -f "$liste.neu" "$liste"
+	teil=${teil#:}
+	printf '%s %s\n' "$credential" "${teil%%,*}" >>"$zuordnung"
+	chmod 0600 "$zuordnung"
+	antworten "{\"parameters\":{\"daten\":$(schluessel_plaetze | wc -l),\"anmeldung\":$(anmeldung_zaehlen "$konto")}}"
+	;;
+Schluessel.Entfernen)
+	unset daten
+	ziel=$(schluessel_plaetze | sed -n "${nummer}p")
+	[[ -n "$ziel" ]] || ablehnen Ungueltig
+	read -r ziel_token ziel_platz <<<"$ziel"
+	# Den, der weg soll, darf man nicht als Beweis nehmen: Berührt war ein anderer (so geht es auch mit verlorenem)
+	[[ "$schluessel_platz" != "$ziel_platz" ]] || ablehnen GleicherSchluessel
+	(($(schluessel_plaetze | wc -l) >= 2)) || ablehnen LetzterSchluessel
+	unset schluessel_passphrase
+	credential=$(schluessel_feld "$ziel_token" zenos-credential) || credential=""
+	schluessel_platz_entfernen "$ziel_platz" || ablehnen Fehlgeschlagen
+	if [[ -n "$credential" && -r "$zuordnung" ]]; then
+		handle=$(awk -v c="$credential" '$1 == c { print $2; exit }' "$zuordnung")
+		if [[ -n "$handle" ]]; then
+			anmeldung_entfernen "$konto" "$handle"
+			awk -v c="$credential" '$1 != c' "$zuordnung" >"$zuordnung.neu" && chmod 0600 "$zuordnung.neu" &&
+				mv -f "$zuordnung.neu" "$zuordnung"
+		fi
+	fi
+	antworten "{\"parameters\":{\"daten\":$(schluessel_plaetze | wc -l),\"anmeldung\":$(anmeldung_zaehlen "$konto")}}"
+	;;
+*)
+	ablehnen Ungueltig
 	;;
 esac

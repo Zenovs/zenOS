@@ -1,0 +1,3 @@
+# Nur im Test-Image für QEMU (nie auf einem Gerät): Es gibt dort keinen Hardware-Schlüssel. Der erste Start legt dann
+# einen Platz mit dem Passwort allein an (BAUAUFTRAG.md, Bauauftrag 4). mkosi.finalize lässt die Datei im Image für den
+# Argon nicht zu.

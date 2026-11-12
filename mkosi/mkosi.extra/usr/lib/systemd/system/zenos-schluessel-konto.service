@@ -1,0 +1,19 @@
+# zenOS, erster Start und Notweg: die Hardware-Schlüssel für die Anmeldung und die Sperre eintragen (BAUAUFTRAG.md,
+# Bauauftrag 4). Läuft nur mit dem Marker von daten-schuetzen oder dem Notweg.
+[Unit]
+Description=zenOS: Hardware-Schlüssel für die Anmeldung eintragen
+After=zenos-konto.service systemd-homed.service var.mount
+Before=greetd.service systemd-user-sessions.service
+ConditionPathExists=/run/zenos/schluessel-konto
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/zenos/schluessel-konto
+StandardInput=tty-force
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/console
+TTYReset=yes
+
+[Install]
+WantedBy=multi-user.target

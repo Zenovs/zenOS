@@ -1,0 +1,214 @@
+# shellcheck shell=bash
+# Hardware-Schlüssel (FIDO2) für die Daten (BAUAUFTRAG.md, Bauauftrag 4). Geladen mit «source» nach notfall-gemeinsam
+# von entsperren, daten-schuetzen, schluessel-konto und notfall-dienst.
+#
+# Pro Schlüssel ein LUKS-Schlüsselplatz. Seine Passphrase entsteht aus dem Passwort UND dem Schlüssel:
+#   salz       = SHA-256("zenOS daten v1\n" ‖ Zufallssalz des Platzes (base64) ‖ "\n" ‖ Passwort)
+#   passphrase = base64(hmac-secret des Schlüssels für sein Credential über salz)
+# hmac-secret ist die Erweiterung von FIDO2, bei der der Schlüssel mit einem geheimen Wert, den er nie herausgibt, ein
+# HMAC berechnet; jede Abfrage verlangt eine Berührung. Ohne den Schlüssel lässt sich die Passphrase nicht berechnen,
+# ohne das Passwort auch nicht. Credential, Zufallssalz und Relying Party stehen offen im LUKS-Token «zenos-fido2» des
+# Platzes. Einen Platz mit dem Passwort allein gibt es nicht; der Wiederherstellungsschlüssel ist der einzige Weg ohne
+# Schlüssel. Die Werkzeuge sind fido2-token, fido2-cred und fido2-assert aus libfido2.
+#
+# Nur das Test-Image für QEMU hat /usr/lib/zenos/test-ohne-schluessel (dort gibt es keinen Schlüssel): Dann darf der
+# erste Start einen Platz mit dem Passwort allein anlegen. mkosi.finalize lässt die Datei im Image für den Argon nicht zu.
+
+SCHLUESSEL_RP=zenos-daten
+SCHLUESSEL_OHNE_DATEI=${ZENOS_TEST_OHNE_SCHLUESSEL:-/usr/lib/zenos/test-ohne-schluessel}
+
+test_ohne_schluessel() {
+	[[ -e "$SCHLUESSEL_OHNE_DATEI" ]]
+}
+
+zufall_b64() { # BYTES
+	head -c "$1" /dev/urandom | base64 -w0
+}
+
+# Eingesteckte FIDO2-Schlüssel (hidraw-Pfade), einer pro Zeile
+schluessel_geraete() {
+	fido2-token -L 2>/dev/null | sed -n 's|^\(/dev/hidraw[^:]*\):.*|\1|p'
+}
+
+# Wartet höchstens SEKUNDEN auf einen Schlüssel. Ausgabe: der erste.
+schluessel_warten() { # SEKUNDEN
+	local ende=$((SECONDS + $1)) geraet
+	while :; do
+		geraet=$(schluessel_geraete | head -n 1)
+		if [[ -n "$geraet" ]]; then
+			printf '%s' "$geraet"
+			return 0
+		fi
+		((SECONDS < ende)) || return 1
+		sleep 0.5
+	done
+}
+
+# Salz für hmac-secret aus Passwort und Zufallssalz des Platzes (32 Bytes, base64)
+ableitungssalz() { # PASSWORT ZUFALLSSALZ
+	printf 'zenOS daten v1\n%s\n%s' "$2" "$1" | sha256sum | cut -c1-64 | tr 'a-f' 'A-F' | basenc --base16 -d |
+		base64 -w0
+}
+
+# Neues Credential auf dem Schlüssel GERAET (mit hmac-secret, verlangt eine Berührung). Ausgabe: Credential (base64).
+schluessel_credential() { # GERAET
+	local ausgabe credential
+	ausgabe=$(printf '%s\n%s\n%s\n%s\n' "$(zufall_b64 32)" "$SCHLUESSEL_RP" zenos "$(zufall_b64 16)" |
+		fido2-cred -M -h "$1" 2>/dev/null) || return 1
+	credential=$(sed -n 5p <<<"$ausgabe")
+	[[ "$credential" =~ ^[A-Za-z0-9+/]+=*$ ]] || return 1
+	printf '%s' "$credential"
+}
+
+# Kennt der Schlüssel dieses Credential? Ohne Berührung (up=false). Exit 1 nur, wenn er sicher nein sagt; bei
+# anderen Fehlern (etwa ein Schlüssel ohne diese Option) Exit 0, dann fragt der Aufrufer mit Berührung.
+schluessel_kennt() { # GERAET CREDENTIAL
+	local fehler
+	fehler=$(printf '%s\n%s\n%s\n' "$(zufall_b64 32)" "$SCHLUESSEL_RP" "$2" |
+		fido2-assert -G -t up=false "$1" 2>&1 >/dev/null) && return 0
+	[[ "$fehler" != *NO_CREDENTIALS* ]]
+}
+
+# Kennt der Schlüssel dieses Credential sicher? Nur wenn die stille Abfrage (ohne Berührung) gelingt.
+schluessel_kennt_sicher() { # GERAET CREDENTIAL
+	printf '%s\n%s\n%s\n' "$(zufall_b64 32)" "$SCHLUESSEL_RP" "$2" | fido2-assert -G -t up=false "$1" >/dev/null 2>&1
+}
+
+# hmac-secret des Schlüssels GERAET für CREDENTIAL über SALZ (base64). Verlangt eine Berührung. Ausgabe: base64.
+schluessel_hmac() { # GERAET CREDENTIAL SALZ
+	local ausgabe hmac
+	ausgabe=$(printf '%s\n%s\n%s\n%s\n' "$(zufall_b64 32)" "$SCHLUESSEL_RP" "$2" "$3" |
+		fido2-assert -G -h -t up=true "$1" 2>/dev/null) || return 1
+	hmac=$(tail -n 1 <<<"$ausgabe")
+	[[ "$hmac" =~ ^[A-Za-z0-9+/]{43}=$ ]] || return 1
+	printf '%s' "$hmac"
+}
+
+# Plätze mit Schlüssel: eine Zeile «TOKEN PLATZ» je Token zenos-fido2
+schluessel_plaetze() {
+	cryptsetup luksDump "$ZENOS_DATEN" 2>/dev/null | awk '
+		/^Tokens:/ { drin = 1; next }
+		/^[A-Za-z]/ { drin = 0 }
+		drin && /^  [0-9]+: / { token = $1; sub(":", "", token); typ = $2; next }
+		drin && typ == "zenos-fido2" && $1 == "Keyslot:" { print token, $2 }'
+}
+
+# Platz des Wiederherstellungsschlüssels (Token systemd-recovery von systemd-cryptenroll)
+wiederherstellung_platz() {
+	cryptsetup luksDump "$ZENOS_DATEN" 2>/dev/null | awk '
+		/^Tokens:/ { drin = 1; next }
+		/^[A-Za-z]/ { drin = 0 }
+		drin && /^  [0-9]+: / { typ = $2; next }
+		drin && typ == "systemd-recovery" && $1 == "Keyslot:" { print $2; exit }'
+}
+
+daten_hat_schluessel() {
+	[[ -n "$(schluessel_plaetze)" ]]
+}
+
+# Ein Feld aus dem Token (nur Zeichen von base64 und Bezeichnern)
+schluessel_feld() { # TOKEN FELD
+	local json muster
+	json=$(cryptsetup token export --token-id "$1" "$ZENOS_DATEN" 2>/dev/null) || return 1
+	muster="\"$2\"[[:space:]]*:[[:space:]]*\"([A-Za-z0-9+/=._-]*)\""
+	[[ "$json" =~ $muster ]] || return 1
+	printf '%s' "${BASH_REMATCH[1]}"
+}
+
+# Kleinster freier Schlüsselplatz (LUKS2: 0 bis 31)
+freier_platz() {
+	local belegt platz
+	belegt=$(cryptsetup luksDump "$ZENOS_DATEN" 2>/dev/null | awk '
+		/^Keyslots:/ { drin = 1; next }
+		/^[A-Za-z]/ { drin = 0 }
+		drin && /^  [0-9]+: / { sub(":", "", $1); print $1 }')
+	for platz in $(seq 0 31); do
+		grep -qx "$platz" <<<"$belegt" || {
+			printf '%s' "$platz"
+			return 0
+		}
+	done
+	return 1
+}
+
+# Passwort und Schlüssel: einen passenden Platz finden. Setzt bei Erfolg «schluessel_platz», «schluessel_token» und
+# «schluessel_passphrase» (nur im Arbeitsspeicher; der Aufrufer löscht sie). Mit ABBILD werden die Daten gleich
+# geöffnet. Jeder eingesteckte Schlüssel wird gefragt; einer, der ein Credential sicher nicht kennt, ohne Berührung.
+# shellcheck disable=SC2034 # die drei Variablen liest der Aufrufer
+schluessel_oeffnen() { # PASSWORT [ABBILD]
+	local geraet token platz credential salz hmac
+	schluessel_platz="" schluessel_token="" schluessel_passphrase=""
+	for geraet in $(schluessel_geraete); do
+		while read -r token platz; do
+			credential=$(schluessel_feld "$token" zenos-credential) || continue
+			salz=$(schluessel_feld "$token" zenos-salz) || continue
+			schluessel_kennt "$geraet" "$credential" || continue
+			hmac=$(schluessel_hmac "$geraet" "$credential" "$(ableitungssalz "$1" "$salz")") || continue
+			if [[ -n "${2:-}" ]]; then
+				printf '%s' "$hmac" | cryptsetup open --key-slot "$platz" --key-file=- "$ZENOS_DATEN" "$2" \
+					>/dev/null 2>&1 || continue
+			else
+				printf '%s' "$hmac" | cryptsetup open --test-passphrase --key-slot "$platz" --key-file=- \
+					"$ZENOS_DATEN" >/dev/null 2>&1 || continue
+			fi
+			schluessel_platz=$platz schluessel_token=$token schluessel_passphrase=$hmac
+			return 0
+		done < <(schluessel_plaetze)
+	done
+	return 1
+}
+
+# Neuen Platz für den Schlüssel GERAET anlegen: Credential erzeugen und hmac-secret holen (zwei Berührungen), den Platz
+# mit dieser Passphrase anlegen (freigegeben mit der Passphrase ALT eines bestehenden Platzes) und das Token dazu.
+# Passphrasen nur über Pipes (Prozess-Ersetzung), nie in einer Befehlszeile oder Datei. ALT ist ein Dateipfad: der
+# Einmal-Schlüssel des ersten Starts oder eine Prozess-Ersetzung wie <(printf '%s' "$passphrase"). Bei Erfolg steht das
+# neue Credential in «schluessel_neues_credential».
+# shellcheck disable=SC2034 # schluessel_neues_credential liest der Aufrufer
+schluessel_eintragen() { # GERAET PASSWORT ALT-DATEI
+	local credential salz hmac platz
+	schluessel_neues_credential=""
+	credential=$(schluessel_credential "$1") || return 1
+	salz=$(zufall_b64 32)
+	hmac=$(schluessel_hmac "$1" "$credential" "$(ableitungssalz "$2" "$salz")") || return 1
+	platz=$(freier_platz) || return 1
+	cryptsetup luksAddKey --batch-mode --key-slot "$platz" --key-file="$3" "$ZENOS_DATEN" <(printf '%s' "$hmac") \
+		>/dev/null 2>&1 || return 1
+	if ! printf '{"type":"zenos-fido2","keyslots":[],"zenos-credential":"%s","zenos-salz":"%s","zenos-rp":"%s"}' \
+		"$credential" "$salz" "$SCHLUESSEL_RP" |
+		cryptsetup token import --json-file=- --key-slot "$platz" "$ZENOS_DATEN" >/dev/null 2>&1; then
+		cryptsetup luksKillSlot --batch-mode "$ZENOS_DATEN" "$platz" </dev/null >/dev/null 2>&1 || true
+		return 1
+	fi
+	schluessel_neues_credential=$credential
+}
+
+# Ist der Schlüssel GERAET schon für die Daten eingetragen? (ohne Berührung, soweit der Schlüssel das kann)
+schluessel_schon_eingetragen() { # GERAET
+	local token platz credential
+	while read -r token _; do
+		credential=$(schluessel_feld "$token" zenos-credential) || continue
+		schluessel_kennt_sicher "$1" "$credential" && return 0
+	done < <(schluessel_plaetze)
+	return 1
+}
+
+# Platz samt Token entfernen. stdin leer: Sonst nähme luksKillSlot, was dort steht, als Passwort und löschte nichts
+# (im Dienst hinter dem Socket ist stdin die Verbindung zu zen).
+schluessel_platz_entfernen() { # PLATZ
+	local token
+	token=$(schluessel_plaetze | awk -v p="$1" '$2 == p { print $1; exit }')
+	if [[ -n "$token" ]]; then
+		cryptsetup token remove --token-id "$token" "$ZENOS_DATEN" </dev/null >/dev/null 2>&1
+	fi
+	cryptsetup luksKillSlot --batch-mode "$ZENOS_DATEN" "$1" </dev/null >/dev/null 2>&1
+}
+
+# Das Passwort der Daten prüfen: mit Schlüssel (Berührung), wenn die Daten Schlüsselplätze haben, sonst (nur im
+# Test-Image für QEMU) gegen die übrigen Plätze.
+daten_passwort_pruefen() { # PASSWORT
+	if daten_hat_schluessel; then
+		schluessel_oeffnen "$1"
+	else
+		passwort_oeffnet_daten "$1"
+	fi
+}

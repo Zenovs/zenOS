@@ -1,0 +1,89 @@
+#!/bin/bash
+# Erster Start und Notweg (zenos-schluessel-konto.service, auf der Konsole, nach dem Anlegen des Kontos): dieselben
+# Hardware-Schlüssel für die Anmeldung und die Sperre eintragen (pam_u2f, BAUAUFTRAG.md, Bauauftrag 4).
+#
+# Die Liste liegt unter /var/lib/zenos/schluessel/u2f (root, 0644): öffentliche Schlüssel und Credentials, nichts
+# Geheimes, aber nur root schreibt sie, nicht das Konto. Daneben /var/lib/zenos/schluessel/zuordnung (root, 0600):
+# welches Credential der Daten zu welchem Eintrag der Anmeldung gehört, damit zen schluessel entfernen beide findet.
+# Läuft nur, wenn daten-schuetzen oder der Notweg den Marker /run/zenos/schluessel-konto angelegt haben.
+set -euo pipefail
+
+# shellcheck source=notfall-gemeinsam
+. /usr/lib/zenos/notfall-gemeinsam
+# shellcheck source=schluessel-gemeinsam
+. /usr/lib/zenos/schluessel-gemeinsam
+
+marker=/run/zenos/schluessel-konto
+ordner=/var/lib/zenos/schluessel
+[[ -e "$marker" ]] || exit 0
+
+name=$(homectl list --no-legend 2>/dev/null | awk 'NR == 1 { print $1 }') || name=""
+if ! name_gueltig "$name"; then
+	echo "  Kein Konto gefunden; die Schlüssel für die Anmeldung fehlen noch." >&2
+	exit 1
+fi
+
+# Welches Credential der Daten kennt dieser Schlüssel? (still, ohne Berührung; leer, wenn er es nicht sagt)
+daten_credential() { # GERAET
+	local token credential
+	while read -r token _; do
+		credential=$(schluessel_feld "$token" zenos-credential) || continue
+		if schluessel_kennt_sicher "$1" "$credential"; then
+			printf '%s' "$credential"
+			return 0
+		fi
+	done < <(schluessel_plaetze)
+}
+
+zeile=$name
+zuordnung=""
+benutzt=""
+anzahl=0
+echo
+echo "  Jetzt dieselben Schlüssel für die Anmeldung und die Sperre."
+for nummer in 1 2; do
+	if ((nummer == 1)); then
+		echo "  Nur Schlüssel 1 einstecken. Berühre ihn, wenn er blinkt."
+	else
+		echo "  Jetzt Schlüssel 1 abziehen und Schlüssel 2 einstecken. Berühre ihn, wenn er blinkt. Ohne: Enter."
+	fi
+	teil=""
+	while [[ -z "$teil" ]]; do
+		if ((nummer == 2)) && read -r -t 0.5 _; then
+			break
+		fi
+		geraete=$(schluessel_geraete)
+		if [[ -z "$geraete" || "$(wc -l <<<"$geraete")" != 1 ]]; then
+			sleep 0.5
+			continue
+		fi
+		credential=$(daten_credential "$geraete")
+		if [[ -n "$credential" && " $benutzt " == *" $credential "* ]]; then
+			sleep 0.5
+			continue
+		fi
+		if teil=$(pamu2fcfg -n -o pam://zenos -i pam://zenos 2>/dev/null) && [[ "$teil" == :* ]]; then
+			benutzt+=" $credential"
+			if [[ -n "$credential" ]]; then
+				zuordnung+="$credential ${teil#:}"$'\n'
+			fi
+		else
+			teil=""
+			echo "  Das hat nicht geklappt. Nochmals berühren, wenn er blinkt."
+		fi
+	done
+	[[ -n "$teil" ]] || break
+	zeile+=$teil
+	anzahl=$((anzahl + 1))
+	echo "  Schlüssel $nummer ist für die Anmeldung eingetragen."
+done
+
+install -d -m 0755 "$ordner"
+printf '%s\n' "$zeile" >"$ordner/u2f.neu"
+chmod 0644 "$ordner/u2f.neu"
+mv -f "$ordner/u2f.neu" "$ordner/u2f"
+printf '%s' "$zuordnung" | awk '{ split($2, teil, ","); print $1, teil[1] }' >"$ordner/zuordnung.neu"
+chmod 0600 "$ordner/zuordnung.neu"
+mv -f "$ordner/zuordnung.neu" "$ordner/zuordnung"
+rm -f "$marker"
+((anzahl == 2)) || echo "  Nur ein Schlüssel für die Anmeldung. Den zweiten nachtragen: zen schluessel hinzufuegen"

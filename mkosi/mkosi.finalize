@@ -158,6 +158,27 @@ else
 	echo "zenOS-Prüfung: Ausschalten nach langer Sperre, im Test-Image nach $nach s"
 fi
 
+# --- 3f. Hardware-Schlüssel (BAUAUFTRAG.md, Bauauftrag 4) --------------------------------------------------------
+# Anmelden, Entsperren und die Notfall-Sperre verlangen nach dem Passwort den Schlüssel (/etc/pam.d/zenos-schluessel),
+# und die Werkzeuge für den Start sind da. Im Image für den Argon gibt es keinen Weg ohne Schlüssel: kein «nouserok»
+# für pam_u2f und keine Datei test-ohne-schluessel (die das Test-Image für QEMU braucht, weil es dort keinen gibt).
+for noetig in usr/bin/fido2-token usr/bin/fido2-cred usr/bin/fido2-assert usr/bin/pamu2fcfg usr/bin/basenc \
+	usr/lib/zenos/schluessel-gemeinsam usr/lib/zenos/schluessel-konto usr/lib/zenos/schluessel-beruehren; do
+	[[ -e "$R/$noetig" ]] || fehler "fehlt im Image: /$noetig (Hardware-Schlüssel)"
+done
+[[ -n "$(find "$R/usr/lib" -name pam_u2f.so -print -quit)" ]] || fehler "pam_u2f.so fehlt im Image"
+grep -Eq '^auth[[:space:]]+required[[:space:]]+pam_u2f\.so[[:space:]]' "$R/etc/pam.d/zenos-schluessel" ||
+	fehler "/etc/pam.d/zenos-schluessel verlangt pam_u2f nicht"
+for dienst in greetd zenos-sperre swaylock; do
+	grep -Eq '^auth[[:space:]]+include[[:space:]]+zenos-schluessel$' "$R/etc/pam.d/$dienst" ||
+		fehler "/etc/pam.d/$dienst bindet zenos-schluessel nicht ein (Anmelden ohne Schlüssel)"
+done
+if [[ ",${PROFILES:-}," == *",argon,"* ]]; then
+	! grep -q nouserok "$R/etc/pam.d/zenos-schluessel" || fehler "pam_u2f mit nouserok im Image für den Argon"
+	[[ ! -e "$R/usr/lib/zenos/test-ohne-schluessel" ]] || fehler "test-ohne-schluessel gehört nur ins Test-Image für QEMU"
+fi
+echo "zenOS-Prüfung: Hardware-Schlüssel für Start, Anmeldung, Sperre und Notfall-Sperre"
+
 # --- 4. Bootpartition (nur Profil argon) ------------------------------------------------------------------------
 # Gerätebäume und Overlays des Kernels von Raspberry Pi und config.txt für mkosi.postoutput bereitlegen.
 if [[ ",${PROFILES:-}," == *",argon,"* ]]; then

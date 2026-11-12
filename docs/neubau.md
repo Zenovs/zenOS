@@ -33,8 +33,9 @@ Bluetooth 5.0 (CYW43455, geschlossene Firmware). Ein Schalter NORMAL/OTG macht d
 
 Was der CM5 nicht hat und was das heisst:
 
-- **Kein TPM.** Die Festplatte schützt ein langes Passwort (LUKS2 mit Argon2id), keine PIN mit Sperre nach
-  Fehlversuchen. Ältere, signierte Stände lassen sich nicht sperren. Einen Echtheitscode beim Start gibt es nicht.
+- **Kein TPM.** Die Festplatte schützt ein langes Passwort (LUKS2 mit Argon2id) zusammen mit einem Hardware-Schlüssel
+  (4.9), keine PIN mit Sperre nach Fehlversuchen. Ältere, signierte Stände lassen sich nicht sperren. Einen
+  Echtheitscode beim Start gibt es nicht.
 - **Kein UEFI.** Geprüfter Start geht nur über den signierten Start von Raspberry Pi; dafür wird der Hash des Schlüssels
   **unwiderruflich** ins OTP gebrannt.
 - **Kein Kernel mit Sicherheitsteam.** Debian kann den BCM2712 nicht vollständig; der Kernel kommt aus dem Quellcode
@@ -49,7 +50,7 @@ Was der CM5 nicht hat und was das heisst:
 | Eine Webseite | Lücke im Browser, Phishing | Chromium-Sandbox, JavaScript ohne JIT als Vorgabe, Safe Browsing, Passkeys, neues Image bei jeder Sicherheitsmeldung | Zero-Day bis zum nächsten signierten Image |
 | Schadsoftware (Download, Anhang) | Daten und Bank-Sitzung abgreifen, Zahlung umbiegen | nur Apps aus dem Image, keine fremden Erweiterungen, kein Admin, nichts Ausführbares ausserhalb von `/usr`; Bestätigung in Bank-App und Wallet | eine Lücke im Kernel gibt Zugriff auf alles, auch aufs Banking; die Bestätigung auf dem zweiten Gerät bleibt der Schutz fürs Geld |
 | Schadsoftware, die bleiben will | System, `/etc`, Erweiterungen aus `/var`, Bootpartition | `/usr` geprüft, `/etc` flüchtig, keine Erweiterungen aus `/var`; ab 1.0 signierter Start | bis 1.0: root kann die Bootpartition ändern |
-| Dieb | SSD ausbauen und lesen; den laufenden, gesperrten Laptop mitnehmen und den Arbeitsspeicher auslesen | LUKS2 für alles ausser `/usr` (das ist öffentlich); nach 30 Minuten ohne entsperrte Sitzung schaltet zenOS aus (4.3) | schwaches Passwort; in den 30 Minuten liegt der Schlüssel der Daten im Arbeitsspeicher |
+| Dieb | SSD ausbauen, kopieren und in Ruhe Passwörter durchprobieren; den laufenden, gesperrten Laptop mitnehmen und den Arbeitsspeicher auslesen | LUKS2 für alles ausser `/usr` (das ist öffentlich), geöffnet nur mit Passwort und Hardware-Schlüssel (4.9), also kein Durchprobieren an einer Kopie; nach 30 Minuten ohne entsperrte Sitzung schaltet zenOS aus (4.3) | Laptop und Schlüssel zusammen gestohlen und das Passwort bekannt; in den 30 Minuten liegt der Schlüssel der Daten im Arbeitsspeicher |
 | Jemand zwingt dich | dich zwingen, den Laptop zu starten und das Passwort einzutippen | Notfall-Passwort (4.8): Es löscht in Sekunden alle Schlüssel der Daten, zenOS startet danach leer, als wäre nichts | eine Kopie der SSD, die jemand vorher zieht; die Täuschung hält nur bis zum Ausschalten |
 | «Evil Maid» | Startcode ändern, Passwort abfangen | ab 1.0 signierter Start: fremder Code startet nicht | Tausch des ganzen CM5-Moduls gegen eine Attrappe |
 | Lieferkette (Debian, Raspberry Pi, GitHub, CI, Zenos Mac, Code von Claude) | manipuliertes Paket oder Image | Debian stable, eingefrorener Paketstand, zwei Bauten, Signieren nur in einem frisch gestarteten Live-System, Durchsicht vor dem Signieren | GitHub und der zweite Bau gleichzeitig übernommen; Fehler, die bei der Durchsicht nicht auffallen |
@@ -210,6 +211,33 @@ Zeno zwingt, das Passwort einzutippen.
   nicht. Die Täuschung hält bis zum Ausschalten; danach ist jedes Passwort «falsch», und wer den LUKS-Kopf ansieht,
   sieht, dass die Schlüssel fehlen. Ein LUKS-Kopf auf `zenos-notfall` verrät, dass es ein Notfall-Passwort gibt.
   Zurück geht es nur mit einem neuen Image.
+
+### 4.9 Hardware-Schlüssel
+
+Wunsch Zeno vom 11.11.2026 (`BAUAUFTRAG.md`, Bauauftrag 4): Ohne einen von zwei FIDO2-Schlüsseln (Security Key von
+Yubico) kommt niemand an die Daten und ins Konto, auch nicht mit dem Passwort und auch nicht mit einer Kopie der SSD.
+Das ersetzt den Sicherheitschip, den der CM5 nicht hat.
+
+- **Start (Daten):** Pro Schlüssel ein LUKS-Schlüsselplatz. Seine Passphrase entsteht aus dem Passwort und dem
+  Schlüssel, offen und nachprüfbar (`/usr/lib/zenos/schluessel-gemeinsam`):
+  `salz = SHA-256("zenOS daten v1\n" ‖ Zufallssalz des Platzes ‖ "\n" ‖ Passwort)`,
+  `passphrase = base64(hmac-secret des Schlüssels über salz)`. hmac-secret ist die FIDO2-Erweiterung, bei der der
+  Schlüssel mit einem Geheimnis rechnet, das er nie herausgibt; jede Abfrage verlangt eine Berührung. Credential und
+  Zufallssalz stehen im LUKS-Token `zenos-fido2`. Einen Platz mit dem Passwort allein gibt es nicht. An einer Kopie
+  der SSD lässt sich das Passwort deshalb nicht durchprobieren; mit dem Schlüssel braucht jeder Versuch eine Berührung.
+- **Anmelden und Entsperren:** Kontopasswort und Schlüssel über PAM (`pam_u2f`) beim Login von greetd, in der Sperre
+  und in der Notfall-Sperre. Die Liste der Schlüssel liegt unter `/var/lib/zenos/schluessel`, nur root schreibt sie.
+- **Mit dem Notfall-Passwort (4.8):** Es wirkt auch ohne Schlüssel. Danach genügt beim Entsperren die Berührung eines
+  beliebigen FIDO2-Schlüssels, weil es dann keine Liste mehr gibt.
+- **Notweg:** Der Wiederherstellungsschlüssel öffnet die Daten ohne Schlüssel. Danach bietet der Start an, ein neues
+  Passwort und neue Schlüssel einzutragen; die alten Plätze werden gelöscht. Sonst gibt es keinen Weg am Schlüssel
+  vorbei.
+- **Später:** `zen schluessel status|hinzufuegen|entfernen` über denselben Dienst wie `zen notfall`, mit dem Passwort
+  der Daten und der Berührung eines eingetragenen Schlüssels; der letzte lässt sich nicht entfernen.
+- **Regel: Der Schlüssel gehört an den Schlüsselbund, nicht in den Laptop.** Steckt er immer im Laptop, schützt er bei
+  einem Diebstahl nicht. Der zweite Schlüssel liegt als Ersatz an einem sicheren Ort.
+- **Grenzen:** Eine PIN auf dem Schlüssel ist keine Pflicht (Zeno entscheidet). Wer Laptop, Schlüssel und Passwort
+  zusammen hat, kommt an die Daten. Sind beide Schlüssel und der Wiederherstellungsschlüssel weg, sind die Daten weg.
 
 ## 5. Lieferkette, Schlüssel und KI
 

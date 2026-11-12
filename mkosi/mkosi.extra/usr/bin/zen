@@ -6,18 +6,19 @@
 #   zen neustart   neu starten (mit dem Probestart, wenn ein Update bereitliegt)
 #   zen status     laufende Version und Stand der Updates
 #   zen notfall    Notfall-Passwort: status, setzen, aendern, entfernen (verlangt das Passwort der Daten)
+#   zen schluessel Hardware-Schlüssel: status, hinzufuegen, entfernen <nummer>
 #   zen hilfe      diese Hilfe
 #
 # Kein Admin nötig: «zen update» startet nur den Dienst zenos-update.service (polkit erlaubt das der Person, die am
 # Gerät angemeldet ist). Installiert wird nur, was mit Zenos Schlüssel signiert ist. «zen notfall» fragt den Dienst
-# hinter /run/zenos/notfall.socket; auch er nimmt nur eine Sitzung am Gerät an.
+# hinter /run/zenos/notfall.socket, ebenso «zen schluessel»; er nimmt nur eine Sitzung am Gerät an.
 set -uo pipefail
 
 laufzeit=/run/zenos/update
 
 version() { (. /usr/lib/os-release && printf '%s' "${IMAGE_VERSION:-unbekannt}"); }
 
-hilfe() { sed -n '4,11p' "$0" | sed 's/^# \{0,1\}//'; }
+hilfe() { sed -n '4,12p' "$0" | sed 's/^# \{0,1\}//'; }
 
 update() {
 	# Nach dem Notfall-Passwort (Attrappe) lädt zenOS nichts und schreibt nichts mehr auf die SSD.
@@ -97,7 +98,12 @@ notfall_fehler() { # AUSGABE VON VARLINKCTL
 	*io.zenos.Notfall.OeffnetDaten*) echo "zen notfall: Das neue Notfall-Passwort öffnet deine Daten. Nimm ein anderes." >&2 ;;
 	*io.zenos.Notfall.SchonGesetzt*) echo "zen notfall: Es ist schon eines gesetzt. Ändern: zen notfall aendern" >&2 ;;
 	*io.zenos.Notfall.NichtGesetzt*) echo "zen notfall: Es ist keines gesetzt. Setzen: zen notfall setzen" >&2 ;;
-	*) echo "zen notfall: Das hat nicht geklappt." >&2 ;;
+	*io.zenos.Schluessel.Abgelehnt*) echo "zen schluessel: geht nur an diesem Gerät, in deiner Sitzung." >&2 ;;
+	*io.zenos.Schluessel.DatenPasswortFalsch*) echo "zen schluessel: Passwort oder Schlüssel stimmen nicht." >&2 ;;
+	*io.zenos.Schluessel.KeinNeuerSchluessel*) echo "zen schluessel: Kein neuer Schlüssel gefunden." >&2 ;;
+	*io.zenos.Schluessel.GleicherSchluessel*) echo "zen schluessel: Berühre einen anderen Schlüssel als den, der weg soll." >&2 ;;
+	*io.zenos.Schluessel.LetzterSchluessel*) echo "zen schluessel: Der letzte Schlüssel bleibt." >&2 ;;
+	*) echo "zen: Das hat nicht geklappt." >&2 ;;
 	esac
 	return 1
 }
@@ -157,11 +163,65 @@ TEXT
 	echo "Notfall-Passwort gesetzt."
 }
 
+# --- zen schluessel (BAUAUFTRAG.md, Bauauftrag 4) -------------------------------------------------------------------
+schluessel() {
+	local aktion=${1:-status} antwort eingabe daten
+	case "$aktion" in
+	status)
+		antwort=$(varlinkctl call --json=short --timeout=60 "$notfall_adresse" io.zenos.Schluessel.Status </dev/null 2>&1) ||
+			notfall_fehler "$antwort" || return 1
+		[[ "$antwort" =~ \"daten\":([0-9]+),\"anmeldung\":([0-9]+),\"steckt\":\[([0-9,]*)\] ]] || return 1
+		local anzahl=${BASH_REMATCH[1]} anmeldung=${BASH_REMATCH[2]} steckt=",${BASH_REMATCH[3]}," nummer
+		echo "Hardware-Schlüssel für die Daten: $anzahl, für die Anmeldung: $anmeldung"
+		for ((nummer = 1; nummer <= anzahl; nummer++)); do
+			if [[ "$steckt" == *",$nummer,"* ]]; then echo "  Schlüssel $nummer (steckt gerade)"; else echo "  Schlüssel $nummer"; fi
+		done
+		((anzahl >= 2)) || echo "Trag einen zweiten als Ersatz ein: zen schluessel hinzufuegen"
+		return 0
+		;;
+	hinzufuegen)
+		echo "Steck einen schon eingetragenen Schlüssel ein. Berühre ihn, wenn er blinkt; dann zieh ihn ab, steck den"
+		echo "neuen ein und berühre ihn jedes Mal, wenn er blinkt (dreimal)."
+		passwort_lesen "Passwort deiner Daten: "
+		daten=$(hex "$eingabe")
+		unset eingabe
+		antwort=$(printf '{"daten":"%s"}' "$daten" |
+			varlinkctl call --json=short --timeout=300 "$notfall_adresse" io.zenos.Schluessel.Hinzufuegen 2>&1) ||
+			{ unset daten; notfall_fehler "$antwort"; return 1; }
+		unset daten
+		echo "Neuer Schlüssel eingetragen, für die Daten und die Anmeldung."
+		;;
+	entfernen)
+		[[ "${2:-}" =~ ^[1-9]$ ]] || {
+			echo "zen schluessel entfernen <nummer>: die Nummer aus zen schluessel status (1, 2, …)" >&2
+			return 64
+		}
+		echo "Berühre einen anderen eingetragenen Schlüssel als Nummer $2, wenn er blinkt."
+		passwort_lesen "Passwort deiner Daten: "
+		daten=$(hex "$eingabe")
+		unset eingabe
+		antwort=$(printf '{"daten":"%s","nummer":"%s"}' "$daten" "$2" |
+			varlinkctl call --json=short --timeout=300 "$notfall_adresse" io.zenos.Schluessel.Entfernen 2>&1) ||
+			{ unset daten; notfall_fehler "$antwort"; return 1; }
+		unset daten
+		echo "Schlüssel $2 entfernt."
+		;;
+	*)
+		echo "zen schluessel: status, hinzufuegen oder entfernen <nummer>" >&2
+		return 64
+		;;
+	esac
+}
+
 case "${1:-hilfe}" in
 update) update ;;
 notfall)
 	shift
 	notfall "$@"
+	;;
+schluessel)
+	shift
+	schluessel "$@"
 	;;
 neustart) exec systemctl reboot ;;
 status) status ;;

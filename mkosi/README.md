@@ -23,7 +23,7 @@ und eigener Kernel kommen mit 1.0.
 | `start/zenos-deckel.dts` | Overlay für den Deckel des Argon ONE UP: GPIO27 als Schalter SW_LID, Zuklappen sperrt (logind) |
 | `umgebung/` | Bauumgebung: Debian-Container mit mkosi und QEMU; `bauen-innen.sh` holt und prüft die Quelle von Quickshell |
 | `veroeffentlichen.sh` | macht aus einem gebauten Image die Dateien für ein Update und `SHA256SUMS` zum Signieren |
-| `test/` | Angriffs- und Starttests in QEMU mit Oberfläche, Update und Notfall-Passwort, Einheitentests des Updates, der Erinnerung und des Notfall-Passworts, Prüfung der Startpartitionen des Argon-Images |
+| `test/` | Angriffs- und Starttests in QEMU mit Oberfläche, Update, Notfall-Passwort und Ausschalten nach langer Sperre, Einheitentests des Updates, der Erinnerung, des Notfall-Passworts und des Hardware-Schlüssels, Prüfung der Startpartitionen des Argon-Images |
 
 ## Aufteilung der SSD
 
@@ -54,6 +54,7 @@ mkosi/test/starten.sh    # erster und zweiter Start in QEMU mit Oberfläche und 
 mkosi/test/update-einheiten.sh
 mkosi/test/erinnerung-einheiten.sh
 mkosi/test/notfall-einheiten.sh   # Passwortabfrage beim Start und Notfall-Passwort, mit echtem cryptsetup
+mkosi/test/schluessel-einheiten.sh   # Hardware-Schlüssel (Attrappen der FIDO2-Werkzeuge, echtes cryptsetup)
 mkosi/test/startpartitionen.sh   # Startpartitionen des Argon-Images, vor dem Schreiben auf die SSD
 ```
 
@@ -88,13 +89,34 @@ von der SSD.
 
 ## Erster Start
 
+Beide Hardware-Schlüssel bereithalten (unten); ohne Schlüssel 1 geht der erste Start nicht weiter.
+
 1. Tastaturbelegung wählen (sie gilt ab dann immer, auch für das Passwort beim Start).
 2. Passwort für die verschlüsselten Daten setzen: lang, zum Beispiel sechs zufällige Wörter.
-3. Den Wiederherstellungsschlüssel auf Papier schreiben und getrennt vom Laptop aufbewahren.
-4. Wenn gewünscht ein Notfall-Passwort (unten), zweimal; Enter überspringt es.
-5. Das Passwort eingeben, um die Daten zu öffnen.
-6. Ein Konto anlegen (Name und Passwort).
-7. Am Login von zenOS anmelden. WLAN über das System-Menü oben rechts.
+3. Schlüssel 1 einstecken und zweimal berühren, wenn er blinkt; dann Schlüssel 2 genauso (Enter: später).
+4. Den Wiederherstellungsschlüssel auf Papier schreiben und getrennt vom Laptop aufbewahren.
+5. Wenn gewünscht ein Notfall-Passwort (unten), zweimal; Enter überspringt es.
+6. Das Passwort eingeben und den Schlüssel berühren, um die Daten zu öffnen.
+7. Ein Konto anlegen (Name und Passwort).
+8. Beide Schlüssel für die Anmeldung eintragen (je einmal berühren).
+9. Am Login von zenOS anmelden: Passwort, dann den Schlüssel berühren. WLAN über das System-Menü oben rechts.
+
+## Hardware-Schlüssel
+
+Ohne einen der beiden Schlüssel öffnen sich die Daten nicht und das Konto nicht, auch nicht mit dem Passwort. Beim
+Start, beim Login und in der Sperre nach dem Passwort den Schlüssel berühren. Der Schlüssel gehört an den
+Schlüsselbund, nicht in den Laptop; der zweite liegt als Ersatz an einem sicheren Ort.
+
+```
+zen schluessel status               # wie viele für die Daten und für die Anmeldung
+zen schluessel hinzufuegen          # Passwort der Daten, eingetragenen Schlüssel berühren, dann den neuen
+zen schluessel entfernen <nummer>   # Passwort der Daten, einen anderen eingetragenen berühren; nie den letzten
+```
+
+**Notweg:** Ist ein Schlüssel verloren, öffnet der Wiederherstellungsschlüssel die Daten beim Start. Danach fragt der
+Start, ob er ein neues Passwort und neue Schlüssel eintragen soll; die alten Plätze werden dabei gelöscht, und die
+neuen Schlüssel gelten auch für die Anmeldung. Wie die Passphrase aus Passwort und Schlüssel entsteht, steht in
+`docs/neubau.md`, Abschnitt 4.9.
 
 ## Notfall-Passwort
 

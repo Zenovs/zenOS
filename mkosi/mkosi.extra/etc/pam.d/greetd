@@ -1,0 +1,6 @@
+#%PAM-1.0
+# Login von zenOS (greetd, auch der Text-Login als Notausgang): wie login, dazu der Hardware-Schlüssel
+# (BAUAUFTRAG.md, Bauauftrag 4, /etc/pam.d/zenos-schluessel). Ersetzt die Datei des Pakets greetd (ohne die Zeilen für
+# GNOME-Schlüsselbund und KWallet, die es in zenOS nicht gibt).
+@include login
+auth	include	zenos-schluessel

@@ -1,0 +1,4 @@
+# Notfall-Sperre (swaylock, /usr/lib/zenos/sperren): wie die Sperre der Oberfläche Passwort und Hardware-Schlüssel
+# (BAUAUFTRAG.md, Bauauftrag 4). Ersetzt die Datei des Pakets swaylock, die nur login einbindet.
+auth	include	login
+auth	include	zenos-schluessel
