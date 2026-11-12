@@ -4,8 +4,11 @@
 Startet das Image in einer virtuellen Maschine, bedient den ersten Start über die serielle Konsole wie ein Mensch
 (Tastatur, Passwort für die Daten, Wiederherstellungsschlüssel, Konto) und prüft danach am laufenden System, was die
 Leitplanken versprechen. Dann die Oberfläche auf dem virtuellen Bildschirm: Anmelden am Login (Tastatur über QEMU),
-Leiste, Sperren und Entsperren mit PAM, Befehlsfeld, hell und dunkel, jeweils mit Bildschirmfoto. Zuletzt ein zweiter
-Start: Die Einrichtung darf nicht wiederkommen, das Passwort muss gelten.
+Leiste, Sperren und Entsperren mit PAM, Befehlsfeld, hell und dunkel, jeweils mit Bildschirmfoto. Dann das
+Notfall-Passwort (BAUAUFTRAG.md, Bauauftrag 2): beim ersten Start gesetzt, mit zen notfall geändert, entfernt und
+wieder gesetzt; ein falsches Passwort und der Wiederherstellungsschlüssel beim zweiten Start, das echte Passwort beim
+dritten. Zuletzt, weil es die Maschine zerstört: Start mit dem Notfall-Passwort (Attrappe im Arbeitsspeicher, Platte von
+aussen geprüft) und ein Start danach, bei dem kein Passwort mehr stimmt.
 
 Läuft in der Bauumgebung (mkosi/test/starten.sh). Die Passwörter hier sind nur für diese Wegwerf-Maschine. Die
 Bildschirmfotos landen in $ZENOS_TEST_BILDER (mkosi/ausgabe/test/).
@@ -25,6 +28,12 @@ import pexpect
 DATEN_PASSWORT = "pruefung-nur-fuer-qemu-daten"
 KONTO = "pruefer"
 KONTO_PASSWORT = "pruefung-nur-fuer-qemu-konto"
+NOTFALL_PASSWORT = "notfall-nur-fuer-qemu"
+NOTFALL_PASSWORT_2 = "notfall-zwei-nur-fuer-qemu"
+# Frage von /usr/lib/zenos/entsperren (Passwort-Agent von systemd auf der Konsole)
+DATEN_FRAGE = r"Passwort f.r deine Daten:"
+# Läuft die Oberfläche? Genau «active» («inactive» und «activating» enthalten das Wort auch)
+AKTIV_SHELL = "systemctl --user is-active zenos-shell.service | grep -qx active && echo shell-laeuft || echo noch-nicht"
 FIRMWARE = "/usr/share/AAVMF/AAVMF_CODE.no-secboot.fd"
 VARIABLEN = "/usr/share/AAVMF/AAVMF_VARS.fd"
 WIEDERHERSTELLUNG = re.compile(r"[cbdefghijklnrtuv]{8}(?:-[cbdefghijklnrtuv]{8}){7}")
@@ -121,11 +130,12 @@ def warten_bis(vm: pexpect.spawn, zeilen: str, erwartet: str, sekunden: int) -> 
         time.sleep(5)
 
 
-def anmelden(vm: pexpect.spawn) -> None:
-    vm.expect(r"login: ")
+def anmelden(vm: pexpect.spawn, passwort: str = KONTO_PASSWORT, warten: bool = True) -> None:
+    if warten:
+        vm.expect(r"login: ")
     vm.sendline(KONTO)
     vm.expect(r"[Pp]assword: ")
-    vm.sendline(KONTO_PASSWORT)
+    vm.sendline(passwort)
     vm.expect(r"\$ ")
 
 
@@ -199,6 +209,28 @@ def protokolle(vm: pexpect.spawn, warum: str) -> None:
         print("\n".join("    " + z for z in befehl(vm, zeilen).splitlines()), flush=True)
 
 
+def pruefe_schluessel(vm: pexpect.spawn) -> None:
+    """Bauauftrag 4, soweit es ohne Schlüssel geht: Werkzeuge, PAM-Kette, Zugriff für Chromium, zen schluessel."""
+    print("\n--- Hardware-Schlüssel (ohne Gerät)", flush=True)
+    fehlend = befehl(vm, "for b in fido2-token fido2-cred fido2-assert pamu2fcfg; do command -v $b >/dev/null || "
+                         "echo $b; done; ls /usr/lib/*/security/pam_u2f.so >/dev/null 2>&1 || echo pam_u2f").split()
+    pruefe(fehlend == [], f"FIDO2-Werkzeuge und pam_u2f im Image ({' '.join(fehlend) or 'alle da'})")
+    ketten = befehl(vm, "for d in greetd zenos-sperre swaylock; do grep -Eq '^auth[[:space:]]+include[[:space:]]+"
+                        "zenos-schluessel$' /etc/pam.d/$d && echo $d; done").split()
+    pruefe(ketten == ["greetd", "zenos-sperre", "swaylock"], f"Login, Sperre und Notfall-Sperre verlangen den Schlüssel ({' '.join(ketten)})")
+    u2f = befehl(vm, "grep -c '^auth.*required.*pam_u2f.so.*authfile=/var/lib/zenos/schluessel/u2f' /etc/pam.d/zenos-schluessel").strip()
+    pruefe(u2f == "1", "pam_u2f mit der Liste unter /var/lib/zenos/schluessel")
+    regeln = befehl(vm, "grep -l 'fido_id' /usr/lib/udev/rules.d/*.rules | head -1; "
+                        "grep -h 'ID_SECURITY_TOKEN' /usr/lib/udev/rules.d/*.rules | grep -c uaccess").split()
+    pruefe(len(regeln) == 2 and regeln[1] != "0", f"FIDO2-Schlüssel gehören der Sitzung am Gerät (udev uaccess, für Chromium) ({' '.join(regeln)})")
+    liste = befehl(vm, "stat -c '%U %a' /var/lib/zenos/schluessel").strip()
+    pruefe(liste == "root 755", f"die Liste der Schlüssel schreibt nur root ({liste})")
+    seriell = befehl(vm, "zen schluessel status 2>&1")
+    pruefe("nur an diesem Ger" in seriell, "zen schluessel von der seriellen Konsole abgelehnt")
+    status = befehl(vm, "systemd-run --user --quiet --wait --pipe --collect zen schluessel status 2>&1")
+    pruefe("Daten: 0" in status, f"zen schluessel status aus der Sitzung ({status.strip().splitlines()[0] if status.strip() else ''})")
+
+
 def pruefe_oberflaeche(vm: pexpect.spawn) -> None:
     print("\n--- Oberfläche", flush=True)
     # Der Login (Quickshell unter labwc, Benutzer _greetd) läuft auf dem virtuellen Bildschirm
@@ -217,9 +249,9 @@ def pruefe_oberflaeche(vm: pexpect.spawn) -> None:
     taste(vm, "ret")
     time.sleep(30)
     foto(vm, "01c-nach-enter")
-    shell = warten_bis(vm, "systemctl --user is-active zenos-shell.service", "active", 600)
-    pruefe(shell.endswith("active") and "inactive" not in shell, f"nach dem Login läuft die Oberfläche ({shell})")
-    if not shell.endswith("active") or "inactive" in shell:
+    shell = warten_bis(vm, AKTIV_SHELL, "shell-laeuft", 600)
+    pruefe(shell == "shell-laeuft", f"nach dem Login läuft die Oberfläche ({shell})")
+    if shell != "shell-laeuft":
         protokolle(vm, "Sitzung")
         foto(vm, "01d-ohne-sitzung")
         return
@@ -370,6 +402,167 @@ def pruefe_update(vm: pexpect.spawn) -> str:
     return neu
 
 
+def zen_notfall(vm: pexpect.spawn, aktion: str, *eingaben: str) -> str:
+    """zen notfall wie im Terminal der Sitzung (Benutzerinstanz); die Passwörter kommen über stdin."""
+    zeilen = "".join(f"{e}\\n" for e in eingaben)
+    return befehl(vm, f"printf '{zeilen}' | systemd-run --user --quiet --wait --pipe --collect zen notfall {aktion} 2>&1")
+
+
+def pruefe_notfall_befehl(vm: pexpect.spawn) -> None:
+    """zen notfall: nur aus der Sitzung am Gerät, jede Änderung mit dem Passwort der Daten, nichts im Journal."""
+    print("\n--- zen notfall", flush=True)
+    seriell = befehl(vm, "zen notfall status 2>&1")
+    pruefe("nur an diesem Ger" in seriell, "zen notfall von der seriellen Konsole (keine Sitzung am Gerät) abgelehnt")
+    status = zen_notfall(vm, "status")
+    pruefe("ist gesetzt" in status, f"das Notfall-Passwort vom ersten Start ist gesetzt ({status.strip()})")
+    falsch = zen_notfall(vm, "aendern", "falsches-daten-passwort", NOTFALL_PASSWORT_2, NOTFALL_PASSWORT_2)
+    pruefe("stimmt nicht" in falsch, "ändern mit einem falschen Passwort der Daten wird abgelehnt")
+    gleich = zen_notfall(vm, "aendern", DATEN_PASSWORT, DATEN_PASSWORT, DATEN_PASSWORT)
+    pruefe("Nimm ein anderes" in gleich, "ein Notfall-Passwort, das die Daten öffnet, wird abgelehnt")
+    geaendert = zen_notfall(vm, "aendern", DATEN_PASSWORT, NOTFALL_PASSWORT_2, NOTFALL_PASSWORT_2)
+    pruefe("Notfall-Passwort gesetzt" in geaendert, f"Notfall-Passwort ändern ({geaendert.strip()})")
+    entfernt = zen_notfall(vm, "entfernen", DATEN_PASSWORT)
+    leer = zen_notfall(vm, "status")
+    pruefe("entfernt" in entfernt and "Kein Notfall-Passwort" in leer, f"Notfall-Passwort entfernen ({leer.strip()})")
+    gesetzt = zen_notfall(vm, "setzen", DATEN_PASSWORT, NOTFALL_PASSWORT, NOTFALL_PASSWORT)
+    wieder = zen_notfall(vm, "status")
+    pruefe("Notfall-Passwort gesetzt" in gesetzt and "ist gesetzt" in wieder, "Notfall-Passwort wieder setzen")
+    muster = f"-e '{NOTFALL_PASSWORT}' -e '{NOTFALL_PASSWORT_2}' -e '{DATEN_PASSWORT}' -e 'zenos-notfall@'"
+    journal = befehl(vm, f"journalctl -b --no-pager -o cat | grep -c {muster}")
+    pruefe(journal.strip() == "0", f"nichts davon im Journal (Treffer: {journal.strip()})")
+    if journal.strip() != "0":
+        print(befehl(vm, f"journalctl -b --no-pager -o short-monotonic | grep {muster} | head -n 6"), flush=True)
+    # Erkennungszeichen der echten Daten: Nach dem Notfall darf es nicht mehr da sein. sync: Der Test startet die
+    # Maschine danach hart neu.
+    befehl(vm, "touch ~/echte-daten && sync")
+
+
+def warten_auf_aus(vm: pexpect.spawn, sekunden: int) -> tuple[bool, int]:
+    """Wartet, bis die Maschine sich ausschaltet (QEMU endet). Gibt zurück, ob sie aus ist, und nach wie vielen Sekunden.
+    In kurzen Schritten mit der monotonen Uhr: pexpect misst seine Wartezeit mit der Uhrzeit, und die Uhr der Bau-VM
+    kann springen (einmal endete das Warten so nach 293 statt 420 Sekunden)."""
+    anfang = time.monotonic()
+    while time.monotonic() - anfang < sekunden:
+        try:
+            vm.expect(pexpect.EOF, timeout=10)
+            return True, int(time.monotonic() - anfang)
+        except pexpect.TIMEOUT:
+            continue
+    return False, int(time.monotonic() - anfang)
+
+
+def pruefe_ausschalten(vm: pexpect.spawn) -> bool:
+    """Bauauftrag 3: gesperrt (mit Inhibitor), eine Minute vorher der Hinweis, Entsperren setzt zurück, wieder gesperrt
+    schaltet zenOS aus. Im Test-Image nach 5 Minuten statt 30. True, wenn die Maschine danach aus ist."""
+    print("\n--- Ausschalten nach langer Sperre", flush=True)
+    nach = int(befehl(vm, "cat /usr/lib/zenos/ausschalten-test-nach 2>/dev/null || echo 1800").strip() or "1800")
+    aktiv = befehl(vm, "systemctl is-active zenos-ausschalten.service").strip()
+    pruefe(aktiv == "active", f"der Wächter läuft ({aktiv}, Grenze im Test-Image {nach} s)")
+    befehl(vm, "systemd-run --user --quiet --collect --unit=test-hemmer systemd-inhibit --what=shutdown:idle "
+               "--mode=block --who=Test --why=Test sleep 3600")
+    hemmer = warten_bis(vm, "systemd-inhibit --list --no-legend | grep -q Test && echo hemmer-da || echo noch-nicht",
+                        "hemmer-da", 60)
+    pruefe(hemmer == "hemmer-da", f"ein Programm hält einen Inhibitor gegen das Ausschalten ({hemmer})")
+    gesperrt_frage = 'loginctl show-session "$(loginctl show-user "$(id -u)" -p Display --value)" -p LockedHint --value'
+    befehl(vm, "/usr/lib/zenos/sperren")
+    hinweis = warten_bis(vm, gesperrt_frage, "yes", 60)
+    pruefe(hinweis == "yes", f"die Sperre meldet sich bei logind (LockedHint {hinweis})")
+    vorher = warten_bis(vm, "test -s /run/zenos-ausschalten/um && echo hinweis-da || echo noch-nicht", "hinweis-da",
+                        nach + 60)
+    pruefe(vorher == "hinweis-da", "eine Minute vorher steht der Zeitpunkt für die Sperre bereit")
+    taste(vm, "shift")  # Bildschirm an, ohne etwas ins Feld zu tippen
+    time.sleep(8)
+    foto(vm, "10-ausschalten-hinweis")
+    tippen(vm, KONTO_PASSWORT)
+    offen = warten_bis(vm, "/usr/lib/zenos/ipc sperre status", "offen", 60)
+    weg = warten_bis(vm, "test -e /run/zenos-ausschalten/um && echo noch-da || echo weg", "weg", 40)
+    nicht_gesperrt = befehl(vm, gesperrt_frage).strip()
+    pruefe(offen == "offen" and weg == "weg" and nicht_gesperrt == "no",
+           f"Entsperren setzt die Zeit zurück ({offen}, Hinweis {weg}, LockedHint {nicht_gesperrt})")
+    befehl(vm, "/usr/lib/zenos/sperren")
+    aus, dauer = warten_auf_aus(vm, nach + 120)
+    pruefe(aus and dauer >= nach - 30, f"gesperrt nach {nach} s ausgeschaltet, trotz Inhibitor ({dauer} s)")
+    return aus
+
+
+def pruefe_attrappe(vm: pexpect.spawn) -> None:
+    """Nach dem Notfall-Passwort: angemeldetes leeres Konto unter dem Namen, /var im Arbeitsspeicher, Sperre mit dem
+    Notfall-Passwort, kein Update, keine Erinnerung."""
+    print("\n--- Attrappe nach dem Notfall-Passwort", flush=True)
+    pruefe(KONTO in befehl(vm, "id -un"), "dasselbe Konto, angemeldet mit dem Notfall-Passwort")
+    pruefe("fehlt" in befehl(vm, "test -e ~/echte-daten && echo da || echo fehlt"), "von den echten Daten ist nichts da")
+    quelle = befehl(vm, 'findmnt -no SOURCE /var; '
+                        'ls --color=never "/sys/block/$(basename "$(readlink -f /dev/mapper/daten)")/slaves"').split()
+    pruefe(len(quelle) == 2 and quelle[0] == "/dev/mapper/daten" and quelle[1].startswith(("zram", "loop")),
+           f"/var liegt im Arbeitsspeicher ({' '.join(quelle)})")
+    shell = warten_bis(vm, AKTIV_SHELL, "shell-laeuft", 600)
+    pruefe(shell == "shell-laeuft", f"die Sitzung ist von selbst angemeldet ({shell})")
+    leiste = warten_bis(vm, "/usr/lib/zenos/ipc leiste status 2>&1", "zu", 600)
+    pruefe(leiste == "zu", f"Leiste wie gewohnt ({leiste})")
+    print("    Sitzungen: " + " | ".join(befehl(vm, "loginctl list-sessions --no-legend").splitlines()), flush=True)
+    time.sleep(45)
+    foto(vm, "09-attrappe")
+    befehl(vm, "/usr/lib/zenos/sperren")
+    gesperrt = warten_bis(vm, "/usr/lib/zenos/ipc sperre status", "gesperrt", 120)
+    taste(vm, "shift")
+    time.sleep(5)
+    tippen(vm, NOTFALL_PASSWORT)
+    offen = warten_bis(vm, "/usr/lib/zenos/ipc sperre status", "offen", 120)
+    pruefe(gesperrt == "gesperrt" and offen == "offen", f"die Sperre entsperrt mit dem Notfall-Passwort ({gesperrt}, {offen})")
+    update = befehl(vm, "systemd-run --user --quiet --wait --pipe --collect zen update 2>&1")
+    pruefe("ist aktuell" in update, f"zen update lädt nichts und sieht normal aus ({update.strip()})")
+    jetzt = int(time.time()) + 30 * 86400
+    erinnerung = befehl(vm, f"ZENOS_ERINNERUNG_JETZT={jetzt} /usr/lib/zenos/erinnerung 2>&1; echo rc=$?")
+    pruefe("erinnert" not in erinnerung and "rc=0" in erinnerung, "keine Erinnerung an Updates")
+    waechter = befehl(vm, "systemctl is-active zenos-ausschalten.service").strip()
+    pruefe(waechter == "active", f"auch hier schaltet zenOS nach langer Sperre aus ({waechter})")
+
+
+def partitionen(roh: Path) -> dict[str, tuple[int, int]]:
+    """GPT eines rohen Abbilds: Name → (Anfang, Grösse) in Bytes."""
+    import struct
+    teile = {}
+    with open(roh, "rb") as f:
+        f.seek(512)
+        kopf = f.read(92)
+        anfang, anzahl, groesse = struct.unpack_from("<QII", kopf, 72)
+        f.seek(anfang * 512)
+        for _ in range(anzahl):
+            eintrag = f.read(groesse)
+            if eintrag[:16] == b"\0" * 16:
+                continue
+            erster, letzter = struct.unpack_from("<QQ", eintrag, 32)
+            name = eintrag[56:128].decode("utf-16-le").rstrip("\0")
+            teile[name] = (erster * 512, (letzter - erster + 1) * 512)
+    return teile
+
+
+def pruefe_platte_nach_notfall(arbeit: Path) -> None:
+    """Von aussen (ausgeschaltete Maschine): keine Schlüsselplätze mehr in den Daten, Notfall-Partition genullt."""
+    print("\n--- Platte nach dem Notfall (von aussen)", flush=True)
+    roh = arbeit / "platte.raw"
+    subprocess.run(["qemu-img", "convert", "-O", "raw", str(arbeit / "platte.qcow2"), str(roh)], check=True)
+    try:
+        teile = partitionen(roh)
+        if "zenos-daten" not in teile or "zenos-notfall" not in teile:
+            pruefe(False, f"Daten- und Notfall-Partition gefunden ({', '.join(teile)})")
+            return
+        kopf = arbeit / "daten-kopf.img"
+        with open(roh, "rb") as f, open(kopf, "wb") as k:
+            f.seek(teile["zenos-daten"][0])
+            k.write(f.read(16 * 1048576))
+        dump = subprocess.run(["cryptsetup", "luksDump", str(kopf)], capture_output=True, text=True).stdout
+        plaetze = re.findall(r"(?m)^  [0-9]+: luks2", dump.split("Tokens:")[0])
+        pruefe("LUKS header information" in dump and not plaetze,
+               f"luksDump der Daten: Kopf da, keine Schlüsselplätze ({len(plaetze)})")
+        with open(roh, "rb") as f:
+            f.seek(teile["zenos-notfall"][0])
+            inhalt = f.read(teile["zenos-notfall"][1])
+        pruefe(len(inhalt) > 0 and inhalt.count(0) == len(inhalt), "die Notfall-Partition ist ganz genullt")
+    finally:
+        roh.unlink(missing_ok=True)
+
+
 def main() -> int:
     image = Path(sys.argv[1])
     arbeit = Path(tempfile.mkdtemp(prefix="zenos-test-"))
@@ -383,16 +576,34 @@ def main() -> int:
     vm.sendline("7")  # USA
     vm.expect("Testeingabe")
     vm.sendline("")
-    for _ in range(2):  # neues Passwort und Wiederholung
-        vm.expect(r"(?i)passphrase.*:")
-        vm.sendline(DATEN_PASSWORT)
+    vm.expect(r"Neues Passwort f.r deine Daten:")
+    vm.sendline(DATEN_PASSWORT)
+    vm.expect("Noch einmal:")
+    vm.sendline(DATEN_PASSWORT)
+    # QEMU hat keinen Hardware-Schlüssel: Nur das Test-Image legt dann einen Platz mit dem Passwort allein an
+    vm.expect("Test-Image ohne Hardware-Schl")
+    pruefe(True, "ohne Schlüssel nur im Test-Image ein Platz mit dem Passwort allein")
     vm.expect("Bereit\\? Enter")
     vm.sendline("")
     vm.expect(WIEDERHERSTELLUNG)
+    wiederherstellung = vm.match.group(0)
     pruefe(True, "Wiederherstellungsschlüssel wird angezeigt")
     vm.expect("Aufgeschrieben\\? Enter")
     vm.sendline("")
-    vm.expect(r"(?i)passphrase.*for disk.*:")
+    # Notfall-Passwort: Eines, das die Daten öffnet (hier das Passwort selbst), wird abgelehnt
+    vm.expect(r"Notfall-Passwort \(Enter = keins\):")
+    vm.sendline(DATEN_PASSWORT)
+    vm.expect("Noch einmal:")
+    vm.sendline(DATEN_PASSWORT)
+    vm.expect(r"Das .ffnet deine Daten")
+    pruefe(True, "ein Notfall-Passwort gleich dem Passwort der Daten wird abgelehnt")
+    vm.expect(r"Notfall-Passwort \(Enter = keins\):")
+    vm.sendline(NOTFALL_PASSWORT)
+    vm.expect("Noch einmal:")
+    vm.sendline(NOTFALL_PASSWORT)
+    vm.expect("Notfall-Passwort gesetzt")
+    pruefe(True, "Notfall-Passwort beim ersten Start gesetzt")
+    vm.expect(DATEN_FRAGE)
     vm.sendline(DATEN_PASSWORT)
     # homectl firstboot wartet zuerst auf eine Taste, damit die Meldungen davor lesbar bleiben.
     if vm.expect([r"(?i)press any key", r"(?i)user name"]) == 0:
@@ -421,6 +632,8 @@ def main() -> int:
 
     pruefe_oberflaeche(vm)
     neu = pruefe_update(vm)
+    pruefe_notfall_befehl(vm)
+    pruefe_schluessel(vm)
 
     # Die serielle Konsole ist keine Sitzung am Gerät. Neu starten ginge von dort nur als Admin, und den gibt es
     # nicht (root ist gesperrt). Am Gerät selbst darf die angemeldete Person neu starten.
@@ -428,18 +641,68 @@ def main() -> int:
     pruefe(re.search(r"(?i)authentication required|access denied|not authorized", antwort) is not None,
            "ohne Sitzung am Gerät kein Neustart (kein Admin)")
 
-    print("\n--- Zweiter Start", flush=True)
-    monitor(vm, "system_reset")
-    index = vm.expect([r"(?i)passphrase.*for disk.*:", "Nummer: "])
+    aus = pruefe_ausschalten(vm)
+
+    print("\n--- Zweiter Start: falsches Passwort, dann der Wiederherstellungsschlüssel", flush=True)
+    if aus:
+        vm = starte(arbeit)
+    else:
+        monitor(vm, "system_reset")
+    index = vm.expect([DATEN_FRAGE, "Nummer: "])
     pruefe(index == 0, "die Einrichtung kommt nicht wieder; der Start fragt nur nach dem Passwort")
-    vm.sendline(DATEN_PASSWORT)
+    vm.sendline("falsches-passwort-nur-fuer-qemu")
+    vm.expect("stimmt nicht")
+    vm.expect(DATEN_FRAGE)
+    pruefe(True, "falsches Passwort: «stimmt nicht», die Frage kommt wieder")
+    vm.sendline(wiederherstellung.upper().replace("-", ""))
     anmelden(vm)
+    pruefe(KONTO in befehl(vm, "id -un") and "da" == befehl(vm, "test -e ~/echte-daten && echo da").strip(),
+           "Wiederherstellungsschlüssel (gross, ohne Bindestriche) öffnet die Daten; nichts gelöscht")
     pruefe("Read-only file system" in befehl(vm, "touch /etc/zenos-test 2>&1"), "System nach dem Neustart unverändert")
-    pruefe(KONTO in befehl(vm, "id -un"), "das Konto ist nach dem Neustart noch da")
     if neu:
         # QEMU startet über systemd-boot weiter den alten Stand (kein Bootloader von Raspberry Pi, kein Probestart):
         # Das Update gilt als ausgeschaltet statt neu gestartet und wartet auf einen weiteren Neustart.
         pruefe("wartet auf einen Neustart" in befehl(vm, "zen status"), "nach dem Neustart ohne Probe wartet das Update weiter")
+
+    print("\n--- Dritter Start: das echte Passwort", flush=True)
+    monitor(vm, "system_reset")
+    vm.expect(DATEN_FRAGE)
+    vm.sendline(DATEN_PASSWORT)
+    anmelden(vm)
+    pruefe(KONTO in befehl(vm, "id -un"), "das Konto ist nach dem Neustart noch da")
+    # Am Login nach dem Entsperren der Daten, ohne Anmeldung am Bildschirm (nur die serielle Konsole): aus
+    nach = int(befehl(vm, "cat /usr/lib/zenos/ausschalten-test-nach 2>/dev/null || echo 1800").strip() or "1800")
+    aus, dauer = warten_auf_aus(vm, nach + 180)
+    pruefe(aus, f"am Login ohne Anmeldung nach {nach} s ausgeschaltet ({dauer} s nach den Prüfungen)")
+
+    # Zuletzt, weil es die Maschine zerstört
+    print("\n--- Vierter Start: das Notfall-Passwort", flush=True)
+    if aus:
+        vm = starte(arbeit)
+    else:
+        monitor(vm, "system_reset")
+    vm.expect(DATEN_FRAGE)
+    vm.sendline(NOTFALL_PASSWORT)
+    index = vm.expect(["stimmt nicht", r"login: "])
+    pruefe(index == 1, "mit dem Notfall-Passwort läuft der Start weiter wie mit dem echten")
+    if index == 1:
+        anmelden(vm, NOTFALL_PASSWORT, warten=False)
+        pruefe_attrappe(vm)
+    monitor(vm, "quit")
+    vm.expect(pexpect.EOF)
+    pruefe_platte_nach_notfall(arbeit)
+
+    print("\n--- Fünfter Start: nach dem Notfall stimmt kein Passwort mehr", flush=True)
+    vm = starte(arbeit)
+    vm.expect(DATEN_FRAGE)
+    for name, passwort in (("echtes Passwort", DATEN_PASSWORT), ("Notfall-Passwort", NOTFALL_PASSWORT),
+                           ("Wiederherstellungsschlüssel", wiederherstellung)):
+        vm.sendline(passwort)
+        index = vm.expect(["stimmt nicht", r"login: "])
+        pruefe(index == 0, f"{name}: «stimmt nicht»")
+        if index != 0:
+            break
+        vm.expect(DATEN_FRAGE)
     monitor(vm, "quit")
     vm.expect(pexpect.EOF)
 
