@@ -20,12 +20,12 @@ mit Oberfläche und Updates über `zen update`. Die SSD kommt danach nicht mehr 
 | Updates | fertig, Test grün (ohne Probestart) | `zen update` → `zenos-update.service` → `/usr/lib/zenos/update`: systemd-sysupdate (GitHub, `releases/latest/download`, nur mit Zenos Signatur), Probestart über `/run/systemd/reboot-param` «0 tryboot», fest über autoboot.txt (Ziffern 2/3 an Ort und Stelle). In QEMU: Update ohne Admin aus der Sitzung in die B-Hälfte, Ablehnung von der seriellen Konsole, Zustand über den Neustart. Erinnerung nach 14 Tagen (`/usr/lib/zenos/erinnerung`, Benutzer-Zeitgeber, Einheitentest). `mkosi/veroeffentlichen.sh` macht die Dateien, `docs/signieren.md` erklärt das Signieren; Releases heissen `zenos-<version>`. |
 | Schlüssel für Updates | wartet auf Zeno | `mkosi/schluessel/zenos-updates.asc` (öffentlich); ohne ihn baut das Image für den Argon nicht |
 | Härtung, Browser | fertig | wie zuvor; Chromium 156 mit Richtlinien |
-| Angriffstests | fertig | `mkosi/test/starten.sh`: System und Härtung, Oberfläche (Login wie ein Mensch, Apps, Befehlsfeld, Sperre, Bildschirmfotos unter `mkosi/ausgabe/test/`), Erinnerung, Update-Test (`ZENOS_TEST_NEU=<version>`), zweiter Start. Einheitentests: `update-einheiten.sh`, `erinnerung-einheiten.sh` |
+| Angriffstests | fertig | `mkosi/test/starten.sh`: System und Härtung, Oberfläche (Login wie ein Mensch, Apps, Befehlsfeld, Sperre, Bildschirmfotos unter `mkosi/ausgabe/test/`), Erinnerung, Update-Test (`ZENOS_TEST_NEU=<version>`), `zen notfall`, Hardware-Schlüssel ohne Gerät, Ausschalten nach langer Sperre, fünf Starts (falsches Passwort, Wiederherstellungsschlüssel, echtes Passwort, Notfall-Passwort mit Prüfung der Platte von aussen, danach stimmt nichts mehr). Am 12.11.2026: 88 von 88 grün. Einheitentests: `update-einheiten.sh`, `erinnerung-einheiten.sh`, `notfall-einheiten.sh`, `schluessel-einheiten.sh` |
 | Deckel | gebaut, Test grün (QEMU 12.11.2026) | Overlay `mkosi/start/zenos-deckel.dts`: GPIO27 des RP1 mit Pull-up als `gpio-keys`-Schalter SW_LID (aktiv tief: Pegel 0 heisst zu), nur im Abschnitt `[cm5]`. logind sperrt beim Zuklappen immer (`HandleLidSwitch*=lock`, `LidSwitchIgnoreInhibited=yes`, keine Schonfrist nach dem Start), über denselben Weg wie die Ein/Aus-Taste (Lock → swayidle → `/usr/lib/zenos/sperren`). `mkosi.finalize` übersetzt das Overlay und wendet es auf den Gerätebaum des CM5 Lite an, sonst bricht der Bau ab; `startpartitionen.sh` prüft es im fertigen Image, `erster-start.py` den Weg über logind in QEMU. Am 11.11.2026 gegen `bcm2712-rpi-cm5l-cm5io.dtb` der Firmware von Raspberry Pi geprüft (fdtoverlay); am 12.11.2026 auf dem Mac gebaut, `startpartitionen.sh` (11 Prüfungen) und QEMU grün. Das Zuklappen selbst prüft erst Zeno am Argon. |
 | Browser ohne Spuren | gebaut, Test grün (QEMU 12.11.2026) | Chromium-Richtlinien: kein Verlauf, Cookies nur für die Sitzung, beim Beenden Cookies, Website-Daten, Cache, Formulardaten, Anmeldedaten und Download-Verlauf löschen, keine Wiederherstellung der Sitzung. Downloads nur im Arbeitsspeicher (`~/Downloads` → `$XDG_RUNTIME_DIR/zenos/downloads`, `sitzung`). Lesezeichen, Einstellungen pro Website und Erweiterungsdaten bleiben. QEMU-Test prüft den tmpfs (45 von 45 Prüfungen grün am 12.11.2026). |
-| Notfall-Passwort | in Arbeit | Bauauftrag 2 vom 11.11.2026 (`BAUAUFTRAG.md`): eigene Partition `zenos-notfall`, eigene Passwortabfrage, Löschen der Schlüssel, Attrappe im Arbeitsspeicher mit angemeldetem leerem Konto, `zen notfall`. |
-| Ausschalten nach langer Sperre | offen | Bauauftrag 3 vom 11.11.2026: nach 30 Minuten ohne entsperrte Sitzung (Sperre, Deckel, Login) ausschalten, Leitplanke; Hinweis eine Minute vorher. |
-| Hardware-Schlüssel (FIDO2) | offen | Bauauftrag 4 vom 11.11.2026: Start, Anmelden und Entsperren nur mit Passwort plus Schlüssel; zwei Schlüssel, Notweg über den Wiederherstellungsschlüssel, `zen schluessel`; zusammen mit dem Notfall-Passwort planen. |
+| Notfall-Passwort | gebaut, Test grün | Bauauftrag 2 vom 11.11.2026 (`BAUAUFTRAG.md`): eigene Partition `zenos-notfall` (32 MB, Nr. 8; Daten jetzt Nr. 9), eigene Passwortabfrage `zenos-entsperren` statt systemd-cryptsetup, Löschen der Schlüssel (`luksErase`), Attrappe im Arbeitsspeicher (zram, sonst Loop-Gerät auf tmpfs) mit angemeldetem leerem Konto, `zen notfall` über `zenos-notfall.socket` (varlinkctl, PID/UID von systemd, strenges Muster statt JSON-Parser). Einheitentests `notfall-einheiten.sh` (32), QEMU: erster Start, `zen notfall`, falsches Passwort, Wiederherstellungsschlüssel, Attrappe, Platte von aussen, danach stimmt nichts mehr. Audit des Kernels aus (`audit=0`): Es schrieb jeden Start von `zenos-notfall@` ins Journal. |
+| Ausschalten nach langer Sperre | gebaut, Test grün | Bauauftrag 3 vom 11.11.2026: `zenos-ausschalten.service` (festes Systemkonto ohne root, polkit nur fürs Ausschalten, auch gegen Inhibitoren; kein DynamicUser, dessen Laufzeitverzeichnis unter `/run/private` für die Sperre nicht lesbar wäre) zählt über logind die Zeit ohne entsperrte Sitzung an seat0, mit `/proc/uptime`; fest 30 Minuten, im QEMU-Image 5 (`ausschalten-test-nach`, im Argon-Image verboten). Die Sperre und swaylock melden LockedHint über `/usr/lib/zenos/gesperrt-melden` an die grafische Sitzung des Kontos (`session/auto` findet für Dienste der Benutzerinstanz keine). «Schaltet in 1 Minute aus» auf der Sperre (Bildschirmfoto `10-ausschalten-hinweis`). QEMU: gesperrt mit Inhibitor aus nach der Testzeit, Entsperren setzt zurück, am Login ohne Anmeldung aus. |
+| Hardware-Schlüssel (FIDO2) | gebaut, ohne Gerät getestet | Bauauftrag 4 vom 11.11.2026: Passphrase pro Schlüsselplatz aus Passwort und hmac-secret (`schluessel-gemeinsam`, Token `zenos-fido2`), kein Platz mit dem Passwort allein; erster Start mit Schlüssel 1 (Pflicht) und 2; `pam_u2f` für greetd, Sperre und swaylock (`/etc/pam.d/zenos-schluessel`, Liste unter `/var/lib/zenos/schluessel`); Notweg nach dem Wiederherstellungsschlüssel; `zen schluessel`. Die Sperre weicht jetzt auf `greetd` statt `login` aus (dort ohne Schlüssel). Einheitentests `schluessel-einheiten.sh` (35) mit Attrappen der FIDO2-Werkzeuge; QEMU ohne Gerät (Test-Image: Platz mit Passwort, `nouserok`), die echte Prüfung macht Zeno am Argon mit seinen Schlüsseln. |
 | Abnahme auf dem Argon ONE UP | offen | Zeno schreibt das Image auf die SSD (Befehle in `mkosi/README.md`) |
 
 **Plan für Bauauftrag 2 und 4 (12.11.2026, zusammen geplant, 2 zuerst):**
@@ -67,18 +67,30 @@ mit Oberfläche und Updates über `zen update`. Die SSD kommt danach nicht mehr 
   Bauauftrag 4 `fido2-tools`, `libpam-u2f`, `pamu2fcfg`. zram ist im Kernel von Raspberry Pi (Modul), brd fest mit 4 MB
   (zu klein).
 
-**Hier geht es weiter:** Bauauftrag 2 (Notfall-Passwort), 3 (Ausschalten nach langer Sperre) und 4 (Hardware-Schlüssel, mit 2 zusammen geplant) umsetzen und in QEMU testen, dazu den Deckel und den Browser
-ohne Spuren mitbauen und testen. Parallel, wie bisher: Image für den Argon bauen, sobald Zenos Schlüssel da ist (`mkosi/schluessel/zenos-updates.asc`,
-Fingerabdruck mit Zenos Papier vergleichen); dann die Befehle zum Schreiben der SSD, einer nach dem anderen. Auf dem
-Argon zu prüfen: der Probestart mit tryboot beim ersten echten Update, und ob beim Öffnen des Befehlsfelds Spuren der
-Gleit-Animation in der Leiste stehen bleiben (in QEMU einmal, in den Läufen danach nicht mehr; vermutlich die
-Software-Darstellung ohne GPU).
+**Hier geht es weiter:** Die Bauaufträge 2 bis 4 sind gebaut und in QEMU geprüft, soweit es ohne Hardware geht.
+Bauauftrag 1 wartet auf Zenos Signaturschlüssel: dann das Image für den Argon bauen (`mkosi/schluessel/zenos-updates.asc`,
+Fingerabdruck mit Zenos Papier vergleichen), `startpartitionen.sh`, und die Befehle zum Schreiben der SSD, einer nach
+dem anderen. Für den ersten Start braucht Zeno beide Hardware-Schlüssel (ohne Schlüssel 1 geht er nicht weiter).
+
+**Abnahme am Argon** (Zeno, nach dem Schreiben der SSD):
+
+1. Erster Start mit beiden Schlüsseln; beim Start Passwort und Berührung, ohne Schlüssel «Schlüssel einstecken».
+2. Login und Sperre: Passwort, dann «Schlüssel berühren»; ohne Schlüssel kein Einlass. Passkey in Chromium (etwa auf
+   webauthn.io) mit dem Schlüssel.
+3. Deckel zu: sperrt sofort. 30 Minuten gesperrt: «Schaltet in 1 Minute aus», dann aus.
+4. `zen schluessel status`, `zen notfall status`.
+5. Das Notfall-Passwort selbst nur ausprobieren, solange noch nichts Wichtiges auf der SSD liegt: Danach geht es nur
+   mit einem neuen Image weiter.
+6. Wie bisher: der Probestart mit tryboot beim ersten echten Update, und ob beim Öffnen des Befehlsfelds Spuren der
+   Gleit-Animation in der Leiste stehen bleiben (in QEMU einmal, in den Läufen danach nicht mehr).
 
 Bekannte, harmlose Meldungen der Oberfläche im Journal: `zenos-konfig` und `zenos-energie` aus 0.1 fehlen (Modi,
 Zustände, Raster und Energie kommen später); labwc kann ext-idle-notify nur in Version 1.
 
-Offene Fragen an Zeno: Signierrechner (z. B. der EliteDesk) und Hardware-Schlüssel (YubiKey/Nitrokey) oder Schlüssel
-auf einem eigenen Stick? Gibt es einen Test-Pi 5 für den signierten Start? Welche Hardware-Wallet (Trezor oder Ledger)?
+Offene Fragen an Zeno: Signierrechner (z. B. der EliteDesk)? Der Signaturschlüssel für Updates ist ein GPG-Schlüssel;
+die bestellten Schlüssel der Security-Key-Reihe von Yubico können nur FIDO2 (gut für Start und Konto, Bauauftrag 4), kein
+OpenPGP. Für den Signaturschlüssel also vorerst ein eigener Stick (zwei Kopien) oder ein Schlüssel mit OpenPGP
+(YubiKey 5, Nitrokey 3). Gibt es einen Test-Pi 5 für den signierten Start? Welche Hardware-Wallet (Trezor oder Ledger)?
 
 Gefunden auf der SSD von 0.1 (nur gelesen): Ubuntu nutzte auf diesem Argon schon `autoboot.txt` mit `tryboot_a_b=1`
 und ein initramfs von 70 MB vom NVMe. Der Bootloader des CM5 kann also tryboot, autoboot.txt und grosse Dateien.
@@ -87,6 +99,32 @@ und ein initramfs von 70 MB vom NVMe. Der Bootloader des CM5 kann also tryboot, 
 zweiten Start «Failed to allocate new home object» und «Fixation failed: Required key not available»; die
 Anmeldung geht trotzdem. Vor Vorschau 2 muss die machine-id dauerhaft werden (Vorschlag: Daten im initrd
 entsperren und `/etc/machine-id` auf `/var` zeigen lassen).
+
+**Befunde vom 12.11.2026 (Bauaufträge 2 bis 4), behoben:**
+
+- Der Kernel schrieb zu jedem Start und Ende eines Dienstes einen Audit-Eintrag ins Journal, auch für `zenos-notfall@`.
+  `Audit=no` in journald half nicht (journald hängt nicht am Audit); jetzt `audit=0` auf der Befehlszeile.
+- `cryptsetup luksKillSlot --batch-mode` liest stdin trotzdem: Steht dort etwas, gilt es als Passwort, und der Platz
+  bleibt. Im Dienst hinter dem Socket ist stdin die Verbindung zu `zen`; alle Aufrufe bekommen `</dev/null`.
+- Die Oberfläche läuft als Dienst der Benutzerinstanz und gehört zu keiner Sitzung: `session/auto` fand keine, und
+  `onLockStateChanged` kommt beim eigenen Sperren nicht. LockedHint meldet jetzt `sperren()`/`_entsperren()` über
+  `gesperrt-melden`, an die grafische Sitzung des Kontos.
+- `update` legte `/var/lib/zenos` mit 0700 an: Die Sperre (als Konto) hätte die Liste der Schlüssel nicht lesen können
+  und sich am Argon nie mehr entsperren lassen. Jetzt 0755, nur `update/` bleibt privat.
+- Im Notweg liess sich das Notfall-Passwort als neues Passwort setzen; ein Start ohne Schlüssel hätte dann die Daten
+  gelöscht. Jetzt abgelehnt (Einheitentest).
+- Die Sperre wich bei einem PAM-Fehler auf `login` aus, das den Schlüssel nicht verlangt; jetzt auf `greetd`. swaylock
+  band nur `login` ein; jetzt mit Schlüssel.
+- Mit `DynamicUser=yes` liegt das Laufzeitverzeichnis unter `/run/private` (nur root): Der Zeitpunkt für «Schaltet in
+  1 Minute aus» war für die Sperre nicht lesbar. Jetzt ein festes Systemkonto `zenos-ausschalten` (sysusers.d). Das
+  Ausschalten selbst kam in QEMU pünktlich (306 s nach dem Sperren bei 300 s Grenze).
+- `pam_exec` meldete den Normalfall (keine Attrappe) bei jedem Entsperren als Fehler; jetzt `quiet_log`.
+- Das Konto des Wächters entstand nie: `systemd-sysusers` verwarf die Zeile (Doppelpunkt in der Beschreibung), und beim
+  Start kann es in das schreibgeschützte `/etc` ohnehin nichts schreiben. `mkosi.finalize` legt Systemkonten aus
+  `/usr/lib/sysusers.d/zenos.conf` jetzt im Bau an und prüft sie.
+- Im Test wartete pexpect einmal nur 293 statt 420 Sekunden aufs Ausschalten: Es misst mit der Uhrzeit, und die Uhr der
+  Bau-VM sprang. Der Test wartet jetzt in kurzen Schritten mit der monotonen Uhr. Der Wächter selbst zählt mit
+  `/proc/uptime` und war pünktlich.
 
 **Befunde vom 10.11.2026 (Oberfläche und Updates), behoben:**
 

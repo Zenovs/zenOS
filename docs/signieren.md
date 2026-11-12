@@ -15,7 +15,8 @@ Claude erzeugt, sieht und benutzt den Schlüssel nie. Ins Repo kommt nur der **�
   in den Mac und nie in den Argon. Dazu eine zweite Kopie, getrennt aufbewahrt.
 - **Transfer-Stick:** ein dritter Stick für das, was öffentlich ist: der öffentliche Schlüssel, `SHA256SUMS` und die
   Signatur `SHA256SUMS.gpg`. Nur er wandert zwischen Mac und Signierrechner.
-- Später, für 1.0: ein Hardware-Schlüssel (YubiKey 5 oder Nitrokey 3) statt des Schlüssel-Sticks.
+- Später, für 1.0: ein Hardware-Schlüssel mit OpenPGP (YubiKey 5 oder Nitrokey 3) statt des Schlüssel-Sticks. Die
+  Schlüssel der Security-Key-Reihe von Yubico für Start und Konto (FIDO2, Bauauftrag 4) können das nicht.
 
 ## Einmal: Schlüssel erzeugen
 

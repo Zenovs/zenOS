@@ -1,10 +1,11 @@
 # Bauaufträge für zenOS 1.0
 
-Vier Aufträge sind offen. Aktiv sind Bauauftrag 2, 3 und 4, in dieser Reihenfolge; 2 und 4 hängen beide an der
-Passwortabfrage beim Start und werden zusammen geplant. Bauauftrag 1 wartet nur noch auf Zenos Schlüssel und die
-Abnahme am Argon. Der Rahmen von Bauauftrag 1 (Mac, Colima, Freigaben, Rückfragen) gilt für alle.
+Vier Aufträge sind offen. Bauauftrag 2, 3 und 4 sind gebaut und in QEMU geprüft (12.11.2026), soweit es ohne
+Hardware geht; sie warten auf die Abnahme am Argon (Liste in `docs/baufortschritt.md`). Bauauftrag 1 wartet auf Zenos
+Signaturschlüssel und die Abnahme am Argon. Der Rahmen von Bauauftrag 1 (Mac, Colima, Freigaben, Rückfragen) gilt für
+alle.
 
-## Bauauftrag 2: Notfall-Passwort (aktiv)
+## Bauauftrag 2: Notfall-Passwort (gebaut, Abnahme am Argon offen)
 
 Erteilt von Zeno am 11.11.2026 im Chat mit Claude («das mit dem nuke passwort will ich»; Entscheide: nach dem
 Notfall-Passwort «soll zenos schreibtisch anzeigen aber es ist nichts mehr da, aber aussehen wie ich mich eingelogt
@@ -96,7 +97,7 @@ des Arbeitsspeichers und jeder weitere Weg zu root.
 
 ---
 
-## Bauauftrag 3: Ausschalten nach langer Sperre (aktiv, nach Bauauftrag 2)
+## Bauauftrag 3: Ausschalten nach langer Sperre (gebaut, Abnahme am Argon offen)
 
 Erteilt von Zeno am 11.11.2026 im Chat mit Claude («Ausschalten nach langer Sperre nimm das auch noch rein»).
 
@@ -134,7 +135,7 @@ Image baut, Tests grün, gitleaks und shellcheck sauber; `docs/neubau.md` (Leitp
 
 ---
 
-## Bauauftrag 4: Hardware-Schlüssel (FIDO2) beim Start, beim Anmelden und beim Entsperren (aktiv)
+## Bauauftrag 4: Hardware-Schlüssel (FIDO2) beim Start, beim Anmelden und beim Entsperren (gebaut, Abnahme am Argon offen)
 
 Erteilt von Zeno am 11.11.2026 im Chat mit Claude («ja nimm das auch rein»; vorher gefragt, ob man «schon beim
 anmelden den key physisch braucht»). Zeno bestellt zwei Schlüssel der Security-Key-Reihe von Yubico (FIDO2, USB-C,
