@@ -1,0 +1,116 @@
+#!/bin/bash
+# zen notfall, die Seite von root (zenos-notfall@.service, eine Instanz pro Anfrage an /run/zenos/notfall.socket).
+# BAUAUFTRAG.md, Bauauftrag 2, Punkt 6: ohne Admin und ohne pkexec, ein Dienst hinter einem Socket, der sonst nichts
+# kann.
+#
+# Liest genau eine varlink-Anfrage (JSON mit einem Nullbyte am Ende, von varlinkctl) und antwortet mit einer:
+#   io.zenos.Notfall.Status                       → {"gesetzt": true|false}
+#   io.zenos.Notfall.Setzen     {daten, neu}      neues Notfall-Passwort, nur wenn noch keins gesetzt ist
+#   io.zenos.Notfall.Aendern    {daten, neu}      ersetzt das Notfall-Passwort
+#   io.zenos.Notfall.Entfernen  {daten}           nullt die Notfall-Partition
+# Fehler: io.zenos.Notfall.<Grund> (Abgelehnt, Ungueltig, DatenPasswortFalsch, OeffnetDaten, SchonGesetzt,
+# NichtGesetzt, Fehlgeschlagen).
+#
+# Die Passwörter kommen hex-kodiert (zen notfall kodiert sie). So prüft ein strenges Muster die ganze Anfrage, ohne
+# JSON-Parser mit root-Rechten; alles andere ist «Ungueltig». Sie bleiben im Arbeitsspeicher und gehen über Pipes an
+# cryptsetup (notfall-gemeinsam), nie in eine Befehlszeile, Datei oder ins Journal.
+#
+# Angenommen wird nur, wer an diesem Gerät sitzt: systemd gibt im Namen der Instanz Nummer, PID und UID des Aufrufers
+# mit (SO_PEERCRED). Dessen Sitzung muss aktiv sein, an seat0 und nicht entfernt, wie polkit es bei «zen update»
+# verlangt: die eigene Sitzung des Prozesses, oder für Programme der Benutzerinstanz (das Terminal) die grafische
+# Sitzung des Kontos. Die serielle Konsole oder eine Sitzung ohne Sitz wird abgelehnt.
+set -uo pipefail
+
+# shellcheck source=notfall-gemeinsam
+. /usr/lib/zenos/notfall-gemeinsam
+
+antworten() { printf '%s\0' "$1"; }
+ablehnen() {
+	antworten "{\"error\":\"io.zenos.Notfall.$1\",\"parameters\":{}}"
+	exit 0
+}
+
+# Sitzung des Aufrufers: die des Prozesses selbst (session-<ID>.scope) oder, wenn er in der Benutzerinstanz läuft, die
+# grafische Sitzung des Kontos (Display, wie polkit)
+sitzung_von() { # PID UID
+	local cgruppe anzeige
+	cgruppe=$(cat "/proc/$1/cgroup" 2>/dev/null) || return 1
+	if [[ "$cgruppe" =~ /session-([A-Za-z0-9]+)\.scope ]]; then
+		printf '%s' "${BASH_REMATCH[1]}"
+		return 0
+	fi
+	[[ "$cgruppe" == *"/user@$2.service/"* ]] || return 1
+	anzeige=$(loginctl show-user "$2" -p Display --value 2>/dev/null) || return 1
+	[[ "$anzeige" =~ ^[A-Za-z0-9]+$ ]] || return 1
+	printf '%s' "$anzeige"
+}
+
+am_geraet() { # PID UID
+	local sitzung zeilen
+	sitzung=$(sitzung_von "$1" "$2") || return 1
+	zeilen=$(loginctl show-session "$sitzung" -p User -p Active -p Remote -p Seat -p Class 2>/dev/null) || return 1
+	grep -qx "User=$2" <<<"$zeilen" && grep -qx 'Active=yes' <<<"$zeilen" && grep -qx 'Remote=no' <<<"$zeilen" &&
+		grep -qx 'Seat=seat0' <<<"$zeilen" && grep -qx 'Class=user' <<<"$zeilen"
+}
+
+# --- Wer fragt? ----------------------------------------------------------------------------------------------------
+[[ "${1:-}" =~ ^[0-9]+-([0-9]+)-([0-9]+)$ ]] || ablehnen Abgelehnt
+pid=${BASH_REMATCH[1]}
+uid=${BASH_REMATCH[2]}
+((uid >= 1000)) || ablehnen Abgelehnt
+[[ "$(stat -c %u "/proc/$pid" 2>/dev/null)" == "$uid" ]] || ablehnen Abgelehnt
+am_geraet "$pid" "$uid" || ablehnen Abgelehnt
+konto=$(id -nu "$uid" 2>/dev/null) || ablehnen Abgelehnt
+name_gueltig "$konto" || ablehnen Abgelehnt
+
+# --- Was wird gefragt? ---------------------------------------------------------------------------------------------
+IFS= read -r -d '' -t 120 anfrage || ablehnen Ungueltig
+if ! anfrage_lesen "$anfrage"; then
+	unset anfrage daten neu
+	ablehnen Ungueltig
+fi
+unset anfrage
+
+# Eine Änderung nach der anderen
+exec 9>/run/zenos/notfall.lock
+flock -w 60 9 || ablehnen Fehlgeschlagen
+
+if [[ "$methode" == Status ]]; then
+	if notfall_gesetzt; then antworten '{"parameters":{"gesetzt":true}}'; else antworten '{"parameters":{"gesetzt":false}}'; fi
+	exit 0
+fi
+
+# Jede Änderung verlangt das Passwort der Daten
+if ! passwort_oeffnet_daten "$daten"; then
+	unset daten neu
+	ablehnen DatenPasswortFalsch
+fi
+unset daten
+
+case "$methode" in
+Setzen | Aendern)
+	if [[ "$methode" == Setzen ]] && notfall_gesetzt; then ablehnen SchonGesetzt; fi
+	if [[ "$methode" == Aendern ]] && ! notfall_gesetzt; then ablehnen NichtGesetzt; fi
+	if passwort_oeffnet_daten "$neu"; then
+		unset neu
+		ablehnen OeffnetDaten
+	fi
+	if ! notfall_anlegen "$neu" zenos-notfall-neu; then
+		unset neu
+		cryptsetup close zenos-notfall-neu >/dev/null 2>&1 || true
+		notfall_nullen >/dev/null 2>&1 || true
+		ablehnen Fehlgeschlagen
+	fi
+	unset neu
+	if ! notfall_name_schreiben zenos-notfall-neu "$konto"; then
+		notfall_nullen >/dev/null 2>&1 || true
+		ablehnen Fehlgeschlagen
+	fi
+	antworten '{"parameters":{"gesetzt":true}}'
+	;;
+Entfernen)
+	notfall_gesetzt || ablehnen NichtGesetzt
+	notfall_nullen >/dev/null 2>&1 || ablehnen Fehlgeschlagen
+	antworten '{"parameters":{"gesetzt":false}}'
+	;;
+esac

@@ -1,0 +1,20 @@
+# zenOS, nur nach dem Notfall-Passwort (BAUAUFTRAG.md, Bauauftrag 2): /usr/lib/zenos/entsperren hat die Schlüssel der
+# Daten gelöscht und /var im Arbeitsspeicher angelegt. Dieser Dienst legt dort das Konto unter dem gelesenen Namen an
+# (Passwort: das Notfall-Passwort aus dem Schlüsselbund von root), aktiviert es und lässt greetd es einmal anmelden.
+[Unit]
+Description=zenOS: Sitzung vorbereiten
+Requires=systemd-homed.service
+After=systemd-homed.service home.mount
+Before=zenos-konto.service greetd.service systemd-user-sessions.service
+ConditionPathExists=/run/zenos/attrappe
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/zenos/attrappe
+StandardOutput=null
+StandardError=null
+KeyringMode=shared
+
+[Install]
+WantedBy=multi-user.target

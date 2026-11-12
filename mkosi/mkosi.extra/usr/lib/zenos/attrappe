@@ -1,0 +1,41 @@
+#!/bin/bash
+# Nach dem Notfall-Passwort (zenos-attrappe.service): Konto der Attrappe anlegen und einmal anmelden.
+#
+# /usr/lib/zenos/entsperren hat /run/zenos/attrappe (Kontoname) angelegt und das Notfall-Passwort für 15 Minuten in den
+# Schlüsselbund von root gelegt. Hier wird es gelesen und sofort gelöscht. Das Konto liegt wie alles in dieser Attrappe
+# nur im Arbeitsspeicher (/var); Passwort ist das Notfall-Passwort, damit die Sperre damit entsperrt. greetd meldet es
+# einmal an (/run/zenos/attrappe-greetd.toml, gelesen von /usr/lib/zenos/greetd-starten).
+#
+# Das Passwort geht an homectl über die Umgebung (NEWPASSWORD, PASSWORD), wie homectl es für den Betrieb ohne Rückfrage
+# vorsieht; die Umgebung eines Prozesses von root kann nur root lesen. Nie in einer Befehlszeile, Datei oder im Journal.
+set -euo pipefail
+
+# shellcheck source=notfall-gemeinsam
+. /usr/lib/zenos/notfall-gemeinsam
+
+name=$(head -n 1 /run/zenos/attrappe)
+name_gueltig "$name" || name=benutzer
+
+schluessel=$(keyctl search @u user zenos-attrappe)
+passwort=$(keyctl pipe "$schluessel")
+keyctl invalidate "$schluessel" || keyctl unlink "$schluessel" @u || true
+
+if ! homectl inspect "$name" >/dev/null 2>&1; then
+	NEWPASSWORD=$passwort homectl create "$name" --storage=directory --enforce-password-policy=no
+fi
+PASSWORD=$passwort homectl activate "$name" || true
+unset passwort
+
+umask 022
+cat >/run/zenos/attrappe-greetd.toml <<TOML
+[terminal]
+vt = 1
+
+[default_session]
+command = "/usr/lib/zenos/greeter"
+user = "_greetd"
+
+[initial_session]
+command = "/usr/lib/zenos/sitzung"
+user = "$name"
+TOML

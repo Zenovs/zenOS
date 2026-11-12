@@ -7,6 +7,8 @@ Documentation=man:homectl(1)
 Requires=systemd-homed.service
 After=home.mount systemd-homed.service zenos-tastatur.service
 Before=systemd-user-sessions.service greetd.service
+# Nach dem Notfall-Passwort legt zenos-attrappe.service das Konto an; dann hier nichts fragen.
+ConditionPathExists=!/run/zenos/attrappe
 
 [Service]
 Type=oneshot

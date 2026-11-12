@@ -2,9 +2,9 @@
 # Ersetzt den Aufruf von systemd-repart (systemd-repart.service.d/zenos.conf).
 #
 # Fehlt die Datenpartition noch (erster Start), entsteht ein Einmal-Schlüssel, nur im Arbeitsspeicher unter /run.
-# systemd-repart legt damit die Partition an und verschlüsselt sie. Später schützt daten-schuetzen die Partition mit
-# Zenos Passwort und löscht diesen Schlüssel. Gibt es die Partition schon, ruft das Skript systemd-repart ohne
-# Schlüssel auf; es gibt dann nichts zu tun.
+# systemd-repart legt damit die Partition an und verschlüsselt sie, davor die leere Notfall-Partition. Später schützt
+# daten-schuetzen die Partition mit Zenos Passwort und löscht diesen Schlüssel. Gibt es die Partition schon, ruft das
+# Skript systemd-repart ohne Schlüssel auf; es gibt dann nichts zu tun.
 set -eu
 
 schluessel=/run/zenos/daten-einmalschluessel
@@ -17,4 +17,13 @@ fi
 umask 077
 mkdir -p /run/zenos
 head -c 64 /dev/urandom > "$schluessel"
-exec systemd-repart --dry-run=no --key-file="$schluessel"
+systemd-repart --dry-run=no --key-file="$schluessel" || exit
+
+# Die Notfall-Partition (40-zenos-notfall.conf) ist neu und leer zu halten: Auf der SSD liegen sonst Reste von vorher,
+# etwa ein alter LUKS-Kopf, der wie ein Notfall-Container aussähe. Ganz mit Nullen überschreiben.
+udevadm settle --timeout=10 || true
+notfall=/dev/disk/by-partlabel/zenos-notfall
+if [ -b "$notfall" ]; then
+	groesse=$(blockdev --getsize64 "$notfall")
+	dd if=/dev/zero of="$notfall" bs=1M count=$((groesse / 1048576)) conv=fsync status=none
+fi

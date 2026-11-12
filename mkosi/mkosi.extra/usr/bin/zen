@@ -5,19 +5,26 @@
 #                  beim nächsten Neustart einmal zur Probe; läuft er, wird er fest, sonst startet wieder der alte.
 #   zen neustart   neu starten (mit dem Probestart, wenn ein Update bereitliegt)
 #   zen status     laufende Version und Stand der Updates
+#   zen notfall    Notfall-Passwort: status, setzen, aendern, entfernen (verlangt das Passwort der Daten)
 #   zen hilfe      diese Hilfe
 #
 # Kein Admin nötig: «zen update» startet nur den Dienst zenos-update.service (polkit erlaubt das der Person, die am
-# Gerät angemeldet ist). Installiert wird nur, was mit Zenos Schlüssel signiert ist.
+# Gerät angemeldet ist). Installiert wird nur, was mit Zenos Schlüssel signiert ist. «zen notfall» fragt den Dienst
+# hinter /run/zenos/notfall.socket; auch er nimmt nur eine Sitzung am Gerät an.
 set -uo pipefail
 
 laufzeit=/run/zenos/update
 
 version() { (. /usr/lib/os-release && printf '%s' "${IMAGE_VERSION:-unbekannt}"); }
 
-hilfe() { sed -n '4,10p' "$0" | sed 's/^# \{0,1\}//'; }
+hilfe() { sed -n '4,11p' "$0" | sed 's/^# \{0,1\}//'; }
 
 update() {
+	# Nach dem Notfall-Passwort (Attrappe) lädt zenOS nichts und schreibt nichts mehr auf die SSD.
+	if [[ -e /run/zenos/attrappe ]]; then
+		echo "zenOS $(version) ist aktuell."
+		return 0
+	fi
 	if [[ -e "$laufzeit/neustart" ]]; then
 		echo "Nichts geladen: Ein neuer Stand ist schon installiert und wartet auf den Neustart."
 		cat "$laufzeit/hinweis" 2>/dev/null || true
@@ -71,8 +78,91 @@ status() {
 	return 0
 }
 
+# --- zen notfall (BAUAUFTRAG.md, Bauauftrag 2) ----------------------------------------------------------------------
+# Die Passwörter liest zen hier ohne Echo, kodiert sie hex (od über eine Pipe) und gibt sie über stdin an varlinkctl;
+# sie stehen nie in einer Befehlszeile, Datei oder im Journal. Der Dienst prüft das Passwort der Daten.
+notfall_adresse=unix:/run/zenos/notfall.socket
+
+passwort_lesen() { # FRAGE → Variable «eingabe»
+	IFS= read -r -s -p "$1" eingabe || eingabe=""
+	echo >&2
+}
+
+hex() { printf '%s' "$1" | od -An -v -tx1 | tr -d ' \n'; }
+
+notfall_fehler() { # AUSGABE VON VARLINKCTL
+	case "$1" in
+	*io.zenos.Notfall.Abgelehnt*) echo "zen notfall: geht nur an diesem Gerät, in deiner Sitzung (nicht über die serielle Konsole)." >&2 ;;
+	*io.zenos.Notfall.DatenPasswortFalsch*) echo "zen notfall: Das Passwort deiner Daten stimmt nicht." >&2 ;;
+	*io.zenos.Notfall.OeffnetDaten*) echo "zen notfall: Das neue Notfall-Passwort öffnet deine Daten. Nimm ein anderes." >&2 ;;
+	*io.zenos.Notfall.SchonGesetzt*) echo "zen notfall: Es ist schon eines gesetzt. Ändern: zen notfall aendern" >&2 ;;
+	*io.zenos.Notfall.NichtGesetzt*) echo "zen notfall: Es ist keines gesetzt. Setzen: zen notfall setzen" >&2 ;;
+	*) echo "zen notfall: Das hat nicht geklappt." >&2 ;;
+	esac
+	return 1
+}
+
+notfall() {
+	local aktion=${1:-status} methode antwort eingabe daten neu
+	case "$aktion" in
+	status)
+		antwort=$(varlinkctl call --json=short --timeout=60 "$notfall_adresse" io.zenos.Notfall.Status </dev/null 2>&1) ||
+			notfall_fehler "$antwort" || return 1
+		if [[ "$antwort" == *'"gesetzt":true'* ]]; then
+			echo "Ein Notfall-Passwort ist gesetzt."
+		else
+			echo "Kein Notfall-Passwort gesetzt."
+		fi
+		return 0
+		;;
+	setzen) methode=Setzen ;;
+	aendern) methode=Aendern ;;
+	entfernen) methode=Entfernen ;;
+	*)
+		echo "zen notfall: status, setzen, aendern oder entfernen" >&2
+		return 64
+		;;
+	esac
+	if [[ "$methode" != Entfernen ]]; then
+		cat <<'TEXT'
+Tippst du beim Start statt deines Passworts das Notfall-Passwort, sind deine Daten in Sekunden endgültig unlesbar,
+und zenOS startet leer, als wäre nichts. Das lässt sich nicht rückgängig machen.
+TEXT
+	fi
+	passwort_lesen "Passwort deiner Daten: "
+	daten=$(hex "$eingabe")
+	if [[ "$methode" == Entfernen ]]; then
+		unset eingabe
+		antwort=$(printf '{"daten":"%s"}' "$daten" |
+			varlinkctl call --json=short --timeout=300 "$notfall_adresse" io.zenos.Notfall.Entfernen 2>&1) ||
+			{ unset daten; notfall_fehler "$antwort"; return 1; }
+		unset daten
+		echo "Notfall-Passwort entfernt."
+		return 0
+	fi
+	passwort_lesen "Neues Notfall-Passwort: "
+	neu=$eingabe
+	passwort_lesen "Noch einmal: "
+	if [[ -z "$neu" || "$neu" != "$eingabe" ]]; then
+		unset eingabe neu daten
+		echo "zen notfall: Die beiden sind leer oder nicht gleich. Nichts geändert." >&2
+		return 1
+	fi
+	unset eingabe
+	neu=$(hex "$neu")
+	antwort=$(printf '{"daten":"%s","neu":"%s"}' "$daten" "$neu" |
+		varlinkctl call --json=short --timeout=300 "$notfall_adresse" "io.zenos.Notfall.$methode" 2>&1) ||
+		{ unset daten neu; notfall_fehler "$antwort"; return 1; }
+	unset daten neu
+	echo "Notfall-Passwort gesetzt."
+}
+
 case "${1:-hilfe}" in
 update) update ;;
+notfall)
+	shift
+	notfall "$@"
+	;;
 neustart) exec systemctl reboot ;;
 status) status ;;
 hilfe | -h | --hilfe | --help) hilfe ;;

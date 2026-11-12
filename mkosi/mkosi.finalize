@@ -81,6 +81,20 @@ done
 
 echo "zenOS-Prüfung: setuid, root, verbotene Programme in Ordnung"
 
+# --- 3a. Notfall-Passwort (BAUAUFTRAG.md, Bauauftrag 2) ----------------------------------------------------------
+# Die Daten öffnet nur zenos-entsperren: Ein Eintrag in /etc/crypttab wäre ein zweiter Weg, an dem das
+# Notfall-Passwort nicht wirkt. /var muss auf den Dienst warten, und seine Werkzeuge müssen im Image sein.
+! grep -Eqv '^[[:space:]]*(#|$)' "$R/etc/crypttab" ||
+	fehler "/etc/crypttab hat einen Eintrag; die Daten öffnet nur zenos-entsperren"
+grep -Eq '^/dev/mapper/daten[[:space:]]+/var[[:space:]].*x-systemd\.requires=zenos-entsperren\.service' \
+	"$R/etc/fstab" || fehler "/var wartet nicht auf zenos-entsperren.service (/etc/fstab)"
+for noetig in usr/sbin/cryptsetup usr/bin/keyctl usr/bin/varlinkctl usr/sbin/zramctl usr/sbin/mkfs.ext4 \
+	usr/lib/zenos/entsperren usr/lib/zenos/notfall-dienst usr/lib/zenos/attrappe; do
+	[[ -x "$R/$noetig" ]] || fehler "fehlt im Image: /$noetig (Notfall-Passwort)"
+done
+[[ ! -e "$R/usr/sbin/request-key" ]] || fehler "request-key darf nicht ins Image (keyutils, nur keyctl)"
+echo "zenOS-Prüfung: Notfall-Passwort: eigene Passwortabfrage und Werkzeuge in Ordnung"
+
 # --- 3b. Quickshell vollständig ----------------------------------------------------------------------------------
 # Quickshell kommt aus dem Quellbau, nicht aus einem Paket: Seine Bibliotheken stehen von Hand in Packages=. Fehlt
 # eine im Image, startete die Oberfläche nicht, auch die Sperre nicht. Der Bau bricht dann hier ab.

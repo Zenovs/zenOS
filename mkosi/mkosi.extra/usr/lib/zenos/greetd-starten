@@ -1,0 +1,7 @@
+#!/bin/sh
+# Startet greetd (greetd.service.d/zenos.conf). Nur nach dem Notfall-Passwort gibt es eine eigene Konfiguration im
+# Arbeitsspeicher, die das Konto der Attrappe einmal anmeldet (/usr/lib/zenos/attrappe); sonst die von /etc/greetd.
+if [ -f /run/zenos/attrappe ] && [ -f /run/zenos/attrappe-greetd.toml ]; then
+	exec greetd --config /run/zenos/attrappe-greetd.toml
+fi
+exec greetd

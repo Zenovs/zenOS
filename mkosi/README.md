@@ -23,7 +23,7 @@ und eigener Kernel kommen mit 1.0.
 | `start/zenos-deckel.dts` | Overlay für den Deckel des Argon ONE UP: GPIO27 als Schalter SW_LID, Zuklappen sperrt (logind) |
 | `umgebung/` | Bauumgebung: Debian-Container mit mkosi und QEMU; `bauen-innen.sh` holt und prüft die Quelle von Quickshell |
 | `veroeffentlichen.sh` | macht aus einem gebauten Image die Dateien für ein Update und `SHA256SUMS` zum Signieren |
-| `test/` | Angriffs- und Starttests in QEMU mit Oberfläche und Update, Einheitentests des Updates und der Erinnerung, Prüfung der Startpartitionen des Argon-Images |
+| `test/` | Angriffs- und Starttests in QEMU mit Oberfläche, Update und Notfall-Passwort, Einheitentests des Updates, der Erinnerung und des Notfall-Passworts, Prüfung der Startpartitionen des Argon-Images |
 
 ## Aufteilung der SSD
 
@@ -35,7 +35,8 @@ und eigener Kernel kommen mit 1.0.
 | 4 | `zenos_<version>_verity` | 128 MB: Prüfsummen (dm-verity) von System A |
 | 5 | `zenos_<version>` | System A (erofs), beim ersten Start auf 6 GB vergrössert |
 | 6, 7 | `_empty` | System und Prüfsummen B, beim ersten Start angelegt |
-| 8 | `zenos-daten` | `/var` und `/home`, LUKS2, beim ersten Start angelegt, der ganze Rest der SSD |
+| 8 | `zenos-notfall` | 32 MB ohne Dateisystem: Nullen, oder mit Notfall-Passwort ein LUKS2-Container, darin nur der Kontoname; beim ersten Start angelegt |
+| 9 | `zenos-daten` | `/var` und `/home`, LUKS2, beim ersten Start angelegt, der ganze Rest der SSD |
 
 Der Bootloader liest `autoboot.txt`: Startpartition 2 startet; nach einem Update startet 3 einmal zur Probe
 (`tryboot`). Läuft der neue Stand, tauscht `/usr/lib/zenos/update` die beiden Ziffern; sonst startet beim nächsten
@@ -52,6 +53,7 @@ mkosi/bauen.sh qemu      # Image für die Tests        → mkosi/ausgabe/qemu/ze
 mkosi/test/starten.sh    # erster und zweiter Start in QEMU mit Oberfläche und Prüfungen
 mkosi/test/update-einheiten.sh
 mkosi/test/erinnerung-einheiten.sh
+mkosi/test/notfall-einheiten.sh   # Passwortabfrage beim Start und Notfall-Passwort, mit echtem cryptsetup
 mkosi/test/startpartitionen.sh   # Startpartitionen des Argon-Images, vor dem Schreiben auf die SSD
 ```
 
@@ -89,9 +91,34 @@ von der SSD.
 1. Tastaturbelegung wählen (sie gilt ab dann immer, auch für das Passwort beim Start).
 2. Passwort für die verschlüsselten Daten setzen: lang, zum Beispiel sechs zufällige Wörter.
 3. Den Wiederherstellungsschlüssel auf Papier schreiben und getrennt vom Laptop aufbewahren.
-4. Das Passwort eingeben, um die Daten zu öffnen.
-5. Ein Konto anlegen (Name und Passwort).
-6. Am Login von zenOS anmelden. WLAN über das System-Menü oben rechts.
+4. Wenn gewünscht ein Notfall-Passwort (unten), zweimal; Enter überspringt es.
+5. Das Passwort eingeben, um die Daten zu öffnen.
+6. Ein Konto anlegen (Name und Passwort).
+7. Am Login von zenOS anmelden. WLAN über das System-Menü oben rechts.
+
+## Notfall-Passwort
+
+Für den Fall, dass dich jemand zwingt, den Laptop zu starten und das Passwort einzutippen. Tippst du beim Start statt
+deines Passworts das Notfall-Passwort, löscht zenOS in Sekunden alle Schlüssel deiner Daten, auch den
+Wiederherstellungsschlüssel. Danach startet zenOS wie immer bis zum Schreibtisch, angemeldet unter deinem Namen, aber
+leer: Alles liegt nur noch im Arbeitsspeicher, die SSD wird nicht mehr beschrieben. Die Sperre entsperrt mit dem
+Notfall-Passwort. **Das lässt sich nicht rückgängig machen.** Nach dem Ausschalten stimmt kein Passwort mehr; zurück
+geht es nur mit einem neuen Image.
+
+Das echte Passwort öffnet immer zuerst. Ein Tippfehler löst den Notfall nie aus, und ein Notfall-Passwort, das die Daten
+öffnet, nimmt zenOS gar nicht an.
+
+```
+zen notfall status       # gesetzt oder nicht
+zen notfall setzen       # Passwort der Daten, dann zweimal das neue Notfall-Passwort
+zen notfall aendern
+zen notfall entfernen    # Passwort der Daten
+```
+
+`zen notfall` geht nur in deiner Sitzung am Gerät und verlangt für jede Änderung das Passwort der Daten. Grenzen: Gegen
+eine Kopie der SSD, die jemand vorher zieht und ohne den Startcode von zenOS untersucht, hilft es nicht. Die Täuschung
+hält bis zum Ausschalten. Wer danach den LUKS-Kopf ansieht, sieht, dass die Schlüssel fehlen, und ein LUKS-Kopf auf
+`zenos-notfall` verrät, dass es ein Notfall-Passwort gibt.
 
 ## Notausgang
 

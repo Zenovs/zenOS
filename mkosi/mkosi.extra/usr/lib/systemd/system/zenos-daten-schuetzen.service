@@ -3,7 +3,7 @@ Description=zenOS: Passwort und Wiederherstellungsschlüssel für die verschlüs
 Documentation=https://github.com/Zenovs/zenOS/blob/neubau/docs/neubau.md
 DefaultDependencies=no
 After=systemd-repart.service zenos-tastatur.service
-Before=systemd-cryptsetup@daten.service cryptsetup.target
+Before=zenos-entsperren.service cryptsetup.target
 ConditionPathExists=/run/zenos/daten-einmalschluessel
 
 [Service]

@@ -1,10 +1,17 @@
 #!/bin/bash
 # Erster Start, auf der Konsole (zenos-daten-schuetzen.service): Tastaturbelegung wählen, Passwort für die
-# verschlüsselten Daten setzen, Wiederherstellungsschlüssel zeigen, Einmal-Schlüssel löschen.
+# verschlüsselten Daten setzen, Wiederherstellungsschlüssel zeigen, Notfall-Passwort (freiwillig), Einmal-Schlüssel
+# löschen.
 #
 # Läuft nur, solange der Einmal-Schlüssel aus daten-anlegen in /run liegt, also nur beim allerersten Start.
-# Das Passwort tippt Zeno direkt in systemd-cryptenroll; dieses Skript sieht es nie.
+# Das Passwort tippt Zeno direkt in systemd-cryptenroll; dieses Skript sieht es nie. Das Notfall-Passwort fragt das
+# Skript selbst ab (BAUAUFTRAG.md, Bauauftrag 2): Es legt damit den Notfall-Container an und lässt ihn geöffnet, bis
+# das Konto angelegt ist; dann schreibt zenos-notfall-name.service den Kontonamen hinein und schliesst ihn. So muss das
+# Notfall-Passwort nirgends liegen bleiben.
 set -euo pipefail
+
+# shellcheck source=notfall-gemeinsam
+. /usr/lib/zenos/notfall-gemeinsam
 
 schluessel=/run/zenos/daten-einmalschluessel
 partition=/dev/disk/by-partlabel/zenos-daten
@@ -46,6 +53,50 @@ read -r -p "  Bereit? Enter drücken. " _
 systemd-cryptenroll --unlock-key-file="$schluessel" --recovery-key "$partition"
 echo
 read -r -p "  Aufgeschrieben? Enter drücken. " _
+
+# Notfall-Passwort, freiwillig. Abgelehnt, wenn es die Daten öffnet (gleich wie das Passwort oder der
+# Wiederherstellungsschlüssel): Das echte Passwort muss immer zuerst öffnen.
+notfall_fragen() {
+	local erstes zweites
+	cat <<'TEXT'
+
+  Jetzt, wenn du willst, ein Notfall-Passwort. Tippst du es beim Start statt deines Passworts, sind deine Daten
+  in Sekunden endgültig unlesbar, und zenOS startet leer, als wäre nichts. Das lässt sich nicht rückgängig machen.
+
+TEXT
+	while :; do
+		erstes=$(systemd-ask-password --timeout=0 --echo=masked --emoji=no "  Notfall-Passwort (Enter = keins):") ||
+			erstes=""
+		if [[ -z "$erstes" ]]; then
+			echo "  Kein Notfall-Passwort. Später setzen: zen notfall setzen"
+			return 0
+		fi
+		zweites=$(systemd-ask-password --timeout=0 --echo=masked --emoji=no "  Noch einmal:") || zweites=""
+		if [[ "$erstes" != "$zweites" ]]; then
+			unset erstes zweites
+			echo "  Die beiden sind nicht gleich. Noch einmal."
+			continue
+		fi
+		unset zweites
+		if passwort_oeffnet_daten "$erstes"; then
+			unset erstes
+			echo "  Das öffnet deine Daten (wie dein Passwort oder der Wiederherstellungsschlüssel). Nimm ein anderes."
+			continue
+		fi
+		if notfall_anlegen "$erstes" zenos-notfall-neu; then
+			unset erstes
+			echo "  Notfall-Passwort gesetzt."
+			return 0
+		fi
+		unset erstes
+		echo "  Das hat nicht geklappt. Noch einmal."
+	done
+}
+if [[ -e "$ZENOS_NOTFALL" ]]; then
+	notfall_fragen
+else
+	echo "  Die Notfall-Partition fehlt; ein Notfall-Passwort geht erst nach einem neuen Image."
+fi
 
 # Der Einmal-Schlüssel steckt in Platz 0 (systemd-repart hat ihn dort angelegt). Erst löschen, wenn Passwort und
 # Wiederherstellungsschlüssel eingetragen sind.

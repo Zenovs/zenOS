@@ -1,0 +1,14 @@
+# zenOS: zen notfall (BAUAUFTRAG.md, Bauauftrag 2). Jede Verbindung startet eine eigene Instanz von
+# zenos-notfall@.service mit PID und UID des Aufrufers im Namen; der Dienst nimmt nur eine aktive Sitzung am Gerät an.
+[Unit]
+Description=zenOS: Notfall-Passwort setzen, ändern, entfernen
+Documentation=https://github.com/Zenovs/zenOS/blob/neubau/BAUAUFTRAG.md
+
+[Socket]
+ListenStream=/run/zenos/notfall.socket
+SocketMode=0666
+Accept=yes
+MaxConnections=1
+
+[Install]
+WantedBy=sockets.target

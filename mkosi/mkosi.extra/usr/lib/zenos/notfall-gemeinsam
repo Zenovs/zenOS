@@ -1,0 +1,148 @@
+# shellcheck shell=bash
+# Gemeinsame Teile für das Notfall-Passwort (BAUAUFTRAG.md, Bauauftrag 2). Geladen mit «source» von
+# /usr/lib/zenos/entsperren (Passwortabfrage beim Start), daten-schuetzen und notfall-name (erster Start) und
+# notfall-dienst (zen notfall).
+#
+# Die Partition zenos-notfall (32 MB) ist entweder leer (Nullen, kein Notfall-Passwort) oder ein LUKS2-Container mit
+# genau einem Schlüsselplatz, dem Notfall-Passwort. Geöffnet steht darin nur der Kontoname (eine Zeile, kein
+# Dateisystem). Kein Hash, nichts im Klartext.
+#
+# Regel für Passwörter (Bauauftrag 2, Punkt 3): nur im Arbeitsspeicher. An cryptsetup gehen sie über eine Pipe;
+# printf ist in bash eingebaut, das Passwort steht also nie in der Befehlszeile eines Prozesses. Nie in einer Datei,
+# nie im Journal: Ausgaben von cryptsetup gehen nach /dev/null. Wer eine Funktion mit einem Passwort aufruft, löscht
+# seine Variable danach (unset).
+
+# Die Pfade lassen sich nur für die Einheitentests umlenken (mkosi/test/notfall-einheiten.sh); die Dienste setzen keine
+# solche Umgebung, und von aussen lässt sich die Umgebung eines Systemdienstes nicht setzen.
+ZENOS_DATEN=${ZENOS_TEST_DATEN:-/dev/disk/by-partlabel/zenos-daten}
+ZENOS_NOTFALL=${ZENOS_TEST_NOTFALL:-/dev/disk/by-partlabel/zenos-notfall}
+ZENOS_MAPPER=${ZENOS_TEST_MAPPER:-/dev/mapper}
+
+# Kontonamen, wie systemd-homed sie annimmt (ohne Punkt und ohne Grossbuchstaben am Anfang wäre strenger; homed lässt
+# beides zu, zenOS nur den sicheren Kern davon)
+name_gueltig() {
+	[[ "$1" =~ ^[A-Za-z_][A-Za-z0-9_-]{0,31}$ ]]
+}
+
+# Öffnet das Passwort (oder der Wiederherstellungsschlüssel) einen Platz der Datenpartition? Nur prüfen, nichts öffnen.
+passwort_oeffnet_daten() { # PASSWORT
+	printf '%s' "$1" | cryptsetup open --test-passphrase --key-file=- "$ZENOS_DATEN" >/dev/null 2>&1
+}
+
+# Die Daten öffnen (Abbild «daten», darauf wartet /var in /etc/fstab)
+daten_oeffnen() { # PASSWORT
+	printf '%s' "$1" | cryptsetup open --key-file=- "$ZENOS_DATEN" daten >/dev/null 2>&1
+}
+
+notfall_gesetzt() {
+	cryptsetup isLuks "$ZENOS_NOTFALL" >/dev/null 2>&1
+}
+
+# Ist die Eingabe das Notfall-Passwort? Nur prüfen.
+passwort_ist_notfall() { # PASSWORT
+	notfall_gesetzt || return 1
+	printf '%s' "$1" | cryptsetup open --test-passphrase --key-file=- "$ZENOS_NOTFALL" >/dev/null 2>&1
+}
+
+# Die ganze Notfall-Partition mit Nullen überschreiben: kein LUKS-Kopf mehr, nichts Lesbares.
+notfall_nullen() {
+	local groesse
+	if [[ -b "$ZENOS_NOTFALL" ]]; then
+		groesse=$(blockdev --getsize64 "$ZENOS_NOTFALL") || return 1
+	else
+		groesse=$(stat -L -c %s -- "$ZENOS_NOTFALL") || return 1
+	fi
+	((groesse > 0)) || return 1
+	dd if=/dev/zero of="$ZENOS_NOTFALL" bs=1M count=$((groesse / 1048576)) conv=notrunc,fsync status=none
+}
+
+# Neuen Notfall-Container mit genau diesem Passwort anlegen und unter ABBILD öffnen, damit der Kontoname hinein kann.
+# Vorher wird die Partition genullt (auch ein alter Container ist danach weg).
+notfall_anlegen() { # PASSWORT ABBILD
+	notfall_nullen || return 1
+	printf '%s' "$1" | cryptsetup luksFormat --batch-mode --type luks2 --pbkdf argon2id --key-file=- \
+		"$ZENOS_NOTFALL" >/dev/null 2>&1 || return 1
+	printf '%s' "$1" | cryptsetup open --key-file=- "$ZENOS_NOTFALL" "$2" >/dev/null 2>&1
+}
+
+# Kontonamen in den geöffneten Container schreiben (ein Block, der Rest Nullen) und ihn schliessen
+notfall_name_schreiben() { # ABBILD NAME
+	local abbild=$1 name=$2 ergebnis=0
+	name_gueltig "$name" || ergebnis=1
+	if ((ergebnis == 0)); then
+		printf '%s\n' "$name" | dd of="$ZENOS_MAPPER/$abbild" bs=4096 count=1 conv=sync,notrunc,fsync status=none ||
+			ergebnis=1
+	fi
+	cryptsetup close "$abbild" >/dev/null 2>&1 || true
+	return "$ergebnis"
+}
+
+# Kontonamen aus dem Container lesen (öffnet nur lesend und schliesst wieder). Ausgabe: der Name, sonst Exit 1.
+notfall_name_lesen() { # PASSWORT
+	local abbild=zenos-notfall-lesen name
+	printf '%s' "$1" | cryptsetup open --readonly --key-file=- "$ZENOS_NOTFALL" "$abbild" >/dev/null 2>&1 || return 1
+	name=$(head -c 4096 -- "$ZENOS_MAPPER/$abbild" | tr -d '\0' | head -n 1) || name=""
+	cryptsetup close "$abbild" >/dev/null 2>&1 || true
+	name_gueltig "$name" || return 1
+	printf '%s' "$name"
+}
+
+# Zählt die Schlüsselplätze der Datenpartition (luksDump, LUKS2). Nach dem Notfall muss es 0 sein.
+daten_schluesselplaetze() {
+	cryptsetup luksDump "$ZENOS_DATEN" 2>/dev/null | awk '
+		/^Keyslots:/ { drin = 1; next }
+		/^[A-Za-z]/ { drin = 0 }
+		drin && /^  [0-9]+: / { n++ }
+		END { print n + 0 }'
+}
+
+# Sieht die Eingabe wie ein Wiederherstellungsschlüssel von systemd-cryptenroll aus (8 × 8 Zeichen «modhex»)? Dann
+# in die Form bringen, in der er eingetragen ist: klein, mit Bindestrichen. Sonst Exit 1.
+als_wiederherstellungsschluessel() { # EINGABE
+	local roh=${1,,}
+	roh=${roh//[- ]/}
+	[[ "$roh" =~ ^[cbdefghijklnrtuv]{64}$ ]] || return 1
+	printf '%s-%s-%s-%s-%s-%s-%s-%s' "${roh:0:8}" "${roh:8:8}" "${roh:16:8}" "${roh:24:8}" "${roh:32:8}" \
+		"${roh:40:8}" "${roh:48:8}" "${roh:56:8}"
+}
+
+# --- zen notfall: Anfrage prüfen (notfall-dienst) ------------------------------------------------------------------
+# Strenges Muster statt JSON-Parser mit root-Rechten. varlinkctl schickt {"method":…,"parameters":{…}} in dieser
+# Reihenfolge, die Passwörter hex-kodiert von zen notfall. Alles andere ist ungültig.
+
+# Hex (zwei Zeichen pro Byte, klein) → Text. Keine Nullbytes, höchstens 256 Bytes.
+hex_zu_text() { # HEX
+	local i maskiert=""
+	[[ "$1" =~ ^([0-9a-f]{2}){1,256}$ ]] || return 1
+	[[ ! "$1" =~ ^([0-9a-f]{2})*00 ]] || return 1
+	for ((i = 0; i < ${#1}; i += 2)); do
+		maskiert+="\\x${1:i:2}"
+	done
+	printf '%b' "$maskiert"
+}
+
+# Setzt «methode» (Status, Setzen, Aendern, Entfernen) und, je nach Methode, «daten» und «neu» (Klartext) für den
+# Aufrufer. Exit 1, wenn irgendetwas nicht genau passt.
+# shellcheck disable=SC2034 # daten und neu liest notfall-dienst
+anfrage_lesen() { # ANFRAGE
+	local muster='^\{"method":"io\.zenos\.Notfall\.(Status|Setzen|Aendern|Entfernen)","parameters":\{(.*)\}\}$'
+	local parameter erstes zweites
+	methode="" daten="" neu=""
+	((${#1} <= 2048)) || return 1
+	[[ "$1" =~ $muster ]] || return 1
+	methode=${BASH_REMATCH[1]}
+	parameter=${BASH_REMATCH[2]}
+	case "$methode" in
+	Status) [[ -z "$parameter" ]] ;;
+	Setzen | Aendern)
+		[[ "$parameter" =~ ^\"daten\":\"([0-9a-f]+)\",\"neu\":\"([0-9a-f]+)\"$ ]] || return 1
+		erstes=${BASH_REMATCH[1]} zweites=${BASH_REMATCH[2]}
+		daten=$(hex_zu_text "$erstes") && neu=$(hex_zu_text "$zweites")
+		;;
+	Entfernen)
+		[[ "$parameter" =~ ^\"daten\":\"([0-9a-f]+)\"$ ]] || return 1
+		erstes=${BASH_REMATCH[1]}
+		daten=$(hex_zu_text "$erstes")
+		;;
+	esac
+}

@@ -4,6 +4,8 @@
 Description=zenOS: Update laden, prüfen und installieren
 After=network-online.target time-sync.target
 Wants=network-online.target
+# Nach dem Notfall-Passwort (Attrappe im Arbeitsspeicher) schreibt zenOS nichts mehr auf die SSD.
+ConditionPathExists=!/run/zenos/attrappe
 
 [Service]
 Type=oneshot

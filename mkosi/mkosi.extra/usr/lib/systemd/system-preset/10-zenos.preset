@@ -15,6 +15,11 @@ enable apparmor.service
 enable zenos-tastatur.service
 enable zenos-daten-schuetzen.service
 enable zenos-konto.service
+# Notfall-Passwort (BAUAUFTRAG.md, Bauauftrag 2): Kontoname beim ersten Start, Attrappe, zen notfall.
+# zenos-entsperren.service holt /etc/fstab selbst herein (x-systemd.requires).
+enable zenos-notfall-name.service
+enable zenos-attrappe.service
+enable zenos-notfall.socket
 enable zenos-update-pruefen.service
 
 disable *

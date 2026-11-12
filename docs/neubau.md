@@ -50,6 +50,7 @@ Was der CM5 nicht hat und was das heisst:
 | Schadsoftware (Download, Anhang) | Daten und Bank-Sitzung abgreifen, Zahlung umbiegen | nur Apps aus dem Image, keine fremden Erweiterungen, kein Admin, nichts Ausführbares ausserhalb von `/usr`; Bestätigung in Bank-App und Wallet | eine Lücke im Kernel gibt Zugriff auf alles, auch aufs Banking; die Bestätigung auf dem zweiten Gerät bleibt der Schutz fürs Geld |
 | Schadsoftware, die bleiben will | System, `/etc`, Erweiterungen aus `/var`, Bootpartition | `/usr` geprüft, `/etc` flüchtig, keine Erweiterungen aus `/var`; ab 1.0 signierter Start | bis 1.0: root kann die Bootpartition ändern |
 | Dieb | SSD ausbauen und lesen | LUKS2 für alles ausser `/usr` (das ist öffentlich) | schwaches Passwort |
+| Jemand zwingt dich | dich zwingen, den Laptop zu starten und das Passwort einzutippen | Notfall-Passwort (4.8): Es löscht in Sekunden alle Schlüssel der Daten, zenOS startet danach leer, als wäre nichts | eine Kopie der SSD, die jemand vorher zieht; die Täuschung hält nur bis zum Ausschalten |
 | «Evil Maid» | Startcode ändern, Passwort abfangen | ab 1.0 signierter Start: fremder Code startet nicht | Tausch des ganzen CM5-Moduls gegen eine Attrappe |
 | Lieferkette (Debian, Raspberry Pi, GitHub, CI, Zenos Mac, Code von Claude) | manipuliertes Paket oder Image | Debian stable, eingefrorener Paketstand, zwei Bauten, Signieren nur in einem frisch gestarteten Live-System, Durchsicht vor dem Signieren | GitHub und der zweite Bau gleichzeitig übernommen; Fehler, die bei der Durchsicht nicht auffallen |
 | Manipulierte Wallet-Erweiterung oder Web-App (wie Ledger Connect Kit 2023) | falsche Empfängeradresse | Hardware-Wallet zeigt Empfänger und Betrag auf ihrem eigenen Display | wer dort nicht hinschaut |
@@ -177,6 +178,30 @@ Nicht abgedeckt: Lücken in Prozessor und Firmware, Seitenkanäle, wer das Gerä
 - Neu gebaut wird bei jeder Debian-Sicherheitsmeldung zu einem Paket im Image und bei jedem Kernel-Update, sonst
   wöchentlich; Chromium hat Vorrang.
 - Mitteilung nach 14 Tagen ohne neues Image (mit der Zeit aus NTS).
+
+### 4.8 Notfall-Passwort
+
+Wunsch Zeno vom 11.11.2026 (`BAUAUFTRAG.md`, Bauauftrag 2). Schützt gegen jemanden, der den Laptop selbst startet und
+Zeno zwingt, das Passwort einzutippen.
+
+- **Was es tut:** Statt des Passworts getippt, löscht es alle Schlüsselplätze der Daten (`luksErase`, auch den
+  Wiederherstellungsschlüssel) und nullt seine eigene Partition. Danach startet zenOS bis zum Schreibtisch, angemeldet
+  mit einem leeren Konto unter Zenos Namen; `/var` liegt nur im Arbeitsspeicher, die SSD wird nicht mehr beschrieben.
+  Kein `zen update`, keine Erinnerung.
+- **Aufbau:** Eine eigene Partition `zenos-notfall` (32 MB, kein Dateisystem): Nullen oder ein LUKS2-Container mit nur
+  dem Notfall-Passwort, darin nur der Kontoname. Kein Hash, nichts im Klartext. Die Daten öffnet eine eigene
+  Passwortabfrage (`/usr/lib/zenos/entsperren`) statt systemd-cryptsetup: zuerst die Daten, nur wenn das scheitert das
+  Notfall-Passwort. Ein Tippfehler löst also nie den Notfall aus, und ein Notfall-Passwort, das die Daten öffnet, wird
+  nicht angenommen.
+- **Passwörter:** Nur in diesen Skripten fasst zenOS ein Passwort selbst an (Ausnahme von «zenOS fasst nie selbst ein
+  Passwort an», erteilt im Bauauftrag): nur im Arbeitsspeicher, an cryptsetup über Pipes, nie in einer Befehlszeile,
+  Datei oder im Journal; an den Dienst, der die Attrappe anmeldet, nur über den Schlüsselbund des Kernels.
+- **Setzen:** beim ersten Start (freiwillig) und später mit `zen notfall` (ein Dienst mit root hinter einem Socket, der
+  nur eine aktive Sitzung am Gerät annimmt und für jede Änderung das Passwort der Daten verlangt).
+- **Grenzen:** Gegen eine Kopie der SSD, die jemand vorher zieht und ohne den Startcode von zenOS untersucht, hilft es
+  nicht. Die Täuschung hält bis zum Ausschalten; danach ist jedes Passwort «falsch», und wer den LUKS-Kopf ansieht,
+  sieht, dass die Schlüssel fehlen. Ein LUKS-Kopf auf `zenos-notfall` verrät, dass es ein Notfall-Passwort gibt.
+  Zurück geht es nur mit einem neuen Image.
 
 ## 5. Lieferkette, Schlüssel und KI
 

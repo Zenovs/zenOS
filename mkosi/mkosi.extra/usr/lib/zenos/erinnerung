@@ -18,6 +18,7 @@ set -euo pipefail
 wurzel=${ZENOS_ERINNERUNG_TESTWURZEL:-}
 stand_datei=$wurzel/usr/lib/zenos/paketstand
 neustart=$wurzel/run/zenos/update/neustart
+attrappe=$wurzel/run/zenos/attrappe
 zustand=${XDG_STATE_HOME:-$HOME/.local/state}/zenos
 laufzeit=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/zenos
 grenze=14
@@ -60,6 +61,8 @@ if (($# > 0)); then
 	exit 64
 fi
 
+# Nach dem Notfall-Passwort (Attrappe) keine Erinnerung: Es gibt dort kein Update.
+[[ ! -e "$attrappe" ]] || exit 0
 s=$(stand_sekunden) || {
 	meldung "kein lesbarer Paketstand ($stand_datei)"
 	exit 0

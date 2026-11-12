@@ -1,0 +1,19 @@
+# zenOS, erster Start: den Kontonamen in den Notfall-Container schreiben (BAUAUFTRAG.md, Bauauftrag 2). Läuft nur, wenn
+# daten-schuetzen ein Notfall-Passwort gesetzt und den Container dafür offen gelassen hat.
+[Unit]
+Description=zenOS: Kontoname für das Notfall-Passwort
+After=zenos-konto.service systemd-homed.service
+Before=greetd.service systemd-user-sessions.service
+ConditionPathExists=/dev/mapper/zenos-notfall-neu
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/zenos/notfall-name
+StandardOutput=null
+StandardError=tty
+TTYPath=/dev/console
+# Nichts zum Notfall-Passwort im Journal, auch nicht, dass dieser Dienst lief
+LogLevelMax=warning
+
+[Install]
+WantedBy=multi-user.target

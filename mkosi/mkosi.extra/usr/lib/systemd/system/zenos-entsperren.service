@@ -1,0 +1,33 @@
+# zenOS: Passwort für die Daten bei jedem Start (BAUAUFTRAG.md, Bauauftrag 2). Ersetzt systemd-cryptsetup: /etc/fstab
+# hängt /var erst ein, wenn dieser Dienst /dev/mapper/daten geöffnet hat (im Notfall: die Attrappe im Arbeitsspeicher).
+# Die Frage stellt der Passwort-Agent von systemd auf der Konsole; die Meldungen dazwischen schreibt der Dienst dorthin,
+# nie ins Journal.
+[Unit]
+Description=zenOS: Daten entsperren
+Documentation=https://github.com/Zenovs/zenOS/blob/neubau/BAUAUFTRAG.md
+DefaultDependencies=no
+Requires=dev-disk-by\x2dpartlabel-zenos\x2ddaten.device
+After=dev-disk-by\x2dpartlabel-zenos\x2ddaten.device
+Wants=dev-disk-by\x2dpartlabel-zenos\x2dnotfall.device
+After=dev-disk-by\x2dpartlabel-zenos\x2dnotfall.device
+After=systemd-repart.service systemd-udevd.service zenos-tastatur.service zenos-daten-schuetzen.service
+Wants=cryptsetup-pre.target
+After=cryptsetup-pre.target
+Before=cryptsetup.target
+Conflicts=umount.target
+Before=umount.target
+IgnoreOnIsolate=yes
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/zenos/entsperren
+ExecStop=-cryptsetup close daten
+# Ohne Zeitlimit: Die Frage wartet, bis jemand das Passwort eingibt.
+TimeoutStartSec=infinity
+StandardInput=null
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/console
+# Im Notfall geht das Notfall-Passwort über den Schlüsselbund von root an zenos-attrappe.service.
+KeyringMode=shared

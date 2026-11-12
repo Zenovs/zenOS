@@ -1,0 +1,35 @@
+# zenOS: eine Anfrage von zen notfall (/usr/lib/zenos/notfall-dienst). %i ist «Nummer-PID-UID» des Aufrufers.
+[Unit]
+Description=zenOS: Anfrage an zen notfall
+Documentation=https://github.com/Zenovs/zenOS/blob/neubau/BAUAUFTRAG.md
+CollectMode=inactive-or-failed
+
+[Service]
+ExecStart=/usr/lib/zenos/notfall-dienst %i
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+# Nichts zum Notfall-Passwort im Journal, auch nicht, wann jemand fragte
+LogLevelMax=warning
+RuntimeMaxSec=5min
+# Darf nur, was cryptsetup für die beiden Partitionen braucht, und logind fragen
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_IPC_LOCK CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_MKNOD
+ProtectSystem=strict
+ReadWritePaths=-/run/cryptsetup /run/zenos
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_ALG
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native

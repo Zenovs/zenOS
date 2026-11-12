@@ -1,0 +1,117 @@
+#!/bin/bash
+# Passwortabfrage beim Start (zenos-entsperren.service, auf der Konsole). Ersetzt systemd-cryptsetup für die Daten
+# (BAUAUFTRAG.md, Bauauftrag 2): /etc/fstab hängt /var erst ein, wenn dieser Dienst /dev/mapper/daten geöffnet hat.
+#
+# Pro Eingabe:
+#   1. Sieht sie aus wie ein Wiederherstellungsschlüssel, wird sie in dessen Form gebracht (klein, Bindestriche).
+#   2. Zuerst die Daten öffnen. Klappt das, fertig (Passwort oder Wiederherstellungsschlüssel).
+#   3. Sonst, nur wenn es ein Notfall-Passwort gibt: Ist es das? Dann der Notfall (unten).
+#   4. Sonst «Das Passwort stimmt nicht. Bitte noch einmal.», ohne Grenze.
+# Das echte Passwort öffnet also immer zuerst; ein Tippfehler löst nie den Notfall aus.
+#
+# Notfall: Kontonamen aus dem Notfall-Container lesen, alle Schlüssel der Daten löschen (luksErase, auch den
+# Wiederherstellungsschlüssel), die Notfall-Partition nullen. Danach eine Attrappe: /var auf einem Datenträger im
+# Arbeitsspeicher (zram) unter demselben Namen /dev/mapper/daten. zenos-attrappe.service legt darauf das Konto unter
+# dem gelesenen Namen an und meldet es einmal an. Die SSD wird danach nicht mehr beschrieben. Scheitert beim Löschen
+# etwas, geht es trotzdem weiter zur Attrappe, nie zurück zur echten Anmeldung.
+#
+# Passwörter nur im Arbeitsspeicher (/usr/lib/zenos/notfall-gemeinsam). Diese Ausgaben gehen nur auf die Konsole, nie
+# ins Journal, und sie sehen bei jedem Passwort gleich aus.
+set -uo pipefail
+
+# shellcheck source=notfall-gemeinsam
+. /usr/lib/zenos/notfall-gemeinsam
+
+# Datenträger im Arbeitsspeicher für die Attrappe, halb so gross wie der Arbeitsspeicher: zram (komprimiert); geht das
+# nicht, eine Datei in einem eigenen tmpfs über ein Loop-Gerät. Ausgabe: das Gerät.
+speicher_geraet() {
+	local kib geraet
+	kib=$(awk '/^MemTotal:/ { print int($2 / 2) }' /proc/meminfo)
+	modprobe zram >/dev/null 2>&1 || true
+	if geraet=$(zramctl --find --size "${kib}K" 2>/dev/null) && [[ -b "$geraet" ]]; then
+		printf '%s' "$geraet"
+		return 0
+	fi
+	install -d -m 0700 /run/zenos-speicher
+	mountpoint -q /run/zenos-speicher || mount -t tmpfs -o "size=${kib}k,mode=0700" tmpfs /run/zenos-speicher || return 1
+	truncate -s "${kib}K" /run/zenos-speicher/daten || return 1
+	losetup --find --show /run/zenos-speicher/daten 2>/dev/null
+}
+
+# Attrappe: Datenträger im Arbeitsspeicher, darauf dm-crypt mit einem Zufallsschlüssel unter dem Namen «daten», ext4 mit
+# demselben Label wie die echten Daten und dem Ordner home. Marker /run/zenos/attrappe (Kontoname) und das
+# Notfall-Passwort im Schlüsselbund von root für zenos-attrappe.service (15 Minuten, dann verfällt es).
+attrappe_anlegen() { # NAME PASSWORT
+	local name=$1 geraet vorlage schluessel
+	geraet=$(speicher_geraet) || return 1
+	cryptsetup open --type plain --cipher aes-xts-plain64 --key-size 512 --key-file /dev/urandom --keyfile-size 64 \
+		"$geraet" daten >/dev/null 2>&1 || return 1
+	vorlage=$(mktemp -d /run/zenos-vorlage.XXXXXX) || return 1
+	install -d -m 0755 "$vorlage/home"
+	if ! mkfs.ext4 -q -F -L zenos-daten -d "$vorlage" /dev/mapper/daten >/dev/null 2>&1; then
+		rm -rf -- "$vorlage"
+		return 1
+	fi
+	rm -rf -- "$vorlage"
+	install -d -m 0755 /run/zenos
+	printf '%s\n' "$name" >/run/zenos/attrappe
+	schluessel=$(printf '%s' "$2" | keyctl padd user zenos-attrappe @u 2>/dev/null) || return 1
+	keyctl setperm "$schluessel" 0x3f0b0000 >/dev/null 2>&1 || true
+	keyctl timeout "$schluessel" 900 >/dev/null 2>&1 || true
+}
+
+notfall() { # PASSWORT
+	local name
+	name=$(notfall_name_lesen "$1") || name=benutzer
+	cryptsetup luksErase --batch-mode "$ZENOS_DATEN" >/dev/null 2>&1 || true
+	notfall_nullen >/dev/null 2>&1 || true
+	sync
+	# Prüfen, ob die Schlüssel weg sind. Wenn nicht: nochmals versuchen, dann trotzdem weiter.
+	if [[ "$(daten_schluesselplaetze)" != 0 ]]; then
+		cryptsetup luksErase --batch-mode "$ZENOS_DATEN" >/dev/null 2>&1 || true
+		sync
+	fi
+	until attrappe_anlegen "$name" "$1"; do
+		cryptsetup close daten >/dev/null 2>&1 || true
+		sleep 1
+	done
+}
+
+udevadm settle --timeout=10 >/dev/null 2>&1 || true
+# Schon offen (etwa nach einem Neustart dieses Dienstes): nichts zu tun
+[[ -e "$ZENOS_MAPPER/daten" ]] && exit 0
+if [[ ! -e "$ZENOS_DATEN" ]]; then
+	echo "  Die Datenpartition fehlt." >&2
+	exit 1
+fi
+
+echo
+while :; do
+	# Über den Passwort-Agenten von systemd (wie bisher bei systemd-cryptsetup): Er zeigt die Frage auf der Konsole,
+	# und solange sie offen ist, schreibt systemd keine Statuszeilen dazwischen.
+	if ! eingabe=$(systemd-ask-password --no-tty --timeout=0 --echo=masked --emoji=no --id=zenos:daten \
+		"Passwort für deine Daten:"); then
+		sleep 1
+		continue
+	fi
+	[[ -n "$eingabe" ]] || continue
+	echo "  Einen Moment …"
+	if schluessel=$(als_wiederherstellungsschluessel "$eingabe"); then
+		eingabe=$schluessel
+	fi
+	unset schluessel
+	if daten_oeffnen "$eingabe"; then
+		unset eingabe
+		echo
+		exit 0
+	fi
+	if passwort_ist_notfall "$eingabe"; then
+		notfall "$eingabe"
+		unset eingabe
+		echo
+		exit 0
+	fi
+	unset eingabe
+	echo "  Das Passwort stimmt nicht. Bitte noch einmal."
+	echo
+done

@@ -1,0 +1,16 @@
+#!/bin/bash
+# Erster Start (zenos-notfall-name.service, nach dem Anlegen des Kontos): den Kontonamen in den Notfall-Container
+# schreiben, den daten-schuetzen mit dem Notfall-Passwort angelegt und offen gelassen hat, und ihn schliessen. Im
+# Notfall meldet die Attrappe ein leeres Konto unter diesem Namen an (BAUAUFTRAG.md, Bauauftrag 2).
+set -euo pipefail
+
+# shellcheck source=notfall-gemeinsam
+. /usr/lib/zenos/notfall-gemeinsam
+
+abbild=zenos-notfall-neu
+[[ -e "$ZENOS_MAPPER/$abbild" ]] || exit 0
+name=$(homectl list --no-legend 2>/dev/null | awk 'NR == 1 { print $1 }') || name=""
+if ! notfall_name_schreiben "$abbild" "$name"; then
+	echo "zenOS: Der Kontoname für das Notfall-Passwort liess sich nicht eintragen. Neu setzen: zen notfall aendern" >&2
+	exit 1
+fi

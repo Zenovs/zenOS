@@ -2,6 +2,21 @@
 
 Grundsatz 1: Sicherheit ist Standard und geht vor Design und Bequemlichkeit. Sie wird übernommen, nicht selbst erfunden.
 
+## zenOS 1.0: Code von zenOS mit root
+
+Ziel ist kein Code von zenOS mit root (`docs/neubau.md`, 4.3). Diese Ausnahmen gibt es, jede mit Grund:
+
+| Was | Wann | Warum root |
+|---|---|---|
+| `daten-anlegen`, `daten-schuetzen`, `notfall-name` | erster Start | Datenpartition und Notfall-Partition anlegen, Passwort, Wiederherstellungsschlüssel und Notfall-Passwort eintragen |
+| `tastatur-laden` | jeder Start, vor der Passwortfrage | Tastaturbelegung von der Startpartition (nur lesend eingehängt) |
+| `entsperren` | jeder Start | öffnet die Daten; im Notfall löscht es ihre Schlüssel und legt die Attrappe an (Bauauftrag 2) |
+| `attrappe` | nur nach dem Notfall-Passwort | Konto der Attrappe bei systemd-homed anlegen und einmal anmelden |
+| `notfall-dienst` | nur auf Anfrage von `zen notfall` | Notfall-Container ändern; nimmt nur eine aktive Sitzung am Gerät an (PID und UID von systemd), prüft die Anfrage mit einem strengen Muster ohne JSON-Parser, verlangt das Passwort der Daten, läuft gehärtet (nur die nötigen Rechte, kein Netz, System nur lesbar) und schreibt nichts ins Journal |
+| `update` | nur auf `zen update` (polkit: Sitzung am Gerät) und beim Start nach einem Update | neuen Stand in die freie Hälfte schreiben, Probestart bestätigen |
+
+Was darunter in diesem Dokument steht, beschreibt meist 0.1 (Ubuntu).
+
 ## Unterbau
 
 - Nur LTS-Versionen von Ubuntu. Sicherheitsupdates laufen automatisch (`unattended-upgrades`). Die übrigen
