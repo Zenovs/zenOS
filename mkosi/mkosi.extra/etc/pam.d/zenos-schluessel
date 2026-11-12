@@ -4,8 +4,9 @@
 # schreibt sie, das Konto kann sie nicht ändern.
 #
 # Nach dem Notfall-Passwort (Bauauftrag 2) gibt es diese Liste nicht: Dann genügt die Berührung eines FIDO2-Schlüssels
-# (/usr/lib/zenos/schluessel-beruehren).
-auth	[success=2 default=ignore]	pam_exec.so quiet /usr/lib/zenos/ist-attrappe
+# (/usr/lib/zenos/schluessel-beruehren). «quiet_log»: Dass es keine Attrappe gibt (der Normalfall), ist kein Fehler fürs
+# Journal.
+auth	[success=2 default=ignore]	pam_exec.so quiet quiet_log /usr/lib/zenos/ist-attrappe
 auth	required	pam_u2f.so authfile=/var/lib/zenos/schluessel/u2f origin=pam://zenos appid=pam://zenos cue [cue_prompt=Schlüssel berühren]
 auth	[default=1]	pam_permit.so
-auth	required	pam_exec.so quiet /usr/lib/zenos/schluessel-beruehren
+auth	required	pam_exec.so quiet quiet_log /usr/lib/zenos/schluessel-beruehren
