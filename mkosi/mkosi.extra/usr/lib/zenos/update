@@ -168,7 +168,10 @@ probe_vorbereiten() {
 
 installieren() {
 	install -d -m 0755 "$wurzel/run/zenos" "$laufzeit"
-	install -d -m 0700 "$wurzel/var/lib/zenos" "$stand"
+	# /var/lib/zenos bleibt 0755: Die Sperre liest als Konto die Liste der Hardware-Schlüssel darunter (schluessel/u2f).
+	# Privat ist nur der Zustand der Updates.
+	install -d -m 0755 "$wurzel/var/lib/zenos"
+	install -d -m 0700 "$stand"
 	: >"$protokoll"
 	chmod 0644 "$protokoll"
 	rm -f "$laufzeit/hinweis"
