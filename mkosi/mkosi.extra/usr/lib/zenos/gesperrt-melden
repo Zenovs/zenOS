@@ -1,8 +1,11 @@
 #!/bin/sh
 # LockedHint der eigenen Sitzung bei logind setzen (ja) oder löschen (nein). Die Sperre (Sperre.qml) und die
 # Notfall-Sperre (/usr/lib/zenos/sperren) melden so, ob gesperrt ist; zenos-ausschalten.service zählt danach die Zeit
-# ohne entsperrte Sitzung (BAUAUFTRAG.md, Bauauftrag 3). «auto» ist die Sitzung des Aufrufers, für Dienste der
-# Benutzerinstanz (die Oberfläche) die grafische Sitzung des Kontos.
+# ohne entsperrte Sitzung (BAUAUFTRAG.md, Bauauftrag 3).
+#
+# Die Oberfläche läuft als Dienst der Benutzerinstanz, also in keiner Sitzung; «session/auto» fände für sie keine.
+# Gemeint ist die grafische Sitzung des Kontos (Display bei logind, wie polkit sie für solche Prozesse nimmt).
+set -eu
 case "${1:-}" in
 ja) wert=true ;;
 nein) wert=false ;;
@@ -11,5 +14,18 @@ nein) wert=false ;;
 	exit 64
 	;;
 esac
-exec busctl call org.freedesktop.login1 /org/freedesktop/login1/session/auto org.freedesktop.login1.Session \
-	SetLockedHint b "$wert"
+sitzung=${XDG_SESSION_ID:-}
+[ -n "$sitzung" ] || sitzung=$(loginctl show-user "$(id -u)" -p Display --value)
+case "$sitzung" in
+"" | *[!A-Za-z0-9]*)
+	echo "gesperrt-melden: keine Sitzung gefunden" >&2
+	exit 1
+	;;
+esac
+pfad=$(busctl call org.freedesktop.login1 /org/freedesktop/login1 org.freedesktop.login1.Manager GetSession s "$sitzung" |
+	sed -n 's|^o "\(/org/freedesktop/login1/session/[A-Za-z0-9_]*\)"$|\1|p')
+[ -n "$pfad" ] || {
+	echo "gesperrt-melden: Sitzung $sitzung unbekannt" >&2
+	exit 1
+}
+exec busctl call org.freedesktop.login1 "$pfad" org.freedesktop.login1.Session SetLockedHint b "$wert"
