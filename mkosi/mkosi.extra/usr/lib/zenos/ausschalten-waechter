@@ -1,0 +1,83 @@
+#!/bin/bash
+# Leitplanke (BAUAUFTRAG.md, Bauauftrag 3, nicht abschaltbar): Solange zenOS läuft, liegt der Schlüssel der Daten im
+# Arbeitsspeicher, auch hinter der Sperre und am Login. Erst ein ausgeschaltetes Gerät ist wirklich zu. Deshalb schaltet
+# zenOS aus, wenn es 30 Minuten lang keine entsperrte Sitzung gab: gesperrt (auch über den Deckel) oder am Login nach
+# dem Entsperren der Daten. Kein Programm kann das mit einem Inhibitor verhindern.
+#
+# Läuft als eigener Systemdienst (zenos-ausschalten.service, ohne root, DynamicUser), nicht in der Sitzung: Ein Absturz
+# der Oberfläche hält ihn nicht auf. Entsperrt heisst: eine aktive Sitzung eines Kontos an seat0, nicht entfernt, deren
+# LockedHint aus ist (die Sperre setzt ihn beim Sperren und löscht ihn beim Entsperren, die Notfall-Sperre ebenso).
+# Antwortet logind nicht, gilt das als gesperrt.
+#
+# Gezählt wird mit der Laufzeit seit dem Start (/proc/uptime), nicht mit der Uhr: Ein Sprung der Uhr verlängert nichts.
+# Eine Minute vorher steht die geplante Uhrzeit in /run/zenos-ausschalten/um (Sekunden seit 1970); die Sperre zeigt dann
+# «Schaltet in 1 Minute aus». Der Zeitpunkt der letzten entsperrten Sitzung liegt in /run/zenos-ausschalten/seit, damit
+# ein Neustart des Dienstes die Zeit nicht zurücksetzt.
+set -uo pipefail
+
+# Fest 30 Minuten. Nur das Test-Image für QEMU hat /usr/lib/zenos/ausschalten-test-nach (kürzer, für den Test);
+# mkosi.finalize lässt die Datei im Image für den Argon nicht zu. /usr ist geprüft (dm-verity), sie lässt sich also
+# nicht nachträglich anlegen.
+grenze=1800
+if [[ -r /usr/lib/zenos/ausschalten-test-nach ]]; then
+	test_nach=$(head -c 16 /usr/lib/zenos/ausschalten-test-nach)
+	[[ "$test_nach" =~ ^[0-9]+$ ]] && ((test_nach >= 120 && test_nach < grenze)) && grenze=$test_nach
+fi
+vorwarnung=60
+takt=10
+ordner=${RUNTIME_DIRECTORY:-/run/zenos-ausschalten}
+um_datei=$ordner/um
+seit_datei=$ordner/seit
+
+laufzeit() {
+	local sekunden _
+	read -r sekunden _ </proc/uptime
+	printf '%s' "${sekunden%.*}"
+}
+
+# Gibt es gerade eine entsperrte Sitzung am Gerät?
+entsperrt() {
+	local sitzung zeilen
+	while read -r sitzung _; do
+		[[ "$sitzung" =~ ^[A-Za-z0-9]+$ ]] || continue
+		zeilen=$(loginctl show-session "$sitzung" -p Class -p Seat -p Remote -p Active -p LockedHint 2>/dev/null) ||
+			continue
+		if grep -qx 'Class=user' <<<"$zeilen" && grep -qx 'Seat=seat0' <<<"$zeilen" &&
+			grep -qx 'Remote=no' <<<"$zeilen" && grep -qx 'Active=yes' <<<"$zeilen" &&
+			grep -qx 'LockedHint=no' <<<"$zeilen"; then
+			return 0
+		fi
+	done < <(loginctl list-sessions --no-legend 2>/dev/null)
+	return 1
+}
+
+ausschalten() {
+	echo "zenOS war $((grenze / 60)) Minuten ohne entsperrte Sitzung: Ausschalten (Leitplanke)."
+	systemctl poweroff --no-ask-password --check-inhibitors=no ||
+		echo "zenos-ausschalten: Ausschalten abgelehnt (polkit?), nächster Versuch gleich" >&2
+}
+
+seit=$(laufzeit)
+if [[ -r "$seit_datei" ]]; then
+	gelesen=$(head -c 16 "$seit_datei")
+	[[ "$gelesen" =~ ^[0-9]+$ ]] && ((gelesen <= seit)) && seit=$gelesen
+fi
+
+while :; do
+	jetzt=$(laufzeit)
+	if entsperrt; then
+		seit=$jetzt
+		rm -f -- "$um_datei"
+	fi
+	printf '%s\n' "$seit" >"$seit_datei.neu" && mv -f -- "$seit_datei.neu" "$seit_datei"
+	rest=$((seit + grenze - jetzt))
+	if ((rest <= 0)); then
+		ausschalten
+		sleep "$takt"
+		continue
+	fi
+	if ((rest <= vorwarnung)); then
+		[[ -e "$um_datei" ]] || printf '%s\n' "$(($(date +%s) + rest))" >"$um_datei"
+	fi
+	if ((rest < takt)); then sleep "$rest"; else sleep "$takt"; fi
+done

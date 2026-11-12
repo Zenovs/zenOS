@@ -49,7 +49,7 @@ Was der CM5 nicht hat und was das heisst:
 | Eine Webseite | Lücke im Browser, Phishing | Chromium-Sandbox, JavaScript ohne JIT als Vorgabe, Safe Browsing, Passkeys, neues Image bei jeder Sicherheitsmeldung | Zero-Day bis zum nächsten signierten Image |
 | Schadsoftware (Download, Anhang) | Daten und Bank-Sitzung abgreifen, Zahlung umbiegen | nur Apps aus dem Image, keine fremden Erweiterungen, kein Admin, nichts Ausführbares ausserhalb von `/usr`; Bestätigung in Bank-App und Wallet | eine Lücke im Kernel gibt Zugriff auf alles, auch aufs Banking; die Bestätigung auf dem zweiten Gerät bleibt der Schutz fürs Geld |
 | Schadsoftware, die bleiben will | System, `/etc`, Erweiterungen aus `/var`, Bootpartition | `/usr` geprüft, `/etc` flüchtig, keine Erweiterungen aus `/var`; ab 1.0 signierter Start | bis 1.0: root kann die Bootpartition ändern |
-| Dieb | SSD ausbauen und lesen | LUKS2 für alles ausser `/usr` (das ist öffentlich) | schwaches Passwort |
+| Dieb | SSD ausbauen und lesen; den laufenden, gesperrten Laptop mitnehmen und den Arbeitsspeicher auslesen | LUKS2 für alles ausser `/usr` (das ist öffentlich); nach 30 Minuten ohne entsperrte Sitzung schaltet zenOS aus (4.3) | schwaches Passwort; in den 30 Minuten liegt der Schlüssel der Daten im Arbeitsspeicher |
 | Jemand zwingt dich | dich zwingen, den Laptop zu starten und das Passwort einzutippen | Notfall-Passwort (4.8): Es löscht in Sekunden alle Schlüssel der Daten, zenOS startet danach leer, als wäre nichts | eine Kopie der SSD, die jemand vorher zieht; die Täuschung hält nur bis zum Ausschalten |
 | «Evil Maid» | Startcode ändern, Passwort abfangen | ab 1.0 signierter Start: fremder Code startet nicht | Tausch des ganzen CM5-Moduls gegen eine Attrappe |
 | Lieferkette (Debian, Raspberry Pi, GitHub, CI, Zenos Mac, Code von Claude) | manipuliertes Paket oder Image | Debian stable, eingefrorener Paketstand, zwei Bauten, Signieren nur in einem frisch gestarteten Live-System, Durchsicht vor dem Signieren | GitHub und der zweite Bau gleichzeitig übernommen; Fehler, die bei der Durchsicht nicht auffallen |
@@ -115,6 +115,14 @@ Nicht abgedeckt: Lücken in Prozessor und Firmware, Seitenkanäle, wer das Gerä
   wpa_supplicant, polkit, greetd, chrony. Kein udisks2 (zuletzt CVE-2025-6019, ein Weg zu root), deshalb vorerst keine
   USB-Datenträger.
 - setuid nur auf einer kurzen Liste, AppArmor erzwungen, Dienste mit systemd-Sandbox.
+- **Ausschalten nach langer Sperre** (Leitplanke, nicht abschaltbar; Wunsch Zeno vom 11.11.2026, `BAUAUFTRAG.md`,
+  Bauauftrag 3): Solange zenOS läuft, liegt der Schlüssel der Daten im Arbeitsspeicher, auch hinter der Sperre und am
+  Login. Erst ein ausgeschaltetes Gerät ist wirklich zu. War zenOS 30 Minuten lang ohne entsperrte Sitzung (gesperrt,
+  auch über den Deckel, oder am Login nach dem Entsperren der Daten), schaltet es aus, und kein Programm kann das mit
+  einem Inhibitor verhindern. Ein Systemdienst ohne root zählt das über logind (LockedHint, den die Sperre setzt), mit
+  der Laufzeit statt der Uhr; eine Minute vorher zeigt die Sperre «Schaltet in 1 Minute aus». Verloren geht dabei
+  nichts, was bleiben soll: Downloads und Browserdaten sind ohnehin flüchtig. Fest 30 Minuten; nur das Test-Image für
+  QEMU hat eine kürzere Zeit, und der Bau des Argon-Images bricht ab, wenn sie dort auftaucht.
 - **Nur Pakete mit voller Sicherheitsunterstützung von Debian** (`check-support-status` im Bau). Ausnahmen mit Grund:
   Firmware (ohne sie startet nichts), der Kernel (4.2) und Quickshell. Quickshell ist nicht in trixie, und forky hat
   erst 0.2.1; die Oberfläche von 0.1 braucht 0.3.1. zenOS baut deshalb wie 0.1 genau den Commit von v0.3.1 aus dem

@@ -230,12 +230,26 @@ function vorwarnungSchritt(z, jetzt) {
 
 // Zeile auf der Sperre und am Login-Bildschirm (Uhrzeiten als «HH:mm», leer: keine). Der leere Akku (zenos-argon) hat
 // Vorrang: Dort bricht nur das Netzteil ab.
-function vorwarnungText(akkuUhrzeit, uhrzeit) {
+// langeSperre: Die Leitplanke «nach 30 Minuten ohne entsperrte Sitzung ausschalten» (zenos-ausschalten.service) schaltet
+// in einer Minute aus. Nur Entsperren hält sie auf, keine Taste.
+function vorwarnungText(akkuUhrzeit, uhrzeit, langeSperre) {
     if (typeof akkuUhrzeit === "string" && akkuUhrzeit.length > 0)
         return "Akku fast leer: zenOS schaltet um " + akkuUhrzeit + " aus · Netzteil anschliessen bricht ab";
+    if (langeSperre === true)
+        return "Schaltet in 1 Minute aus";
     if (typeof uhrzeit === "string" && uhrzeit.length > 0)
         return "zenOS schaltet um " + uhrzeit + " aus · Eine Taste bricht ab";
     return "";
+}
+
+// Inhalt von /run/zenos-ausschalten/um (Sekunden seit 1970, von zenos-ausschalten.service eine Minute vorher
+// geschrieben): true, solange der Zeitpunkt höchstens zwei Minuten entfernt und nicht länger als eine Minute vorbei ist.
+function langeSperreAus(text, jetztMs) {
+    const um = parseInt(String(text ?? "").trim(), 10);
+    if (!(um > 0))
+        return false;
+    const rest = um * 1000 - jetztMs;
+    return rest <= 120000 && rest > -60000;
 }
 
 // --- Wecktaste der Sperre -----------------------------------------------------

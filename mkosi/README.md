@@ -120,6 +120,13 @@ eine Kopie der SSD, die jemand vorher zieht und ohne den Startcode von zenOS unt
 hält bis zum Ausschalten. Wer danach den LUKS-Kopf ansieht, sieht, dass die Schlüssel fehlen, und ein LUKS-Kopf auf
 `zenos-notfall` verrät, dass es ein Notfall-Passwort gibt.
 
+## Ausschalten nach langer Sperre
+
+War zenOS 30 Minuten lang ohne entsperrte Sitzung, schaltet es aus: gesperrt (auch über den Deckel) oder am Login nach
+dem Entsperren der Daten. Eine Minute vorher zeigt die Sperre «Schaltet in 1 Minute aus»; Entsperren setzt die Zeit
+zurück. Kein Programm kann es aufhalten. Erst ausgeschaltet ist der Schlüssel der Daten aus dem Arbeitsspeicher.
+Downloads und Browserdaten sind ohnehin flüchtig. Im Test-Image für QEMU sind es 5 Minuten.
+
 ## Notausgang
 
 Scheitert der grafische Login zweimal schnell hintereinander (etwa ein Problem mit der Grafik), kommt stattdessen der

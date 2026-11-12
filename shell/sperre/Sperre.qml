@@ -87,8 +87,24 @@ Scope {
     readonly property string ausschaltenUm: Energie.vorwarnungLaeuft && Energie.ausschaltenUm > 0 ? Qt.formatDateTime(new Date(Energie.ausschaltenUm), "HH:mm") : ""
     // Uhrzeit des Ausschaltens bei leerem Akku (zenos-argon), z. B. «22:41» (leer: keins)
     readonly property string akkuAusschaltenUm: Geraet.akkuAusschaltenUm > 0 ? Qt.formatDateTime(new Date(Geraet.akkuAusschaltenUm), "HH:mm") : ""
-    // Zeile auf der Sperre: leerer Akku vor der Vorwarnung nach langer Sperre
-    readonly property string vorwarnungText: EnergieLogik.vorwarnungText(akkuAusschaltenUm, ausschaltenUm)
+    // Leitplanke «nach 30 Minuten ohne entsperrte Sitzung ausschalten» (BAUAUFTRAG.md, Bauauftrag 3): in einer Minute
+    property bool langeSperreAus: false
+    // Zeile auf der Sperre: leerer Akku vor dem Ausschalten nach langer Sperre, dann die Vorwarnung aus 0.1
+    readonly property string vorwarnungText: EnergieLogik.vorwarnungText(akkuAusschaltenUm, ausschaltenUm, langeSperreAus)
+
+    // LockedHint bei logind (Bauauftrag 3): zenos-ausschalten.service zählt die Zeit ohne entsperrte Sitzung. Gemeldet
+    // wird über /usr/lib/zenos/gesperrt-melden (Argumentliste), immer der letzte Stand, auch bei schnellem Wechsel.
+    property bool _hinweisSoll: false
+    function gesperrtMelden(gesperrt: bool): void {
+        root._hinweisSoll = gesperrt;
+        if (!hinweisMelden.running)
+            root._hinweisStarten();
+    }
+    function _hinweisStarten(): void {
+        hinweisMelden.wert = root._hinweisSoll;
+        hinweisMelden.command = [Pfade.bin + "/gesperrt-melden", root._hinweisSoll ? "ja" : "nein"];
+        hinweisMelden.running = true;
+    }
 
     // Der Bildschirm ist aus bzw. wieder an (Meldung von zenos-bildschirm oder eigener Aufruf über Energie)
     function bildschirmGemeldet(was: string): void {
@@ -271,6 +287,7 @@ Scope {
         id: lock
 
         onLockStateChanged: {
+            root.gesperrtMelden(locked);
             if (locked)
                 return;
             Oberflaeche.gesperrt = false;
@@ -612,6 +629,38 @@ Scope {
                 root._meldungZeigen("Anmeldung gerade nicht möglich.");
             }
         }
+    }
+
+    Process {
+        id: hinweisMelden
+
+        property bool wert: false
+
+        onExited: (code, status) => {
+            if (code !== 0)
+                console.warn("Sperre: LockedHint liess sich nicht melden (" + code + ")");
+            if (root._hinweisSoll !== wert)
+                Qt.callLater(root._hinweisStarten);
+        }
+    }
+
+    // Vorwarnung von zenos-ausschalten.service (Sekunden seit 1970, eine Minute vorher; fehlt sonst)
+    FileView {
+        id: ausschaltenDatei
+
+        path: "/run/zenos-ausschalten/um"
+        printErrors: false
+        watchChanges: true
+        onFileChanged: reload()
+        onLoaded: root.langeSperreAus = EnergieLogik.langeSperreAus(text(), Date.now())
+        onLoadFailed: root.langeSperreAus = false
+    }
+    Timer {
+        interval: 5000
+        repeat: true
+        running: lock.locked
+        onTriggered: ausschaltenDatei.reload()
+        onRunningChanged: if (!running) root.langeSperreAus = false
     }
 
     Process {

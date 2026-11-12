@@ -24,4 +24,10 @@ if /usr/lib/zenos/ipc sperre sperren >/dev/null 2>&1; then
 	done
 fi
 echo "sperren: Die Oberfläche antwortet nicht, Notfall-Sperre mit swaylock" >&2
-exec swaylock -f -c 000000
+# LockedHint wie die Sperre der Oberfläche (BAUAUFTRAG.md, Bauauftrag 3): swaylock läuft hier im Vordergrund, bis
+# entsperrt ist; erst dann ist die Sitzung wieder offen.
+/usr/lib/zenos/gesperrt-melden ja >/dev/null 2>&1 || true
+swaylock -c 000000
+ergebnis=$?
+/usr/lib/zenos/gesperrt-melden nein >/dev/null 2>&1 || true
+exit "$ergebnis"

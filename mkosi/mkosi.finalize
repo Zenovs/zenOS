@@ -142,6 +142,22 @@ printf '%s-%s-%sT%s:%s:%sZ\n' "${staende:0:4}" "${staende:4:2}" "${staende:6:2}"
 chmod 0644 "$R/usr/lib/zenos/paketstand"
 echo "zenOS-Prüfung: Paketstand $(cat "$R/usr/lib/zenos/paketstand")"
 
+# --- 3e. Ausschalten nach langer Sperre (BAUAUFTRAG.md, Bauauftrag 3) --------------------------------------------
+# Leitplanke: fest 30 Minuten im Image für den Argon. Nur das Test-Image für QEMU darf eine kürzere Zeit haben
+# (/usr/lib/zenos/ausschalten-test-nach), und der Dienst muss eingeschaltet sein.
+grep -qx 'grenze=1800' "$R/usr/lib/zenos/ausschalten-waechter" || fehler "ausschalten-waechter: nicht fest 30 Minuten"
+grep -qx 'enable zenos-ausschalten.service' "$R/usr/lib/systemd/system-preset/10-zenos.preset" ||
+	fehler "zenos-ausschalten.service ist nicht eingeschaltet (10-zenos.preset)"
+[[ -f "$R/etc/polkit-1/rules.d/50-zenos-ausschalten.rules" ]] || fehler "polkit-Regel für zenos-ausschalten fehlt"
+if [[ ",${PROFILES:-}," == *",argon,"* ]]; then
+	[[ ! -e "$R/usr/lib/zenos/ausschalten-test-nach" ]] ||
+		fehler "ausschalten-test-nach darf nur ins Test-Image für QEMU (der Argon schaltet fest nach 30 Minuten aus)"
+	echo "zenOS-Prüfung: Ausschalten nach 30 Minuten ohne entsperrte Sitzung (fest)"
+else
+	nach=$(cat "$R/usr/lib/zenos/ausschalten-test-nach" 2>/dev/null || echo 1800)
+	echo "zenOS-Prüfung: Ausschalten nach langer Sperre, im Test-Image nach $nach s"
+fi
+
 # --- 4. Bootpartition (nur Profil argon) ------------------------------------------------------------------------
 # Gerätebäume und Overlays des Kernels von Raspberry Pi und config.txt für mkosi.postoutput bereitlegen.
 if [[ ",${PROFILES:-}," == *",argon,"* ]]; then

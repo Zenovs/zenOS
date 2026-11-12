@@ -20,6 +20,8 @@ enable zenos-konto.service
 enable zenos-notfall-name.service
 enable zenos-attrappe.service
 enable zenos-notfall.socket
+# Leitplanke: nach 30 Minuten ohne entsperrte Sitzung ausschalten (Bauauftrag 3)
+enable zenos-ausschalten.service
 enable zenos-update-pruefen.service
 
 disable *

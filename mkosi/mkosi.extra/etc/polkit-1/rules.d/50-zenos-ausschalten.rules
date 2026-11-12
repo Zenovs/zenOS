@@ -1,0 +1,13 @@
+// zenOS 1.0: Leitplanke «nach 30 Minuten ohne entsperrte Sitzung ausschalten» (BAUAUFTRAG.md, Bauauftrag 3). Nur das
+// Konto des Dienstes zenos-ausschalten.service (DynamicUser, kein root) darf ausschalten, auch wenn ein Programm es mit
+// einem Inhibitor aufhalten will oder noch eine andere Sitzung offen ist. Neu starten oder sonst etwas darf es nicht.
+polkit.addRule(function (action, subject) {
+    var erlaubt = [
+        "org.freedesktop.login1.power-off",
+        "org.freedesktop.login1.power-off-ignore-inhibit",
+        "org.freedesktop.login1.power-off-multiple-sessions"
+    ];
+    if (subject.user == "zenos-ausschalten" && erlaubt.indexOf(action.id) >= 0) {
+        return polkit.Result.YES;
+    }
+});
