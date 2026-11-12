@@ -21,12 +21,51 @@ mit Oberfläche und Updates über `zen update`. Die SSD kommt danach nicht mehr 
 | Schlüssel für Updates | wartet auf Zeno | `mkosi/schluessel/zenos-updates.asc` (öffentlich); ohne ihn baut das Image für den Argon nicht |
 | Härtung, Browser | fertig | wie zuvor; Chromium 156 mit Richtlinien |
 | Angriffstests | fertig | `mkosi/test/starten.sh`: System und Härtung, Oberfläche (Login wie ein Mensch, Apps, Befehlsfeld, Sperre, Bildschirmfotos unter `mkosi/ausgabe/test/`), Erinnerung, Update-Test (`ZENOS_TEST_NEU=<version>`), zweiter Start. Einheitentests: `update-einheiten.sh`, `erinnerung-einheiten.sh` |
-| Deckel | gebaut, Test geschrieben | Overlay `mkosi/start/zenos-deckel.dts`: GPIO27 des RP1 mit Pull-up als `gpio-keys`-Schalter SW_LID (aktiv tief: Pegel 0 heisst zu), nur im Abschnitt `[cm5]`. logind sperrt beim Zuklappen immer (`HandleLidSwitch*=lock`, `LidSwitchIgnoreInhibited=yes`, keine Schonfrist nach dem Start), über denselben Weg wie die Ein/Aus-Taste (Lock → swayidle → `/usr/lib/zenos/sperren`). `mkosi.finalize` übersetzt das Overlay und wendet es auf den Gerätebaum des CM5 Lite an, sonst bricht der Bau ab; `startpartitionen.sh` prüft es im fertigen Image, `erster-start.py` den Weg über logind in QEMU. Am 11.11.2026 gegen `bcm2712-rpi-cm5l-cm5io.dtb` der Firmware von Raspberry Pi geprüft (fdtoverlay). Bauen und QEMU-Test auf dem Mac stehen aus. |
-| Browser ohne Spuren | gebaut, Test geschrieben | Chromium-Richtlinien: kein Verlauf, Cookies nur für die Sitzung, beim Beenden Cookies, Website-Daten, Cache, Formulardaten, Anmeldedaten und Download-Verlauf löschen, keine Wiederherstellung der Sitzung. Downloads nur im Arbeitsspeicher (`~/Downloads` → `$XDG_RUNTIME_DIR/zenos/downloads`, `sitzung`). Lesezeichen, Einstellungen pro Website und Erweiterungsdaten bleiben. QEMU-Test prüft den tmpfs; Bau und Test auf dem Mac stehen aus. |
-| Notfall-Passwort | offen | Bauauftrag 2 vom 11.11.2026 (`BAUAUFTRAG.md`): eigene Partition `zenos-notfall`, eigene Passwortabfrage, Löschen der Schlüssel, Attrappe im Arbeitsspeicher mit angemeldetem leerem Konto, `zen notfall`. |
+| Deckel | gebaut, Test grün (QEMU 12.11.2026) | Overlay `mkosi/start/zenos-deckel.dts`: GPIO27 des RP1 mit Pull-up als `gpio-keys`-Schalter SW_LID (aktiv tief: Pegel 0 heisst zu), nur im Abschnitt `[cm5]`. logind sperrt beim Zuklappen immer (`HandleLidSwitch*=lock`, `LidSwitchIgnoreInhibited=yes`, keine Schonfrist nach dem Start), über denselben Weg wie die Ein/Aus-Taste (Lock → swayidle → `/usr/lib/zenos/sperren`). `mkosi.finalize` übersetzt das Overlay und wendet es auf den Gerätebaum des CM5 Lite an, sonst bricht der Bau ab; `startpartitionen.sh` prüft es im fertigen Image, `erster-start.py` den Weg über logind in QEMU. Am 11.11.2026 gegen `bcm2712-rpi-cm5l-cm5io.dtb` der Firmware von Raspberry Pi geprüft (fdtoverlay); am 12.11.2026 auf dem Mac gebaut, `startpartitionen.sh` (11 Prüfungen) und QEMU grün. Das Zuklappen selbst prüft erst Zeno am Argon. |
+| Browser ohne Spuren | gebaut, Test grün (QEMU 12.11.2026) | Chromium-Richtlinien: kein Verlauf, Cookies nur für die Sitzung, beim Beenden Cookies, Website-Daten, Cache, Formulardaten, Anmeldedaten und Download-Verlauf löschen, keine Wiederherstellung der Sitzung. Downloads nur im Arbeitsspeicher (`~/Downloads` → `$XDG_RUNTIME_DIR/zenos/downloads`, `sitzung`). Lesezeichen, Einstellungen pro Website und Erweiterungsdaten bleiben. QEMU-Test prüft den tmpfs (45 von 45 Prüfungen grün am 12.11.2026). |
+| Notfall-Passwort | in Arbeit | Bauauftrag 2 vom 11.11.2026 (`BAUAUFTRAG.md`): eigene Partition `zenos-notfall`, eigene Passwortabfrage, Löschen der Schlüssel, Attrappe im Arbeitsspeicher mit angemeldetem leerem Konto, `zen notfall`. |
 | Ausschalten nach langer Sperre | offen | Bauauftrag 3 vom 11.11.2026: nach 30 Minuten ohne entsperrte Sitzung (Sperre, Deckel, Login) ausschalten, Leitplanke; Hinweis eine Minute vorher. |
 | Hardware-Schlüssel (FIDO2) | offen | Bauauftrag 4 vom 11.11.2026: Start, Anmelden und Entsperren nur mit Passwort plus Schlüssel; zwei Schlüssel, Notweg über den Wiederherstellungsschlüssel, `zen schluessel`; zusammen mit dem Notfall-Passwort planen. |
 | Abnahme auf dem Argon ONE UP | offen | Zeno schreibt das Image auf die SSD (Befehle in `mkosi/README.md`) |
+
+**Plan für Bauauftrag 2 und 4 (12.11.2026, zusammen geplant, 2 zuerst):**
+
+- **Partition:** `40-zenos-notfall.conf` (32 MB, `linux-generic`, Label `zenos-notfall`) entsteht beim ersten Start vor
+  `zenos-daten`. `daten-anlegen` nullt sie sofort: Auf der SSD liegen alte Daten von 0.1, ein alter LUKS-Kopf darin sähe
+  sonst wie ein Notfall-Container aus. Die Datenpartition wird damit Nummer 9.
+- **`zenos-entsperren.service`** ersetzt den Eintrag in `/etc/crypttab`: auf der Konsole wie `daten-schuetzen`
+  (`tty-force`), `TimeoutStartSec=infinity`; `/etc/fstab` verlangt den Dienst (`x-systemd.requires=`,
+  `x-systemd.device-timeout=0`). Ablauf: Eingabe mit `systemd-ask-password`; sieht sie aus wie ein
+  Wiederherstellungsschlüssel, normalisieren (klein, Bindestriche). Dann die Daten öffnen (`cryptsetup open
+  --key-file=-`, Passwort per `printf` über eine Pipe). Erst wenn das scheitert und `zenos-notfall` LUKS ist:
+  `--test-passphrase` dagegen. Mit Bauauftrag 4 öffnen die Daten nur noch Plätze aus Passwort und Schlüssel (unten);
+  ist kein Schlüssel eingesteckt, kann die Eingabe die echten Daten gar nicht öffnen, dann wird gleich das
+  Notfall-Passwort geprüft, und sonst kommt «Schlüssel einstecken und berühren».
+- **Notfall:** Namen lesen und Container schliessen, `luksErase` der Daten, Notfall-Partition nullen, `luksDump`
+  prüfen (scheitert etwas: trotzdem weiter). Attrappe: zram, darauf `cryptsetup open --type plain` mit Zufallsschlüssel
+  unter dem Namen `daten`, ext4 mit `home`. Marker `/run/zenos/attrappe` (Name), Notfall-Passwort mit `keyctl padd` in
+  den Schlüsselbund von root (Zeitlimit 5 Min.). `zenos-attrappe.service` (nach homed, vor greetd) legt das Konto an
+  (`directory`), aktiviert es und schreibt eine Konfiguration von greetd mit `[initial_session]` nach `/run`;
+  `/usr/lib/zenos/greetd-starten` nimmt sie nur, wenn es sie gibt. Im Notfall-Zustand: kein `zen update`, keine
+  Erinnerung.
+- **Erster Start** (`daten-schuetzen`): Tastatur, Kontoname (für den Notfall-Container und `zenos-konto`), Passwort,
+  [4: Schlüssel 1 und 2], Wiederherstellungsschlüssel, Notfall-Passwort (Enter = keins, zweimal; abgelehnt, wenn es
+  die Daten öffnet). `zenos-konto` legt das Konto unter diesem Namen an.
+- **`zen notfall`:** `zenos-notfall.socket` (`Accept=yes`) mit `zenos-notfall@.service` als root. systemd gibt im
+  Namen der Instanz PID und UID des Aufrufers mit (SO_PEERCRED); angenommen wird nur eine aktive, lokale grafische
+  Sitzung dieser UID (wie polkit bei `zen update`). Der Aufrufer ist `varlinkctl`, die Parameter kommen über stdin
+  (geprüft am 12.11.2026), die Passwörter hex-kodiert; der Dienst prüft die Anfrage mit einem strengen Muster statt
+  eines JSON-Parsers.
+- **Bauauftrag 4:** Pro Schlüssel ein LUKS-Platz mit der Passphrase aus dem hmac-secret des Schlüssels, Salz =
+  SHA-256 aus festem Präfix, Zufallssalz des Platzes und Passwort; Credential und Salz als LUKS-Token
+  `zenos-fido2`. Kein Platz mit dem Passwort allein; der Wiederherstellungsschlüssel bleibt der einzige Weg ohne
+  Schlüssel. Anmelden und Sperre: Passwort (homed) und `pam_u2f` mit einer Liste unter `/var/lib/zenos`, die nur root
+  schreibt. In der Attrappe nimmt die Sperre die Berührung eines beliebigen FIDO2-Schlüssels an. Test in QEMU mit
+  einem nachgebauten FIDO2-Schlüssel (Python in der Bauumgebung über uhid an `u2f-passthru` von QEMU; Debians QEMU hat
+  keinen canokey).
+- **Pakete:** `cryptsetup-bin` (luksFormat, luksErase, Test der Passwörter), `keyutils` (Übergabe an die Attrappe), mit
+  Bauauftrag 4 `fido2-tools`, `libpam-u2f`, `pamu2fcfg`. zram ist im Kernel von Raspberry Pi (Modul), brd fest mit 4 MB
+  (zu klein).
 
 **Hier geht es weiter:** Bauauftrag 2 (Notfall-Passwort), 3 (Ausschalten nach langer Sperre) und 4 (Hardware-Schlüssel, mit 2 zusammen geplant) umsetzen und in QEMU testen, dazu den Deckel und den Browser
 ohne Spuren mitbauen und testen. Parallel, wie bisher: Image für den Argon bauen, sobald Zenos Schlüssel da ist (`mkosi/schluessel/zenos-updates.asc`,
