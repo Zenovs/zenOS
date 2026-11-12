@@ -95,7 +95,10 @@ Scope {
     // LockedHint bei logind (Bauauftrag 3): zenos-ausschalten.service zählt die Zeit ohne entsperrte Sitzung. Gemeldet
     // wird über /usr/lib/zenos/gesperrt-melden (Argumentliste), immer der letzte Stand, auch bei schnellem Wechsel.
     property bool _hinweisSoll: false
+    // Aufgerufen von sperren() und _entsperren() (eigene Wechsel) und wenn labwc die Sperre beendet: onLockStateChanged
+    // kommt beim eigenen Sperren nicht (in QEMU geprüft).
     function gesperrtMelden(gesperrt: bool): void {
+        console.info("Sperre: LockedHint " + (gesperrt ? "ja" : "nein"));
         root._hinweisSoll = gesperrt;
         if (!hinweisMelden.running)
             root._hinweisStarten();
@@ -161,8 +164,10 @@ Scope {
             _zuruecksetzen();
             lock.locked = true;
             // Ohne ext-session-lock bleibt locked false
-            if (lock.locked)
+            if (lock.locked) {
                 Oberflaeche.gesperrt = true;
+                root.gesperrtMelden(true);
+            }
             // Erst sperren, dann schliessen: Was beim Schliessen schiefgeht, hält die Sperre nicht auf.
             // Für labwc ist die Reihenfolge gleich, es gibt die Fläche auch während der Sperre frei.
             _overlaysSchliessen(true);
@@ -233,6 +238,7 @@ Scope {
         root._gehalten = -1;
         lock.locked = false;
         Oberflaeche.gesperrt = false;
+        root.gesperrtMelden(false);
         _zuruecksetzen();
         _aufraeumen();
         // Dunkel heisst gesperrt: Entsperrt ist der Bildschirm immer an, auch wenn die Sperre nichts von «aus» wusste
@@ -289,9 +295,9 @@ Scope {
         id: lock
 
         onLockStateChanged: {
-            root.gesperrtMelden(locked);
             if (locked)
                 return;
+            root.gesperrtMelden(false);
             Oberflaeche.gesperrt = false;
             // Beendet labwc die Sperre von sich aus (z. B. weil schon ein anderes Programm sperrt),
             // bleibt kein alter Marker liegen.
