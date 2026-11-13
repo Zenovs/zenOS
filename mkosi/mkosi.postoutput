@@ -54,6 +54,27 @@ printf 'root=/dev/mapper/root rootfstype=erofs ro rootwait roothash=%s systemd.v
 cp "${kernel[0]}" "$start/kernel_2712.img"
 cp "${initrd[0]}" "$start/initramfs_2712"
 
+# Die drei FAT-Partitionen neu formatieren, mit 512 Byte pro Sektor. systemd-repart legt FAT mit 4096 Byte pro Sektor
+# an; der Bootloader von Raspberry Pi rechnet immer mit 512 und findet dann weder autoboot.txt noch config.txt. Am Argon
+# gesehen am 13.11.2026: «Trying partition: 2 … clusters 524128 (1)», danach 3 und 4, dann von vorn. In QEMU fällt das
+# nicht auf (UEFI kann beides). Cluster von 2 KiB wie bei Raspberry Pi OS; Partition 1 (64 MB) hätte damit zu wenige
+# Cluster für FAT32 und bekommt 512 Byte. «hidden sectors» = Beginn der Partition, wie bei einem mkfs auf der Partition
+# selbst (Raspberry Pi OS). Volume-ID aus der Partitions-UUID, damit derselbe Stand dasselbe Image ergibt.
+fat_neu() { # NAME LABEL SEKTOREN_PRO_CLUSTER
+	local beginn groesse uuid datei
+	read -r beginn groesse uuid < <(jq -r --arg n "$1" \
+		'.partitiontable.partitions[] | select(.name == $n) | "\(.start) \(.size) \(.uuid)"' <<<"$tabelle")
+	[[ "$beginn" =~ ^[0-9]+$ && "$groesse" =~ ^[0-9]+$ ]] || fehler "Partition $1 nicht gefunden"
+	datei=$(mktemp)
+	truncate -s $((groesse * sektor)) "$datei"
+	mkfs.fat -F 32 -S 512 -s "$3" -h "$beginn" -n "$2" -i "${uuid:0:8}" "$datei" >/dev/null || fehler "mkfs.fat für $1"
+	dd if="$datei" of="$img" bs="$sektor" seek="$beginn" conv=notrunc status=none
+	rm -f "$datei"
+}
+fat_neu zenos-start ZENOS-START 1
+fat_neu "zenos-start_$version" ZENOS-START 4
+fat_neu _empty _EMPTY 4
+
 export MTOOLS_SKIP_CHECK=1
 mcopy -o -s -i "$img@@$((start_a * sektor))" "$start"/* ::/
 rm -rf "$start"
@@ -65,4 +86,10 @@ printf '[all]\ntryboot_a_b=1\nboot_partition=2\n[tryboot]\nboot_partition=3\n' >
 mcopy -o -i "$img@@$((auswahl * sektor))" "$auswahl_datei" ::/autoboot.txt
 rm -f "$auswahl_datei"
 
+# Kontrolle: Alle drei FAT-Partitionen haben 512 Byte pro Sektor (BPB, Bytes 11 und 12).
+for name in zenos-start "zenos-start_$version" _empty; do
+	beginn=$(beginn "$name")
+	bps=$(od -An -tu2 --endian=little -j $((beginn * sektor + 11)) -N 2 "$img" | tr -d ' ')
+	[[ "$bps" == 512 ]] || fehler "$name hat $bps Byte pro Sektor, der Bootloader braucht 512"
+done
 echo "zenOS-Bootpartition: autoboot.txt auf Partition 1, Kernel, initrd, Gerätebäume, config.txt und cmdline.txt auf Startpartition A (Wurzel-Hash ${roothash:0:12}…)"

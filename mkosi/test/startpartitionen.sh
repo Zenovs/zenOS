@@ -58,6 +58,11 @@ echo "--- Prüfungen"
 pruefe $? "die ersten drei Partitionen sind FAT-Startpartitionen (ESP), wie der Bootloader es für tryboot braucht"
 [[ "$(feld 1 6)" == zenos-start && -n "$version" && "$(feld 3 6)" == _empty ]]
 pruefe $? "Bezeichnungen: zenos-start, zenos-start_$version, _empty"
+# Der Bootloader von Raspberry Pi liest FAT nur mit 512 Byte pro Sektor; systemd-repart legt 4096 an (mkosi.postoutput
+# formatiert neu). Am Argon gesehen am 13.11.2026: Er fand config.txt nicht und probierte eine Partition nach der anderen.
+sektoren=$(for n in 1 2 3; do od -An -tu2 --endian=little -j $(($(feld "$n" 2) * 512 + 11)) -N 2 "$bild" | tr -d ' '; done | paste -sd ' ' -)
+[[ "$sektoren" == "512 512 512" ]]
+pruefe $? "die drei Startpartitionen haben 512 Byte pro Sektor, wie der Bootloader sie lesen kann ($sektoren)"
 [[ "$(feld 4 6)" == "zenos_${version}_verity" && "$(feld 5 6)" == "zenos_$version" ]]
 pruefe $? "Prüfsummen und System A tragen die Version $version"
 
