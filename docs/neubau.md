@@ -53,7 +53,7 @@ Was der CM5 nicht hat und was das heisst:
 | Dieb | SSD ausbauen, kopieren und in Ruhe Passwörter durchprobieren; den laufenden, gesperrten Laptop mitnehmen und den Arbeitsspeicher auslesen | LUKS2 für alles ausser `/usr` (das ist öffentlich), geöffnet nur mit Passwort und Hardware-Schlüssel (4.9), also kein Durchprobieren an einer Kopie; nach 30 Minuten ohne entsperrte Sitzung schaltet zenOS aus (4.3) | Laptop und Schlüssel zusammen gestohlen und das Passwort bekannt; in den 30 Minuten liegt der Schlüssel der Daten im Arbeitsspeicher |
 | Jemand zwingt dich | dich zwingen, den Laptop zu starten und das Passwort einzutippen | Notfall-Passwort (4.8): Es löscht in Sekunden alle Schlüssel der Daten, zenOS startet danach leer, als wäre nichts | eine Kopie der SSD, die jemand vorher zieht; die Täuschung hält nur bis zum Ausschalten |
 | «Evil Maid» | Startcode ändern, Passwort abfangen | ab 1.0 signierter Start: fremder Code startet nicht | Tausch des ganzen CM5-Moduls gegen eine Attrappe |
-| Lieferkette (Debian, Raspberry Pi, GitHub, CI, Zenos Mac, Code von Claude) | manipuliertes Paket oder Image | Debian stable, eingefrorener Paketstand, zwei Bauten, Signieren nur in einem frisch gestarteten Live-System, Durchsicht vor dem Signieren | GitHub und der zweite Bau gleichzeitig übernommen; Fehler, die bei der Durchsicht nicht auffallen |
+| Lieferkette (Debian, Raspberry Pi, GitHub, CI, Zenos Mac, Code von Claude) | manipuliertes Paket oder Image | Debian stable, eingefrorener Paketstand, zwei Bauten, Signieren nur mit Zenos FIDO2-Schlüssel (PIN und Berührung), Durchsicht vor dem Signieren | ein manipulierter Stand vom Mac, den Zeno signiert, weil er bei der Durchsicht nicht auffällt; GitHub und der zweite Bau gleichzeitig übernommen |
 | Manipulierte Wallet-Erweiterung oder Web-App (wie Ledger Connect Kit 2023) | falsche Empfängeradresse | Hardware-Wallet zeigt Empfänger und Betrag auf ihrem eigenen Display | wer dort nicht hinschaut |
 
 Nicht abgedeckt: Lücken in Prozessor und Firmware, Seitenkanäle, wer das Gerät lange in der Hand hat und Hardware umbaut.
@@ -245,14 +245,19 @@ Das ersetzt den Sicherheitschip, den der CM5 nicht hat.
 - Zwei Bauten: arm64-Runner von GitHub und eine Linux-VM auf dem Mac. Signiert wird nur, wenn beide dasselbe ergeben;
   ob mkosi Bit für Bit gleich baut, wird gemessen.
 - CI ist nicht vertrauenswürdig: keine Geheimnisse in GitHub, fremde Actions nur mit festem Commit-Hash.
-- **Signiert wird in einem frisch gestarteten Live-System vom USB-Stick, nie auf dem Mac, auf dem Claude Code läuft.**
-  Es lädt die Images selbst, vergleicht die Prüfsummen mit dem zweiten Bau und zeigt geänderte Pakete und Commits.
-  Erst dann signiert Zeno. Der Mac lädt die Signaturen hoch und kann sie zurückhalten, aber nicht fälschen.
-- Schlüssel auf einem Hardware-Schlüssel mit PIN und Berührung (zum Beispiel YubiKey 5 oder Nitrokey 3), dazu ein
-  zweiter als Ersatz und eine verschlüsselte Sicherung offline. Bis sie da sind, gilt ein vorläufiger Schlüssel; der
-  erste Stand mit dem Hardware-Schlüssel wird noch mit dem vorläufigen signiert, danach gilt nur noch der neue. Den
-  Schlüssel für den signierten Start verlangen die Werkzeuge von Raspberry Pi als RSA-Datei; ob er auf den
-  Hardware-Schlüssel kann (PKCS#11), wird geprüft.
+- **Signiert wird nur mit Zenos FIDO2-Schlüsseln** (Entscheid Zeno, 13.11.2026; `docs/signieren.md`): je ein
+  Signaturschlüssel `ed25519-sk` von OpenSSH auf seinen zwei Security Keys, der geheime Teil verlässt sie nie. Zeno
+  signiert `SHA256SUMS` in seinem Terminal am Mac (`ssh-keygen -Y sign`), mit PIN und Berührung; der Argon prüft mit
+  `ssh-keygen -Y verify` und verlangt beide Flags in der Signatur. Claude löst nie eine Signatur aus. Der Mac kann eine
+  Signatur zurückhalten, aber keine ohne Zenos Berührung erzeugen.
+- **Grenze:** Gebaut wird der Stand auf dem Mac, mit Claude. Was Zeno dort signiert, ist so gut wie der Stand, den er
+  vorgelegt bekommt. Die Signatur schützt vor einem gestohlenen Schlüssel, vor einer Übernahme von GitHub und vor jedem
+  Update ohne Zenos Handlung, nicht vor einem manipulierten Bau. Dagegen helfen der zweite Bau und die Durchsicht vor
+  dem Signieren (1.0).
+- Vorher geplant war ein GPG-Schlüssel in einem Live-System vom USB-Stick auf einem eigenen Signierrechner. Verworfen:
+  Zeno hat keinen zweiten Rechner dafür, und ein Hardware-Schlüssel mit Berührung schützt den Schlüssel genauso, ohne
+  dass er je als Datei existiert. Den Schlüssel für den signierten Start (1.0) verlangen die Werkzeuge von Raspberry Pi
+  als RSA-Datei; ob er auf einen Hardware-Schlüssel kann (PKCS#11), wird geprüft.
 - **KI:** Claude schreibt einen Grossteil des Codes. Deshalb: wenig eigener Code, keiner mit root-Rechten auf dem Gerät;
   Zeno sieht vor dem Signieren jeden Commit; Claude hat nie Zugriff auf die Schlüssel. Kein Release-Image enthält KI.
 - **Entwicklung nicht mehr auf dem Laptop:** Claude Code arbeitet auf dem Mac (Container und QEMU) und, für den
@@ -264,7 +269,7 @@ Das ersetzt den Sicherheitschip, den der CM5 nicht hat.
 | Stufe | Inhalt | Für Banking und Krypto |
 |---|---|---|
 | **Vorschau 1** (in den nächsten Tagen) | startet auf dem Argon von USB-Stick oder SSD: `/usr` geprüft, `/etc` flüchtig, LUKS2, kein SSH, kein Admin, kein Paketmanager, Firewall zu, Zeit über NTS, Kernel-Härtung, Chromium mit Richtlinien und Wallet-Regeln, Grundfunktionen der Oberfläche (Login, Leiste, Apps starten, Sperre, WLAN) | **nein:** noch keine Updates, und ein Browser ohne Updates ist nach wenigen Wochen unsicher |
-| **Vorschau 2** (rund zwei Wochen danach) | signierte Updates über sysupdate mit `tryboot`, vorläufiger Schlüssel, Signieren im Live-System, Mitteilung nach 14 Tagen, mehr Funktionen aus 0.1 (Befehlsfeld, Mitteilungen, Akku, Bluetooth) | **ja** |
+| **Vorschau 2** (rund zwei Wochen danach) | signierte Updates über sysupdate mit `tryboot`, signiert mit Zenos FIDO2-Schlüssel (PIN und Berührung), Mitteilung nach 14 Tagen, mehr Funktionen aus 0.1 (Befehlsfeld, Mitteilungen, Akku, Bluetooth) | **ja** |
 | **1.0** (Wochen danach) | eigener Kernel mit Lockdown, signierter Start mit OTP (zuerst auf dem Test-Pi), Hardware-Schlüssel, zweiter Bau, alle Angriffstests, Durchsicht von aussen | ja, mit vollem Schutz |
 
 Entscheid Zeno (10.11.2026): Die SSD bekommt zenOS 1.0 direkt, ohne Umweg über den Stick, und 0.1 wird dabei
@@ -309,6 +314,8 @@ Neue Leitplanken:
 > - Kein Dienst nimmt Verbindungen von aussen an.
 > - Auf dem Gerät läuft nur, was im signierten Image ist.
 > - Ein Gerät installiert nur, was zenOS signiert hat. Signiert wird nie auf einem Rechner, auf dem eine KI arbeitet.
+>   (Seit 13.11.2026: Der geheime Signaturschlüssel existiert nur auf Zenos Hardware-Schlüsseln und verlässt sie nie;
+>   signiert wird nur von Zeno selbst, mit PIN und Berührung; eine KI löst nie eine Signatur aus.)
 > - Jede Leitplanke hat einen Test, der versucht, sie zu brechen.
 
 Architektur und harte Regeln in `CLAUDE.md` (Unterbau Debian, Kernel, Apps, Entwicklung nicht mehr auf dem Laptop)
@@ -320,7 +327,8 @@ werden mit dem Start angepasst.
    gewesen wäre: nur Apps aus dem Image, nur freigegebene Erweiterungen, kein Admin. Der zusätzliche Schutz fürs Geld
    liegt ausserhalb des Laptops (Bank-App, Hardware-Wallet).
 2. **JIT** ist jetzt eine Vorgabe, die man pro Seite in Chromium selbst ändern kann, statt eines Zwangs.
-3. **Signieren** in einem Live-System vom USB-Stick statt in einem eigenen Start von zenOS.
+3. **Signieren** in einem Live-System vom USB-Stick statt in einem eigenen Start von zenOS. (Seit 13.11.2026 mit
+   Zenos FIDO2-Schlüsseln am Mac, Abschnitt 5.)
 4. **Stufen** statt Phasen: Vorschau 1 in den nächsten Tagen, Vorschau 2 mit Updates, dann 1.0. Bis 1.0 das fertige
    Kernel-Paket von Raspberry Pi.
 

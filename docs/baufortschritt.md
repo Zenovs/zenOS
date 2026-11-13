@@ -17,8 +17,8 @@ mit Oberfläche und Updates über `zen update`. Die SSD kommt danach nicht mehr 
 | Quickshell 0.3.1 | fertig | Commit `1a4716c…`, gebaut in `mkosi.build.d/10-quickshell.sh.chroot`; wayland-protocols 1.47 nur fürs Bau-Overlay aus trixie-backports (fürs Image gesperrt, `mkosi.postinst` prüft). `mkosi.finalize` prüft alle Bibliotheken. |
 | Oberfläche | fertig, Test grün | Login, Sitzung, Leiste, Befehlsfeld mit Apps, Chromium, kitty, hell und dunkel, System-Menü, Sperre in QEMU geprüft (Bildschirmfotos). Oberfläche von 0.1 für 1.0 angepasst (`shell/`, ohne Kanal, Basis, Firewall, Lüfter, Installer, Einstellungen, Einrichtung, Freigabe, Anzeige); Login `greeter.qml` über `/usr/lib/zenos/greeter`, Sitzung `/usr/lib/zenos/sitzung`, Benutzerdienste `zenos-shell` und `zenos-idle` (swayidle, 5 min), Notfall-Sperre swaylock. Hilfsprogramme unter `/usr/lib/zenos`, `zen` unter `/usr/bin`. |
 | Start auf dem CM5, A/B | gebaut, Aufteilung geprüft | Probestart mit tryboot erst auf dem Argon (QEMU hat keinen Bootloader von Raspberry Pi). Schema von Raspberry Pi: Partition 1 `zenos-start` (64 MB, autoboot.txt, Tastatur), 2 `zenos-start_<v>` (Start A), 3 `_empty` (Start B), dann Prüfsummen A (128 MB) und System A (wächst beim ersten Start auf 6 GB), B-Hälfte und Daten beim ersten Start |
-| Updates | fertig, Test grün (ohne Probestart) | `zen update` → `zenos-update.service` → `/usr/lib/zenos/update`: systemd-sysupdate (GitHub, `releases/latest/download`, nur mit Zenos Signatur), Probestart über `/run/systemd/reboot-param` «0 tryboot», fest über autoboot.txt (Ziffern 2/3 an Ort und Stelle). In QEMU: Update ohne Admin aus der Sitzung in die B-Hälfte, Ablehnung von der seriellen Konsole, Zustand über den Neustart. Erinnerung nach 14 Tagen (`/usr/lib/zenos/erinnerung`, Benutzer-Zeitgeber, Einheitentest). `mkosi/veroeffentlichen.sh` macht die Dateien, `docs/signieren.md` erklärt das Signieren; Releases heissen `zenos-<version>`. |
-| Schlüssel für Updates | wartet auf Zeno | `mkosi/schluessel/zenos-updates.asc` (öffentlich); ohne ihn baut das Image für den Argon nicht |
+| Updates | fertig, Test grün (ohne Probestart) | `zen update` → `zenos-update.service` → `/usr/lib/zenos/update`: lädt `SHA256SUMS` und `SHA256SUMS.sig` (GitHub, `releases/latest/download`), prüft Zenos SSH-Signatur mit Berührung und PIN, dann jede Datei; systemd-sysupdate schreibt nur diese geprüfte Kopie (seit 13.11.2026, vorher GPG in sysupdate), Probestart über `/run/systemd/reboot-param` «0 tryboot», fest über autoboot.txt (Ziffern 2/3 an Ort und Stelle). In QEMU: Update ohne Admin aus der Sitzung in die B-Hälfte, Ablehnung von der seriellen Konsole, Zustand über den Neustart. Erinnerung nach 14 Tagen (`/usr/lib/zenos/erinnerung`, Benutzer-Zeitgeber, Einheitentest). `mkosi/veroeffentlichen.sh` macht die Dateien, `docs/signieren.md` erklärt das Signieren; Releases heissen `zenos-<version>`. |
+| Schlüssel für Updates | wartet auf Zeno | Entscheid 13.11.2026: zwei FIDO2-Schlüssel (`ed25519-sk`, OpenSSH), signiert am Mac in Zenos Terminal mit PIN und Berührung (`docs/signieren.md`). `mkosi/schluessel/argon-allowed-signers` (öffentlich); ohne sie baut das Image für den Argon nicht |
 | Härtung, Browser | fertig | wie zuvor; Chromium 156 mit Richtlinien |
 | Angriffstests | fertig | `mkosi/test/starten.sh`: System und Härtung, Oberfläche (Login wie ein Mensch, Apps, Befehlsfeld, Sperre, Bildschirmfotos unter `mkosi/ausgabe/test/`), Erinnerung, Update-Test (`ZENOS_TEST_NEU=<version>`), `zen notfall`, Hardware-Schlüssel ohne Gerät, Ausschalten nach langer Sperre, fünf Starts (falsches Passwort, Wiederherstellungsschlüssel, echtes Passwort, Notfall-Passwort mit Prüfung der Platte von aussen, danach stimmt nichts mehr). Am 12.11.2026: 88 von 88 grün. Einheitentests: `update-einheiten.sh`, `erinnerung-einheiten.sh`, `notfall-einheiten.sh`, `schluessel-einheiten.sh` |
 | Deckel | gebaut, Test grün (QEMU 12.11.2026) | Overlay `mkosi/start/zenos-deckel.dts`: GPIO27 des RP1 mit Pull-up als `gpio-keys`-Schalter SW_LID (aktiv tief: Pegel 0 heisst zu), nur im Abschnitt `[cm5]`. logind sperrt beim Zuklappen immer (`HandleLidSwitch*=lock`, `LidSwitchIgnoreInhibited=yes`, keine Schonfrist nach dem Start), über denselben Weg wie die Ein/Aus-Taste (Lock → swayidle → `/usr/lib/zenos/sperren`). `mkosi.finalize` übersetzt das Overlay und wendet es auf den Gerätebaum des CM5 Lite an, sonst bricht der Bau ab; `startpartitionen.sh` prüft es im fertigen Image, `erster-start.py` den Weg über logind in QEMU. Am 11.11.2026 gegen `bcm2712-rpi-cm5l-cm5io.dtb` der Firmware von Raspberry Pi geprüft (fdtoverlay); am 12.11.2026 auf dem Mac gebaut, `startpartitionen.sh` (11 Prüfungen) und QEMU grün. Das Zuklappen selbst prüft erst Zeno am Argon. |
@@ -67,10 +67,15 @@ mit Oberfläche und Updates über `zen update`. Die SSD kommt danach nicht mehr 
   Bauauftrag 4 `fido2-tools`, `libpam-u2f`, `pamu2fcfg`. zram ist im Kernel von Raspberry Pi (Modul), brd fest mit 4 MB
   (zu klein).
 
-**Hier geht es weiter:** Die Bauaufträge 2 bis 4 sind gebaut und in QEMU geprüft, soweit es ohne Hardware geht.
-Bauauftrag 1 wartet auf Zenos Signaturschlüssel: dann das Image für den Argon bauen (`mkosi/schluessel/zenos-updates.asc`,
-Fingerabdruck mit Zenos Papier vergleichen), `startpartitionen.sh`, und die Befehle zum Schreiben der SSD, einer nach
-dem anderen. Für den ersten Start braucht Zeno beide Hardware-Schlüssel (ohne Schlüssel 1 geht er nicht weiter).
+**Hier geht es weiter:** Die Bauaufträge 2 bis 4 sind gebaut und in QEMU geprüft, soweit es ohne Hardware geht. Seit
+13.11.2026 signiert Zeno Updates mit seinen zwei FIDO2-Schlüsseln (OpenSSH, `docs/signieren.md`). Reihenfolge:
+1. Zeno richtet die Keys ein (`docs/signieren.md`, Abschnitte 1 bis 3), einen Befehl nach dem anderen.
+2. Nach dem Setzen der PIN prüft Claude lesend, ob die Keys neue Einträge ohne PIN erlauben (`makeCredUvNotRqd`);
+   sonst fragt der erste Start des Argon (Bauauftrag 4) nach einer PIN, die er nicht kennt.
+3. Probe mit beiden Keys (`mkosi/ausgabe/signatur-probe/`, `mkosi/signatur-pruefen.sh probe`).
+4. Image für den Argon bauen (Fingerabdrücke mit Zenos Papier vergleichen, in `MANIFEST.md` eintragen),
+   `startpartitionen.sh`, und die Befehle zum Schreiben der SSD, einer nach dem anderen.
+Für den ersten Start braucht Zeno beide Hardware-Schlüssel (ohne Schlüssel 1 geht er nicht weiter).
 
 **Abnahme am Argon** (Zeno, nach dem Schreiben der SSD):
 
@@ -87,10 +92,8 @@ dem anderen. Für den ersten Start braucht Zeno beide Hardware-Schlüssel (ohne 
 Bekannte, harmlose Meldungen der Oberfläche im Journal: `zenos-konfig` und `zenos-energie` aus 0.1 fehlen (Modi,
 Zustände, Raster und Energie kommen später); labwc kann ext-idle-notify nur in Version 1.
 
-Offene Fragen an Zeno: Signierrechner (z. B. der EliteDesk)? Der Signaturschlüssel für Updates ist ein GPG-Schlüssel;
-die bestellten Schlüssel der Security-Key-Reihe von Yubico können nur FIDO2 (gut für Start und Konto, Bauauftrag 4), kein
-OpenPGP. Für den Signaturschlüssel also vorerst ein eigener Stick (zwei Kopien) oder ein Schlüssel mit OpenPGP
-(YubiKey 5, Nitrokey 3). Gibt es einen Test-Pi 5 für den signierten Start? Welche Hardware-Wallet (Trezor oder Ledger)?
+Offene Fragen an Zeno: Gibt es einen Test-Pi 5 für den signierten Start? Welche Hardware-Wallet (Trezor oder Ledger)?
+(Geklärt am 13.11.2026: kein Signierrechner; signiert wird mit den zwei Security Keys über OpenSSH, Vorschlag von Zeno.)
 
 Gefunden auf der SSD von 0.1 (nur gelesen): Ubuntu nutzte auf diesem Argon schon `autoboot.txt` mit `tryboot_a_b=1`
 und ein initramfs von 70 MB vom NVMe. Der Bootloader des CM5 kann also tryboot, autoboot.txt und grosse Dateien.
@@ -99,6 +102,24 @@ und ein initramfs von 70 MB vom NVMe. Der Bootloader des CM5 kann also tryboot, 
 zweiten Start «Failed to allocate new home object» und «Fixation failed: Required key not available»; die
 Anmeldung geht trotzdem. Vor Vorschau 2 muss die machine-id dauerhaft werden (Vorschlag: Daten im initrd
 entsperren und `/etc/machine-id` auf `/var` zeigen lassen).
+
+**Befunde vom 13.11.2026 (Updates mit FIDO2-Schlüsseln statt GPG), behoben:**
+
+- systemd-sysupdate prüft nur GPG (`SHA256SUMS.gpg`). `/usr/lib/zenos/update` prüft jetzt selbst und gibt sysupdate
+  nur eine geprüfte lokale Kopie (`Type=regular-file`, `/var/lib/zenos/update/quelle`). Vorher in der Bauumgebung mit
+  einer Loop-Platte geprüft: Inhalt Byte für Byte gleich, UUID und Bezeichnung gesetzt. systemd-pull und gpg sind aus
+  dem Image; `mkosi.finalize` lässt keine Quelle aus dem Netz zu.
+- `ssh-keygen -Y verify` prüft bei FIDO-Signaturen die Flags nicht (Berührung, PIN). zenOS liest sie selbst aus der
+  Signatur (PROTOCOL.sshsig, PROTOCOL.u2f). Einheitentest mit nachgebauten Signaturen, am Mac mit Zenos echten Keys
+  geprüft (Probe A und B: «Berührung und PIN: ja», Gegenprobe mit verändertem Inhalt abgelehnt).
+- openssh-client bringt `ssh-agent` (setgid, startet als Benutzerdienst mit jeder Sitzung) und `ssh-keysign` (setuid
+  root). Im Image bleibt nur `ssh-keygen`; die Probe läuft ohne `/usr/lib/openssh`, wie auf dem Argon.
+- mkosi trennt `--environment` an Leerzeichen: Der Wegwerf-Schlüssel des Tests kam als `ssh-ed25519` allein an. Jetzt
+  nur der Base64-Teil.
+- Die Security Keys (Firmware 5.8) haben eine PIN; der erste Start des Argon legt seine Einträge ohne PIN an. Beide
+  Keys melden `makeCredUvNotRqd: true` und `alwaysUv: false` (mit ykman/python-fido2 gelesen), das geht also.
+- Das `ssh-keygen` von macOS kann keine FIDO-Keys («No FIDO SecurityKeyProvider specified»): Zeno nimmt
+  `/opt/homebrew/bin/ssh-keygen` mit vollem Pfad.
 
 **Befunde vom 12.11.2026 (Bauaufträge 2 bis 4), behoben:**
 

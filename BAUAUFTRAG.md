@@ -2,7 +2,7 @@
 
 Vier Aufträge sind offen. Bauauftrag 2, 3 und 4 sind gebaut und in QEMU geprüft (12.11.2026), soweit es ohne
 Hardware geht; sie warten auf die Abnahme am Argon (Liste in `docs/baufortschritt.md`). Bauauftrag 1 wartet auf Zenos
-Signaturschlüssel und die Abnahme am Argon. Der Rahmen von Bauauftrag 1 (Mac, Colima, Freigaben, Rückfragen) gilt für
+Signaturschlüssel (seit 13.11.2026 seine zwei FIDO2-Schlüssel, `docs/signieren.md`) und die Abnahme am Argon. Der Rahmen von Bauauftrag 1 (Mac, Colima, Freigaben, Rückfragen) gilt für
 alle.
 
 ## Bauauftrag 2: Notfall-Passwort (gebaut, Abnahme am Argon offen)
@@ -253,8 +253,8 @@ diesem Gerät pflegen lässt (Chromium aus Debian, gehärtet über Richtlinien).
 - Chromium mit Richtlinien, udev-Regeln für Trezor und Ledger.
 - Oberfläche: Login, Leiste, Apps starten, Sperre, WLAN.
 - Angriffstests in QEMU.
-- Updates: `zen update` lädt den neuen Stand (systemd-sysupdate, GitHub), prüft die Signatur von Zenos Schlüssel und
-  alle Prüfsummen, schreibt in die freie Hälfte (System, Prüfsummen, Startpartition) und startet ihn einmal zur Probe
+- Updates: `zen update` lädt den neuen Stand (GitHub), prüft die Signatur von Zenos Schlüssel und alle Prüfsummen,
+  schreibt mit systemd-sysupdate in die freie Hälfte (System, Prüfsummen, Startpartition) und startet ihn einmal zur Probe
   (tryboot, autoboot.txt). Läuft er, wird er fest; sonst startet wieder der alte.
 
 ### Nicht im Umfang
@@ -264,7 +264,8 @@ Signierter Start und eigener Kernel (1.0), alle übrigen Funktionen von 0.1 (Ein
 ### Fertig heisst
 
 - Das Image baut, die Angriffstests in QEMU sind grün (auch Oberfläche und Update), gitleaks ist sauber.
-- Zenos öffentlicher Schlüssel ist im Image; ohne ihn baut das Image für den Argon nicht.
+- Zenos öffentliche Schlüssel sind im Image; ohne sie baut das Image für den Argon nicht. (Entscheid Zeno vom
+  13.11.2026: zwei FIDO2-Schlüssel mit OpenSSH statt GPG im Live-System, `docs/signieren.md`.)
 - `docs/baufortschritt.md` ist nachgeführt, `mkosi/README.md` erklärt Bau, Schreiben auf die SSD und Updates,
   `docs/signieren.md` das Signieren.
 - Zeno bekommt einen kurzen Schlussbericht und den ersten Befehl, um das Image auf die SSD zu schreiben.

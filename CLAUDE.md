@@ -81,7 +81,7 @@ Diese Regeln gelten immer:
 7. **Proprietäre Software** (Chrome, VS Code, 1Password-App) kommt nie aufs Gerät, auch nicht nachinstalliert.
 8. **Keine Telemetrie, keine automatischen Uploads.** Nichts verlässt den Rechner ohne Zenos ausdrückliche Aktion.
 9. **Datenträger und Firmware:** Nie auf einen USB-Stick, eine SSD, das EEPROM oder das OTP schreiben. Das macht Zeno selbst, mit einem Befehl nach dem anderen, nach ausdrücklichem Ja für genau dieses Gerät.
-10. **Schlüssel:** Claude erzeugt, sieht und benutzt nie Signaturschlüssel. Signiert wird nie auf dem Mac, auf dem Claude Code läuft.
+10. **Schlüssel:** Claude erzeugt, sieht und benutzt nie Signaturschlüssel und startet nie einen Signaturbefehl (`ssh-keygen -Y sign` oder ähnlich). Die geheimen Teile liegen nur auf Zenos FIDO2-Schlüsseln; signiert wird nur von Zeno, in seinem Terminal, mit PIN und Berührung (`docs/signieren.md`). Claude prüft Signaturen nur. Einzige Ausnahme: der Wegwerf-Schlüssel des QEMU-Tests (`mkosi/ausgabe/test-schluessel/`), dem nur das Test-Image traut.
 
 ## Design-Regeln
 

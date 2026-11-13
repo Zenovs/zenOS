@@ -11,18 +11,19 @@ und eigener Kernel kommen mit 1.0.
 | `mkosi.conf` | gemeinsame Einstellungen, Paketliste mit Gründen, Härtung der Kernel-Befehlszeile |
 | `mkosi.sandbox/` | Paketquellen: ein fester Stand von snapshot.debian.org (Backports nur für den Bau von Quickshell) |
 | `mkosi.profiles/argon/` | Argon ONE UP (CM5) und Pi 5: Kernel und Firmware von Raspberry Pi, Startpartitionen, Updates |
-| `mkosi.profiles/qemu/` | virtuelle Maschine für die Tests: Kernel von Debian, Start über UEFI mit UKI, Updates vom Testserver |
+| `mkosi.profiles/qemu/` | virtuelle Maschine für die Tests: Kernel von Debian, Start über UEFI mit UKI, Updates vom Testserver, signiert mit dem Wegwerf-Schlüssel des Tests |
 | `repart/gemeinsam/` | System A (erofs, dm-verity) und seine Prüfsummen |
 | `mkosi.build.d/` | Quickshell 0.3.1 aus dem Quellcode; Oberfläche (`shell/`) und Schriften ins Image |
 | `mkosi.extra/` | Dateien im System: Login, Sitzung, Sperre, `zen`, Updates, Firewall, Zeit, Netz, Härtung, Chromium |
 | `mkosi.postinst` | löscht Dateien von Paketen, die nur als Abhängigkeit kommen; nichts aus den Backports |
 | `mkosi.finalize` | /var vorbereiten; setuid, Verbotenes, Quickshell und Signaturprüfung prüfen; Schlüssel und Paketstand ins Image; Overlay des Deckels übersetzen und am Gerätebaum des CM5 prüfen |
 | `mkosi.postoutput` | schreibt autoboot.txt (Partition 1) und Kernel, initrd, Gerätebäume, `config.txt`, `cmdline.txt` (Startpartition A) |
-| `schluessel/` | Zenos öffentlicher Schlüssel für Updates (`zenos-updates.asc`); ohne ihn baut das Image für den Argon nicht |
+| `schluessel/` | Zenos öffentliche Schlüssel für Updates (`argon-allowed-signers`, zwei FIDO2-Schlüssel); ohne sie baut das Image für den Argon nicht |
 | `start/config.txt` | Start auf dem CM5 und dem Pi 5 |
 | `start/zenos-deckel.dts` | Overlay für den Deckel des Argon ONE UP: GPIO27 als Schalter SW_LID, Zuklappen sperrt (logind) |
 | `umgebung/` | Bauumgebung: Debian-Container mit mkosi und QEMU; `bauen-innen.sh` holt und prüft die Quelle von Quickshell |
 | `veroeffentlichen.sh` | macht aus einem gebauten Image die Dateien für ein Update und `SHA256SUMS` zum Signieren |
+| `signatur-pruefen.sh` | prüft Zenos Signatur eines Stands (oder der Probe) mit dem Code des Argon; signiert nie |
 | `test/` | Angriffs- und Starttests in QEMU mit Oberfläche, Update, Notfall-Passwort und Ausschalten nach langer Sperre, Einheitentests des Updates, der Erinnerung, des Notfall-Passworts und des Hardware-Schlüssels, Prüfung der Startpartitionen des Argon-Images |
 
 ## Aufteilung der SSD
@@ -66,13 +67,18 @@ ZENOS_AUSGABE=qemu-neu ZENOS_VERSION=0.9.2 mkosi/veroeffentlichen.sh qemu
 ZENOS_TEST_NEU=0.9.2 mkosi/test/starten.sh
 ```
 
-Ohne `schluessel/zenos-updates.asc` bricht `bauen.sh argon` ab. Nur für einen Entwicklungsbau, der nie auf ein Gerät
-kommt: `mkosi/bauen.sh argon --environment=ZENOS_SCHLUESSEL_FEHLT_OK=1` (dieses Image nimmt keine Updates an).
+Ohne `schluessel/argon-allowed-signers` bricht `bauen.sh argon` ab. Nur für einen Entwicklungsbau, der nie auf ein
+Gerät kommt: `mkosi/bauen.sh argon --environment=ZENOS_SCHLUESSEL_FEHLT_OK=1` (dieses Image nimmt keine Updates an).
+
+Das Test-Image traut nur einem Wegwerf-Schlüssel: `bauen.sh qemu` legt ihn beim ersten Mal unter
+`mkosi/ausgabe/test-schluessel/` an (nicht im Repo), `veroeffentlichen.sh qemu` signiert damit. Kein Gerät kennt ihn;
+`mkosi.finalize` lässt im Argon-Image nur FIDO2-Schlüssel zu.
 
 ## Auf die SSD schreiben (Zeno, auf dem Mac)
 
 Vorher prüft Claude das fertige Image: `mkosi/test/startpartitionen.sh` muss «Alle Prüfungen bestanden» melden, und der
-Bau muss «Updates nur mit Zenos Schlüssel (<Fingerabdruck>)» gemeldet haben, mit dem Fingerabdruck von Zenos Papier.
+Bau muss «Updates nur mit Zenos FIDO2-Schlüsseln» mit zwei Fingerabdrücken gemeldet haben, denselben wie auf Zenos
+Papier. Beide Keys haben vorher die Probe bestanden (`docs/signieren.md`, Abschnitt 4).
 
 Die SSD des Argon hängt in einem USB-Gehäuse am Mac. **Alles auf ihr wird gelöscht.** Die Nummer (`/dev/diskN`) muss
 genau stimmen: Mit einer falschen Nummer überschreibt `dd` eine andere Platte. Einen Befehl nach dem anderen:
@@ -157,8 +163,9 @@ Text-Login von greetd. Dort mit Name und Passwort des Kontos anmelden; es starte
 
 ## Updates
 
-Im Terminal (Ctrl+Alt+T): `zen update`. Es lädt den neuesten Stand von GitHub, prüft die Signatur (Zenos Schlüssel)
-und alle Prüfsummen und schreibt ihn in die freie Hälfte. Danach `zen neustart`: Der neue Stand startet einmal zur
+Im Terminal (Ctrl+Alt+T): `zen update`. Es lädt die Liste des neuesten Stands von GitHub, prüft Zenos Signatur (einer
+der zwei FIDO2-Schlüssel, mit PIN und Berührung), lädt dann die Dateien, prüft jede gegen ihre Prüfsumme und schreibt
+erst diese geprüfte Kopie in die freie Hälfte. Danach `zen neustart`: Der neue Stand startet einmal zur
 Probe. Läuft er bis zum Login, wird er fest. Hängt er, die Ein/Aus-Taste lange drücken und wieder einschalten: Dann
 startet der alte Stand, und `zen status` sagt, was war. Ein gescheiterter Stand wird nicht nochmals angeboten.
 
@@ -167,7 +174,8 @@ kommt einmal am Tag eine Mitteilung. Gezählt wird nur mit einer Uhr, die chrony
 dafür nichts. `zen status` zeigt das Alter der Pakete.
 
 Veröffentlichen (Claude, nach Zenos Ja): `mkosi/bauen.sh argon`, `mkosi/veroeffentlichen.sh`, Zeno signiert
-`SHA256SUMS` (`docs/signieren.md`), dann ein Release auf GitHub mit den Dateien, `SHA256SUMS` und `SHA256SUMS.gpg`.
+`SHA256SUMS` in seinem Terminal (`docs/signieren.md`), `mkosi/signatur-pruefen.sh <version>`, dann ein Release auf
+GitHub mit den Dateien, `SHA256SUMS` und `SHA256SUMS.sig`.
 Das Release heisst `zenos-<version>` (Tag ebenso, zum Beispiel `zenos-0.9.2`) und ist keine Vorabversion, sonst zeigt
 `releases/latest` nicht darauf. Nie ein Tag `v…`: Darauf reagieren `zen update` von 0.1 (signierte Tags `v1.2.3`) und
 der Image-Workflow von 0.1.
