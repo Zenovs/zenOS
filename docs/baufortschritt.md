@@ -124,6 +124,20 @@ entsperren und `/etc/machine-id` auf `/var` zeigen lassen).
   `startpartitionen.sh` auch. `mkosi.postoutput` formatiert die drei Startpartitionen neu (FAT32, 512 Byte pro Sektor,
   Cluster 2 KiB wie Raspberry Pi OS, Partition 1 512 Byte, hidden sectors = Beginn); `startpartitionen.sh` prüft die
   Sektorgrösse, und ein einfacher Leser mit 512-Byte-Sektoren findet autoboot.txt und config.txt.
+- **Zweiter Versuch am Argon (13.11.2026):** Kernel, initrd und das geprüfte System starteten, dann wartete systemd
+  90 Sekunden vergeblich auf `/dev/disk/by-partlabel/zenos-start`, `-notfall` und `-daten` und landete im Notfallmodus
+  (root gesperrt, keine Shell; Neuversuche mit Enter ebenso). Ursache: systemd-repart (daten-anlegen) startete, während
+  udev die Partitionen noch erfasste, und sperrte die ganze Platte. udevd stellt Ereignisse gesperrter Platten zurück
+  und verwirft sie nach drei Minuten («The underlying block device is locked by a process more than 3min, skipping
+  event»); die Verweise entstanden bis zum Ausschalten nie. In QEMU nur mit NVMe und 500 GB nachstellbar (virtio 500 GB
+  und NVMe 20 GB liefen), dort zwei von zwei Starts gescheitert. Behoben: repart erst nach udev-trigger und `udevadm
+  settle`, ohne Frist für repart und für die Geräte `zenos-daten` und `zenos-notfall`, Meldungen direkt auf
+  `/dev/console`. Neuer Test `mkosi/test/grosse-platte.sh` (NVMe 500 GB). Zeitleiste in QEMU: udev fertig nach 33 s,
+  `zenos-start` gefunden nach 35 s, repart (Discard und Verschlüsselung von 490 GB) bis 285 s, dann die Einrichtung.
+- **Offener Punkt:** Bricht der erste Start nach repart ab, bevor daten-schuetzen das Passwort gesetzt hat, ist der
+  Einmal-Schlüssel (nur im Arbeitsspeicher) weg und die Datenpartition nicht mehr zu öffnen; dann hilft nur ein neues
+  Image. Eine Erkennung beim nächsten Start (Partition noch ohne Zenos Schlüsselplätze → neu anlegen) braucht Zenos Ja,
+  weil sie eine Partition löschen würde.
 - Das `ssh-keygen` von macOS kann keine FIDO-Keys («No FIDO SecurityKeyProvider specified»): Zeno nimmt
   `/opt/homebrew/bin/ssh-keygen` mit vollem Pfad.
 

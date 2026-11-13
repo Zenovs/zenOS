@@ -97,6 +97,11 @@ von der SSD.
 
 Beide Hardware-Schlüssel bereithalten (unten); ohne Schlüssel 1 geht der erste Start nicht weiter.
 
+Zuerst bereitet zenOS den Speicher vor: Es legt die verschlüsselte Datenpartition an und verwirft dabei die alten Daten
+auf der SSD. Auf dem Bildschirm steht «Der Speicher wird vorbereitet …»; das dauert einige Minuten (in QEMU mit
+500 GB gut vier), danach kommt die erste Frage. Nicht ausschalten: Bricht der erste Start ab, bevor das Passwort gesetzt
+ist, lässt sich die Datenpartition nicht mehr öffnen, und die SSD muss neu geschrieben werden.
+
 1. Tastaturbelegung wählen (sie gilt ab dann immer, auch für das Passwort beim Start).
 2. Passwort für die verschlüsselten Daten setzen: lang, zum Beispiel sechs zufällige Wörter.
 3. Schlüssel 1 einstecken und zweimal berühren, wenn er blinkt; dann Schlüssel 2 genauso (Enter: später).

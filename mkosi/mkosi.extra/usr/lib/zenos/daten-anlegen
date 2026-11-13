@@ -8,6 +8,14 @@
 set -eu
 
 schluessel=/run/zenos/daten-einmalschluessel
+protokoll=/run/zenos/repart.protokoll
+
+# Meldungen für Zeno direkt auf die Konsole (auf dem Argon tty1, wie die Fragen der Einrichtung) und ins Journal. Nicht
+# über StandardOutput=journal+console: journald lässt dort nur bis MaxLevelConsole durch (im QEMU-Image nur Fehler).
+melden() {
+	printf '%s\n' "$*"
+	printf '%s\n' "$*" >/dev/console 2>/dev/null || true
+}
 
 # Erst wenn udev alle Geräte vom Start erfasst hat (systemd-repart.service.d/zenos.conf): repart sperrt die Platte, und
 # was udev bis dahin nicht erfasst hat, verwirft es nach drei Minuten Sperre.
@@ -16,21 +24,32 @@ if [ -e /dev/disk/by-partlabel/zenos-daten ]; then
 	exec systemd-repart --dry-run=no
 fi
 
-echo "zenOS: Erster Start. Der Speicher wird vorbereitet und verschlüsselt, das kann einige Minuten dauern."
+melden "zenOS: Erster Start. Der Speicher wird vorbereitet und verschlüsselt, das kann einige Minuten dauern."
 umask 077
 mkdir -p /run/zenos
 head -c 64 /dev/urandom > "$schluessel"
-if ! systemd-repart --dry-run=no --key-file="$schluessel"; then
-	echo "zenOS: Der Speicher liess sich nicht vorbereiten (systemd-repart)."
+if ! systemd-repart --dry-run=no --key-file="$schluessel" >"$protokoll" 2>&1; then
+	cat "$protokoll"
+	melden "zenOS: Der Speicher liess sich nicht vorbereiten. Meldung von systemd-repart:"
+	tail -n 12 "$protokoll" >/dev/console 2>/dev/null || true
 	exit 1
 fi
-echo "zenOS: Speicher vorbereitet."
+cat "$protokoll"
+melden "zenOS: Speicher vorbereitet."
 
 # Die Notfall-Partition (40-zenos-notfall.conf) ist neu und leer zu halten: Auf der SSD liegen sonst Reste von vorher,
-# etwa ein alter LUKS-Kopf, der wie ein Notfall-Container aussähe. Ganz mit Nullen überschreiben.
+# etwa ein alter LUKS-Kopf, der wie ein Notfall-Container aussähe. Ganz mit Nullen überschreiben. Den Verweis legt udev
+# erst an, wenn repart die Platte freigegeben hat; deshalb bis zu einer Minute darauf warten.
 udevadm settle --timeout=180 || true
 notfall=/dev/disk/by-partlabel/zenos-notfall
+i=0
+while [ ! -b "$notfall" ] && [ "$i" -lt 60 ]; do
+	sleep 1
+	i=$((i + 1))
+done
 if [ -b "$notfall" ]; then
 	groesse=$(blockdev --getsize64 "$notfall")
 	dd if=/dev/zero of="$notfall" bs=1M count=$((groesse / 1048576)) conv=fsync status=none
+else
+	melden "zenOS: Warnung: Die Notfall-Partition ist nicht erschienen und wurde nicht geleert."
 fi
