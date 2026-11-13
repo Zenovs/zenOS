@@ -8,12 +8,15 @@
 #   zenos_<version>_<uuid>.root-verity.raw.xz   Prüfsummen (dm-verity), UUID = zweite Hälfte
 #   zenos_<version>.start.raw.xz                Startpartition (nur argon): Kernel, initrd, Gerätebäume, cmdline.txt
 #   zenos_<version>.raw.xz                      ganzes Image zum Schreiben auf eine leere SSD oder einen Stick
-#   SHA256SUMS                                  Prüfsummen aller Dateien, wie sie systemd-sysupdate erwartet
+#   SHA256SUMS                                  Prüfsummen aller Dateien; diese Liste wird signiert
+#   SHA256SUMS.sig                              nur qemu: Signatur mit dem Wegwerf-Schlüssel des Tests
 #
 # ZENOS_AUSGABE und ZENOS_VERSION wählen ein anderes Image (wie bei bauen.sh), etwa den zweiten Stand im Update-Test.
 #
-# Danach signiert Zeno SHA256SUMS auf seinem Signierrechner (docs/signieren.md) und legt SHA256SUMS.gpg daneben.
-# Hochgeladen wird erst nach Zenos Ja. Claude erzeugt, sieht und benutzt nie einen Signaturschlüssel.
+# argon: Danach signiert Zeno SHA256SUMS selbst, in seinem Terminal, mit PIN und Berührung seines FIDO2-Schlüssels
+# (docs/signieren.md). Das legt SHA256SUMS.sig daneben; mkosi/signatur-pruefen.sh prüft sie wie der Argon.
+# Hochgeladen wird erst nach Zenos Ja. Claude erzeugt, sieht und benutzt nie einen Signaturschlüssel und startet nie
+# einen Signaturbefehl; der Wegwerf-Schlüssel des QEMU-Tests gilt auf keinem Gerät.
 set -euo pipefail
 
 profil=${1:-argon}
@@ -30,10 +33,19 @@ if [[ "${ZENOS_IM_CONTAINER:-}" != 1 ]]; then
 		exit 1
 	}
 	mkdir -p "$hier/ausgabe/veroeffentlichung/$profil"
+	test=()
+	if [[ "$profil" == qemu ]]; then
+		[[ -f "$hier/ausgabe/test-schluessel/zenos-test" ]] || {
+			echo "Kein Wegwerf-Schlüssel unter mkosi/ausgabe/test-schluessel/. Zuerst: mkosi/bauen.sh qemu" >&2
+			exit 1
+		}
+		test=(-v "$hier/ausgabe/test-schluessel:/test-schluessel:ro")
+	fi
 	exec docker --context "$kontext" run --rm \
 		-v "$hier:/zenos/mkosi:ro" \
 		-v "$hier/ausgabe/$eingabe:/eingabe:ro" \
 		-v "$hier/ausgabe/veroeffentlichung/$profil:/ausgabe" \
+		${test[@]+"${test[@]}"} \
 		-e ZENOS_IM_CONTAINER=1 -e ZENOS_VERSION="$version" \
 		zenos-bau:1 /zenos/mkosi/veroeffentlichen.sh "$profil"
 fi
@@ -75,11 +87,24 @@ cp "$image" "$ziel/zenos_$version.raw"
 xz -T0 -6 "$ziel"/*.raw
 (cd "$ziel" && sha256sum -- *.xz >SHA256SUMS)
 
+if [[ "$profil" == qemu ]]; then
+	# Nur für QEMU: Der Wegwerf-Schlüssel gilt allein im Test-Image (mkosi.finalize, ZENOS_TEST_SIGNIERER).
+	install -m 0600 /test-schluessel/zenos-test /tmp/zenos-test
+	ssh-keygen -q -Y sign -f /tmp/zenos-test -n argon-update "$ziel/SHA256SUMS"
+	rm -f /tmp/zenos-test
+fi
+
 echo "Stand $version ($profil), Wurzel-Hash $roothash"
 echo "Dateien in mkosi/ausgabe/veroeffentlichung/$profil/$version/:"
 (cd "$ziel" && ls -l)
 echo
-echo "SHA256SUMS (diese Datei signiert Zeno):"
+echo "SHA256SUMS:"
 cat "$ziel/SHA256SUMS"
 echo
-echo "Prüfsumme von SHA256SUMS selbst (beim Signieren vergleichen): $(sha256sum "$ziel/SHA256SUMS" | cut -d' ' -f1)"
+echo "Prüfsumme von SHA256SUMS selbst: $(sha256sum "$ziel/SHA256SUMS" | cut -d' ' -f1)"
+if [[ "$profil" == argon ]]; then
+	echo
+	echo "Zeno signiert in seinem Terminal (PIN, dann den Schlüssel berühren), aus dem Ordner des Repos:"
+	echo "  ssh-keygen -Y sign -f ~/.ssh/argon_update_a -n argon-update mkosi/ausgabe/veroeffentlichung/argon/$version/SHA256SUMS"
+	echo "Danach prüft mkosi/signatur-pruefen.sh $version die Signatur wie der Argon."
+fi

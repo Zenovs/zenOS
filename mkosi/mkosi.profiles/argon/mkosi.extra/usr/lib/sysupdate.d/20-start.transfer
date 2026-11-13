@@ -1,13 +1,13 @@
 # zenOS 1.0: die Startpartition des nächsten Stands (FAT mit Kernel, initrd, Gerätebäumen, config.txt und cmdline.txt)
 # in die freie Startpartition (2 oder 3). Sie kommt zuletzt: Erst wenn System und Prüfsummen geschrieben sind, gibt es
 # etwas, das starten kann. Partition 1 (zenos-start, autoboot.txt) passt nie auf das Muster und bleibt unberührt.
+# Quelle wie in 10-root-verity.transfer: nur die geprüfte Kopie, nie das Netz.
 [Transfer]
 ProtectVersion=%A
-Verify=yes
 
 [Source]
-Type=url-file
-Path=https://github.com/Zenovs/zenOS/releases/latest/download/
+Type=regular-file
+Path=/var/lib/zenos/update/quelle
 MatchPattern=zenos_@v.start.raw.xz
 
 [Target]

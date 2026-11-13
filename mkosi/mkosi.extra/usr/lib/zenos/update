@@ -6,17 +6,27 @@
 #   update pruefen        zenos-update-pruefen.service, bei jedem Start: Probestart bestätigen oder Fehlschlag festhalten
 #
 # Ablauf auf dem Argon ONE UP und dem Pi 5 (A/B-Schema von Raspberry Pi, Startpartitionen 2 und 3):
-#   1. systemd-sysupdate lädt System, Prüfsummen und Startpartition des neuen Stands. SHA256SUMS muss gültig signiert
-#      sein (SHA256SUMS.gpg, Schlüssel in /etc/systemd/import-pubring.gpg), jede Datei muss ihre Prüfsumme haben.
-#      Geschrieben wird nur in die freie Hälfte; der laufende Stand ist geschützt (ProtectVersion=%A).
-#   2. /run/systemd/reboot-param bekommt «0 tryboot»: Der nächste Neustart, egal wie ausgelöst, startet die andere
+#   1. Laden und prüfen, bevor etwas geschrieben wird (Leitplanke: Ein Gerät installiert nur, was zenOS signiert hat):
+#      a. SHA256SUMS und SHA256SUMS.sig von der Quelle in /usr/lib/zenos/update-quelle (auf dem Gerät nur GitHub, https).
+#      b. Signatur mit ssh-keygen -Y verify gegen /usr/lib/zenos/update-signierer (Zenos FIDO2-Schlüssel, Namespace
+#         argon-update; die Datei liegt im geprüften System unter dm-verity). Dazu müssen die Flags der Signatur
+#         Berührung und PIN zeigen: ssh-keygen prüft das bei FIDO-Schlüsseln nicht selbst.
+#      c. Erst dann wird SHA256SUMS gelesen (strenges Muster): Version und Dateinamen. Ist der Stand nicht neuer, endet
+#         es hier.
+#      d. Die Dateien des Updates laden und jede gegen ihre Prüfsumme prüfen (das ganze Image zum Schreiben auf eine
+#         leere SSD bleibt auf GitHub).
+#   2. systemd-sysupdate schreibt aus dieser geprüften Kopie (/var/lib/zenos/update/quelle, nur root) System,
+#      Prüfsummen und Startpartition des neuen Stands. sysupdate selbst lädt nichts aus dem Netz. Geschrieben wird nur
+#      in die freie Hälfte; der laufende Stand ist geschützt (ProtectVersion=%A).
+#   3. /run/systemd/reboot-param bekommt «0 tryboot»: Der nächste Neustart, egal wie ausgelöst, startet die andere
 #      Startpartition einmal zur Probe (autoboot.txt: [tryboot] boot_partition=…). autoboot.txt bleibt dabei, wie es ist.
-#   3. Im Probestart (tryboot=1, Startpartition und Version des neuen Stands, der Login läuft) wird der Stand fest:
+#   4. Im Probestart (tryboot=1, Startpartition und Version des neuen Stands, der Login läuft) wird der Stand fest:
 #      autoboot.txt tauscht die Ziffern 2 und 3 an Ort und Stelle, gleiche Länge, ein Sektor.
-#   4. Startet der neue Stand nicht (Absturz, hängt: ausschalten und wieder einschalten), startet beim nächsten Mal
+#   5. Startet der neue Stand nicht (Absturz, hängt: ausschalten und wieder einschalten), startet beim nächsten Mal
 #      wieder der alte. Er hält den Fehlschlag fest und bietet diesen Stand nicht nochmals an.
 # Zustände: /run/zenos/update (flüchtig, für alle lesbar: laeuft, neustart, protokoll, hinweis) und
-# /var/lib/zenos/update (probe: «<version> bereit|bereit-2|probiert», fehlgeschlagen: eine Version pro Zeile).
+# /var/lib/zenos/update (probe: «<version> bereit|bereit-2|probiert», fehlgeschlagen: eine Version pro Zeile; laden
+# und quelle nur während eines Updates).
 set -uo pipefail
 
 # Feste Orte. Nur der Einheitentest (mkosi/test/update-einheiten.sh) setzt ZENOS_UPDATE_TESTWURZEL; dann liegen alle
@@ -30,8 +40,17 @@ auswahl_ort=$laufzeit/auswahl
 reboot_param=$wurzel/run/systemd/reboot-param
 partlabel=$wurzel/dev/disk/by-partlabel
 os_release=$wurzel/usr/lib/os-release
+# Woher Updates kommen (eine Zeile, endet mit /) und wessen Signatur gilt (Format allowed_signers von OpenSSH)
+quelle_datei=$wurzel/usr/lib/zenos/update-quelle
+signierer=$wurzel/usr/lib/zenos/update-signierer
+# Hierhin wird geladen; erst nach allen Prüfungen wird der Ordner zu «quelle», aus der sysupdate liest
+# (Path= in /usr/lib/sysupdate.d/*.transfer).
+laden=$stand/laden
+quelle=$stand/quelle
 # Debian legt systemd-sysupdate ausserhalb des Suchpfads ab
 sysupdate=/usr/lib/systemd/systemd-sysupdate
+# Namespace und Name in update-signierer: Eine Signatur für etwas anderes (etwa einen Git-Commit) gilt hier nicht.
+namespace=argon-update
 
 melden() {
 	printf '%s\n' "$*" >>"$protokoll"
@@ -166,6 +185,130 @@ probe_vorbereiten() {
 	fi
 }
 
+# --- Laden und prüfen -------------------------------------------------------------------------------------------
+
+# Datei NAME von der Quelle nach ZIEL laden, höchstens MAX Bytes (0: ohne Grenze). Erlaubt ist nur das Protokoll der
+# Quelle, auch bei Weiterleitungen (auf dem Gerät https; mkosi.finalize prüft die Quelle).
+holen() { # NAME ZIEL MAX
+	local basis schema grenze=()
+	basis=$(head -n 1 "$quelle_datei" 2>/dev/null)
+	if [[ ! "$basis" =~ ^(https|http|file)://[^[:space:]]+/$ ]]; then
+		melden "Update-Quelle ungültig: «$basis»"
+		return 1
+	fi
+	schema=${BASH_REMATCH[1]}
+	(($3 > 0)) && grenze=(--max-filesize "$3")
+	curl --fail --silent --show-error --location --max-redirs 5 --proto "=$schema" --proto-redir "=$schema" \
+		--connect-timeout 30 --retry 2 "${grenze[@]}" --output "$2" -- "$basis$1" 2>>"$protokoll"
+}
+
+# Text aus Hex-Zeichen (nur für kurze, druckbare Felder der Signatur)
+hex_text() { printf '%b' "$(sed 's/../\\x&/g' <<<"$1")"; }
+
+# Eine Signatur mit einem FIDO-Schlüssel (Typ sk-…) trägt die Flags des Schlüssels: Bit 0 = berührt, Bit 2 = PIN
+# geprüft (PROTOCOL.sshsig und PROTOCOL.u2f von OpenSSH). Die Flags sind mitsigniert, aber ssh-keygen -Y verify prüft
+# sie nicht. zenOS verlangt beides. Signaturen anderer Schlüssel haben keine Flags; welche Schlüssel gelten, bestimmt
+# update-signierer (auf dem Gerät nur FIDO2-Schlüssel, mkosi.finalize prüft das).
+signatur_flags() { # SIGNATURDATEI
+	local hex pos=20 laenge feld ende typ flags
+	hex=$(sed -n '/^-----BEGIN SSH SIGNATURE-----$/,/^-----END SSH SIGNATURE-----$/{//!p;}' "$1" |
+		base64 -d 2>/dev/null | od -An -v -tx1 | tr -d ' \n')
+	# «SSHSIG», Version 1, dann fünf Felder: Schlüssel, Namespace, reserviert, Hash-Verfahren, Signatur
+	[[ "${hex:0:20}" == 53534853494700000001 ]] || return 1
+	for feld in 1 2 3 4; do
+		((pos + 8 <= ${#hex})) || return 1
+		laenge=$((16#${hex:pos:8}))
+		pos=$((pos + 8 + 2 * laenge))
+	done
+	((pos + 8 <= ${#hex})) || return 1
+	laenge=$((16#${hex:pos:8}))
+	pos=$((pos + 8))
+	ende=$((pos + 2 * laenge))
+	((ende == ${#hex})) || return 1
+	# Im Feld Signatur: Typ, Signatur, bei FIDO-Schlüsseln dahinter ein Byte Flags und vier Bytes Zähler
+	((pos + 8 <= ende)) || return 1
+	laenge=$((16#${hex:pos:8}))
+	((laenge <= 64 && pos + 8 + 2 * laenge <= ende)) || return 1
+	typ=$(hex_text "${hex:pos+8:2*laenge}")
+	pos=$((pos + 8 + 2 * laenge))
+	[[ "$typ" == sk-* ]] || return 0
+	((pos + 8 <= ende)) || return 1
+	laenge=$((16#${hex:pos:8}))
+	pos=$((pos + 8 + 2 * laenge))
+	((pos + 10 == ende)) || return 1
+	flags=$((16#${hex:pos:2}))
+	if ((!(flags & 0x01))); then
+		melden "Signatur ohne Berührung des Schlüssels"
+		return 1
+	fi
+	if ((!(flags & 0x04))); then
+		melden "Signatur ohne PIN des Schlüssels"
+		return 1
+	fi
+}
+
+# Signatur von ORDNER/SHA256SUMS (ORDNER/SHA256SUMS.sig) gegen update-signierer prüfen
+signatur_pruefen() { # ORDNER
+	local ordner=$1 ausgabe
+	if ! grep -Eq '^[^#[:space:]]' "$signierer" 2>/dev/null; then
+		melden "Im System steht kein Schlüssel, dem Updates trauen (update-signierer ist leer)"
+		return 1
+	fi
+	if ! ausgabe=$(ssh-keygen -Y verify -f "$signierer" -I "$namespace" -n "$namespace" \
+		-s "$ordner/SHA256SUMS.sig" <"$ordner/SHA256SUMS" 2>&1); then
+		melden "Signatur ungültig: $(tail -n 2 <<<"$ausgabe" | tr '\n' ' ')"
+		return 1
+	fi
+	signatur_flags "$ordner/SHA256SUMS.sig" || {
+		melden "Signatur ungültig: Flags des Schlüssels fehlen oder sind unlesbar"
+		return 1
+	}
+	melden "Signatur gültig: $(tail -n 1 <<<"$ausgabe")"
+}
+
+# SHA256SUMS lesen, erst nach der Signatur. Erlaubt sind nur die Dateien eines Stands (mkosi/veroeffentlichen.sh):
+#   zenos_<v>_<uuid>.root.raw.xz, zenos_<v>_<uuid>.root-verity.raw.xz, zenos_<v>.start.raw.xz, zenos_<v>.raw.xz
+# System und Prüfsummen müssen dabei sein, jede Datei höchstens einmal. Ausgabe: die Version.
+liste_version() { # SHA256SUMS
+	local zeile v="" art n=0 root=0 verity=0 start=0 ganz=0
+	local muster='^[0-9a-f]{64}  zenos_([0-9]+(\.[0-9]+)*)(_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(root|root-verity)|\.start)?\.raw\.xz$'
+	while IFS= read -r zeile || [[ -n "$zeile" ]]; do
+		n=$((n + 1))
+		((n <= 8)) || return 1
+		[[ "$zeile" =~ $muster ]] || return 1
+		[[ -z "$v" || "$v" == "${BASH_REMATCH[1]}" ]] || return 1
+		v=${BASH_REMATCH[1]}
+		art=${BASH_REMATCH[4]:-${BASH_REMATCH[3]:-ganz}}
+		case "$art" in
+		root) root=$((root + 1)) ;;
+		root-verity) verity=$((verity + 1)) ;;
+		.start) start=$((start + 1)) ;;
+		ganz) ganz=$((ganz + 1)) ;;
+		*) return 1 ;;
+		esac
+	done <"$1"
+	((root == 1 && verity == 1 && start <= 1 && ganz <= 1)) || return 1
+	printf '%s' "$v"
+}
+
+# Die Dateien des Updates aus ORDNER/SHA256SUMS laden und jede gegen ihre Prüfsumme prüfen. Das ganze Image
+# (zenos_<v>.raw.xz, zum Schreiben auf eine leere SSD) braucht ein Update nicht.
+dateien_laden() { # ORDNER
+	local ordner=$1 summe name ist
+	while read -r summe name; do
+		[[ "$name" =~ ^zenos_[0-9.]+\.raw\.xz$ ]] && continue
+		[[ "$name" =~ ^zenos_[0-9a-z._-]+\.raw\.xz$ ]] || return 1
+		melden "Lade $name …"
+		holen "$name" "$ordner/$name" 0 || return 1
+		ist=$(sha256sum <"$ordner/$name" | cut -d' ' -f1)
+		if [[ "$ist" != "$summe" ]]; then
+			melden "Prüfsumme falsch: $name"
+			return 1
+		fi
+	done <"$ordner/SHA256SUMS"
+	melden "Alle Prüfsummen stimmen."
+}
+
 installieren() {
 	install -d -m 0755 "$wurzel/run/zenos" "$laufzeit"
 	# /var/lib/zenos bleibt 0755: Die Sperre liest als Konto die Liste der Hardware-Schlüssel darunter (schluessel/u2f).
@@ -177,9 +320,10 @@ installieren() {
 	rm -f "$laufzeit/hinweis"
 	: >"$laufzeit/laeuft"
 	chmod 0644 "$laufzeit/laeuft"
-	trap 'rm -f "$laufzeit/laeuft"' EXIT
+	rm -rf "$laden" "$quelle"
+	trap 'rm -f "$laufzeit/laeuft"; rm -rf "$laden" "$quelle"' EXIT
 
-	local jetzt neu fehler rc=0 neuester
+	local jetzt neu neuester
 	jetzt=$(version)
 	if [[ -e "$laufzeit/neustart" ]]; then
 		hinweis "Ein neuer Stand ist schon installiert und wartet auf den Neustart."
@@ -195,37 +339,43 @@ installieren() {
 	fi
 
 	melden "zenOS $jetzt: suche nach einem neuen Stand …"
-	fehler=$(mktemp)
-	neu=$("$sysupdate" check-new 2>"$fehler") || rc=$?
-	if ((rc != 0)); then
-		if [[ -s "$fehler" ]]; then
-			melden "Suche fehlgeschlagen: $(tail -n 3 "$fehler" | tr '\n' ' ')"
-			rm -f "$fehler"
-			hinweis "Keine Verbindung zum Update-Server oder ungültige Antwort. Später nochmals versuchen."
-			return 1
-		fi
-		rm -f "$fehler"
+	install -d -m 0700 "$laden"
+	if ! holen SHA256SUMS "$laden/SHA256SUMS" 65536 || ! holen SHA256SUMS.sig "$laden/SHA256SUMS.sig" 65536; then
+		hinweis "Keine Verbindung zum Update-Server, oder dort liegt kein signierter Stand. Später nochmals versuchen."
+		return 1
+	fi
+	if ! signatur_pruefen "$laden"; then
+		hinweis "Die Signatur des Updates stimmt nicht. Nichts installiert; zenOS $jetzt bleibt."
+		return 1
+	fi
+	if ! neu=$(liste_version "$laden/SHA256SUMS"); then
+		hinweis "Unerwartete Liste vom Update-Server. Nichts installiert; zenOS $jetzt bleibt."
+		return 1
+	fi
+	if ! neuer_als "$neu" "$jetzt"; then
 		hinweis "zenOS $jetzt ist aktuell."
 		return 0
 	fi
-	rm -f "$fehler"
-	neu=$(printf '%s' "$neu" | tail -n 1 | tr -d '[:space:]')
-	[[ "$neu" =~ ^[0-9]+(\.[0-9]+)*$ ]] || {
-		hinweis "Unerwartete Version vom Update-Server: «$neu». Nichts installiert."
-		return 1
-	}
 	if fehlgeschlagen "$neu"; then
 		hinweis "Stand $neu ist beim letzten Probestart nicht gestartet. zenOS $jetzt bleibt, bis ein neuerer Stand da ist."
 		return 0
 	fi
 
-	melden "Neuer Stand $neu: wird geladen, die Signatur und alle Prüfsummen werden geprüft …"
+	melden "Neuer Stand $neu: wird geladen, jede Datei wird gegen ihre Prüfsumme geprüft …"
+	if ! dateien_laden "$laden"; then
+		hinweis "Update auf $neu fehlgeschlagen (Verbindung oder Prüfsumme). Nichts installiert; zenOS $jetzt bleibt."
+		return 1
+	fi
+	mv "$laden" "$quelle"
+
+	melden "Schreibe $neu in die freie Hälfte …"
 	# Während des Schreibens kein Ausschalten und kein Neustart über logind (Block-Inhibitor)
 	if ! systemd-inhibit --what=shutdown:sleep:handle-power-key --mode=block --who=zenOS \
 		"--why=Update wird geschrieben" "$sysupdate" update "$neu" >>"$protokoll" 2>&1; then
-		hinweis "Update auf $neu fehlgeschlagen (Signatur, Prüfsumme oder Verbindung). Nichts wurde verändert, was startet; zenOS $jetzt bleibt."
+		hinweis "Update auf $neu fehlgeschlagen (beim Schreiben). Nichts wurde verändert, was startet; zenOS $jetzt bleibt."
 		return 1
 	fi
+	rm -rf "$quelle"
 	# udev die neuen Bezeichnungen einlesen lassen, dann bis 15 s auf sie warten
 	local p i
 	if p=$(platte); then udevadm trigger --action=change --settle "/dev/$p" 2>/dev/null || true; fi

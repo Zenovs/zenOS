@@ -187,9 +187,19 @@ def pruefe_system(vm: pexpect.spawn) -> None:
     erhoeht = set(befehl(vm, "find / -xdev -type f -perm /6000 2>/dev/null").split())
     pruefe(erhoeht <= erlaubt, f"setuid/setgid nur auf der Liste ({sorted(erhoeht)})")
 
-    gefunden = befehl(vm, "for p in sudo su ssh sshd apt dpkg gcc make Xwayland pkexec; do "
-                          "[ -x \"$(command -v $p)\" ] && [ -u \"$(command -v $p)\" -o $p != su ] && echo $p; done").split()
+    gefunden = befehl(vm, "for p in sudo su ssh sshd scp sftp ssh-agent ssh-add ssh-keyscan apt dpkg gcc make Xwayland "
+                          "pkexec; do [ -x \"$(command -v $p)\" ] && [ -u \"$(command -v $p)\" -o $p != su ] && echo $p; "
+                          "done").split()
     pruefe(not gefunden, f"kein Paketmanager, kein SSH, kein sudo, kein Compiler ({gefunden})")
+
+    # Updates: nur über /usr/lib/zenos/update, nur mit der Signatur aus update-signierer (hier der Wegwerf-Schlüssel)
+    signierer = befehl(vm, "grep -c '^argon-update namespaces=\"argon-update\" ' /usr/lib/zenos/update-signierer; "
+                           "command -v ssh-keygen curl | wc -l; ls /usr/lib/systemd/systemd-pull 2>&1 | grep -c 'No such'; "
+                           "grep -h '^Type=\\|^Path=/' /usr/lib/sysupdate.d/*.transfer | sort -u").split()
+    pruefe(signierer[:3] == ["1", "2", "1"] and signierer[3:] == ["Path=/var/lib/zenos/update/quelle", "Type=partition",
+                                                                  "Type=regular-file"],
+           f"Updates: ein erlaubter Schlüssel, ssh-keygen und curl da, kein systemd-pull, sysupdate liest nur die "
+           f"geprüfte Kopie ({' '.join(signierer)})")
 
     for dienst in ("nftables", "chrony", "NetworkManager", "systemd-resolved", "greetd"):
         zustand = befehl(vm, f"systemctl is-active {dienst}.service").strip()
@@ -370,23 +380,64 @@ def pruefe_update(vm: pexpect.spawn) -> str:
         print("\n--- Update (übersprungen: kein zweiter Stand)", flush=True)
         return ""
     ende = time.monotonic() + 3600
-    while not (UPDATE / "SHA256SUMS").is_file() and time.monotonic() < ende:
+    # Die Signatur entsteht zuletzt (mkosi/veroeffentlichen.sh qemu): erst dann ist der zweite Stand fertig
+    while not (UPDATE / "SHA256SUMS.sig").is_file() and time.monotonic() < ende:
         time.sleep(20)
-    if not (UPDATE / "SHA256SUMS").is_file():
-        pruefe(False, f"zweiter Stand unter {UPDATE} bereit")
+    if not (UPDATE / "SHA256SUMS").is_file() or not (UPDATE / "SHA256SUMS.sig").is_file():
+        pruefe(False, f"zweiter Stand unter {UPDATE} bereit und signiert (mkosi/veroeffentlichen.sh qemu)")
         return ""
     print("\n--- Update", flush=True)
     neu = next(n.split("_")[1] for n in os.listdir(UPDATE) if n.endswith(".root.raw.xz"))
+    # Der Testserver liefert einen Ordner mit Verweisen auf den zweiten Stand; für die Angriffe wird er verändert.
+    angebot = Path(tempfile.mkdtemp(prefix="zenos-update-"))
+
+    def anbieten(liste: bytes | None = None, signatur: bool = True, tausch: dict[str, str] | None = None) -> None:
+        for alt in angebot.iterdir():
+            alt.unlink()
+        for name in os.listdir(UPDATE):
+            if name == "SHA256SUMS" and liste is not None:
+                (angebot / name).write_bytes(liste)
+            elif name == "SHA256SUMS.sig" and not signatur:
+                continue
+            else:
+                (angebot / name).symlink_to(UPDATE / (tausch or {}).get(name, name))
+
+    def nichts_installiert() -> bool:
+        return f"zenos_{neu}" not in befehl(vm, "lsblk -nr -o PARTLABEL /dev/vda").split()
+
+    def zen_update() -> str:
+        # Wie im Terminal der Sitzung (kitty läuft in der Benutzerinstanz)
+        return befehl(vm, "systemd-run --user --quiet --wait --pipe --collect zen update 2>&1")
+
+    anbieten()
     server = subprocess.Popen([sys.executable, "-m", "http.server", "8080", "--bind", "127.0.0.1",
-                               "--directory", str(UPDATE)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                               "--directory", str(angebot)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         # Zuerst, solange noch kein Stand wartet: Die serielle Konsole ist keine Sitzung am Gerät, polkit lässt
         # zenos-update.service von dort nicht starten (sofort, ohne nach einem Passwort zu fragen)
         seriell = befehl(vm, "timeout 60 zen update 2>&1")
         pruefe("liess sich nicht starten" in seriell and "Password" not in seriell,
                "zen update von der seriellen Konsole (keine Sitzung am Gerät) abgelehnt, ohne Passwortfrage")
-        # Wie im Terminal der Sitzung (kitty läuft in der Benutzerinstanz)
-        ausgabe = befehl(vm, "systemd-run --user --quiet --wait --pipe --collect zen update 2>&1")
+
+        # Angriffe auf den Update-Weg: Keiner darf etwas schreiben (Leitplanke: nur, was zenOS signiert hat)
+        echt = (UPDATE / "SHA256SUMS").read_bytes()
+        anbieten(liste=re.sub(rb"^[0-9a-f]{64}", b"0" * 64, echt, count=1))
+        ausgabe = zen_update()
+        pruefe("Signatur des Updates stimmt nicht" in ausgabe and nichts_installiert(),
+               "Liste nach dem Signieren verändert: abgelehnt, nichts geschrieben")
+        anbieten(signatur=False)
+        ausgabe = zen_update()
+        pruefe("kein signierter Stand" in ausgabe and nichts_installiert(),
+               "Stand ohne Signatur: abgelehnt, nichts geschrieben")
+        system = next(n for n in os.listdir(UPDATE) if n.endswith(".root.raw.xz"))
+        verity = next(n for n in os.listdir(UPDATE) if n.endswith(".root-verity.raw.xz"))
+        anbieten(tausch={system: verity})
+        ausgabe = zen_update()
+        pruefe("Prüfsumme" in ausgabe and nichts_installiert(),
+               "System nach dem Signieren ausgetauscht: abgelehnt, nichts geschrieben")
+
+        anbieten()
+        ausgabe = zen_update()
         print("\n".join("    " + z for z in ausgabe.splitlines()[-12:]), flush=True)
         pruefe(f"Neuer Stand {neu} ist installiert" in ausgabe, f"zen update installiert {neu} ohne Admin")
         teile = befehl(vm, "lsblk -nr -o PARTLABEL /dev/vda").split()
@@ -399,6 +450,7 @@ def pruefe_update(vm: pexpect.spawn) -> str:
         pruefe("wartet auf den Neustart" in nochmal, "ein zweites zen update lädt nicht nochmals")
     finally:
         server.terminate()
+        shutil.rmtree(angebot, ignore_errors=True)
     return neu
 
 

@@ -1,14 +1,14 @@
 # zenOS 1.0: Prüfsummen (dm-verity) des nächsten Stands in die freie Hälfte. Die Partitions-UUID steht im Dateinamen
 # (@u) und ist die zweite Hälfte des Wurzel-Hashs; cmdline.txt des Stands findet die Partition so wieder.
-# Nur im Test-Image für QEMU: Quelle ist der Testserver in der Bauumgebung (10.0.2.2), ohne Signatur (Verify=no).
-# Die Prüfsummen in SHA256SUMS gelten trotzdem. mkosi.finalize lässt «Verify=no» nur in diesem Profil zu.
+# Quelle ist nie das Netz: /usr/lib/zenos/update lädt den Stand, prüft Zenos Signatur (SSH, FIDO2) und jede
+# Prüfsumme und legt erst dann die Dateien nach /var/lib/zenos/update/quelle (nur root). mkosi.finalize lässt keine
+# Quelle aus dem Netz zu.
 [Transfer]
 ProtectVersion=%A
-Verify=no
 
 [Source]
-Type=url-file
-Path=http://10.0.2.2:8080/
+Type=regular-file
+Path=/var/lib/zenos/update/quelle
 MatchPattern=zenos_@v_@u.root-verity.raw.xz
 
 [Target]

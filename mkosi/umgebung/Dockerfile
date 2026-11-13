@@ -10,6 +10,8 @@ ARG DEBIAN_FRONTEND=noninteractive
 # dtc und fdtoverlay für das eigene Overlay des Deckels (mkosi/start/zenos-deckel.dts), keyctl für die Einheitentests
 # des Notfall-Passworts (mkosi/test/notfall-einheiten.sh),
 # QEMU mit UEFI-Firmware für die Angriffstests und python3-pexpect, um die Konsole im Test zu bedienen.
+# ssh-keygen (openssh-client) prüft Zenos öffentliche Schlüssel und Signaturen für Updates; signiert wird damit nur mit
+# dem Wegwerf-Schlüssel des QEMU-Tests, nie mit einem Schlüssel, dem ein Gerät traut.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       mkosi apt dpkg debian-archive-keyring gpg gpgv bubblewrap \
@@ -18,5 +20,5 @@ RUN apt-get update \
       kmod cpio zstd xz-utils device-tree-compiler keyutils \
       qemu-system-arm qemu-efi-aarch64 qemu-utils \
       python3 python3-pexpect \
-      ca-certificates curl git jq \
+      ca-certificates curl git jq openssh-client \
  && rm -rf /var/lib/apt/lists/*

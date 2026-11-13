@@ -1,12 +1,11 @@
 # zenOS 1.0: das System (erofs) des nächsten Stands in die freie Hälfte. Partitions-UUID im Dateinamen (@u, erste
-# Hälfte des Wurzel-Hashs). Signatur und Prüfsummen wie in 10-root-verity.transfer.
+# Hälfte des Wurzel-Hashs). Quelle wie in 10-root-verity.transfer: nur die geprüfte Kopie, nie das Netz.
 [Transfer]
 ProtectVersion=%A
-Verify=yes
 
 [Source]
-Type=url-file
-Path=https://github.com/Zenovs/zenOS/releases/latest/download/
+Type=regular-file
+Path=/var/lib/zenos/update/quelle
 MatchPattern=zenos_@v_@u.root.raw.xz
 
 [Target]

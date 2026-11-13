@@ -28,6 +28,20 @@ mkdir -p "$hier/ausgabe/$ausgabe"
 
 docker --context "$kontext" build -q -t zenos-bau:1 "$hier/umgebung" >/dev/null
 
+# Wegwerf-Schlüssel für den Update-Test in QEMU: Nur das Test-Image traut ihm (mkosi.finalize), kein Gerät. Er liegt
+# unter mkosi/ausgabe/test-schluessel/ (nicht im Repo); mkosi/veroeffentlichen.sh qemu signiert damit.
+extra=()
+if [[ "$profil" == qemu ]]; then
+	testschluessel="$hier/ausgabe/test-schluessel"
+	if [[ ! -f "$testschluessel/zenos-test.pub" ]]; then
+		mkdir -p "$testschluessel"
+		docker --context "$kontext" run --rm -v "$testschluessel:/s" zenos-bau:1 \
+			ssh-keygen -q -t ed25519 -N '' -C zenos-test -f /s/zenos-test
+	fi
+	# Nur der Base64-Teil: mkosi trennt --environment an Leerzeichen. Der Typ ist immer ssh-ed25519.
+	extra=("--environment=ZENOS_TEST_SIGNIERER=$(awk '$1 == "ssh-ed25519" { print $2 }' "$testschluessel/zenos-test.pub")")
+fi
+
 # Zeitstempel aus dem letzten Commit: Derselbe Stand soll dasselbe Image ergeben.
 epoch=$(git -C "$repo" log -1 --format=%ct)
 
@@ -47,4 +61,4 @@ exec docker --context "$kontext" run --rm --privileged \
 	--build-directory=/var/cache/zenos/bau \
 	--workspace-directory=/var/cache/zenos/arbeit \
 	--output-directory=/ausgabe \
-	"$@" build
+	${extra[@]+"${extra[@]}"} "$@" build

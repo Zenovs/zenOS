@@ -74,8 +74,9 @@ root_pw=$(awk -F: '$1 == "root" { print $2 }' "$R/etc/shadow")
 [[ "$root_pw" == "*" || "$root_pw" == "!"* ]] || fehler "root hat ein Passwort (${root_pw:0:3}…)"
 
 # --- 3. Verbotenes ----------------------------------------------------------------------------------------------
-for verboten in usr/sbin/sshd usr/bin/ssh usr/bin/sudo usr/bin/apt usr/bin/apt-get usr/bin/dpkg usr/bin/gcc \
-	usr/bin/cc usr/bin/make usr/bin/pkexec usr/sbin/avahi-daemon usr/bin/Xwayland usr/lib/udisks2/udisksd; do
+for verboten in usr/sbin/sshd usr/bin/ssh usr/bin/scp usr/bin/sftp usr/bin/ssh-agent usr/lib/openssh/ssh-keysign \
+	usr/bin/sudo usr/bin/apt usr/bin/apt-get usr/bin/dpkg usr/bin/gcc usr/bin/cc usr/bin/make usr/bin/pkexec \
+	usr/sbin/avahi-daemon usr/bin/Xwayland usr/lib/udisks2/udisksd; do
 	[[ ! -e "$R/$verboten" ]] || fehler "darf nicht ins Image: /$verboten"
 done
 
@@ -104,32 +105,62 @@ fehlend=$(cd "$R" && find usr/bin/quickshell usr/lib/*/qt6/qml/Quickshell -type 
 [[ -z "$fehlend" ]] || fehler "Quickshell braucht Bibliotheken, die im Image fehlen: $fehlend"
 echo "zenOS-Prüfung: Quickshell und seine Bibliotheken vollständig"
 
-# --- 3c. Updates: nur signiert ---------------------------------------------------------------------------------
-# Leitplanke: Ein Gerät installiert nur, was zenOS signiert hat. Auf dem Argon prüft systemd-sysupdate SHA256SUMS mit
-# Zenos öffentlichem Schlüssel (mkosi/schluessel/zenos-updates.asc). Ohne Schlüssel bricht der Bau ab; nur mit
-# ZENOS_SCHLUESSEL_FEHLT_OK=1 (Entwicklungsbau, nie auf ein Gerät) entsteht ein Image, das keine Updates annimmt.
-# «Verify=no» gibt es nur im Test-Image für QEMU.
+# --- 3c. Updates: nur mit Zenos Signatur -----------------------------------------------------------------------
+# Leitplanke: Ein Gerät installiert nur, was zenOS signiert hat. /usr/lib/zenos/update lädt den Stand, prüft die
+# SSH-Signatur von SHA256SUMS gegen /usr/lib/zenos/update-signierer (mit Berührung und PIN des FIDO2-Schlüssels) und
+# jede Prüfsumme; sysupdate schreibt nur diese geprüfte Kopie. Hier wird geprüft, dass es keinen anderen Weg gibt und
+# wem das Gerät traut:
+#   - Jede Transfer-Datei liest nur aus /var/lib/zenos/update/quelle, keine aus dem Netz (systemd-pull ist entfernt).
+#   - argon: Quelle nur GitHub über https. update-signierer kommt aus mkosi/schluessel/argon-allowed-signers und enthält nur
+#     FIDO2-Schlüssel (sk-ssh-ed25519) für den Namespace argon-update. Fehlt die Datei, bricht der Bau ab; nur mit
+#     ZENOS_SCHLUESSEL_FEHLT_OK=1 (Entwicklungsbau, nie auf ein Gerät) entsteht ein Image, das keine Updates annimmt.
+#   - qemu: nur der Wegwerf-Schlüssel des Tests (ZENOS_TEST_SIGNIERER von mkosi/bauen.sh), gilt nur in diesem Image.
+abschnitt() { # DATEI ABSCHNITT SCHLUESSEL
+	awk -v a="[$2]" -v k="$3=" '$0 == a { s = 1; next } /^\[/ { s = 0 } s && index($0, k) == 1 { print substr($0, length(k) + 1) }' "$1"
+}
+for transfer in "$R"/usr/lib/sysupdate.d/*.transfer; do
+	[[ "$(abschnitt "$transfer" Source Type) $(abschnitt "$transfer" Source Path)" == "regular-file /var/lib/zenos/update/quelle" ]] ||
+		fehler "$(basename "$transfer"): Quelle muss die geprüfte Kopie sein (regular-file, /var/lib/zenos/update/quelle)"
+done
+[[ -x "$R/usr/bin/ssh-keygen" && -x "$R/usr/bin/curl" ]] || fehler "ssh-keygen oder curl fehlt (Updates)"
+signierer="$R/usr/lib/zenos/update-signierer"
+update_quelle=$(cat "$R/usr/lib/zenos/update-quelle" 2>/dev/null || true)
 if [[ ",${PROFILES:-}," == *",argon,"* ]]; then
-	for transfer in "$R"/usr/lib/sysupdate.d/*.transfer; do
-		grep -qx 'Verify=yes' "$transfer" || fehler "$(basename "$transfer") prüft die Signatur nicht (Verify=yes fehlt)"
-		! grep -q '^Verify=no' "$transfer" || fehler "$(basename "$transfer") hat Verify=no"
-	done
-	schluessel="$SRCDIR/mkosi/schluessel/zenos-updates.asc"
+	[[ "$update_quelle" == "https://github.com/Zenovs/zenOS/releases/latest/download/" ]] ||
+		fehler "Update-Quelle auf dem Gerät nur GitHub über https (ist: $update_quelle)"
+	schluessel="$SRCDIR/mkosi/schluessel/argon-allowed-signers"
 	if [[ -f "$schluessel" ]]; then
-		gpgheim=$(mktemp -d)
-		gpg --batch --quiet --homedir "$gpgheim" --dearmor <"$schluessel" >"$R/etc/systemd/import-pubring.gpg"
-		chmod 0644 "$R/etc/systemd/import-pubring.gpg"
-		anzahl=$(gpg --batch --homedir "$gpgheim" --show-keys --with-colons "$R/etc/systemd/import-pubring.gpg" | grep -c '^pub:')
-		rm -rf "$gpgheim"
-		((anzahl == 1)) || fehler "mkosi/schluessel/zenos-updates.asc enthält $anzahl Schlüssel, erwartet genau einen"
-		echo "zenOS-Prüfung: Updates nur mit Zenos Schlüssel ($(gpg --batch --show-keys --with-colons "$schluessel" 2>/dev/null | awk -F: '/^fpr:/ { print $10; exit }'))"
+		zeilen=$(grep -Ev '^[[:space:]]*(#|$)' "$schluessel" || true)
+		[[ -n "$zeilen" ]] || fehler "mkosi/schluessel/argon-allowed-signers enthält keinen Schlüssel"
+		muster='^argon-update namespaces="argon-update" sk-ssh-ed25519@openssh\.com AAAA[A-Za-z0-9+/]+=*( [^[:space:]].*)?$'
+		while IFS= read -r zeile; do
+			[[ "$zeile" =~ $muster ]] ||
+				fehler "mkosi/schluessel/argon-allowed-signers: nur FIDO2-Schlüssel (sk-ssh-ed25519) für argon-update: ${zeile:0:50}…"
+		done <<<"$zeilen"
+		printf '%s\n' "$zeilen" >"$signierer"
+		chmod 0644 "$signierer"
+		fingerabdruecke=$(awk '{ print $3, $4 }' "$signierer" | ssh-keygen -lf -) ||
+			fehler "mkosi/schluessel/argon-allowed-signers: ein Schlüssel lässt sich nicht lesen"
+		echo "zenOS-Prüfung: Updates nur mit Zenos FIDO2-Schlüsseln (Berührung und PIN), $(wc -l <"$signierer") Stück:"
+		sed 's/^/  /' <<<"$fingerabdruecke"
 	elif [[ "${ZENOS_SCHLUESSEL_FEHLT_OK:-}" == 1 ]]; then
+		: >"$signierer"
+		chmod 0644 "$signierer"
 		echo "zenOS-Prüfung: WARNUNG: kein Schlüssel für Updates. Dieses Image nimmt keine Updates an und gehört auf kein Gerät." >&2
 	else
-		fehler "mkosi/schluessel/zenos-updates.asc fehlt: Ohne Zenos öffentlichen Schlüssel kann das Gerät keine Updates prüfen"
+		fehler "mkosi/schluessel/argon-allowed-signers fehlt: Ohne Zenos öffentliche Schlüssel kann das Gerät keine Updates prüfen"
 	fi
+else
+	# Nur der Base64-Teil eines ssh-ed25519-Schlüssels (mkosi trennt --environment an Leerzeichen)
+	[[ "${ZENOS_TEST_SIGNIERER:-}" =~ ^AAAA[A-Za-z0-9+/]+=*$ ]] ||
+		fehler "ZENOS_TEST_SIGNIERER fehlt oder ist unplausibel (Wegwerf-Schlüssel des Tests, kommt von mkosi/bauen.sh qemu)"
+	printf 'argon-update namespaces="argon-update" ssh-ed25519 %s zenOS-Test\n' "$ZENOS_TEST_SIGNIERER" >"$signierer"
+	chmod 0644 "$signierer"
+	echo "zenOS-Prüfung: Updates im Test-Image nur mit dem Wegwerf-Schlüssel des Tests"
 fi
-[[ ! -e "$R/usr/lib/systemd/import-pubring.gpg" ]] || fehler "fremder Schlüsselbund für Updates im Image (/usr/lib/systemd/import-pubring.gpg)"
+for verboten in usr/lib/systemd/import-pubring.gpg etc/systemd/import-pubring.gpg usr/lib/systemd/systemd-pull; do
+	[[ ! -e "$R/$verboten" ]] || fehler "darf nicht ins Image: /$verboten (Updates nur über /usr/lib/zenos/update)"
+done
 
 # --- 3d. Paketstand ----------------------------------------------------------------------------------------------
 # Der feste Stand von snapshot.debian.org, aus dem das Image gebaut ist. Daran misst /usr/lib/zenos/erinnerung, wie alt
