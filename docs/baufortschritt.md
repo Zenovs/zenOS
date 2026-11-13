@@ -118,6 +118,12 @@ entsperren und `/etc/machine-id` auf `/var` zeigen lassen).
   nur der Base64-Teil.
 - Die Security Keys (Firmware 5.8) haben eine PIN; der erste Start des Argon legt seine Einträge ohne PIN an. Beide
   Keys melden `makeCredUvNotRqd: true` und `alwaysUv: false` (mit ykman/python-fido2 gelesen), das geht also.
+- **Erster Start am Argon (13.11.2026):** Der Bootloader fand nichts zum Starten («Trying partition: 2 … clusters
+  524128 (1)», dann 3, 4, von vorn). systemd-repart legt FAT mit 4096 Byte pro Sektor an; der Bootloader von Raspberry
+  Pi rechnet mit 512 und las an den falschen Stellen. In QEMU unsichtbar (UEFI kann beides), und mtools in
+  `startpartitionen.sh` auch. `mkosi.postoutput` formatiert die drei Startpartitionen neu (FAT32, 512 Byte pro Sektor,
+  Cluster 2 KiB wie Raspberry Pi OS, Partition 1 512 Byte, hidden sectors = Beginn); `startpartitionen.sh` prüft die
+  Sektorgrösse, und ein einfacher Leser mit 512-Byte-Sektoren findet autoboot.txt und config.txt.
 - Das `ssh-keygen` von macOS kann keine FIDO-Keys («No FIDO SecurityKeyProvider specified»): Zeno nimmt
   `/opt/homebrew/bin/ssh-keygen` mit vollem Pfad.
 
