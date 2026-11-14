@@ -134,6 +134,36 @@ entsperren und `/etc/machine-id` auf `/var` zeigen lassen).
   settle`, ohne Frist für repart und für die Geräte `zenos-daten` und `zenos-notfall`, Meldungen direkt auf
   `/dev/console`. Neuer Test `mkosi/test/grosse-platte.sh` (NVMe 500 GB). Zeitleiste in QEMU: udev fertig nach 33 s,
   `zenos-start` gefunden nach 35 s, repart (Discard und Verschlüsselung von 490 GB) bis 285 s, dann die Einrichtung.
+- **Unabhängige Prüfung (14.11.2026, fünf Prüfer mit Gegenprüfung, nur lesend), behoben:**
+  - **WLAN:** mkosi 25.3 wertet `KernelModulesInitrdInclude=` nur zusammen mit einer Exclude-Liste aus; ohne sie kamen
+    alle 1916 Module ins initrd, auch 157 für WLAN. `brcmfmac` lud schon dort («HT Avail timeout» nach 2,7 s auf dem
+    Foto vom Argon), fand die Firmware nicht (der Verweis über `/etc/alternatives` fehlt im initrd) und gab den Chip
+    auf; im System lädt es nie neu. Jetzt `KernelModulesInitrdExclude=` nur für Funk (WLAN, Bluetooth), alles andere
+    bleibt wie im initrd, mit dem der Argon bis ins System startete.
+  - **Erster Start:** `mkfs.ext4` verwarf die 490 GB ein zweites Mal (über dm-crypt und das Loop-Gerät von repart als
+    «Write Zeroes»); jetzt `-E nodiscard` über `SYSTEMD_REPART_MKFS_OPTIONS_EXT4`. Das Discard von repart selbst bleibt
+    (es beseitigt die Reste von 0.1). Ob erster Start, liest daten-anlegen aus der Partitionstabelle der Systemplatte
+    (`partx`), nicht über udev; das lange `udevadm settle` nur dann. Die Notfall-Partition wird über dieselbe Tabelle
+    bestimmt, bevor sie genullt wird. Jede Minute ein Lebenszeichen auf der Konsole, solange repart arbeitet.
+  - Notfall-Partition: 30 Minuten Frist statt keiner; `loglevel=3` auf dem Argon (Kernel-Fehler nicht mitten in den
+    Fragen); Signaturbefehl mit `/opt/homebrew/bin/ssh-keygen`; Ausnahme für den Wegwerf-Schlüssel auch im Manifest.
+- **Offene Punkte aus der Prüfung (bestätigt, brauchen Zenos Entscheid oder einen eigenen Schritt):**
+  - Fehlt der Schlüssel beim Login oder in der Sperre, meldet zenOS «Das Passwort stimmt nicht» statt «Schlüssel
+    einstecken» (pam_u2f sucht nur einmal und wartet nicht).
+  - Die Schlüssel für die Anmeldung werden nur einmal eingetragen (Marker in `/run`). Scheitert das oder wird der erste
+    Start dort unterbrochen, ist kein Login möglich, nur ein neues Image hilft. Stecken beim Eintragen beide Schlüssel,
+    wartet es ohne Hinweis.
+  - Ein abgebrochener erster Start macht das Gerät unbrauchbar, bis das Image neu geschrieben ist (Vorschlag der
+    Prüfer: den Wiederherstellungsschlüssel direkt nach dem Passwort eintragen, dann heilt der Notweg spätere Abbrüche).
+  - Der Wächter «nach 30 Minuten ausschalten» zählt schon während Konto und Login-Schlüsseln (Leitplanke, nur mit Ja).
+  - Kernel von Raspberry Pi: kein Yama (`ptrace_scope` wirkungslos), AppArmor eingebaut, aber ohne `lsm=apparmor` aus.
+    In QEMU (Debian-Kernel) ist beides aktiv; am Argon also schwächer als getestet.
+  - Der Bereich, in den System A beim ersten Start wächst (~4,8 GiB), behält Reste der alten 0.1-SSD (nur dieser Teil
+    wird nicht verworfen).
+  - Passwörter mit Zeichen über AltGr (€, œ) kommen auf der Konsole (kbd) und am grafischen Login (XKB) verschieden an.
+    Für das Konto-Passwort nur Buchstaben, Ziffern und Zeichen direkt auf einer Taste nehmen.
+  - Weitere Skripte (Notfall, Tastatur) finden Partitionen über `/dev/disk/by-partlabel`, das für jede Platte gilt; ein
+    beim Start eingesteckter zweiter zenOS-Datenträger könnte sie verwirren.
 - **Offener Punkt:** Bricht der erste Start nach repart ab, bevor daten-schuetzen das Passwort gesetzt hat, ist der
   Einmal-Schlüssel (nur im Arbeitsspeicher) weg und die Datenpartition nicht mehr zu öffnen; dann hilft nur ein neues
   Image. Eine Erkennung beim nächsten Start (Partition noch ohne Zenos Schlüsselplätze → neu anlegen) braucht Zenos Ja,
