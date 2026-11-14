@@ -119,6 +119,9 @@ entsperren und `/etc/machine-id` auf `/var` zeigen lassen).
   Update-Test mit zweitem Stand). Kommt mit dem nächsten Image auf den Argon.
 - `docs/sicherheit.md`: In der Liste des Codes, der als root läuft, fehlen `greetd-starten` und `tastatur-waehlen`.
 - `firmware-brcm80211` ist nicht auf eine Version festgelegt; jeder Bau nimmt die neueste WLAN-Firmware.
+- `?` im Terminal rät bei fehlenden Seiten «Mit Internet einmal: tldr --update»
+  (`usr/share/zenos/fish/functions/_zenos_explain.fish`), aber tldr (tealdeer) ist nicht im Image, und man-Seiten
+  fehlen auch. Entweder den Hinweis anpassen oder tealdeer samt Seiten ins Image nehmen.
 
 **Befunde vom 13.11.2026 (Updates mit FIDO2-Schlüsseln statt GPG), behoben:**
 
