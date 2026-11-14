@@ -23,8 +23,9 @@ Steck während der Einrichtung immer nur einen Key ein, sonst ist unklar, welche
 `ykman` ist installiert. Es fehlt ein OpenSSH, das FIDO-Keys ansprechen kann; das von macOS kann es nicht zuverlässig.
 
 1. OpenSSH aus Homebrew: `brew install openssh`
-2. Neues Terminal-Fenster öffnen und prüfen: `which ssh-keygen` muss `/opt/homebrew/bin/ssh-keygen` zeigen. Steht dort
-   `/usr/bin/ssh-keygen`, überall `/opt/homebrew/bin/ssh-keygen` mit vollem Pfad aufrufen.
+2. Alle Befehle unten rufen `/opt/homebrew/bin/ssh-keygen` mit vollem Pfad auf. Das `ssh-keygen` von macOS kann die
+   FIDO-Keys nicht ansprechen («No FIDO SecurityKeyProvider specified»), und ein Terminal-Fenster, das vor der
+   Installation offen war, fände sonst noch dieses.
 3. Version (mindestens 8.2): `ssh -V`
 4. Nur Key A einstecken, FIDO-Status: `ykman fido info`. Bei PIN steht «Not set» oder die Zahl der verbleibenden
    Versuche.
@@ -44,7 +45,7 @@ das Image nicht gebaut.
 Nur Key A eingesteckt. Ein Befehl erzeugt den Schlüssel auf dem Key:
 
 ```
-ssh-keygen -t ed25519-sk -O resident -O verify-required -O application=ssh:argon-update -C "Argon Update Key A" -f ~/.ssh/argon_update_a
+/opt/homebrew/bin/ssh-keygen -t ed25519-sk -O resident -O verify-required -O application=ssh:argon-update -C "Argon Update Key A" -f ~/.ssh/argon_update_a
 ```
 
 | Option | Wirkung |
@@ -62,7 +63,7 @@ Datei allein nützt niemandem. Danach liegen `~/.ssh/argon_update_a` (Verweis, b
 Key A abziehen, Key B einstecken, derselbe Befehl mit B:
 
 ```
-ssh-keygen -t ed25519-sk -O resident -O verify-required -O application=ssh:argon-update -C "Argon Update Key B" -f ~/.ssh/argon_update_b
+/opt/homebrew/bin/ssh-keygen -t ed25519-sk -O resident -O verify-required -O application=ssh:argon-update -C "Argon Update Key B" -f ~/.ssh/argon_update_b
 ```
 
 Kontrolle: `cat ~/.ssh/argon_update_a.pub ~/.ssh/argon_update_b.pub` zeigt zwei verschiedene Zeilen, beide beginnen
@@ -76,7 +77,7 @@ Der Argon prüft gegen `/usr/lib/zenos/update-signierer`; der Bau nimmt sie aus 
 1. `printf 'argon-update namespaces="argon-update" %s\n' "$(cat ~/.ssh/argon_update_a.pub)" > mkosi/schluessel/argon-allowed-signers`
 2. `printf 'argon-update namespaces="argon-update" %s\n' "$(cat ~/.ssh/argon_update_b.pub)" >> mkosi/schluessel/argon-allowed-signers`
 3. Kontrolle, genau zwei Zeilen: `cat mkosi/schluessel/argon-allowed-signers`
-4. Fingerabdrücke: `ssh-keygen -lf ~/.ssh/argon_update_a.pub` und `ssh-keygen -lf ~/.ssh/argon_update_b.pub`. Auf
+4. Fingerabdrücke: `/opt/homebrew/bin/ssh-keygen -lf ~/.ssh/argon_update_a.pub` und `/opt/homebrew/bin/ssh-keygen -lf ~/.ssh/argon_update_b.pub`. Auf
    Papier notieren; sie kommen auch in `MANIFEST.md`. So fällt auf, wenn jemand die Datei austauscht. Der Bau zeigt
    sie jedes Mal («Updates nur mit Zenos FIDO2-Schlüsseln»).
 
@@ -89,7 +90,7 @@ etwas anderes gemacht wurde (etwa ein Git-Commit), lehnt er ab. Der Bau nimmt in
 Einmal pro Key, nur dieser Key eingesteckt. Claude legt eine Probe an (`mkosi/ausgabe/signatur-probe/SHA256SUMS`).
 
 1. Signieren, PIN, dann den Key berühren:
-   `ssh-keygen -Y sign -f ~/.ssh/argon_update_a -n argon-update mkosi/ausgabe/signatur-probe/SHA256SUMS`
+   `/opt/homebrew/bin/ssh-keygen -Y sign -f ~/.ssh/argon_update_a -n argon-update mkosi/ausgabe/signatur-probe/SHA256SUMS`
 2. Claude prüft mit dem Code des Argon: `mkosi/signatur-pruefen.sh probe` muss «Berührung und PIN: ja» melden.
 3. Dasselbe mit Key B (`~/.ssh/argon_update_b`); vorher `SHA256SUMS.sig` der Probe löschen.
 
@@ -100,7 +101,7 @@ Erst wenn beide Keys bestanden haben, baut Claude das Image für den Argon und d
 1. Claude baut den Stand und bereitet ihn vor (`mkosi/bauen.sh argon`, `mkosi/veroeffentlichen.sh`). Am Ende steht der
    Befehl zum Signieren.
 2. Du signierst in deinem Terminal, PIN und Berührung:
-   `ssh-keygen -Y sign -f ~/.ssh/argon_update_a -n argon-update mkosi/ausgabe/veroeffentlichung/argon/<version>/SHA256SUMS`
+   `/opt/homebrew/bin/ssh-keygen -Y sign -f ~/.ssh/argon_update_a -n argon-update mkosi/ausgabe/veroeffentlichung/argon/<version>/SHA256SUMS`
 3. Claude prüft wie der Argon (`mkosi/signatur-pruefen.sh <version>`: Signatur, Berührung und PIN, Liste, alle
    Prüfsummen) und veröffentlicht nach deinem Ja das Release `zenos-<version>` mit den Dateien, `SHA256SUMS` und
    `SHA256SUMS.sig` (nie mit einem Tag `v…`, die gehören zu 0.1).
@@ -125,7 +126,7 @@ Blinkt der Key, ohne dass du gerade selbst signierst: nicht berühren, abziehen.
 Key A bleibt bei dir (am Schlüsselbund). Key B liegt an einem anderen Ort, etwa in einem Safe. Die PINs auf Papier oder
 im Passwortmanager, nie als Datei auf dem Mac.
 
-**Neuer Mac oder Verweisdatei weg:** Key einstecken, in `~/.ssh` wechseln, `ssh-keygen -K` (PIN nötig) holt die
+**Neuer Mac oder Verweisdatei weg:** Key einstecken, in `~/.ssh` wechseln, `/opt/homebrew/bin/ssh-keygen -K` (PIN nötig) holt die
 Verweisdatei vom Key zurück.
 
 **Ein Key verloren oder gestohlen:**

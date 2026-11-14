@@ -105,6 +105,6 @@ echo "Prüfsumme von SHA256SUMS selbst: $(sha256sum "$ziel/SHA256SUMS" | cut -d'
 if [[ "$profil" == argon ]]; then
 	echo
 	echo "Zeno signiert in seinem Terminal (PIN, dann den Schlüssel berühren), aus dem Ordner des Repos:"
-	echo "  ssh-keygen -Y sign -f ~/.ssh/argon_update_a -n argon-update mkosi/ausgabe/veroeffentlichung/argon/$version/SHA256SUMS"
+	echo "  /opt/homebrew/bin/ssh-keygen -Y sign -f ~/.ssh/argon_update_a -n argon-update mkosi/ausgabe/veroeffentlichung/argon/$version/SHA256SUMS"
 	echo "Danach prüft mkosi/signatur-pruefen.sh $version die Signatur wie der Argon."
 fi

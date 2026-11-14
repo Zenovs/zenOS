@@ -45,7 +45,7 @@ Diese Regeln kann kein Modus, kein Zustand und keine Einstellung aushebeln:
 - Das Release-Image hat keinen Fernzugang, keine Entwicklerwerkzeuge und keine KI.
 - Kein Dienst nimmt Verbindungen von aussen an.
 - Auf dem Gerät läuft nur, was im Image von zenOS ist.
-- Ein Gerät installiert nur, was zenOS signiert hat. Der geheime Signaturschlüssel existiert nur auf Zenos Hardware-Schlüsseln und verlässt sie nie. Signiert wird nur von Zeno selbst, in seinem Terminal, mit PIN und Berührung des Schlüssels; eine KI löst nie eine Signatur aus.
+- Ein Gerät installiert nur, was zenOS signiert hat. Der geheime Signaturschlüssel existiert nur auf Zenos Hardware-Schlüsseln und verlässt sie nie. Signiert wird nur von Zeno selbst, in seinem Terminal, mit PIN und Berührung des Schlüssels; eine KI löst nie eine Signatur aus, der ein Gerät traut (der Wegwerf-Schlüssel des QEMU-Tests gilt nur im Test-Image).
   Diese zwei Schlüssel gelten (OpenSSH, `ed25519-sk`, `mkosi/schluessel/argon-allowed-signers`): Key A `SHA256:wOv2IuueQWW6oiyF8QkkhZ3OIJIC1T1V2pYZWM9lemA`, Key B `SHA256:BUHu5i7N/37kr64gkxbfKLoOj6uQYAIuKQ6vFgsCWJg`. Zeigt der Bau andere, ist die Datei ausgetauscht worden.
 - Jede Leitplanke hat einen Test, der versucht, sie zu brechen.
 
