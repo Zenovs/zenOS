@@ -26,7 +26,7 @@ mit Oberfläche und Updates über `zen update`. Die SSD kommt danach nicht mehr 
 | Notfall-Passwort | gebaut, Test grün | Bauauftrag 2 vom 11.11.2026 (`BAUAUFTRAG.md`): eigene Partition `zenos-notfall` (32 MB, Nr. 8; Daten jetzt Nr. 9), eigene Passwortabfrage `zenos-entsperren` statt systemd-cryptsetup, Löschen der Schlüssel (`luksErase`), Attrappe im Arbeitsspeicher (zram, sonst Loop-Gerät auf tmpfs) mit angemeldetem leerem Konto, `zen notfall` über `zenos-notfall.socket` (varlinkctl, PID/UID von systemd, strenges Muster statt JSON-Parser). Einheitentests `notfall-einheiten.sh` (32), QEMU: erster Start, `zen notfall`, falsches Passwort, Wiederherstellungsschlüssel, Attrappe, Platte von aussen, danach stimmt nichts mehr. Audit des Kernels aus (`audit=0`): Es schrieb jeden Start von `zenos-notfall@` ins Journal. |
 | Ausschalten nach langer Sperre | gebaut, Test grün | Bauauftrag 3 vom 11.11.2026: `zenos-ausschalten.service` (festes Systemkonto ohne root, polkit nur fürs Ausschalten, auch gegen Inhibitoren; kein DynamicUser, dessen Laufzeitverzeichnis unter `/run/private` für die Sperre nicht lesbar wäre) zählt über logind die Zeit ohne entsperrte Sitzung an seat0, mit `/proc/uptime`; fest 30 Minuten, im QEMU-Image 5 (`ausschalten-test-nach`, im Argon-Image verboten). Die Sperre und swaylock melden LockedHint über `/usr/lib/zenos/gesperrt-melden` an die grafische Sitzung des Kontos (`session/auto` findet für Dienste der Benutzerinstanz keine). «Schaltet in 1 Minute aus» auf der Sperre (Bildschirmfoto `10-ausschalten-hinweis`). QEMU: gesperrt mit Inhibitor aus nach der Testzeit, Entsperren setzt zurück, am Login ohne Anmeldung aus. |
 | Hardware-Schlüssel (FIDO2) | gebaut, ohne Gerät getestet | Bauauftrag 4 vom 11.11.2026: Passphrase pro Schlüsselplatz aus Passwort und hmac-secret (`schluessel-gemeinsam`, Token `zenos-fido2`), kein Platz mit dem Passwort allein; erster Start mit Schlüssel 1 (Pflicht) und 2; `pam_u2f` für greetd, Sperre und swaylock (`/etc/pam.d/zenos-schluessel`, Liste unter `/var/lib/zenos/schluessel`); Notweg nach dem Wiederherstellungsschlüssel; `zen schluessel`. Die Sperre weicht jetzt auf `greetd` statt `login` aus (dort ohne Schlüssel). Einheitentests `schluessel-einheiten.sh` (35) mit Attrappen der FIDO2-Werkzeuge; QEMU ohne Gerät (Test-Image: Platz mit Passwort, `nouserok`), die echte Prüfung macht Zeno am Argon mit seinen Schlüsseln. |
-| Abnahme auf dem Argon ONE UP | offen | Zeno schreibt das Image auf die SSD (Befehle in `mkosi/README.md`) |
+| Abnahme auf dem Argon ONE UP | teilweise | 14.11.2026: Image 0.9.1 (Stand 638a881, SHA-256 `8f9a1687…f056a4c`) auf der SSD; erster Start, Einrichtung und Login gelungen (Zenos Rückmeldung «alles hat geklappt»). Offen: die übrigen Punkte der Abnahmeliste unten |
 
 **Plan für Bauauftrag 2 und 4 (12.11.2026, zusammen geplant, 2 zuerst):**
 
@@ -67,15 +67,12 @@ mit Oberfläche und Updates über `zen update`. Die SSD kommt danach nicht mehr 
   Bauauftrag 4 `fido2-tools`, `libpam-u2f`, `pamu2fcfg`. zram ist im Kernel von Raspberry Pi (Modul), brd fest mit 4 MB
   (zu klein).
 
-**Hier geht es weiter:** Die Bauaufträge 2 bis 4 sind gebaut und in QEMU geprüft, soweit es ohne Hardware geht. Seit
-13.11.2026 signiert Zeno Updates mit seinen zwei FIDO2-Schlüsseln (OpenSSH, `docs/signieren.md`). Reihenfolge:
-1. Zeno richtet die Keys ein (`docs/signieren.md`, Abschnitte 1 bis 3), einen Befehl nach dem anderen.
-2. Nach dem Setzen der PIN prüft Claude lesend, ob die Keys neue Einträge ohne PIN erlauben (`makeCredUvNotRqd`);
-   sonst fragt der erste Start des Argon (Bauauftrag 4) nach einer PIN, die er nicht kennt.
-3. Probe mit beiden Keys (`mkosi/ausgabe/signatur-probe/`, `mkosi/signatur-pruefen.sh probe`).
-4. Image für den Argon bauen (Fingerabdrücke mit Zenos Papier vergleichen, in `MANIFEST.md` eintragen),
-   `startpartitionen.sh`, und die Befehle zum Schreiben der SSD, einer nach dem anderen.
-Für den ersten Start braucht Zeno beide Hardware-Schlüssel (ohne Schlüssel 1 geht er nicht weiter).
+**Hier geht es weiter:** zenOS 1.0 (Image 0.9.1) läuft seit dem 14.11.2026 auf der SSD des Argon; erster Start,
+Einrichtung und Login sind gelungen. Die Keys sind eingerichtet (`docs/signieren.md`, beide Proben bestanden,
+`makeCredUvNotRqd` an beiden Keys). Als Nächstes: die übrigen Punkte der Abnahmeliste unten am Gerät (WLAN, Deckel,
+Ausschalten nach 30 Minuten, `zen schluessel status`, `zen notfall status`), dann das erste signierte Update
+(`zenos-0.9.2`) mit dem Probestart über tryboot. Vor jedem neuen Image für die SSD: `mkosi/test/startpartitionen.sh`
+(auch das initrd) und `mkosi/test/grosse-platte.sh`.
 
 **Abnahme am Argon** (Zeno, nach dem Schreiben der SSD):
 
