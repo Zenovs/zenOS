@@ -110,6 +110,45 @@ pruefe $? "cmdline.txt: Wurzel-Hash und PARTUUIDs passen zu System A und seinen 
 [[ -n "$hash" && "${hash:0:32}" == "$(tr -d - <<<"$(feld 5 5)")" && "${hash:32:32}" == "$(tr -d - <<<"$(feld 4 5)")" ]]
 pruefe $? "die UUIDs stammen aus dem Wurzel-Hash (so findet systemd-sysupdate die Partitionen)"
 
+# initrd: Kein Funk-Treiber darf darin sein (mkosi.profiles/argon/mkosi.conf, KernelModulesInitrdExclude=). Lädt
+# brcmfmac schon im initrd, findet es dort seine Firmware nicht und gibt den WLAN-Chip für immer auf. Und der Filter muss
+# überhaupt greifen: ohne ihn kämen alle Module ins initrd (mkosi 25.3), am 14.11.2026 waren es 1916. Was zum Start
+# nötig ist, muss drin sein. Das initrd besteht aus zstd-Teilen, in denen cpio-Archive stecken.
+probe=$(mktemp -d)
+module=""
+if mcopy -n -i "$(p 2)" ::initramfs_2712 "$probe/initrd" 2>/dev/null; then
+	for teil in $(python3 -c '
+import re, sys
+d = open(sys.argv[1], "rb").read()
+print(" ".join(str(m.start()) for m in re.finditer(re.escape(b"\x28\xb5\x2f\xfd"), d)))' "$probe/initrd"); do
+		tail -c +$((teil + 1)) "$probe/initrd" | zstd -dc 2>/dev/null
+	done >"$probe/entpackt"
+	module=$(python3 -c '
+import re, sys
+d = open(sys.argv[1], "rb").read()
+namen, i = set(), 0
+while True:
+    j = d.find(b"070701", i)
+    if j < 0:
+        break
+    try:
+        nlen = int(d[j + 94:j + 102], 16)
+    except ValueError:
+        i = j + 6
+        continue
+    n = d[j + 110:j + 110 + nlen - 1].decode(errors="replace")
+    if re.search(r"\.ko(\.xz|\.zst|\.gz)?$", n):
+        namen.add(re.sub(r"^usr/lib/modules/[^/]+/kernel/", "", n))
+    i = j + 110 + nlen
+print("\n".join(sorted(namen)))' "$probe/entpackt")
+fi
+rm -rf "$probe"
+anzahl=$(grep -c . <<<"$module")
+funk=$(grep -cE '^drivers/net/wireless/|^drivers/bluetooth/|^net/bluetooth/' <<<"$module")
+noetig=$(for m in drivers/md/dm-verity fs/erofs/erofs; do grep -q "^$m\.ko" <<<"$module" || echo "$m"; done | paste -sd ' ' -)
+[[ "$anzahl" -gt 0 && "$anzahl" -lt 1500 && "$funk" == 0 && -z "$noetig" ]]
+pruefe $? "initrd ohne Funk-Treiber (WLAN lädt erst im System, mit Firmware): $anzahl Module, $funk für Funk${noetig:+, fehlt: $noetig}"
+
 # Leer heisst: ein lesbares FAT ohne Einträge (eine Fehlermeldung von mdir zählt nicht als leer)
 minfo -i "$(p 3)" :: >/dev/null 2>&1 && [[ -z "$(mdir -b -i "$(p 3)" :: 2>/dev/null)" ]]
 pruefe $? "Startpartition B ist ein leeres FAT (frei für das erste Update)"
