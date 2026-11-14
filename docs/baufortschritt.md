@@ -147,6 +147,11 @@ entsperren und `/etc/machine-id` auf `/var` zeigen lassen).
     bestimmt, bevor sie genullt wird. Jede Minute ein Lebenszeichen auf der Konsole, solange repart arbeitet.
   - Notfall-Partition: 30 Minuten Frist statt keiner; `loglevel=3` auf dem Argon (Kernel-Fehler nicht mitten in den
     Fragen); Signaturbefehl mit `/opt/homebrew/bin/ssh-keygen`; Ausnahme für den Wegwerf-Schlüssel auch im Manifest.
+- **Geprüft am 14.11.2026 (Stand 638a881 und die Prüfung des initrd):** QEMU 92 von 92; erster Start auf einer
+  500-GB-NVMe in QEMU dreimal grün, die Einrichtung erscheint jetzt nach rund 66 s (vorher rund 300 s, das zweite
+  Discard ist weg), beide Meldungen zum Speicher auf der Konsole; `startpartitionen.sh` 13 von 13. initrd des Argon
+  vorher und nachher verglichen: entfernt sind genau 106 WLAN- und 18 Bluetooth-Module und ihre Firmware (brcm,
+  cypress), nichts kam dazu; dm-verity, dm-crypt, dm-mod, erofs, vc4, nvme sind drin, pcie-brcmstb ist fest im Kernel.
 - **Offene Punkte aus der Prüfung (bestätigt, brauchen Zenos Entscheid oder einen eigenen Schritt):**
   - Fehlt der Schlüssel beim Login oder in der Sperre, meldet zenOS «Das Passwort stimmt nicht» statt «Schlüssel
     einstecken» (pam_u2f sucht nur einmal und wartet nicht).
