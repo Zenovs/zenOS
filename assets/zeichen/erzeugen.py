@@ -46,13 +46,13 @@ VORSCHAU = {
     "links": 120,
     "schriftzug": {"groesse": 130, "oben": 200},
     "unterzeile": {
-        "text": "Ein ruhiges, persönliches Desktop-System für den Raspberry Pi 5.",
+        "text": "Ein ruhiges, sicheres Desktop-System aus Debian.",
         "schrift": "Geist-Regular.ttf",
         "groesse": 32,
         "grundlinie": 420,
     },
     "monozeile": {
-        "text": "basiert auf Ubuntu · gebaut mit Claude",
+        "text": "für den Argon ONE UP · gebaut mit Claude",
         "schrift": "GeistMono-Regular.ttf",
         "groesse": 22,
         "grundlinie": 470,
