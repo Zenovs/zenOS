@@ -17,18 +17,53 @@ melden() {
 	printf '%s\n' "$*" >/dev/console 2>/dev/null || true
 }
 
-# Erst wenn udev alle Geräte vom Start erfasst hat (systemd-repart.service.d/zenos.conf): repart sperrt die Platte, und
-# was udev bis dahin nicht erfasst hat, verwirft es nach drei Minuten Sperre.
-udevadm settle --timeout=180 || true
-if [ -e /dev/disk/by-partlabel/zenos-daten ]; then
+# Die Platte, auf der das laufende System liegt, über sysfs (ohne udev): die Partitionen unter dem Gerät von /.
+wurzelplatte() {
+	majmin=$(findmnt -nro MAJ:MIN /) || return 1
+	for teil in /sys/dev/block/"$majmin"/slaves/*; do
+		[ -e "$teil" ] || continue
+		basename "$(dirname "$(readlink -f "$teil")")"
+		return 0
+	done
+	return 1
+}
+
+# Erster Start oder nicht: steht zenos-daten in der Partitionstabelle der Systemplatte? Bewusst nicht über
+# /dev/disk/by-partlabel: Die Verweise legt udev an, und sie gelten für jede Platte (auch einen eingesteckten Stick).
+if ! platte=$(wurzelplatte); then
+	melden "zenOS: Die Systemplatte lässt sich nicht bestimmen; der Speicher wird nicht angefasst."
+	exit 1
+fi
+if partx -g -o NAME "/dev/$platte" 2>/dev/null | grep -qx zenos-daten; then
+	# Normaler Start: repart hat nichts zu tun und sperrt die Platte nur einen Augenblick.
+	udevadm settle --timeout=10 || true
 	exec systemd-repart --dry-run=no
 fi
 
+# Erster Start: erst wenn udev alle Geräte vom Start erfasst hat (systemd-repart.service.d/zenos.conf). repart sperrt
+# die Platte minutenlang, und was udev bis dahin nicht erfasst hat, verwirft es nach drei Minuten Sperre.
+udevadm settle --timeout=180 || true
 melden "zenOS: Erster Start. Der Speicher wird vorbereitet und verschlüsselt, das kann einige Minuten dauern."
 umask 077
 mkdir -p /run/zenos
 head -c 64 /dev/urandom > "$schluessel"
-if ! systemd-repart --dry-run=no --key-file="$schluessel" >"$protokoll" 2>&1; then
+# repart verwirft die alten Daten im freien Bereich selbst (Discard, das beseitigt Reste von früher). Das Discard von
+# mkfs.ext4 durch dm-crypt und das Loop-Gerät von repart wäre ein zweiter, langsamer Durchgang über die ganze Partition
+# (auf einem Loop-Gerät über einer Platte als «Write Zeroes»); mke2fs nimmt das letzte -E.
+# Solange repart arbeitet, jede Minute ein Lebenszeichen auf der Konsole: Wie lange es auf einer echten SSD dauert, ist
+# offen, und ein stummer Bildschirm sähe aus wie ein Absturz.
+SYSTEMD_REPART_MKFS_OPTIONS_EXT4='-E nodiscard,lazy_itable_init=1' \
+	systemd-repart --dry-run=no --key-file="$schluessel" >"$protokoll" 2>&1 &
+repart=$!
+sekunden=0
+while kill -0 "$repart" 2>/dev/null; do
+	sleep 5
+	sekunden=$((sekunden + 5))
+	if [ $((sekunden % 60)) -eq 0 ]; then
+		melden "zenOS: Der Speicher wird noch vorbereitet ($((sekunden / 60)) min) …"
+	fi
+done
+if ! wait "$repart"; then
 	cat "$protokoll"
 	melden "zenOS: Der Speicher liess sich nicht vorbereiten. Meldung von systemd-repart:"
 	tail -n 12 "$protokoll" >/dev/console 2>/dev/null || true
@@ -38,16 +73,22 @@ cat "$protokoll"
 melden "zenOS: Speicher vorbereitet."
 
 # Die Notfall-Partition (40-zenos-notfall.conf) ist neu und leer zu halten: Auf der SSD liegen sonst Reste von vorher,
-# etwa ein alter LUKS-Kopf, der wie ein Notfall-Container aussähe. Ganz mit Nullen überschreiben. Den Verweis legt udev
-# erst an, wenn repart die Platte freigegeben hat; deshalb bis zu einer Minute darauf warten.
-udevadm settle --timeout=180 || true
-notfall=/dev/disk/by-partlabel/zenos-notfall
+# etwa ein alter LUKS-Kopf, der wie ein Notfall-Container aussähe. Ganz mit Nullen überschreiben. Welche Partition das
+# ist, steht in der Tabelle der Systemplatte; das Gerät legt der Kernel selbst an (devtmpfs), sobald repart ihm die neue
+# Partition gemeldet hat. Nicht über by-partlabel: Das Nullen darf nie eine Partition auf einer anderen Platte treffen.
+nr=$(partx -g -o NR,NAME "/dev/$platte" 2>/dev/null | awk '$2 == "zenos-notfall" { print $1; exit }')
+notfall=""
 i=0
-while [ ! -b "$notfall" ] && [ "$i" -lt 60 ]; do
-	sleep 1
+while [ -n "$nr" ] && [ -z "$notfall" ] && [ "$i" -lt 60 ]; do
+	for teil in /sys/block/"$platte"/*/partition; do
+		if [ -r "$teil" ] && [ "$(cat "$teil")" = "$nr" ] && [ -b "/dev/$(basename "$(dirname "$teil")")" ]; then
+			notfall=/dev/$(basename "$(dirname "$teil")")
+		fi
+	done
+	[ -n "$notfall" ] || sleep 1
 	i=$((i + 1))
 done
-if [ -b "$notfall" ]; then
+if [ -n "$notfall" ]; then
 	groesse=$(blockdev --getsize64 "$notfall")
 	dd if=/dev/zero of="$notfall" bs=1M count=$((groesse / 1048576)) conv=fsync status=none
 else
