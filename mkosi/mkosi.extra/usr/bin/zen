@@ -18,7 +18,8 @@ laufzeit=/run/zenos/update
 
 version() { (. /usr/lib/os-release && printf '%s' "${IMAGE_VERSION:-unbekannt}"); }
 
-hilfe() { sed -n '4,12p' "$0" | sed 's/^# \{0,1\}//'; }
+# Die Befehlsliste oben (Zeilen 4 bis 10), ohne den Absatz danach
+hilfe() { sed -n '4,10p' "$0" | sed 's/^# \{0,1\}//'; }
 
 update() {
 	# Nach dem Notfall-Passwort (Attrappe) lädt zenOS nichts und schreibt nichts mehr auf die SSD.
