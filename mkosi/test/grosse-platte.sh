@@ -33,15 +33,31 @@ vm = pexpect.spawn("qemu-system-aarch64", [
     "-drive", f"if=pflash,format=raw,file={w}/vars.fd",
     "-drive", f"if=none,id=d,file={w}/platte.qcow2,format=qcow2", "-device", "nvme,serial=zenos,drive=d",
     "-device", "virtio-rng-pci", "-serial", "mon:stdio"], encoding="utf-8", codec_errors="replace", timeout=900)
+# Frist mit der monotonen Uhr in kurzen Schritten: pexpect misst mit der Uhrzeit, und die springt in der Bau-VM (etwa
+# wenn der Mac schläft); dann käme die Zeitüberschreitung zu früh.
 beginn = time.monotonic()
-i = vm.expect(["Nummer: ", "Timed out waiting for device", "emergency mode", pexpect.TIMEOUT, pexpect.EOF])
+ausgabe = ""
+while True:
+    i = vm.expect(["Nummer: ", "Timed out waiting for device", "emergency mode", pexpect.TIMEOUT, pexpect.EOF], timeout=10)
+    # vor dem ersten Treffer enthält before alles seit dem Start
+    ausgabe = vm.before if isinstance(vm.before, str) else ausgabe
+    if i != 3 or time.monotonic() - beginn > 900:
+        break
 dauer = int(time.monotonic() - beginn)
-speicher = "Speicher wird vorbereitet" in (vm.before or "")
 vm.terminate(force=True)
 if i == 0:
-    print(f"  ok      Einrichtung erscheint nach {dauer} s (Meldung zum Speicher auf der Konsole: {'ja' if speicher else 'nein'})")
-    sys.exit(0)
+    # Zeno muss sehen, was passiert (daten-anlegen schreibt auf /dev/console), und die Notfall-Partition muss geleert sein
+    fehlt = [t for t in ("Der Speicher wird vorbereitet", "Speicher vorbereitet.") if t not in ausgabe]
+    warnung = "Notfall-Partition ist nicht erschienen" in ausgabe
+    if not fehlt and not warnung:
+        print(f"  ok      Einrichtung erscheint nach {dauer} s, Meldungen zum Speicher auf der Konsole")
+        sys.exit(0)
+    print(f"  FEHLER  Einrichtung nach {dauer} s, aber Meldung fehlt: {fehlt}, Warnung zur Notfall-Partition: {warnung}")
+    sys.exit(1)
 print(f"  FEHLER  nach {dauer} s: {['', 'Zeitüberschreitung beim Warten auf ein Gerät', 'Notfallmodus', 'nichts nach 15 Minuten', 'QEMU beendet'][i]}")
+import re
+for zeile in re.sub(r"\x1b\[[0-9;:?]*[A-Za-z]", "", ausgabe).replace("\r", "").splitlines()[-15:]:
+    print(f"          {zeile[:160]}")
 sys.exit(1)
 PY
 	(($? == 0)) || fehler=$((fehler + 1))
