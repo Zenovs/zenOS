@@ -100,6 +100,26 @@ zweiten Start «Failed to allocate new home object» und «Fixation failed: Requ
 Anmeldung geht trotzdem. Vor Vorschau 2 muss die machine-id dauerhaft werden (Vorschlag: Daten im initrd
 entsperren und `/etc/machine-id` auf `/var` zeigen lassen).
 
+**Befunde vom 14.11.2026 (beim Aktualisieren von Website und README), offen:**
+
+- **Downloads lassen sich ausführen.** `~/Downloads` zeigt auf `$XDG_RUNTIME_DIR/zenos/downloads`, und das tmpfs von
+  logind unter `/run/user` hat `nosuid,nodev`, aber kein `noexec`. Ein Download, den man ausführbar macht und startet,
+  läuft also; die Leitplanke «Auf dem Gerät läuft nur, was im Image ist» gilt damit noch nicht ganz (Skripte über
+  `bash` oder `python3` hält auch `noexec` nicht auf). Vorschlag: `/run/user/<uid>` mit `noexec` (Drop-in für
+  `user-runtime-dir@.service`, `mount -o remount,noexec`) und ein Angriffstest dazu; vorher prüfen, ob etwas im
+  Laufzeitordner ausführen muss. Zenos Entscheid. Website und README nennen es als offen.
+- **Lizenzen der Releases:** Jedes Release von 1.0 enthält das ganze Image, schon `zenos-0.9.2`. Wie Lizenztexte und
+  Quellcode der Pakete dazukommen, ist nicht geregelt (`/usr/share/doc` fehlt im Image). Vor dem ersten öffentlichen
+  Release klären.
+- `zen update` zeigt eine Fehlermeldung zweimal: einmal aus dem Protokoll, dann noch einmal als Hinweis.
+- Das Befehlsfeld zeigt «Tab Werkzeuge», obwohl es keine Werkzeuge gibt (`shell/befehlsfeld/Befehlsfeld.qml`,
+  `werkzeuge: []`).
+- `zen hilfe` brach mitten im Satz ab (Zeilen 4 bis 12 des Kopfkommentars); korrigiert auf die Befehlsliste (4 bis
+  10) in `mkosi/mkosi.extra/usr/bin/zen`. Test-Image neu gebaut, in QEMU alle Prüfungen bestanden (83, ohne den
+  Update-Test mit zweitem Stand). Kommt mit dem nächsten Image auf den Argon.
+- `docs/sicherheit.md`: In der Liste des Codes, der als root läuft, fehlen `greetd-starten` und `tastatur-waehlen`.
+- `firmware-brcm80211` ist nicht auf eine Version festgelegt; jeder Bau nimmt die neueste WLAN-Firmware.
+
 **Befunde vom 13.11.2026 (Updates mit FIDO2-Schlüsseln statt GPG), behoben:**
 
 - systemd-sysupdate prüft nur GPG (`SHA256SUMS.gpg`). `/usr/lib/zenos/update` prüft jetzt selbst und gibt sysupdate
