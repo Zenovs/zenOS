@@ -24,7 +24,7 @@ und eigener Kernel kommen mit 1.0.
 | `umgebung/` | Bauumgebung: Debian-Container mit mkosi und QEMU; `bauen-innen.sh` holt und prüft die Quelle von Quickshell |
 | `veroeffentlichen.sh` | macht aus einem gebauten Image die Dateien für ein Update und `SHA256SUMS` zum Signieren |
 | `signatur-pruefen.sh` | prüft Zenos Signatur eines Stands (oder der Probe) mit dem Code des Argon; signiert nie |
-| `test/` | Angriffs- und Starttests in QEMU mit Oberfläche, Update, Notfall-Passwort und Ausschalten nach langer Sperre, Einheitentests des Updates, der Erinnerung, des Notfall-Passworts und des Hardware-Schlüssels, Prüfung der Startpartitionen des Argon-Images |
+| `test/` | Angriffs- und Starttests in QEMU mit Oberfläche, Update, Notfall-Passwort und Ausschalten nach langer Sperre, Einheitentests des Updates, der Erinnerung, des Notfall-Passworts und des Hardware-Schlüssels, Prüfung der Startpartitionen des Argon-Images, Bildschirmfotos für die Website |
 
 ## Aufteilung der SSD
 
@@ -57,6 +57,7 @@ mkosi/test/erinnerung-einheiten.sh
 mkosi/test/notfall-einheiten.sh   # Passwortabfrage beim Start und Notfall-Passwort, mit echtem cryptsetup
 mkosi/test/schluessel-einheiten.sh   # Hardware-Schlüssel (Attrappen der FIDO2-Werkzeuge, echtes cryptsetup)
 mkosi/test/startpartitionen.sh   # Startpartitionen des Argon-Images, vor dem Schreiben auf die SSD
+mkosi/test/fotos.sh      # Bildschirmfotos für die Website (Konto «demo», hell und dunkel) → mkosi/ausgabe/fotos/
 ```
 
 Update-Test: einen zweiten Stand bauen und vorbereiten, dann den Test damit starten:
